@@ -7,7 +7,6 @@
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 #include "runtime/Session.h"
 
-
 namespace simxr
 {
 static SnapshotAdmission PromoteInspectionCapture(const std::shared_ptr<const FrameOutput>& output,
@@ -23,18 +22,21 @@ static SnapshotAdmission PromoteInspectionCapture(const std::shared_ptr<const Fr
 
 class VulkanSessionGraphics::FrameBindings final : public VulkanFrameBindings
 {
-  public:
+public:
 	explicit FrameBindings(const VulkanSessionGraphics& graphics) : m_graphics(graphics) {}
+
 	std::optional<SwapchainDescription> Describe(XrSwapchain swapchain) const override
 	{
 		const auto chain = m_graphics.FindSwapchain(swapchain);
 		return chain ? std::optional{chain->Description()} : std::nullopt;
 	}
+
 	std::shared_ptr<VulkanImage> ReleasedImage(XrSwapchain swapchain) const override
 	{
 		const auto chain = m_graphics.FindSwapchain(swapchain);
 		return chain ? chain->ReleasedImage() : nullptr;
 	}
+
 	void MarkReleasedUsed(XrSwapchain swapchain,
 						  const std::shared_ptr<const GpuCompletion>& completion) const noexcept override
 	{
@@ -42,7 +44,7 @@ class VulkanSessionGraphics::FrameBindings final : public VulkanFrameBindings
 			chain->MarkReleasedUsed(completion);
 	}
 
-  private:
+private:
 	const VulkanSessionGraphics& m_graphics;
 };
 
@@ -191,11 +193,8 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 	VulkanFrameSubmission backend(*m_session, *m_backend, m_inspection.get(), bindings,
 								  m_session->Display().Policy() == PresentationPolicy::Rotational);
 	FrameSubmission submission(*m_session, backend);
-	const auto result = submission.Execute(info,
-										   [&bindings](XrSwapchain swapchain)
-										   {
-											   return bindings.Describe(swapchain);
-										   });
+	const auto result =
+		submission.Execute(info, [&bindings](XrSwapchain swapchain) { return bindings.Describe(swapchain); });
 	return result;
 }
 
@@ -203,6 +202,7 @@ std::shared_ptr<VulkanDevice> VulkanSessionGraphics::Device() const
 {
 	return m_backend->Device();
 }
+
 void VulkanSessionGraphics::BeginClose()
 {
 	m_closing = true;
@@ -223,8 +223,7 @@ XrResult VulkanSessionGraphics::Drain(std::chrono::nanoseconds timeout)
 	using Clock = std::chrono::steady_clock;
 	const auto maximum = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(5));
 	const auto deadline = Clock::now() + std::min(timeout, maximum);
-	const auto remaining = [&]
-	{
+	const auto remaining = [&] {
 		return std::chrono::duration_cast<std::chrono::nanoseconds>(
 			std::max(deadline - Clock::now(), Clock::duration::zero()));
 	};

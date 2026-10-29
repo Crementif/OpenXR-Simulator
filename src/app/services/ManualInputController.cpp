@@ -7,6 +7,7 @@ namespace simxr::app
 {
 namespace wire = control;
 using Clock = std::chrono::steady_clock;
+
 static void Check(const wire::Message& reply)
 {
 	const auto error = reply.Find(wire::tag::Error);
@@ -17,6 +18,7 @@ static void Check(const wire::Message& reply)
 															: "Manual input request failed");
 	}
 }
+
 static bool Pending(const wire::Message& result)
 {
 	const auto phase = SimulationEditPhase(result);
@@ -25,12 +27,9 @@ static bool Pending(const wire::Message& result)
 
 ManualInputController::ManualInputController()
 {
-	m_worker = std::thread(
-		[this]
-		{
-			Run();
-		});
+	m_worker = std::thread([this] { Run(); });
 }
+
 ManualInputController::~ManualInputController()
 {
 	{
@@ -42,6 +41,7 @@ ManualInputController::~ManualInputController()
 	m_changed.notify_all();
 	m_worker.join();
 }
+
 void ManualInputController::Run() noexcept
 {
 	try
@@ -64,6 +64,7 @@ void ManualInputController::Run() noexcept
 		}
 	}
 }
+
 void ManualInputController::RunChecked()
 {
 	std::shared_ptr<WorkerConnection> connection;
@@ -80,15 +81,12 @@ void ManualInputController::RunChecked()
 		bool read = false;
 		{
 			std::unique_lock lock(m_mutex);
-			m_changed.wait_until(
-				lock, nextRead,
-				[&]
-				{
-					return m_stopping || bound != m_revision || m_refresh ||
-						   (!m_edits.empty() &&
-							(!waiting || std::holds_alternative<ReleaseManualInputs>(m_edits.front()))) ||
-						   (m_pose && !waiting);
-				});
+			m_changed.wait_until(lock, nextRead, [&] {
+				return m_stopping || bound != m_revision || m_refresh ||
+					   (!m_edits.empty() &&
+						(!waiting || std::holds_alternative<ReleaseManualInputs>(m_edits.front()))) ||
+					   (m_pose && !waiting);
+			});
 			if (m_stopping)
 				return;
 			if (bound != m_revision)
@@ -156,14 +154,13 @@ void ManualInputController::RunChecked()
 							throw std::runtime_error("Input rejected: " + SimulationEditPhase(receipt));
 						waiting = receipt;
 						const auto& commands = std::get<ManualTransaction>(*edit).commands;
-						waitingPose = std::any_of(commands.begin(), commands.end(),
-												  [](const SimulationCommand& command)
-												  {
-													  return std::holds_alternative<SetHeadPose>(command) ||
-															 std::holds_alternative<SetControllerPose>(command) ||
-															 std::holds_alternative<SetTracker>(command) ||
-															 std::holds_alternative<SetTrackers>(command);
-												  });
+						waitingPose =
+							std::any_of(commands.begin(), commands.end(), [](const SimulationCommand& command) {
+								return std::holds_alternative<SetHeadPose>(command) ||
+									   std::holds_alternative<SetControllerPose>(command) ||
+									   std::holds_alternative<SetTracker>(command) ||
+									   std::holds_alternative<SetTrackers>(command);
+							});
 					}
 				}
 				nextRead = Clock::now();
@@ -226,6 +223,7 @@ void ManualInputController::RunChecked()
 		}
 	}
 }
+
 void ManualInputController::SetTarget(ManualInputTarget target)
 {
 	std::lock_guard lock(m_mutex);
@@ -240,6 +238,7 @@ void ManualInputController::SetTarget(ManualInputTarget target)
 		m_current->Stop();
 	m_changed.notify_all();
 }
+
 bool ManualInputController::Submit(SimulationEdit edit, bool continuous)
 {
 	std::lock_guard lock(m_mutex);
@@ -281,11 +280,13 @@ bool ManualInputController::Submit(SimulationEdit edit, bool continuous)
 	m_changed.notify_all();
 	return true;
 }
+
 void ManualInputController::DiscardUnsentPose()
 {
 	std::lock_guard lock(m_mutex);
 	m_pose.reset();
 }
+
 void ManualInputController::Refresh()
 {
 	std::lock_guard lock(m_mutex);
@@ -295,6 +296,7 @@ void ManualInputController::Refresh()
 	m_snapshot.error.clear();
 	m_changed.notify_all();
 }
+
 ManualInputSnapshot ManualInputController::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);

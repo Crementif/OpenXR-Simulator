@@ -39,6 +39,7 @@ struct Fixture
 	wire::ControlService service{runtime};
 	wire::ConnectionId connection;
 	std::uint64_t request = 0;
+
 	explicit Fixture(bool capture = false)
 	{
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -57,6 +58,7 @@ struct Fixture
 		connection = *service.Connect();
 		Exchange(wire::OpCode::Hello, {});
 	}
+
 	wire::Message Exchange(wire::OpCode opcode, std::vector<wire::Field> fields)
 	{
 		wire::Message message;
@@ -74,6 +76,7 @@ struct Fixture
 		}
 		return result;
 	}
+
 	automation::RigOptions Options(std::string source)
 	{
 		automation::RigOptions options;
@@ -86,14 +89,14 @@ struct Fixture
 		return options;
 	}
 };
+
 void CheckSharedSequenceRigCancellation()
 {
 	Fixture fixture(true);
-	const auto fields = [&]
-	{
+	const auto fields = [&] {
 		return std::vector{wire::Field::U64(wire::tag::Session, 1),
-			wire::Field::U64(wire::tag::Generation, fixture.session->Snapshot().generation.value),
-			wire::Field::U32(wire::tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Rig))};
+						   wire::Field::U64(wire::tag::Generation, fixture.session->Snapshot().generation.value),
+						   wire::Field::U32(wire::tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Rig))};
 	};
 	const std::string program = R"({"frame":0,"head":{"x":2},"capture":true})";
 	auto upload = fields();
@@ -102,62 +105,62 @@ void CheckSharedSequenceRigCancellation()
 	upload.push_back(wire::Field::U64(wire::tag::TotalBytes, program.size()));
 	upload.push_back(wire::Field::Bytes(wire::tag::Bytes, std::as_bytes(std::span(program))));
 	Require(fixture.Exchange(wire::OpCode::UploadSequence, std::move(upload)).Find(wire::tag::Error)->AsU32() == 0,
-		"Stage a native sequence on the rig connection");
+			"Stage a native sequence on the rig connection");
 	auto start = fields();
 	start.push_back(wire::Field::U64(wire::tag::ProgramId, 1));
 	start.push_back(wire::Field::Bool(wire::tag::Loop, true));
 	Require(fixture.Exchange(wire::OpCode::StartSequence, std::move(start)).Find(wire::tag::Error)->AsU32() == 0,
-		"Start a native sequence on the rig connection");
-	automation::RigRunner runner([&](auto opcode, auto request)
-	{
-		return fixture.Exchange(opcode, std::move(request));
-	}, [&] { fixture.service.Disconnect(fixture.connection); });
+			"Start a native sequence on the rig connection");
+	automation::RigRunner runner(
+		[&](auto opcode, auto request) { return fixture.Exchange(opcode, std::move(request)); },
+		[&] { fixture.service.Disconnect(fixture.connection); });
 	runner.Start(fixture.Options("simxr.start_input_recording() while true do simxr.wait(10) end"));
-	Eventually([&]
-	{
-		const auto result = runner.Snapshot();
-		Require(result.phase == automation::RigPhase::Running, result.error.c_str());
-		return fixture.session->Commands().Recorder().Snapshot({}, 0).active;
-	},
+	Eventually(
+		[&] {
+			const auto result = runner.Snapshot();
+			Require(result.phase == automation::RigPhase::Running, result.error.c_str());
+			return fixture.session->Commands().Recorder().Snapshot({}, 0).active;
+		},
 		"Rig recording did not begin");
 	FramePrediction frame;
 	Require(fixture.session->WaitFrame(frame) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS &&
-		fixture.session->EndFrame(frame) == XR_SUCCESS && fixture.session->Captures().Snapshot().captures.size() == 1,
-		"Rig's native loop did not retain an exact capture");
+				fixture.session->EndFrame(frame) == XR_SUCCESS &&
+				fixture.session->Captures().Snapshot().captures.size() == 1,
+			"Rig's native loop did not retain an exact capture");
 	runner.Cancel();
 	runner.Join();
 	const CommandSource owner{CommandSourceKind::Rig, fixture.connection.value};
 	Require(runner.Snapshot().phase == automation::RigPhase::Cancelled &&
-		!fixture.session->Commands().PoseSequenceStatusFor(owner)->active &&
-		!fixture.session->Commands().Recorder().Snapshot({}, 0).active &&
-		fixture.session->Captures().Snapshot().captures.empty(),
-		"Rig cancellation did not retire its native sequence, recording and captures together");
+				!fixture.session->Commands().PoseSequenceStatusFor(owner)->active &&
+				!fixture.session->Commands().Recorder().Snapshot({}, 0).active &&
+				fixture.session->Captures().Snapshot().captures.empty(),
+			"Rig cancellation did not retire its native sequence, recording and captures together");
 }
 
 void CheckTransportRetirementAfterCleanupFailure()
 {
 	Fixture fixture;
 	bool disconnected = false;
-	automation::RigRunner runner([&](auto opcode, auto fields)
-	{
-		if (opcode == wire::OpCode::ReleaseControl)
-			throw std::runtime_error("Injected cleanup transport failure");
-		return fixture.Exchange(opcode, std::move(fields));
-	}, [&]
-	{
-		fixture.service.Disconnect(fixture.connection);
-		disconnected = true;
-	});
+	automation::RigRunner runner(
+		[&](auto opcode, auto fields) {
+			if (opcode == wire::OpCode::ReleaseControl)
+				throw std::runtime_error("Injected cleanup transport failure");
+			return fixture.Exchange(opcode, std::move(fields));
+		},
+		[&] {
+			fixture.service.Disconnect(fixture.connection);
+			disconnected = true;
+		});
 	runner.Start(fixture.Options("simxr.start_input_recording()"));
 	runner.Join();
 	const auto status = runner.Snapshot();
 	Require(status.phase == automation::RigPhase::Failed &&
-		status.error.find("Injected cleanup transport failure") != std::string::npos && disconnected &&
-		!fixture.session->Commands().Recorder().Snapshot({}, 0).active,
-		"Rig reported completion before disconnect released recording ownership after cleanup failure");
+				status.error.find("Injected cleanup transport failure") != std::string::npos && disconnected &&
+				!fixture.session->Commands().Recorder().Snapshot({}, 0).active,
+			"Rig reported completion before disconnect released recording ownership after cleanup failure");
 	const CommandSource successor{CommandSourceKind::Mcp, 52};
 	Require(fixture.session->StartCommandRecording(false, successor) == RecordingResult::Ok,
-		"Failed rig transport retained native recording ownership");
+			"Failed rig transport retained native recording ownership");
 	fixture.session->ReleaseCommandSource(successor, true);
 }
 
@@ -172,21 +175,18 @@ void CheckControllerBindingRigOwnership()
 	Require(fixture.session->Commands().Submit(transaction).result == CommandResult::Queued,
 			"Cannot acquire baseline controller ownership");
 	FramePrediction prediction;
-	Require(fixture.session->WaitFrame(prediction) == XR_SUCCESS &&
-			fixture.session->BeginFrame() == XR_SUCCESS && fixture.session->EndFrame(prediction) == XR_SUCCESS,
+	Require(fixture.session->WaitFrame(prediction) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS &&
+				fixture.session->EndFrame(prediction) == XR_SUCCESS,
 			"Cannot publish owned input");
 	std::ifstream file(std::filesystem::path{SIMXR_RIG_EXAMPLES_DIR} / "controller_bindings.luau");
 	Require(file.is_open(), "Cannot open controller binding rig");
 	std::string source{std::istreambuf_iterator<char>{file}, {}};
-	automation::RigRunner runner([&](auto opcode, auto fields)
-	{
-		return fixture.Exchange(opcode, std::move(fields));
-	});
+	automation::RigRunner runner([&](auto opcode, auto fields) { return fixture.Exchange(opcode, std::move(fields)); });
 	runner.Start(fixture.Options(std::move(source)));
 	runner.Join();
 	const auto result = runner.Snapshot();
 	Require(result.phase == automation::RigPhase::Failed && result.transactions == 0 &&
-			result.error.find("Release existing input owners") != std::string::npos,
+				result.error.find("Release existing input owners") != std::string::npos,
 			"Controller binding rig did not reject a shared input session");
 	Require(fixture.session->Commands().At(prediction.id)->owners[3] == transaction.source,
 			"Rejected controller binding rig changed existing ownership");
@@ -203,8 +203,7 @@ void CheckSweepRigs()
 		Require(!file.bad(), "Cannot read sweep rig");
 		Fixture fixture(true);
 		unsigned frames = 0;
-		automation::RigRunner runner([&](auto opcode, auto fields)
-		{
+		automation::RigRunner runner([&](auto opcode, auto fields) {
 			wire::Message request;
 			request.requestId = wire::RequestId{++fixture.request};
 			request.opcode = static_cast<std::uint16_t>(opcode);
@@ -214,46 +213,44 @@ void CheckSweepRigs()
 			{
 				FramePrediction prediction;
 				Require(fixture.session->WaitFrame(prediction) == XR_SUCCESS &&
-					fixture.session->BeginFrame() == XR_SUCCESS, "Sweep frame admission failed");
+							fixture.session->BeginFrame() == XR_SUCCESS,
+						"Sweep frame admission failed");
 				const auto applied = fixture.session->Commands().At(prediction.id);
 				Require(applied && prediction.id.value == frames + 1, "Sweep skipped an application frame");
 				const auto& tracking = applied->configuration.tracking;
 				const auto orientation =
 					wheel ? tracking.controllers[1].pose.pose.orientation : tracking.head.pose.orientation;
 				const auto norm = orientation.x * orientation.x + orientation.y * orientation.y +
-					orientation.z * orientation.z + orientation.w * orientation.w;
+								  orientation.z * orientation.z + orientation.w * orientation.w;
 				Require(std::abs(norm - 1) < .0001f, "Sweep quaternion is not normalized");
 				Require(std::count_if(applied->owners.begin(), applied->owners.end(),
-					[](const auto& owner)
-					{
-						return owner.has_value();
-					}) == (wheel ? 4 : 1),
-					"Sweep took unrelated input channels");
+									  [](const auto& owner) { return owner.has_value(); }) == (wheel ? 4 : 1),
+						"Sweep took unrelated input channels");
 				if (wheel)
 				{
 					const auto left = tracking.controllers[0].pose.pose.position;
 					const auto right = tracking.controllers[1].pose.pose.position;
-					Require(std::abs(left.x + right.x) < .0001f &&
-						std::abs(left.y + right.y - 2.7f) < .0001f &&
-						std::abs(left.z + right.z + .9f) < .0001f,
-						"Wheel hands left opposite sides of the configured center");
+					Require(std::abs(left.x + right.x) < .0001f && std::abs(left.y + right.y - 2.7f) < .0001f &&
+								std::abs(left.z + right.z + .9f) < .0001f,
+							"Wheel hands left opposite sides of the configured center");
 					const auto x = right.x, y = right.y - 1.35f, z = right.z + .45f;
 					Require(std::abs(x * x + y * y + z * z - .18f * .18f) < .0001f &&
-						std::abs(y * std::sin(.34906585f) + z * std::cos(.34906585f)) < .0001f,
-						"Wheel changed radius or left its tilted plane");
+								std::abs(y * std::sin(.34906585f) + z * std::cos(.34906585f)) < .0001f,
+							"Wheel changed radius or left its tilted plane");
 					for (const auto& controller : applied->configuration.input.controllers)
 						Require(controller.grip == 1, "Wheel released grip during motion");
 					if (frames == 30)
 						Require(right.x > .03f && right.x < .032f && right.y < 1.19f && orientation.z > .6f,
-							"Wheel did not reach its configured steering amplitude");
+								"Wheel did not reach its configured steering amplitude");
 				}
 				else
 				{
 					Require(tracking.head.pose.position.x == 0 && tracking.head.pose.position.y == 1.7f &&
-						tracking.head.pose.position.z == 0, "Orientation sweep translated the head");
+								tracking.head.pose.position.z == 0,
+							"Orientation sweep translated the head");
 					if (frames == 30)
 						Require(orientation.y > .25f && orientation.z < -.12f,
-							"Orientation sweep did not rotate yaw and roll");
+								"Orientation sweep did not rotate yaw and roll");
 					if (frames == 15)
 						Require(orientation.x > .14f, "Orientation sweep did not rotate pitch");
 				}
@@ -272,15 +269,15 @@ void CheckSweepRigs()
 		Require(frames == 121 && runner.Snapshot().transactions == frames, "Sweep cycle length changed");
 		FramePrediction cleanup;
 		Require(fixture.session->WaitFrame(cleanup) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS &&
-			fixture.session->EndFrame(cleanup) == XR_SUCCESS, "Sweep cleanup frame failed");
+					fixture.session->EndFrame(cleanup) == XR_SUCCESS,
+				"Sweep cleanup frame failed");
 		const auto applied = fixture.session->Commands().At(cleanup.id);
-		Require(applied && std::none_of(applied->owners.begin(), applied->owners.end(),
-			[](const auto& owner)
-			{
-				return owner.has_value();
-			}) &&
-			applied->configuration.input.controllers[0].grip == 0 &&
-			applied->configuration.input.controllers[1].grip == 0, "Sweep retained input after completion");
+		Require(applied &&
+					std::none_of(applied->owners.begin(), applied->owners.end(),
+								 [](const auto& owner) { return owner.has_value(); }) &&
+					applied->configuration.input.controllers[0].grip == 0 &&
+					applied->configuration.input.controllers[1].grip == 0,
+				"Sweep retained input after completion");
 	}
 }
 
@@ -290,45 +287,24 @@ void CheckBindingPauseAndStep()
 	std::atomic<bool> stateEntered = false;
 	std::atomic<bool> continueState = false;
 	std::atomic<bool> intercepted = false;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
+	automation::RigRunner runner([&](auto opcode, auto fields) {
+		if (opcode == wire::OpCode::SimulationStatus && !intercepted.exchange(true))
 		{
-			if (opcode == wire::OpCode::SimulationStatus && !intercepted.exchange(true))
-			{
-				stateEntered = true;
-				Eventually(
-					[&]
-					{
-						return continueState.load();
-					},
-					"State interception was not released");
-			}
-			return fixture.Exchange(opcode, std::move(fields));
-		});
+			stateEntered = true;
+			Eventually([&] { return continueState.load(); }, "State interception was not released");
+		}
+		return fixture.Exchange(opcode, std::move(fields));
+	});
 	runner.Start(fixture.Options("simxr.state()\nprint('one binding')\nsimxr.checkpoint('after resume', true)"));
 	try
 	{
-		Eventually(
-			[&]
-			{
-				return stateEntered.load();
-			},
-			"Script did not enter state binding");
+		Eventually([&] { return stateEntered.load(); }, "Script did not enter state binding");
 		runner.Pause();
 		continueState = true;
-		Eventually(
-			[&]
-			{
-				return runner.Snapshot().phase == automation::RigPhase::Paused;
-			},
-			"Runner did not pause at binding boundary");
+		Eventually([&] { return runner.Snapshot().phase == automation::RigPhase::Paused; },
+				   "Runner did not pause at binding boundary");
 		runner.Step();
-		Eventually(
-			[&]
-			{
-				return runner.Snapshot().output.size() == 1;
-			},
-			"One binding permit did not run print");
+		Eventually([&] { return runner.Snapshot().output.size() == 1; }, "One binding permit did not run print");
 		Require(runner.Snapshot().checkpoints.empty(), "One binding permit ran a second binding");
 		runner.Resume();
 		runner.Join();
@@ -369,10 +345,9 @@ void CheckTimedWaits()
 {
 	for (unsigned mode = 0; mode < 3; ++mode)
 	{
-		automation::RigRunner runner([](auto opcode, auto)
-		{
+		automation::RigRunner runner([](auto opcode, auto) {
 			Require(opcode == wire::OpCode::Status || opcode == wire::OpCode::ReleaseControl,
-				"An observational wait must not poll, acquire control, or step the application");
+					"An observational wait must not poll, acquire control, or step the application");
 			wire::Message response;
 			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
 			return response;
@@ -391,15 +366,19 @@ void CheckTimedWaits()
 		}
 		auto joined = std::async(std::launch::async, [&] { runner.Join(); });
 		Require(joined.wait_for(std::chrono::seconds{1}) == std::future_status::ready,
-			"Cancellation or execution deadline did not interrupt the timed wait");
+				"Cancellation or execution deadline did not interrupt the timed wait");
 		joined.get();
 		const auto result = runner.Snapshot();
-		Require(result.phase == (mode == 2 ? automation::RigPhase::Cancelled : mode == 1 ? automation::RigPhase::Failed
-			: automation::RigPhase::Complete), "Timed wait ended in the wrong phase");
+		Require(result.phase == (mode == 2	 ? automation::RigPhase::Cancelled
+								 : mode == 1 ? automation::RigPhase::Failed
+											 : automation::RigPhase::Complete),
+				"Timed wait ended in the wrong phase");
 		if (!mode)
-			Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds{40}, "Wait returned before its target");
+			Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds{40},
+					"Wait returned before its target");
 		if (mode == 1)
-			Require(result.error.find("deadline") != std::string::npos, "Timed wait failed for a reason other than its deadline");
+			Require(result.error.find("deadline") != std::string::npos,
+					"Timed wait failed for a reason other than its deadline");
 	}
 }
 
@@ -410,8 +389,7 @@ void CheckPausedCancellation()
 	options.deadline = std::chrono::seconds{5};
 	progress.Start(options);
 	progress.Pause();
-	auto worker = std::async(std::launch::async, [&]
-	{
+	auto worker = std::async(std::launch::async, [&] {
 		try
 		{
 			progress.Check(true);
@@ -432,8 +410,7 @@ void CheckSteppedExecutionPhase()
 {
 	Fixture fixture;
 	std::atomic<bool> entered = false, release = false;
-	automation::RigRunner runner([&](auto opcode, auto fields)
-	{
+	automation::RigRunner runner([&](auto opcode, auto fields) {
 		if (opcode == wire::OpCode::SimulationStatus && !entered.exchange(true))
 			Eventually([&] { return release.load(); }, "State interception was not released");
 		return fixture.Exchange(opcode, std::move(fields));
@@ -445,10 +422,10 @@ void CheckSteppedExecutionPhase()
 		runner.Pause();
 		release = true;
 		Eventually([&] { return runner.Snapshot().phase == automation::RigPhase::Paused; },
-			"Rig did not reach a paused binding");
+				   "Rig did not reach a paused binding");
 		runner.Step();
 		Eventually([&] { return runner.Snapshot().phase == automation::RigPhase::Running; },
-			"Stepped Luau execution was reported as paused");
+				   "Stepped Luau execution was reported as paused");
 		runner.Cancel();
 		runner.Join();
 		Require(runner.Snapshot().phase == automation::RigPhase::Cancelled, "Stepped run did not cancel");
@@ -469,33 +446,30 @@ void CheckCleanupFailures()
 	{
 		Fixture fixture;
 		bool attempted = false, inputsReleased = false;
-		automation::RigRunner runner(
-			[&](auto opcode, auto fields)
+		automation::RigRunner runner([&](auto opcode, auto fields) {
+			if (opcode == wire::OpCode::ReleaseControl)
+				inputsReleased = true;
+			if (opcode == failed)
 			{
-				if (opcode == wire::OpCode::ReleaseControl)
-					inputsReleased = true;
-				if (opcode == failed)
-				{
-					attempted = true;
-					wire::Message response;
-					response.fields = {
-						wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::Internal)),
-						wire::Field::Text(wire::tag::Detail, "injected cleanup failure")};
-					return response;
-				}
-				if (opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::InspectFrame)
-				{
-					wire::Message response;
-					response.fields = {
-						wire::Field::U32(wire::tag::Error, 0),
-						wire::Field::U64(opcode == wire::OpCode::BeginImageWindow ? wire::tag::ImageWindowId
-																				  : wire::tag::InspectionId,
-										 42),
-						wire::Field::Bytes(wire::tag::Document, wire::InspectionValue::Object({}).Encode())};
-					return response;
-				}
-				return fixture.Exchange(opcode, std::move(fields));
-			});
+				attempted = true;
+				wire::Message response;
+				response.fields = {
+					wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::Internal)),
+					wire::Field::Text(wire::tag::Detail, "injected cleanup failure")};
+				return response;
+			}
+			if (opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::InspectFrame)
+			{
+				wire::Message response;
+				response.fields = {wire::Field::U32(wire::tag::Error, 0),
+								   wire::Field::U64(opcode == wire::OpCode::BeginImageWindow ? wire::tag::ImageWindowId
+																							 : wire::tag::InspectionId,
+													42),
+								   wire::Field::Bytes(wire::tag::Document, wire::InspectionValue::Object({}).Encode())};
+				return response;
+			}
+			return fixture.Exchange(opcode, std::move(fields));
+		});
 		runner.Start(fixture.Options(failed == wire::OpCode::ReleaseImageWindow	 ? "simxr.begin_image_window()"
 									 : failed == wire::OpCode::ReleaseInspection ? "simxr.inspect('7')"
 																				 : "simxr.pause()"));
@@ -510,22 +484,20 @@ void CheckScriptValueBoundaries()
 {
 	Fixture fixture;
 	unsigned submissions = 0;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
+	automation::RigRunner runner([&](auto opcode, auto fields) {
+		if (opcode == wire::OpCode::SubmitSimulation)
+			++submissions;
+		if (opcode == wire::OpCode::SimulationStatus)
 		{
-			if (opcode == wire::OpCode::SubmitSimulation)
-				++submissions;
-			if (opcode == wire::OpCode::SimulationStatus)
-			{
-				wire::Message response;
-				const auto document = wire::EncodeFields(
-					std::vector{wire::Field::Text(1, ""), wire::Field::U32(2, 999), wire::Field::Bytes(3, {})});
-				response.fields = {wire::Field::U32(wire::tag::Error, 0),
-								   wire::Field::Bytes(wire::tag::Document, document)};
-				return response;
-			}
-			return fixture.Exchange(opcode, std::move(fields));
-		});
+			wire::Message response;
+			const auto document = wire::EncodeFields(
+				std::vector{wire::Field::Text(1, ""), wire::Field::U32(2, 999), wire::Field::Bytes(3, {})});
+			response.fields = {wire::Field::U32(wire::tag::Error, 0),
+							   wire::Field::Bytes(wire::tag::Document, document)};
+			return response;
+		}
+		return fixture.Exchange(opcode, std::move(fields));
+	});
 	runner.Start(fixture.Options(R"(
 for _, duration in {-1, 0.5, 3600001, math.huge} do assert(not pcall(simxr.wait, duration)) end
 local ok, detail = pcall(simxr.state)
@@ -573,6 +545,7 @@ void CheckReportText()
 	snapshot.error = "\xef\xbf\xbf\r\n\t";
 	Require(automation::SerializeRigJunit(snapshot).find(replacement + "&#13;&#10;&#9;") != std::string::npos,
 			"JUnit contains a forbidden XML character or loses attribute whitespace");
+
 	struct GroupedNumbers : std::numpunct<char>
 	{
 		std::string do_grouping() const override
@@ -580,6 +553,7 @@ void CheckReportText()
 			return "\3";
 		}
 	};
+
 	const auto previous = std::locale();
 	std::locale::global(std::locale{previous, new GroupedNumbers});
 	snapshot.transactions = 1234;
@@ -591,11 +565,7 @@ void CheckReportText()
 void CheckInputRecording()
 {
 	Fixture fixture;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
-		{
-			return fixture.Exchange(opcode, std::move(fields));
-		});
+	automation::RigRunner runner([&](auto opcode, auto fields) { return fixture.Exchange(opcode, std::move(fields)); });
 	runner.Start(fixture.Options(R"(
 assert(simxr.start_input_recording().active)
 local transaction = simxr.schedule({frame="1", commands={
@@ -626,41 +596,42 @@ void CheckRecordedPlaytestOutcome()
 		std::filesystem::path path =
 			std::filesystem::temp_directory_path() /
 			("simxr-sdk-playtest-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
 		ArchiveDirectory()
 		{
 			Require(std::filesystem::create_directory(path), "Create private playtest directory");
 		}
+
 		~ArchiveDirectory()
 		{
 			std::error_code ignored;
 			std::filesystem::remove_all(path, ignored);
 		}
 	} directory;
+
 	Fixture captured;
 	std::unique_ptr<automation::RecordingArchiveWriter> archive;
-	automation::RigRunner recorder(
-		[&](auto opcode, auto fields)
+	automation::RigRunner recorder([&](auto opcode, auto fields) {
+		if (opcode == wire::OpCode::StartRecording)
+			fields.push_back(wire::Field::Bool(wire::tag::RecordingDrain, true));
+		if (opcode == wire::OpCode::StopRecording)
+			fields.push_back(wire::Field::U64(wire::tag::RecordingId, archive->State().identity));
+		auto result = captured.Exchange(opcode, std::move(fields));
+		if (opcode == wire::OpCode::StartRecording)
+			archive = std::make_unique<automation::RecordingArchiveWriter>(directory.path / "take", result);
+		if (opcode == wire::OpCode::StopRecording)
 		{
-			if (opcode == wire::OpCode::StartRecording)
-				fields.push_back(wire::Field::Bool(wire::tag::RecordingDrain, true));
-			if (opcode == wire::OpCode::StopRecording)
-				fields.push_back(wire::Field::U64(wire::tag::RecordingId, archive->State().identity));
-			auto result = captured.Exchange(opcode, std::move(fields));
-			if (opcode == wire::OpCode::StartRecording)
-				archive = std::make_unique<automation::RecordingArchiveWriter>(directory.path / "take", result);
-			if (opcode == wire::OpCode::StopRecording)
-			{
-				auto fields =
-					std::vector{wire::Field::U64(wire::tag::Session, 1),
-								wire::Field::U64(wire::tag::Generation, captured.session->Snapshot().generation.value),
-								wire::Field::U64(wire::tag::RecordingId, archive->State().identity),
-								wire::Field::U64(wire::tag::Offset, 0), wire::Field::U64(wire::tag::Length, 16)};
-				const auto page = captured.Exchange(wire::OpCode::ReadRecording, std::move(fields));
-				Require(archive->Append(page) == 3, "SDK playtest archive lost captured input");
-				archive->Finish(result);
-			}
-			return result;
-		});
+			auto fields =
+				std::vector{wire::Field::U64(wire::tag::Session, 1),
+							wire::Field::U64(wire::tag::Generation, captured.session->Snapshot().generation.value),
+							wire::Field::U64(wire::tag::RecordingId, archive->State().identity),
+							wire::Field::U64(wire::tag::Offset, 0), wire::Field::U64(wire::tag::Length, 16)};
+			const auto page = captured.Exchange(wire::OpCode::ReadRecording, std::move(fields));
+			Require(archive->Append(page) == 3, "SDK playtest archive lost captured input");
+			archive->Finish(result);
+		}
+		return result;
+	});
 	BodyObservation recordedBody;
 	recordedBody.jointSet = BodyJointSet::WithoutArmsBD;
 	recordedBody.located = true;
@@ -716,54 +687,52 @@ simxr.stop_input_recording()
 		Require(game != 0, "Replay game registration failed");
 		bool reset = false, hit = false, bodyVerified = false;
 		unsigned presses = 0, advancedFrames = 0;
-		automation::RigRunner runner(
-			[&](auto opcode, auto fields)
+		automation::RigRunner runner([&](auto opcode, auto fields) {
+			wire::Message request;
+			request.requestId = wire::RequestId{++replay.request};
+			request.opcode = static_cast<std::uint16_t>(opcode);
+			request.fields = std::move(fields);
+			auto result = replay.service.Handle(replay.connection, request);
+			SimxrGameCommand command{};
+			if (api.poll(api.context, game, &command))
 			{
-				wire::Message request;
-				request.requestId = wire::RequestId{++replay.request};
-				request.opcode = static_cast<std::uint16_t>(opcode);
-				request.fields = std::move(fields);
-				auto result = replay.service.Handle(replay.connection, request);
-				SimxrGameCommand command{};
-				if (api.poll(api.context, game, &command))
+				Require(command.kind == SIMXR_GAME_RESET &&
+							std::string_view(command.payload, command.payloadLength) == "checkpoint:target",
+						"Replay reset the wrong game checkpoint");
+				reset = !rejectReset;
+				hit = false;
+				presses = 0;
+				Require(api.publish(api.context, game, "miss", 4) &&
+							api.complete(api.context, game, command.id, rejectReset ? 0 : 1, nullptr, 0),
+						"Game reset acknowledgement failed");
+			}
+			if (replay.session->Scheduler().Snapshot().permits)
+			{
+				FramePrediction prediction;
+				Require(replay.session->WaitFrame(prediction) == XR_SUCCESS &&
+							replay.session->BeginFrame() == XR_SUCCESS,
+						"Replay frame admission failed");
+				++advancedFrames;
+				const auto applied = replay.session->Commands().At(prediction.id);
+				Require(reset && applied, "Replay advanced before the game's acknowledged reset");
+				if (const auto& body = applied->configuration.tracking.bodyObservation; body && !bodyVerified)
 				{
-					Require(command.kind == SIMXR_GAME_RESET &&
-								std::string_view(command.payload, command.payloadLength) == "checkpoint:target",
-							"Replay reset the wrong game checkpoint");
-					reset = !rejectReset;
-					hit = false;
-					presses = 0;
-					Require(api.publish(api.context, game, "miss", 4) &&
-								api.complete(api.context, game, command.id, rejectReset ? 0 : 1, nullptr, 0),
-							"Game reset acknowledgement failed");
+					Require(body->requestedTime.value.count() == applied->runtimeTime.value.count() - 20,
+							"Generated replay failed to preserve body observation age in the new runtime clock");
+					bodyVerified = true;
 				}
-				if (replay.session->Scheduler().Snapshot().permits)
-				{
-					FramePrediction prediction;
-					Require(replay.session->WaitFrame(prediction) == XR_SUCCESS &&
-								replay.session->BeginFrame() == XR_SUCCESS,
-							"Replay frame admission failed");
-					++advancedFrames;
-					const auto applied = replay.session->Commands().At(prediction.id);
-					Require(reset && applied, "Replay advanced before the game's acknowledged reset");
-					if (const auto& body = applied->configuration.tracking.bodyObservation; body && !bodyVerified)
-					{
-						Require(body->requestedTime.value.count() == applied->runtimeTime.value.count() - 20,
-								"Generated replay failed to preserve body observation age in the new runtime clock");
-						bodyVerified = true;
-					}
 
-					if (applied->configuration.input.controllers[0].primary)
-					{
-						++presses;
-						hit |= applied->configuration.tracking.head.pose.position.x > .5f;
-					}
-					Require(api.publish(api.context, game, hit ? "hit" : "miss", hit ? 3 : 4),
-							"Game outcome publication failed");
-					Require(replay.session->EndFrame(prediction) == XR_SUCCESS, "Replay frame completion failed");
+				if (applied->configuration.input.controllers[0].primary)
+				{
+					++presses;
+					hit |= applied->configuration.tracking.head.pose.position.x > .5f;
 				}
-				return result;
-			});
+				Require(api.publish(api.context, game, hit ? "hit" : "miss", hit ? 3 : 4),
+						"Game outcome publication failed");
+				Require(replay.session->EndFrame(prediction) == XR_SUCCESS, "Replay frame completion failed");
+			}
+			return result;
+		});
 		auto script = std::string{R"(
 local operation, game = simxr.game_command(1, "checkpoint:target")
 simxr.await_game(game, operation)
@@ -799,18 +768,17 @@ void CheckLeaseRenewal()
 		const auto controller = fixture.runtime.Debugger(fixture.session, config);
 		Require(controller != nullptr, "Lease fixture debugger unavailable");
 		unsigned renewals = 0;
-		automation::RigRunner runner(
-			[&](auto opcode, auto fields)
-			{
-				if (opcode == wire::OpCode::Renew)
-					++renewals;
-				if (opcode == wire::OpCode::SimulationStatus || opcode == wire::OpCode::GameStatus)
-					std::this_thread::sleep_for(std::chrono::milliseconds{40});
-				return fixture.Exchange(opcode, std::move(fields));
-			});
+		automation::RigRunner runner([&](auto opcode, auto fields) {
+			if (opcode == wire::OpCode::Renew)
+				++renewals;
+			if (opcode == wire::OpCode::SimulationStatus || opcode == wire::OpCode::GameStatus)
+				std::this_thread::sleep_for(std::chrono::milliseconds{40});
+			return fixture.Exchange(opcode, std::move(fields));
+		});
 		auto options =
 			fixture.Options(std::string_view(binding) == "wait" ? "simxr.pause() simxr.wait(2200) simxr.resume()"
-			: "simxr.pause() for i = 1, 55 do simxr." + std::string(binding) + "() end simxr.resume()");
+																: "simxr.pause() for i = 1, 55 do simxr." +
+																	  std::string(binding) + "() end simxr.resume()");
 		options.deadline = std::chrono::seconds{6};
 		runner.Start(std::move(options));
 		runner.Join();
@@ -825,11 +793,12 @@ void CheckMonitorCoverage()
 	coverage.Add({{1, false, ""}, {2, true, "missing_eye"}});
 	coverage.Add({{2, false, ""}, {4, false, ""}});
 	Require(coverage.report.observed == 3 && coverage.report.skipped == 0 && coverage.report.gaps == 1,
-		"Overlapping windows recover skipped frames without double counting or hiding gaps");
+			"Overlapping windows recover skipped frames without double counting or hiding gaps");
 	for (std::uint64_t frame = 5; frame < 75; ++frame)
 		coverage.Add({{frame, false, "anomaly"}});
-	Require(coverage.report.events.size() == 64 && coverage.report.eventsTotal == 70 && coverage.report.eventsDropped == 6,
-		"Monitor event retention is bounded and reports overflow");
+	Require(coverage.report.events.size() == 64 && coverage.report.eventsTotal == 70 &&
+				coverage.report.eventsDropped == 6,
+			"Monitor event retention is bounded and reports overflow");
 	coverage.Add({{74, false, "anomaly"}});
 	Require(coverage.report.eventsTotal == 70, "Repeated events are not counted twice");
 }
@@ -840,8 +809,7 @@ void CheckMonitorPolicy()
 	for (unsigned mode = 0; mode < 7; ++mode)
 	{
 		std::atomic<unsigned> reads = 0;
-		automation::RigRunner runner([&](auto opcode, auto)
-		{
+		automation::RigRunner runner([&](auto opcode, auto) {
 			wire::Message response;
 			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
 			if (opcode == wire::OpCode::ReadImageHistory)
@@ -849,7 +817,8 @@ void CheckMonitorPolicy()
 				++reads;
 				if (mode == 2)
 				{
-					response.fields[0] = wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::StaleGeneration));
+					response.fields[0] = wire::Field::U32(wire::tag::Error,
+														  static_cast<std::uint32_t>(wire::ErrorCode::StaleGeneration));
 					return response;
 				}
 				if (mode == 3 || mode == 4)
@@ -858,16 +827,18 @@ void CheckMonitorPolicy()
 				if (mode != 1 && (mode != 5 || reads > 2))
 					for (unsigned i = 0; i < 2; ++i)
 						entries.push_back(Value::Object({{"frame_id", Value::Unsigned(reads * 10 + i)},
-							{"phase", Value::Text(mode == 6 ? "ready" : "clear")}}));
+														 {"phase", Value::Text(mode == 6 ? "ready" : "clear")}}));
 				const auto document = Value::Object({{"target", Value::Text("composed_eyes")},
-					{"entries", Value::Array(std::move(entries))}}).Encode();
+													 {"entries", Value::Array(std::move(entries))}})
+										  .Encode();
 				response.fields.push_back(wire::Field::Bytes(wire::tag::Document, document));
 			}
 			else if (opcode == wire::OpCode::RetainHistoricalImage && mode == 6)
-				response.fields[0] = wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::NotFound));
+				response.fields[0] =
+					wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::NotFound));
 			else
 				Require(opcode == wire::OpCode::Status || opcode == wire::OpCode::ReleaseControl,
-					"Monitoring must not acquire input, pause, step, or retain full image windows");
+						"Monitoring must not acquire input, pause, step, or retain full image windows");
 			return response;
 		});
 		automation::RigOptions options;
@@ -875,14 +846,15 @@ void CheckMonitorPolicy()
 		options.generation = 1;
 		options.background = true;
 		options.deadline = std::chrono::milliseconds{mode == 4 ? 1000 : 40};
-		options.source = "local target = 'composed' local interval = .25 local timeout = " +
-			std::string(mode == 4 ? "1" : ".04") + "\n" + std::string(automation::MonitorSource);
+		options.source =
+			"local target = 'composed' local interval = .25 local timeout = " + std::string(mode == 4 ? "1" : ".04") +
+			"\n" + std::string(automation::MonitorSource);
 		runner.Start(options);
 		if (mode == 0 || mode >= 4)
 		{
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
 			while (runner.Snapshot().monitor.windows < 2 && runner.Phase() == automation::RigPhase::Running &&
-				std::chrono::steady_clock::now() < deadline)
+				   std::chrono::steady_clock::now() < deadline)
 				std::this_thread::sleep_for(std::chrono::milliseconds{5});
 			runner.Cancel();
 		}
@@ -890,14 +862,17 @@ void CheckMonitorPolicy()
 		const auto result = runner.Snapshot();
 		if (mode == 0 || mode >= 4)
 			Require(result.phase == automation::RigPhase::Cancelled && result.monitor.windows >= 2 &&
-				result.monitor.gaps >= 8, "Background policy survives its per-sample timeout and reports coverage gaps");
+						result.monitor.gaps >= 8,
+					"Background policy survives its per-sample timeout and reports coverage gaps");
 		else
-			Require(result.phase == automation::RigPhase::Failed, "Unavailable sessions or overdue monitoring must report failure");
+			Require(result.phase == automation::RigPhase::Failed,
+					"Unavailable sessions or overdue monitoring must report failure");
 		if (mode == 4)
-			Require(result.monitor.missedCadences >= 2, "Slow observations report missed cadence without catch-up bursts");
+			Require(result.monitor.missedCadences >= 2,
+					"Slow observations report missed cadence without catch-up bursts");
 		if (mode == 6)
 			Require(result.monitor.observed == 0 && result.monitor.skipped >= 4,
-				"Frames evicted during sampling are reported as gaps in analyzed coverage");
+					"Frames evicted during sampling are reported as gaps in analyzed coverage");
 	}
 }
 
@@ -908,32 +883,37 @@ void CheckWindowAnalysisGaps()
 	{
 		std::vector<Value> entries;
 		for (const auto frame : {1u, 2u, 4u, 5u})
-			entries.push_back(Value::Object({{"frame_id", Value::Unsigned(frame)},
-				{"phase", Value::Text(frame == 2 ? "expired" : ui && frame == 1 ? "ready" : "clear")},
-				{"quad_rectangles", Value::Array({Value::Object({}), Value::Object({{"width", Value::Unsigned(4)},
-					{"height", Value::Unsigned(4)}})})}}));
+			entries.push_back(Value::Object(
+				{{"frame_id", Value::Unsigned(frame)},
+				 {"phase", Value::Text(frame == 2		  ? "expired"
+									   : ui && frame == 1 ? "ready"
+														  : "clear")},
+				 {"quad_rectangles",
+				  Value::Array({Value::Object({}),
+								Value::Object({{"width", Value::Unsigned(4)}, {"height", Value::Unsigned(4)}})})}}));
 		const auto document = Value::Object({{"phase", Value::Text("complete")},
-			{"target", Value::Text(ui ? "quad_layers" : "composed_eyes")}, {"entries", Value::Array(std::move(entries))}}).Encode();
-		automation::RigRunner runner([&](auto opcode, auto)
-		{
+											 {"target", Value::Text(ui ? "quad_layers" : "composed_eyes")},
+											 {"entries", Value::Array(std::move(entries))}})
+								  .Encode();
+		automation::RigRunner runner([&](auto opcode, auto) {
 			wire::Message response;
 			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
 			if (opcode == wire::OpCode::ReadImageWindow)
 				response.fields.push_back(wire::Field::Bytes(wire::tag::Document, document));
 			else
 				Require(opcode == wire::OpCode::ReleaseControl || opcode == wire::OpCode::Status,
-					"Window analysis must not acquire control, step, or read unavailable pixels");
+						"Window analysis must not acquire control, step, or read unavailable pixels");
 			return response;
 		});
 		automation::RigOptions options;
 		options.session = wire::ControlSessionId{1};
 		options.generation = 1;
 		options.source = "local a = simxr.analyze_image_window('1') "
-			"assert(a.frame_gaps == 1 and not a.detected and #a.events == 0) ";
+						 "assert(a.frame_gaps == 1 and not a.detected and #a.events == 0) ";
 		options.source += ui ? "assert(a.frames_analyzed == 0 and a.frames_skipped == 4 and a.temporal_pairs == 0) "
-			"assert(#a.skipped_frames == 4 and a.skipped_frames[1].reason == 'missing_eye')"
-			: "assert(a.frames_analyzed == 3 and a.frames_skipped == 1 and a.temporal_pairs == 1) "
-			"assert(#a.skipped_frames == 1 and a.skipped_frames[1].frame_id == '2')";
+							   "assert(#a.skipped_frames == 4 and a.skipped_frames[1].reason == 'missing_eye')"
+							 : "assert(a.frames_analyzed == 3 and a.frames_skipped == 1 and a.temporal_pairs == 1) "
+							   "assert(#a.skipped_frames == 1 and a.skipped_frames[1].frame_id == '2')";
 		runner.Start(std::move(options));
 		runner.Join();
 		const auto result = runner.Snapshot();
@@ -950,39 +930,39 @@ void CheckExportReader()
 		bool failed = false;
 		try
 		{
-			wire::ExportReader reader([&](auto opcode, auto fields)
-			{
-				wire::Message reply, request;
-				request.fields = std::move(fields);
-				if (opcode == wire::OpCode::StartExport)
-					reply.fields = {wire::Field::U64(wire::tag::ExportId, 4)};
-				else if (opcode == wire::OpCode::ReleaseExport)
-					++releases;
-				else if (opcode == wire::OpCode::ExportInfo)
-				{
-					++polls;
-					reply.fields = {wire::Field::Text(wire::tag::Phase, polls == 1 ? "pending" : "complete"),
-						wire::Field::U64(wire::tag::TotalBytes, 6)};
-				}
-				else if (opcode == wire::OpCode::ReadExport)
-				{
-					++reads;
-					const auto offset = *request.Find(wire::tag::Offset)->AsU64();
-					const auto length = *request.Find(wire::tag::Length)->AsU64();
-					Require(length == 6 - offset, "Export read must fit the remaining range");
-					std::vector<std::byte> bytes(mode == 1 ? 0 : mode == 2 ? length + 1 : 2, std::byte{7});
-					reply.fields = {wire::Field::U64(wire::tag::Offset, mode == 3 ? offset + 1 : offset),
-						wire::Field::Bytes(wire::tag::Bytes, bytes)};
-				}
-				return reply;
-			}, {}, [&]
-			{
-				++waits;
-				if (mode == 5)
-					throw std::runtime_error("cancelled");
-			});
-			reader.Read([&](auto bytes)
-			{
+			wire::ExportReader reader(
+				[&](auto opcode, auto fields) {
+					wire::Message reply, request;
+					request.fields = std::move(fields);
+					if (opcode == wire::OpCode::StartExport)
+						reply.fields = {wire::Field::U64(wire::tag::ExportId, 4)};
+					else if (opcode == wire::OpCode::ReleaseExport)
+						++releases;
+					else if (opcode == wire::OpCode::ExportInfo)
+					{
+						++polls;
+						reply.fields = {wire::Field::Text(wire::tag::Phase, polls == 1 ? "pending" : "complete"),
+										wire::Field::U64(wire::tag::TotalBytes, 6)};
+					}
+					else if (opcode == wire::OpCode::ReadExport)
+					{
+						++reads;
+						const auto offset = *request.Find(wire::tag::Offset)->AsU64();
+						const auto length = *request.Find(wire::tag::Length)->AsU64();
+						Require(length == 6 - offset, "Export read must fit the remaining range");
+						std::vector<std::byte> bytes(mode == 1 ? 0 : mode == 2 ? length + 1 : 2, std::byte{7});
+						reply.fields = {wire::Field::U64(wire::tag::Offset, mode == 3 ? offset + 1 : offset),
+										wire::Field::Bytes(wire::tag::Bytes, bytes)};
+					}
+					return reply;
+				},
+				{},
+				[&] {
+					++waits;
+					if (mode == 5)
+						throw std::runtime_error("cancelled");
+				});
+			reader.Read([&](auto bytes) {
 				if (mode == 4)
 					throw std::runtime_error("sink failed");
 				consumed += bytes.size();
@@ -994,9 +974,10 @@ void CheckExportReader()
 			failed = true;
 		}
 		Require(releases == 1 && waits == 1 && failed == (mode != 0),
-			"Export ticket cleanup failed during polling, reading, or consumption");
+				"Export ticket cleanup failed during polling, reading, or consumption");
 		if (!mode)
-			Require(consumed == 6 && reads == 3 && polls == 2, "Partial chunks must complete without repolling metadata");
+			Require(consumed == 6 && reads == 3 && polls == 2,
+					"Partial chunks must complete without repolling metadata");
 	}
 }
 
@@ -1007,46 +988,44 @@ void CheckTemporaryResourceCleanup()
 		const bool inspect = mode == 1;
 		std::atomic<bool> pending = false;
 		std::size_t releasedImages = 0, releasedExports = 0, releasedInspections = 0;
-		automation::RigRunner runner(
-			[&](auto opcode, auto)
+		automation::RigRunner runner([&](auto opcode, auto) {
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			switch (opcode)
 			{
-				wire::Message response;
-				response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
-				switch (opcode)
-				{
-				case wire::OpCode::RetainImage:
-					response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
-					break;
-				case wire::OpCode::StartExport:
-					response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
-					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
-					break;
-				case wire::OpCode::ExportInfo:
-					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
-					pending = true;
-					response.fields.push_back(wire::Field::Text(wire::tag::Phase, mode == 2 ? "pending" : "complete"));
-					break;
-				case wire::OpCode::ReleaseImage:
-					++releasedImages;
-					break;
-				case wire::OpCode::ReleaseExport:
-					++releasedExports;
-					break;
-				case wire::OpCode::InspectFrame:
-					response.fields.push_back(wire::Field::U64(wire::tag::InspectionId, 43));
-					response.fields.push_back(wire::Field::Bytes(wire::tag::Document, {}));
-					break;
-				case wire::OpCode::ReleaseInspection:
-					++releasedInspections;
-					break;
-				case wire::OpCode::Status:
-				case wire::OpCode::ReleaseControl:
-					break;
-				default:
-					throw std::runtime_error("Unexpected resource test operation");
-				}
-				return response;
-			});
+			case wire::OpCode::RetainImage:
+				response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
+				break;
+			case wire::OpCode::StartExport:
+				response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
+				response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+				break;
+			case wire::OpCode::ExportInfo:
+				response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+				pending = true;
+				response.fields.push_back(wire::Field::Text(wire::tag::Phase, mode == 2 ? "pending" : "complete"));
+				break;
+			case wire::OpCode::ReleaseImage:
+				++releasedImages;
+				break;
+			case wire::OpCode::ReleaseExport:
+				++releasedExports;
+				break;
+			case wire::OpCode::InspectFrame:
+				response.fields.push_back(wire::Field::U64(wire::tag::InspectionId, 43));
+				response.fields.push_back(wire::Field::Bytes(wire::tag::Document, {}));
+				break;
+			case wire::OpCode::ReleaseInspection:
+				++releasedInspections;
+				break;
+			case wire::OpCode::Status:
+			case wire::OpCode::ReleaseControl:
+				break;
+			default:
+				throw std::runtime_error("Unexpected resource test operation");
+			}
+			return response;
+		});
 		automation::RigOptions options;
 		options.session = wire::ControlSessionId{1};
 		options.generation = 1;
@@ -1061,7 +1040,7 @@ void CheckTemporaryResourceCleanup()
 		}
 		runner.Join();
 		Require(runner.Snapshot().phase == (mode == 2 ? automation::RigPhase::Cancelled : automation::RigPhase::Failed),
-			"Resource operation did not fail or cancel as expected");
+				"Resource operation did not fail or cancel as expected");
 		if (inspect)
 			Require(releasedInspections == 1, "Malformed inspection leaked or double-released its reader");
 		else
@@ -1077,52 +1056,49 @@ void CheckImageWindowCleanup()
 		std::size_t releasedWindows = 0, releasedImages = 0, releasedExports = 0;
 		std::atomic<bool> begun = false;
 		constexpr std::uint64_t window = 9007199254740993ULL;
-		automation::RigRunner runner(
-			[&](auto opcode, auto fields)
+		automation::RigRunner runner([&](auto opcode, auto fields) {
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			if (opcode == wire::OpCode::BeginImageWindow)
 			{
-				wire::Message response;
-				response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
-				if (opcode == wire::OpCode::BeginImageWindow)
-				{
-					begun = true;
-					response.fields.push_back(wire::Field::U64(wire::tag::ImageWindowId, window));
-					const auto document =
-						wire::InspectionValue::Object({{"phase", wire::InspectionValue::Text("complete")}}).Encode();
-					response.fields.push_back(
-						wire::Field::Bytes(wire::tag::Document, mode == 0 ? std::span<const std::byte>{}
-																		  : std::span<const std::byte>{document}));
-				}
-				else if (opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow)
-				{
-					wire::Message request;
-					request.fields = std::move(fields);
-					Require(!request.Find(wire::tag::Session) &&
-								request.Find(wire::tag::ImageWindowId)->AsU64() == window,
-							"Window operation lost its exact connection-owned identity");
-					if (opcode == wire::OpCode::ReleaseImageWindow)
-						++releasedWindows;
-					else
-						response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
-				}
-				else if (opcode == wire::OpCode::StartExport)
-				{
-					response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
-					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
-				}
-				else if (opcode == wire::OpCode::ExportInfo)
-				{
-					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
-					response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
-				}
-				else if (opcode == wire::OpCode::ReleaseImage)
-					++releasedImages;
-				else if (opcode == wire::OpCode::ReleaseExport)
-					++releasedExports;
+				begun = true;
+				response.fields.push_back(wire::Field::U64(wire::tag::ImageWindowId, window));
+				const auto document =
+					wire::InspectionValue::Object({{"phase", wire::InspectionValue::Text("complete")}}).Encode();
+				response.fields.push_back(
+					wire::Field::Bytes(wire::tag::Document, mode == 0 ? std::span<const std::byte>{}
+																	  : std::span<const std::byte>{document}));
+			}
+			else if (opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow)
+			{
+				wire::Message request;
+				request.fields = std::move(fields);
+				Require(!request.Find(wire::tag::Session) && request.Find(wire::tag::ImageWindowId)->AsU64() == window,
+						"Window operation lost its exact connection-owned identity");
+				if (opcode == wire::OpCode::ReleaseImageWindow)
+					++releasedWindows;
 				else
-					Require(opcode == wire::OpCode::ReleaseControl || opcode == wire::OpCode::Status,
-							"Unexpected window cleanup operation");
-				return response;
-			});
+					response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
+			}
+			else if (opcode == wire::OpCode::StartExport)
+			{
+				response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
+				response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+			}
+			else if (opcode == wire::OpCode::ExportInfo)
+			{
+				response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+				response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
+			}
+			else if (opcode == wire::OpCode::ReleaseImage)
+				++releasedImages;
+			else if (opcode == wire::OpCode::ReleaseExport)
+				++releasedExports;
+			else
+				Require(opcode == wire::OpCode::ReleaseControl || opcode == wire::OpCode::Status,
+						"Unexpected window cleanup operation");
+			return response;
+		});
 		automation::RigOptions options;
 		options.session = wire::ControlSessionId{1};
 		options.generation = 1;
@@ -1152,11 +1128,7 @@ void CheckImageWindowCleanup()
 void CheckExactFrameArithmetic()
 {
 	Fixture fixture;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
-		{
-			return fixture.Exchange(opcode, std::move(fields));
-		});
+	automation::RigRunner runner([&](auto opcode, auto fields) { return fixture.Exchange(opcode, std::move(fields)); });
 	runner.Start(fixture.Options(R"(
 assert(simxr.frame_add("9007199254740993", "2") == "9007199254740995")
 assert(simxr.frame_add("18446744073709551614", "1") == "18446744073709551615")
@@ -1170,6 +1142,7 @@ simxr.checkpoint("exact frame arithmetic", true)
 	runner.Join();
 	Require(runner.Snapshot().phase == automation::RigPhase::Complete, runner.Snapshot().error.c_str());
 }
+
 void CheckEditableCommands()
 {
 	CommandConfiguration configuration;
@@ -1275,22 +1248,20 @@ void CheckEditableCommands()
 		script += automation::EditableCommand(command) + ",\n";
 	script += "}})";
 	std::vector<SimulationCommand> decoded;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
+	automation::RigRunner runner([&](auto opcode, auto fields) {
+		wire::Message response;
+		response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+		if (opcode == wire::OpCode::SubmitSimulation)
 		{
-			wire::Message response;
-			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
-			if (opcode == wire::OpCode::SubmitSimulation)
-			{
-				wire::Message request;
-				request.fields = std::move(fields);
-				const auto commands = wire::DecodeFields(request.Find(wire::tag::Commands)->value);
-				for (const auto& command : commands.fields)
-					decoded.push_back(wire::DecodeSimulationCommand(command));
-				response.fields.push_back(wire::Field::Text(wire::tag::Phase, "queued"));
-			}
-			return response;
-		});
+			wire::Message request;
+			request.fields = std::move(fields);
+			const auto commands = wire::DecodeFields(request.Find(wire::tag::Commands)->value);
+			for (const auto& command : commands.fields)
+				decoded.push_back(wire::DecodeSimulationCommand(command));
+			response.fields.push_back(wire::Field::Text(wire::tag::Phase, "queued"));
+		}
+		return response;
+	});
 	automation::RigOptions options;
 	options.session = wire::ControlSessionId{1};
 	options.generation = 1;
@@ -1316,14 +1287,12 @@ void CheckBodyReplayTransport()
 	for (const auto joint : BodyModel::JointMap(body.jointSet))
 		body.joints[static_cast<std::size_t>(joint)] = ObservedBodyJoint{IdentityPose(), ValidPoseFlags};
 	std::shared_ptr<const AppliedCommandSnapshot> applied;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
-		{
-			auto response = fixture.Exchange(opcode, std::move(fields));
-			if (opcode == wire::OpCode::SubmitSimulation)
-				applied = fixture.session->Commands().Snapshot().applied;
-			return response;
-		});
+	automation::RigRunner runner([&](auto opcode, auto fields) {
+		auto response = fixture.Exchange(opcode, std::move(fields));
+		if (opcode == wire::OpCode::SubmitSimulation)
+			applied = fixture.session->Commands().Snapshot().applied;
+		return response;
+	});
 	const auto command =
 		automation::EditableCommand(SetBodyControls{{}, body, RuntimeTime{Duration{9007199254740993LL}}});
 	runner.Start(fixture.Options("simxr.schedule({frame='1', commands={{kind='take_control',channel='body'}, " +
@@ -1335,6 +1304,7 @@ void CheckBodyReplayTransport()
 					applied->runtimeTime.value.count() - 20,
 			"Luau/transport/application boundary lost the recorded body sample age");
 }
+
 void CheckMalformedBodyObservations()
 {
 	BodyObservation body;
@@ -1359,14 +1329,12 @@ void CheckMalformedBodyObservations()
 		  "b.skeleton[1].parent = b.skeleton[1].joint", "b.skeleton[2].joint = b.skeleton[1].joint", "b.active = nil"})
 	{
 		bool submitted = false;
-		automation::RigRunner runner(
-			[&](auto opcode, auto)
-			{
-				submitted |= opcode == wire::OpCode::SubmitSimulation;
-				wire::Message response;
-				response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
-				return response;
-			});
+		automation::RigRunner runner([&](auto opcode, auto) {
+			submitted |= opcode == wire::OpCode::SubmitSimulation;
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			return response;
+		});
 		automation::RigOptions options;
 		options.session = wire::ControlSessionId{1};
 		options.generation = 1;
@@ -1383,17 +1351,12 @@ void CheckMalformedBodyObservations()
 void CheckUnreportedCompatibility()
 {
 	Fixture fixture;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
-		{
-			auto response = fixture.Exchange(opcode, std::move(fields));
-			std::erase_if(response.fields,
-						  [](const auto& field)
-						  {
-							  return field.tag == wire::tag::CompatibilityDeviations;
-						  });
-			return response;
-		});
+	automation::RigRunner runner([&](auto opcode, auto fields) {
+		auto response = fixture.Exchange(opcode, std::move(fields));
+		std::erase_if(response.fields,
+					  [](const auto& field) { return field.tag == wire::tag::CompatibilityDeviations; });
+		return response;
+	});
 	runner.Start(fixture.Options("simxr.checkpoint('older runtime', true)"));
 	runner.Join();
 	Require(runner.Snapshot().phase == automation::RigPhase::Complete &&
@@ -1413,10 +1376,7 @@ int main()
 		CheckControllerBindingRigOwnership();
 		Fixture fixture;
 		automation::RigRunner runner(
-			[&](auto opcode, auto fields)
-			{
-				return fixture.Exchange(opcode, std::move(fields));
-			});
+			[&](auto opcode, auto fields) { return fixture.Exchange(opcode, std::move(fields)); });
 		runner.Start(fixture.Options(R"(
 local command = simxr.schedule({frame="1", commands={
     {kind="take_control",channel="head"},

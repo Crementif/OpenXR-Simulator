@@ -14,17 +14,10 @@ CommandResult Session::SubmitLiveInput(SessionGeneration generation, CommandSour
 	if (generation != m_state.generation)
 		return CommandResult::Conflict;
 	if (!m_liveInputWorker.joinable())
-		m_liveInputWorker = std::jthread(
-			[this](std::stop_token stop)
-			{
-				WatchLiveInput(stop);
-			});
+		m_liveInputWorker = std::jthread([this](std::stop_token stop) { WatchLiveInput(stop); });
 	CommandResult result = CommandResult::Conflict;
 	m_scheduler.WithClockRevision(generation, sample.clockRevision,
-								  [&]
-								  {
-									  result = m_publication.Commands().SubmitLiveInput(source, sample);
-								  });
+								  [&] { result = m_publication.Commands().SubmitLiveInput(source, sample); });
 	return result;
 }
 
@@ -40,10 +33,8 @@ bool Session::SubmitDisplayPrediction(SessionGeneration generation, CommandSourc
 	if (input.owner != source || input.phase != LiveInputPhase::Active || input.connection != attachment ||
 		input.sequence != sequence || input.clockRevision != clockRevision)
 		return false;
-	const bool accepted = m_scheduler.PublishExternalPrediction(
-		generation, clockRevision, source.id, sequence, target, period,
-		[&]
-		{
+	const bool accepted =
+		m_scheduler.PublishExternalPrediction(generation, clockRevision, source.id, sequence, target, period, [&] {
 			return m_display.PublishExternalPrediction(generation, source.id, sequence, target, period);
 		});
 	if (accepted)
@@ -100,8 +91,7 @@ void Session::WatchLiveInput(std::stop_token stop)
 			}
 		}
 		catch (...)
-		{
-		}
+		{}
 		std::fputs("Simulator live-input watchdog failed\n", stderr);
 	}
 }

@@ -11,8 +11,7 @@ namespace simxr::tests
 void IgnoreRealPointer()
 {
 	SDL_SetEventFilter(
-		[](void*, SDL_Event* event)
-		{
+		[](void*, SDL_Event* event) {
 			switch (event->type)
 			{
 			case SDL_EVENT_MOUSE_MOTION:
@@ -47,17 +46,18 @@ ImGuiWindow* FindPanel(const char* name)
 			return window;
 	return nullptr;
 }
+
 bool UseValidation()
 {
-	static const bool enabled = []
-	{
+	static const bool enabled = [] {
 		const auto mode = std::getenv("SIMXR_UI_VALIDATION");
 		Require(!mode || std::strcmp(mode, "0") == 0 || std::strcmp(mode, "1") == 0,
-			"SIMXR_UI_VALIDATION must be 0 or 1");
+				"SIMXR_UI_VALIDATION must be 0 or 1");
 		const bool requested = !mode || std::strcmp(mode, "0") != 0;
-		std::cout << (requested ? "Vulkan validation=required\n" :
-			"Vulkan validation=disabled explicitly; functional checks only, GPU validation remains unqualified\n")
-			<< std::flush;
+		std::cout << (requested ? "Vulkan validation=required\n"
+								: "Vulkan validation=disabled explicitly; functional checks only, GPU validation "
+								  "remains unqualified\n")
+				  << std::flush;
 		return requested;
 	}();
 	return enabled;
@@ -73,20 +73,15 @@ std::filesystem::path QaDirectory(const char* name)
 #endif
 }
 
-
 bool Interaction::PollEvents()
 {
-	return window.PollEvents(
-		[&](const SDL_Event& event)
-		{
-			renderer.ProcessEvent(event);
-		});
+	return window.PollEvents([&](const SDL_Event& event) { renderer.ProcessEvent(event); });
 }
+
 void Interaction::Frame()
 {
 	Eventually(
-		[&]
-		{
+		[&] {
 			Require(PollEvents(), "Unexpected window closure");
 			return renderer.BeginFrame();
 		},
@@ -103,8 +98,7 @@ void Interaction::Frame()
 		workspace.Draw(runtime);
 		if (extraDraw)
 			extraDraw();
-		const auto transfers = [&](VkCommandBuffer command)
-		{
+		const auto transfers = [&](VkCommandBuffer command) {
 			runtime.RecordTransfers(command);
 		};
 		Require(renderer.Render(runtime.ReadyWaits(), transfers), "Live launch UI frame was not rendered");
@@ -126,14 +120,15 @@ void Interaction::Frame()
 	const auto inputMinimum = ImGui::GetItemRectMin();
 	inputCenter = {inputMinimum.x + 10, inputMinimum.y + 10};
 	ImGui::End();
-	if (extraDraw) extraDraw();
-	const auto transfers = [&](VkCommandBuffer command)
-	{
+	if (extraDraw)
+		extraDraw();
+	const auto transfers = [&](VkCommandBuffer command) {
 		runtime.RecordTransfers(command);
 	};
 	Require(renderer.Render(runtime.ReadyWaits(), transfers), "Admitted UI frame was not rendered");
 	runtime.Submitted(renderer.SubmittedFrames());
 }
+
 void Interaction::Click(ImVec2 position)
 {
 	SDL_Event event{};
@@ -156,12 +151,14 @@ void Interaction::Click(ImVec2 position)
 	Frame();
 	Frame();
 }
+
 void Interaction::SelectWorkspace(Selection selection)
 {
 	workspace.Select(std::move(selection));
 	Frame();
 	Require(FindPanel("Inspector") != nullptr, "Inspector is missing");
 }
+
 void Interaction::CheckFocusLoss()
 {
 	window.TakeFocusLost();
@@ -172,6 +169,7 @@ void Interaction::CheckFocusLoss()
 	Require(PollEvents() && window.TakeFocusLost(), "Focus loss was not delivered to the application");
 	Require(!window.TakeFocusLost(), "Focus loss must be consumed once");
 }
+
 void Interaction::CheckControls()
 {
 	workspace.Select(DeviceSel{});

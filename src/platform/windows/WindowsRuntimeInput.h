@@ -12,11 +12,13 @@
 namespace simxr::windows
 {
 class WindowsRuntimeFiles;
+
 struct RuntimeHeadPose
 {
 	float x = 0, y = 1.7f, z = 0;
 	float yaw = 0, pitch = 0, roll = 0;
 };
+
 struct RuntimeInputSnapshot
 {
 	RuntimeHeadPose head;
@@ -27,13 +29,13 @@ struct RuntimeInputSnapshot
 
 class WindowsRuntimeInput
 {
-  public:
+public:
 	WindowsRuntimeInput();
 	RuntimeInputSnapshot Snapshot() const;
 	RuntimeInputSnapshot Poll(std::chrono::nanoseconds period, WindowsRuntimeFiles& files);
 	RuntimeHeadPose Head() const;
 
-  private:
+private:
 	RuntimeInputSnapshot SnapshotLocked() const;
 	mutable std::mutex m_mutex;
 	RuntimeHeadPose m_head;

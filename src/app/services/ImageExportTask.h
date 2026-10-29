@@ -18,6 +18,7 @@ struct ImageExportMetadata
 	std::uint32_t width = 0, height = 0, slices = 0, format = 0;
 	std::uint32_t target = 0, layer = 0, view = 0;
 };
+
 struct ImageExportWriteResult
 {
 	enum class Status
@@ -28,16 +29,17 @@ struct ImageExportWriteResult
 	Status status;
 	std::string path, error;
 };
+
 class ImageExportWriter
 {
-  public:
+public:
 	ImageExportWriter();
 	~ImageExportWriter();
 	bool Save(std::string path, std::vector<std::byte> bytes, ImageExportMetadata metadata = {});
 	bool Busy() const;
 	std::optional<ImageExportWriteResult> TakeResult();
 
-  private:
+private:
 	struct Job
 	{
 		std::string path;
@@ -46,6 +48,7 @@ class ImageExportWriter
 		ImageExportMetadata metadata;
 		bool image = false;
 	};
+
 	void Run() noexcept;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
@@ -54,11 +57,12 @@ class ImageExportWriter
 	bool m_busy = false, m_stopping = false;
 	std::thread m_worker;
 };
+
 // Owns one connection-bound export exchange, exact byte-range validation and
 // transfer to the independent file writer. Normal preview never enters it.
 class ImageExportTask
 {
-  public:
+public:
 	explicit ImageExportTask(RuntimePanelRequests& requests);
 	void ResetEpoch();
 	bool Request(std::uint64_t reader, std::string path);
@@ -69,12 +73,13 @@ class ImageExportTask
 	void Poll();
 	bool Busy() const;
 	const std::string& Detail() const noexcept;
+
 	bool Succeeded() const noexcept
 	{
 		return m_succeeded;
 	}
 
-  private:
+private:
 	void Abort(std::string detail);
 	void ReleaseRemote();
 	RuntimePanelRequests& m_requests;

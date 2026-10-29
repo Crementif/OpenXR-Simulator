@@ -39,6 +39,7 @@ static BodyObservation Observed(BodyJointSet set)
 	}
 	return observation;
 }
+
 static void ReplayTime()
 {
 	constexpr std::int64_t source = 9007199254740993LL;
@@ -92,6 +93,7 @@ static void ReplayTime()
 		}
 	}
 }
+
 static void Ownership()
 {
 	CommandState state;
@@ -153,6 +155,7 @@ static void Ownership()
 				"Body retry identity must include metadata, validity and skeleton values");
 	}
 }
+
 static void Publication()
 {
 	TrackingSystem tracking;
@@ -197,6 +200,7 @@ static void Publication()
 	Require(generated.body.joints[foot].flags != 0 && !generated.input.bodyObservation,
 			"Releasing observed body restores authored rig evaluation");
 }
+
 static void RuntimeQueries()
 {
 	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_BD_BODY_TRACKING_EXTENSION_NAME,
@@ -267,6 +271,7 @@ static void RuntimeQueries()
 			"BD reports available partial joints without inventing missing arms");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

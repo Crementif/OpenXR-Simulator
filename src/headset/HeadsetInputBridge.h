@@ -17,6 +17,7 @@ namespace simxr::control
 {
 class LocalControlClient;
 }
+
 namespace simxr::headset
 {
 struct HeadsetInputTarget
@@ -41,6 +42,7 @@ enum class HeadsetInputPhase
 	Failed,
 	Stopped
 };
+
 struct HeadsetInputStatus
 {
 	HeadsetInputPhase phase = HeadsetInputPhase::Connecting;
@@ -52,10 +54,11 @@ struct HeadsetInputStatus
 	std::optional<XrPosef> worldFromInitial;
 	std::string error;
 };
+
 // Owns the IPC worker. The OpenXR thread only copies observations into a bounded queue.
 class HeadsetInputBridge
 {
-  public:
+public:
 	explicit HeadsetInputBridge(HeadsetInputTarget target);
 	~HeadsetInputBridge();
 	bool Publish(const HeadsetInputSample& input, NativeClockDomain domain, std::int64_t observed,
@@ -64,7 +67,7 @@ class HeadsetInputBridge
 	std::array<std::optional<HeadsetVibration>, 2> ConsumeHaptics(bool enabled);
 	void Stop();
 
-  private:
+private:
 	struct Observation
 	{
 		HeadsetInputSample input;
@@ -73,6 +76,7 @@ class HeadsetInputBridge
 		HostTime received;
 		std::optional<std::int64_t> bodyReturned;
 	};
+
 	void Run(std::stop_token stop) noexcept;
 	void Fail(const char* error) noexcept;
 	HeadsetInputTarget m_target;

@@ -8,6 +8,7 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 static std::string LoadScript(const std::filesystem::path& path)
 {
 	if (path.empty() ||
@@ -28,6 +29,7 @@ static std::string LoadScript(const std::filesystem::path& path)
 		throw std::runtime_error("Cannot close rig script");
 	return source;
 }
+
 static void WriteReport(const std::filesystem::path& destination, const std::string& bytes)
 {
 	if (bytes.size() > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max()))
@@ -53,15 +55,12 @@ static void WriteReport(const std::filesystem::path& destination, const std::str
 		throw;
 	}
 }
+
 RigController::RigController()
-	: m_runner(
-		  [this](auto opcode, auto fields)
-		  {
-			  return m_transport->Exchange(opcode, std::move(fields));
-		  },
-		  [this] { m_transport->Close(); })
-{
-}
+	: m_runner([this](auto opcode, auto fields) { return m_transport->Exchange(opcode, std::move(fields)); },
+			   [this] { m_transport->Close(); })
+{}
+
 RigController::~RigController()
 {
 	if (m_transport)
@@ -70,6 +69,7 @@ RigController::~RigController()
 	m_runner.Join();
 	m_transport.reset();
 }
+
 void RigController::Start(RigTarget target, std::string source, std::string name, const ScriptOptions& options,
 						  bool replay, std::filesystem::path archive, std::optional<std::uint64_t> expectedProcess)
 {
@@ -99,6 +99,7 @@ void RigController::Start(RigTarget target, std::string source, std::string name
 	++m_runId;
 	m_error.clear();
 }
+
 std::uint64_t RigController::RunSource(RigTarget target, std::string source, std::string name,
 									   const ScriptOptions& options, const std::shared_ptr<AutomationOwner>& owner,
 									   std::uint64_t expectedProcess)
@@ -113,15 +114,18 @@ std::uint64_t RigController::RunSource(RigTarget target, std::string source, std
 		m_runner.Cancel();
 	return m_runId;
 }
+
 bool RigController::OwnedBy(const std::shared_ptr<AutomationOwner>& owner, std::uint64_t run) const noexcept
 {
 	return owner && owner->active.load() && m_owner == owner && m_runId == run && run != 0;
 }
+
 void RigController::CancelDisconnected()
 {
 	if (m_owner && !m_owner->active.load() && IsActive())
 		m_runner.Cancel();
 }
+
 void RigController::RunScript(RigTarget target, const std::string& path, const ScriptOptions& options)
 {
 	try
@@ -133,6 +137,7 @@ void RigController::RunScript(RigTarget target, const std::string& path, const S
 		m_error = error.what();
 	}
 }
+
 void RigController::ReplayRecording(RigTarget target, const std::string& path, std::uint64_t seed)
 {
 	try
@@ -148,59 +153,72 @@ void RigController::ReplayRecording(RigTarget target, const std::string& path, s
 		m_error = error.what();
 	}
 }
+
 void RigController::Pause()
 {
 	if (IsActive())
 		m_runner.Pause();
 }
+
 void RigController::Step()
 {
 	if (IsActive())
 		m_runner.Step();
 }
+
 void RigController::Resume()
 {
 	if (IsActive())
 		m_runner.Resume();
 }
+
 void RigController::Cancel()
 {
 	if (IsActive())
 		m_runner.Cancel();
 }
+
 const std::string& RigController::Script() const noexcept
 {
 	return m_script;
 }
+
 bool RigController::ReplayingTake() const noexcept
 {
 	return m_recordingReplay;
 }
+
 bool RigController::WaitingForLaunch() const noexcept
 {
 	return m_launch.has_value();
 }
+
 const std::string& RigController::Error() const noexcept
 {
 	return m_error;
 }
+
 std::uint64_t RigController::RunId() const noexcept
 {
 	return m_runId;
 }
+
 automation::RigSnapshot RigController::Snapshot() const
 {
 	return m_runner.Snapshot();
 }
+
 bool RigController::MatchesTarget(const RigTarget& target) const noexcept
 {
 	return m_runId && m_target == target;
 }
+
 bool RigController::IsActive() const
 {
 	const auto phase = m_runner.Phase();
 	return phase == automation::RigPhase::Running || phase == automation::RigPhase::Paused;
 }
+
 std::string RigController::SaveReport(const std::string& path, bool junit)
 {
 	try
@@ -213,22 +231,20 @@ std::string RigController::SaveReport(const std::string& path, bool junit)
 		if (snapshot.phase == automation::RigPhase::Idle || snapshot.phase == automation::RigPhase::Running ||
 			snapshot.phase == automation::RigPhase::Paused)
 			throw std::runtime_error("Finish the current rig before saving its report");
-		m_report = std::async(
-			std::launch::async,
-			[path = std::string(path), destination = Utf8Path(path), snapshot = std::move(snapshot), junit]() mutable
+		m_report = std::async(std::launch::async, [path = std::string(path), destination = Utf8Path(path),
+												   snapshot = std::move(snapshot), junit]() mutable {
+			RigReportResult result{std::move(path), {}};
+			try
 			{
-				RigReportResult result{std::move(path), {}};
-				try
-				{
-					WriteReport(destination, junit ? automation::SerializeRigJunit(snapshot)
-												   : automation::SerializeRigJson(snapshot));
-				}
-				catch (...)
-				{
-					result.error = std::current_exception();
-				}
-				return result;
-			});
+				WriteReport(destination,
+							junit ? automation::SerializeRigJunit(snapshot) : automation::SerializeRigJson(snapshot));
+			}
+			catch (...)
+			{
+				result.error = std::current_exception();
+			}
+			return result;
+		});
 		return {};
 	}
 	catch (const std::exception& error)
@@ -236,16 +252,19 @@ std::string RigController::SaveReport(const std::string& path, bool junit)
 		return error.what();
 	}
 }
+
 bool RigController::ReportBusy() const noexcept
 {
 	return m_report.valid();
 }
+
 std::optional<RigReportResult> RigController::TakeReportResult()
 {
 	if (!m_report.valid() || m_report.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
 		return {};
 	return m_report.get();
 }
+
 void RigController::PrepareLaunch(const LaunchProfile& profile)
 {
 	m_launch.reset();
@@ -263,6 +282,7 @@ void RigController::PrepareLaunch(const LaunchProfile& profile)
 	m_launch = Launch{LoadScript(file), PathText(file)};
 	m_error.clear();
 }
+
 void RigController::AttachLaunch(const LaunchedSession& session)
 {
 	if (!m_launch)

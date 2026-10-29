@@ -33,15 +33,18 @@ static simxr::LinuxRuntime& Host()
 	static simxr::LinuxRuntime s_runtime;
 	return s_runtime;
 }
+
 static bool Valid(XrInstance handle)
 {
 	return static_cast<bool>(Host().FindInstance(handle));
 }
+
 static bool Valid(XrSession handle)
 {
 	return static_cast<bool>(Host().FindSession(handle));
 }
-template <typename T>
+
+template<typename T>
 static XrResult Enumerate(std::uint32_t cap, std::uint32_t* count, T* out, const std::vector<T>& items)
 {
 	if (!count || (cap && !out))
@@ -56,6 +59,7 @@ static XrResult Enumerate(std::uint32_t cap, std::uint32_t* count, T* out, const
 	std::copy(items.begin(), items.end(), out);
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateInstanceExtensionProperties(const char* layer, std::uint32_t cap,
 																	std::uint32_t* n, XrExtensionProperties* p)
 {
@@ -64,10 +68,12 @@ static XrResult XRAPI_PTR RunXrEnumerateInstanceExtensionProperties(const char* 
 		return XR_ERROR_API_LAYER_NOT_PRESENT;
 	return simxr::LinuxRuntime::Extensions().Enumerate(cap, n, p);
 }
+
 static XrResult XRAPI_PTR RunXrCreateInstance(const XrInstanceCreateInfo* info, XrInstance* out)
 {
 	return Host().CreateInstance(info, out);
 }
+
 static XrResult XRAPI_PTR RunXrGetInstanceProperties(XrInstance iHandle, XrInstanceProperties* p)
 {
 	auto i = Host().FindInstance(iHandle);
@@ -80,6 +86,7 @@ static XrResult XRAPI_PTR RunXrGetInstanceProperties(XrInstance iHandle, XrInsta
 	std::strcpy(p->runtimeName, "OpenXR Simulator Linux Vulkan");
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrGetSystem(XrInstance iHandle, const XrSystemGetInfo* info, XrSystemId* id)
 {
 	auto i = Host().FindInstance(iHandle);
@@ -93,6 +100,7 @@ static XrResult XRAPI_PTR RunXrGetSystem(XrInstance iHandle, const XrSystemGetIn
 	*id = 1;
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrGetSystemProperties(XrInstance iHandle, XrSystemId id, XrSystemProperties* p)
 {
 	auto i = Host().FindInstance(iHandle);
@@ -111,6 +119,7 @@ static XrResult XRAPI_PTR RunXrGetSystemProperties(XrInstance iHandle, XrSystemI
 	p->trackingProperties = {XR_TRUE, XR_TRUE};
 	return XR_SUCCESS;
 }
+
 static XrResult ValidateViewConfiguration(simxr::LinuxRuntime::InstanceRef instance, XrSystemId system,
 										  XrViewConfigurationType type)
 {
@@ -124,6 +133,7 @@ static XrResult ValidateViewConfiguration(simxr::LinuxRuntime::InstanceRef insta
 		return XR_SUCCESS;
 	return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateViewConfigurations(XrInstance handle, XrSystemId system, std::uint32_t c,
 														   std::uint32_t* n, XrViewConfigurationType* p)
 {
@@ -137,6 +147,7 @@ static XrResult XRAPI_PTR RunXrEnumerateViewConfigurations(XrInstance handle, Xr
 		types.push_back(XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO);
 	return Enumerate(c, n, p, types);
 }
+
 static XrResult XRAPI_PTR RunXrGetViewConfigurationProperties(XrInstance handle, XrSystemId system,
 															  XrViewConfigurationType type,
 															  XrViewConfigurationProperties* p)
@@ -154,6 +165,7 @@ static XrResult XRAPI_PTR RunXrGetViewConfigurationProperties(XrInstance handle,
 	p->fovMutable = XR_TRUE;
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateViewConfigurationViews(XrInstance handle, XrSystemId system,
 															   XrViewConfigurationType type, std::uint32_t c,
 															   std::uint32_t* n, XrViewConfigurationView* p)
@@ -200,6 +212,7 @@ static XrResult XRAPI_PTR RunXrEnumerateViewConfigurationViews(XrInstance handle
 	}
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateEnvironmentBlendModes(XrInstance handle, XrSystemId system,
 															  XrViewConfigurationType type, std::uint32_t c,
 															  std::uint32_t* n, XrEnvironmentBlendMode* p)
@@ -211,6 +224,7 @@ static XrResult XRAPI_PTR RunXrEnumerateEnvironmentBlendModes(XrInstance handle,
 		return validation;
 	return Enumerate(c, n, p, std::vector<XrEnvironmentBlendMode>{XR_ENVIRONMENT_BLEND_MODE_OPAQUE});
 }
+
 static XrResult XRAPI_PTR RunXrGetVulkanGraphicsRequirementsKHR(XrInstance handle, XrSystemId system,
 																XrGraphicsRequirementsVulkanKHR* output)
 {
@@ -222,6 +236,7 @@ static XrResult XRAPI_PTR RunXrGetVulkanGraphicsRequirementsKHR(XrInstance handl
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return instance->graphics.Requirements(system, output);
 }
+
 static XrResult XRAPI_PTR RunXrGetVulkanGraphicsRequirements2KHR(XrInstance handle, XrSystemId system,
 																 XrGraphicsRequirementsVulkanKHR* output)
 {
@@ -233,6 +248,7 @@ static XrResult XRAPI_PTR RunXrGetVulkanGraphicsRequirements2KHR(XrInstance hand
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return instance->graphics.Requirements(system, output);
 }
+
 static XrResult XRAPI_PTR RunXrGetVulkanInstanceExtensionsKHR(XrInstance handle, XrSystemId system,
 															  std::uint32_t capacity, std::uint32_t* count,
 															  char* output)
@@ -245,6 +261,7 @@ static XrResult XRAPI_PTR RunXrGetVulkanInstanceExtensionsKHR(XrInstance handle,
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return instance->graphics.InstanceExtensions(system, capacity, count, output);
 }
+
 static XrResult XRAPI_PTR RunXrGetVulkanDeviceExtensionsKHR(XrInstance handle, XrSystemId system,
 															std::uint32_t capacity, std::uint32_t* count, char* output)
 {
@@ -256,6 +273,7 @@ static XrResult XRAPI_PTR RunXrGetVulkanDeviceExtensionsKHR(XrInstance handle, X
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return instance->graphics.DeviceExtensions(system, capacity, count, output);
 }
+
 static XrResult XRAPI_PTR RunXrCreateVulkanInstanceKHR(XrInstance handle, const XrVulkanInstanceCreateInfoKHR* info,
 													   VkInstance* output, VkResult* result)
 {
@@ -267,6 +285,7 @@ static XrResult XRAPI_PTR RunXrCreateVulkanInstanceKHR(XrInstance handle, const 
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return instance->graphics.CreateInstance(info, output, result);
 }
+
 static XrResult XRAPI_PTR RunXrCreateVulkanDeviceKHR(XrInstance handle, const XrVulkanDeviceCreateInfoKHR* info,
 													 VkDevice* output, VkResult* result)
 {
@@ -278,6 +297,7 @@ static XrResult XRAPI_PTR RunXrCreateVulkanDeviceKHR(XrInstance handle, const Xr
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return instance->graphics.CreateDevice(info, output, result);
 }
+
 static XrResult XRAPI_PTR RunXrGetVulkanGraphicsDeviceKHR(XrInstance handle, XrSystemId system,
 														  VkInstance graphicsInstance, VkPhysicalDevice* output)
 {
@@ -289,6 +309,7 @@ static XrResult XRAPI_PTR RunXrGetVulkanGraphicsDeviceKHR(XrInstance handle, XrS
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return instance->graphics.PhysicalDevice(system, graphicsInstance, output);
 }
+
 static XrResult XRAPI_PTR RunXrGetVulkanGraphicsDevice2KHR(XrInstance handle,
 														   const XrVulkanGraphicsDeviceGetInfoKHR* info,
 														   VkPhysicalDevice* output)
@@ -305,6 +326,7 @@ static XrResult XRAPI_PTR RunXrGetVulkanGraphicsDevice2KHR(XrInstance handle,
 		return XR_ERROR_VALIDATION_FAILURE;
 	return instance->graphics.PhysicalDevice(info->systemId, info->vulkanInstance, output);
 }
+
 static XrResult XRAPI_PTR RunXrCreateSession(XrInstance handle, const XrSessionCreateInfo* info, XrSession* output)
 {
 	const auto result = Host().CreateSession(handle, info, output);
@@ -313,12 +335,10 @@ static XrResult XRAPI_PTR RunXrCreateSession(XrInstance handle, const XrSessionC
 	// Driver/validation DSOs register their exit handlers during native creation.
 	// Close retained control readers and the retirement worker before those handlers.
 	// Rearm after each creation because drivers may have been unloaded and reloaded.
-	if (std::atexit(
-			[]
-			{
-				Host().Shutdown();
-				simxr::ShutdownVulkanImageDelivery();
-			}) != 0)
+	if (std::atexit([] {
+			Host().Shutdown();
+			simxr::ShutdownVulkanImageDelivery();
+		}) != 0)
 	{
 		Host().DestroySession(*output);
 		*output = XR_NULL_HANDLE;
@@ -326,10 +346,12 @@ static XrResult XRAPI_PTR RunXrCreateSession(XrInstance handle, const XrSessionC
 	}
 	return result;
 }
+
 static XrResult XRAPI_PTR RunXrBeginSession(XrSession handle, const XrSessionBeginInfo* info)
 {
 	return Host().BeginSession(handle, info);
 }
+
 static XrResult XRAPI_PTR RunXrRequestExitSession(XrSession handle)
 {
 	auto session = Host().FindSession(handle);
@@ -339,10 +361,12 @@ static XrResult XRAPI_PTR RunXrRequestExitSession(XrSession handle)
 	auto result = session->core->RequestExit(simxr::LinuxRuntime::SessionTime(*session.Shared()));
 	return result;
 }
+
 static XrResult XRAPI_PTR RunXrEndSession(XrSession handle)
 {
 	return Host().EndSession(handle);
 }
+
 static XrResult XRAPI_PTR RunXrPollEvent(XrInstance iHandle, XrEventDataBuffer* p)
 {
 	auto i = Host().FindInstance(iHandle);
@@ -353,6 +377,7 @@ static XrResult XRAPI_PTR RunXrPollEvent(XrInstance iHandle, XrEventDataBuffer* 
 		return XR_ERROR_VALIDATION_FAILURE;
 	return i->core->Events().Poll(*p);
 }
+
 static XrResult XRAPI_PTR RunXrWaitFrame(XrSession sHandle, const XrFrameWaitInfo* info, XrFrameState* p)
 {
 	auto s = Host().FindSession(sHandle);
@@ -364,8 +389,7 @@ static XrResult XRAPI_PTR RunXrWaitFrame(XrSession sHandle, const XrFrameWaitInf
 	auto core = s->core.Shared();
 	apiLock.unlock();
 	simxr::FramePrediction prediction;
-	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult
-	{
+	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult {
 		std::lock_guard nativeLock(s->graphicsMutex);
 		if (!Valid(s) || s->core.Shared() != core || core->Snapshot().closed)
 			return XR_ERROR_HANDLE_INVALID;
@@ -381,6 +405,7 @@ static XrResult XRAPI_PTR RunXrWaitFrame(XrSession sHandle, const XrFrameWaitInf
 	};
 	return core->WaitFrame(prediction, publishNative);
 }
+
 static XrResult XRAPI_PTR RunXrBeginFrame(XrSession sHandle, const XrFrameBeginInfo* info)
 {
 	auto s = Host().FindSession(sHandle);
@@ -391,6 +416,7 @@ static XrResult XRAPI_PTR RunXrBeginFrame(XrSession sHandle, const XrFrameBeginI
 		return XR_ERROR_VALIDATION_FAILURE;
 	return s->core->BeginFrame();
 }
+
 static XrResult XRAPI_PTR RunXrLocateViews(XrSession handle, const XrViewLocateInfo* info, XrViewState* state,
 										   std::uint32_t cap, std::uint32_t* count, XrView* views)
 {
@@ -402,6 +428,7 @@ static XrResult XRAPI_PTR RunXrLocateViews(XrSession handle, const XrViewLocateI
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->LocateViews(*info, state, cap, count, views);
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateSwapchainFormats(XrSession handle, std::uint32_t capacity, std::uint32_t* count,
 														 std::int64_t* formats)
 {
@@ -420,6 +447,7 @@ static XrResult XRAPI_PTR RunXrEnumerateSwapchainFormats(XrSession handle, std::
 	std::copy(supported.begin(), supported.end(), formats);
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrCreateSwapchain(XrSession handle, const XrSwapchainCreateInfo* info, XrSwapchain* output)
 {
 	auto session = Host().FindSession(handle);
@@ -434,6 +462,7 @@ static XrResult XRAPI_PTR RunXrCreateSwapchain(XrSession handle, const XrSwapcha
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->graphics->CreateSwapchain(*info, *output);
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateSwapchainImages(XrSwapchain handle, std::uint32_t capacity,
 														std::uint32_t* count, XrSwapchainImageBaseHeader* images)
 {
@@ -448,6 +477,7 @@ static XrResult XRAPI_PTR RunXrEnumerateSwapchainImages(XrSwapchain handle, std:
 		return XR_ERROR_HANDLE_INVALID;
 	return chain->EnumerateImages(capacity, count, images);
 }
+
 static XrResult XRAPI_PTR RunXrAcquireSwapchainImage(XrSwapchain handle, const XrSwapchainImageAcquireInfo* info,
 													 std::uint32_t* index)
 {
@@ -466,6 +496,7 @@ static XrResult XRAPI_PTR RunXrAcquireSwapchainImage(XrSwapchain handle, const X
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->graphics->Acquire(*chain.Shared(), *index);
 }
+
 static XrResult XRAPI_PTR RunXrWaitSwapchainImage(XrSwapchain handle, const XrSwapchainImageWaitInfo* info)
 {
 	const auto session = Host().CurrentSession();
@@ -485,6 +516,7 @@ static XrResult XRAPI_PTR RunXrWaitSwapchainImage(XrSwapchain handle, const XrSw
 	nativeLock.unlock();
 	return chain->Wait(info->timeout);
 }
+
 static XrResult XRAPI_PTR RunXrReleaseSwapchainImage(XrSwapchain handle, const XrSwapchainImageReleaseInfo* info)
 {
 	const auto session = Host().CurrentSession();
@@ -500,6 +532,7 @@ static XrResult XRAPI_PTR RunXrReleaseSwapchainImage(XrSwapchain handle, const X
 		return XR_ERROR_VALIDATION_FAILURE;
 	return chain->Release();
 }
+
 static XrResult XRAPI_PTR RunXrDestroySwapchain(XrSwapchain handle)
 {
 	const auto session = Host().CurrentSession();
@@ -514,6 +547,7 @@ static XrResult XRAPI_PTR RunXrDestroySwapchain(XrSwapchain handle)
 	session->graphics->DestroySwapchain(chain);
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrEndFrame(XrSession handle, const XrFrameEndInfo* info)
 {
 	const auto session = Host().FindSession(handle);
@@ -538,6 +572,7 @@ static XrResult XRAPI_PTR RunXrEndFrame(XrSession handle, const XrFrameEndInfo* 
 		return result;
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateReferenceSpaces(XrSession sHandle, std::uint32_t c, std::uint32_t* n,
 														XrReferenceSpaceType* p)
 {
@@ -551,6 +586,7 @@ static XrResult XRAPI_PTR RunXrEnumerateReferenceSpaces(XrSession sHandle, std::
 		types.push_back(XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO);
 	return Enumerate(c, n, p, types);
 }
+
 static XrResult XRAPI_PTR RunXrCreateReferenceSpace(XrSession handle, const XrReferenceSpaceCreateInfo* info,
 													XrSpace* out)
 {
@@ -561,6 +597,7 @@ static XrResult XRAPI_PTR RunXrCreateReferenceSpace(XrSession handle, const XrRe
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Spaces().CreateReferenceSpace(info->referenceSpaceType, info->poseInReferenceSpace, *out);
 }
+
 static XrResult XRAPI_PTR RunXrGetReferenceSpaceBoundsRect(XrSession handle, XrReferenceSpaceType type,
 														   XrExtent2Df* bounds)
 {
@@ -571,6 +608,7 @@ static XrResult XRAPI_PTR RunXrGetReferenceSpaceBoundsRect(XrSession handle, XrR
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Spaces().Bounds(type, *bounds);
 }
+
 static XrResult XRAPI_PTR RunXrLocateSpace(XrSpace space, XrSpace base, XrTime time, XrSpaceLocation* location)
 {
 	std::lock_guard<std::recursive_mutex> apiLock(Host().Mutex());
@@ -579,6 +617,7 @@ static XrResult XRAPI_PTR RunXrLocateSpace(XrSpace space, XrSpace base, XrTime t
 	return simxr::LocateSpace(Host().CurrentSession()->core->Spaces(), space, base, time, location,
 							  &Host().CurrentSession()->core->Extensions());
 }
+
 static XrResult XRAPI_PTR RunXrDestroySpace(XrSpace space)
 {
 	std::lock_guard<std::recursive_mutex> apiLock(Host().Mutex());
@@ -586,6 +625,7 @@ static XrResult XRAPI_PTR RunXrDestroySpace(XrSpace space)
 		return XR_ERROR_HANDLE_INVALID;
 	return Host().CurrentSession()->core->Spaces().Destroy(space);
 }
+
 static XrResult XRAPI_PTR RunXrStringToPath(XrInstance handle, const char* name, XrPath* path)
 {
 	auto instance = Host().FindInstance(handle);
@@ -598,6 +638,7 @@ static XrResult XRAPI_PTR RunXrStringToPath(XrInstance handle, const char* name,
 		return XR_ERROR_PATH_FORMAT_INVALID;
 	return instance->core->Actions().StringToPath(std::string_view(name, end - name), *path);
 }
+
 static XrResult XRAPI_PTR RunXrPathToString(XrInstance handle, XrPath path, std::uint32_t capacity,
 											std::uint32_t* count, char* buffer)
 {
@@ -606,6 +647,7 @@ static XrResult XRAPI_PTR RunXrPathToString(XrInstance handle, XrPath path, std:
 		return XR_ERROR_HANDLE_INVALID;
 	return instance->core->Actions().PathToString(path, capacity, count, buffer);
 }
+
 static XrResult XRAPI_PTR RunXrCreateActionSet(XrInstance handle, const XrActionSetCreateInfo* info, XrActionSet* set)
 {
 	auto instance = Host().FindInstance(handle);
@@ -615,6 +657,7 @@ static XrResult XRAPI_PTR RunXrCreateActionSet(XrInstance handle, const XrAction
 		return XR_ERROR_VALIDATION_FAILURE;
 	return instance->core->Actions().CreateSet(*info, *set);
 }
+
 static XrResult XRAPI_PTR RunXrCreateAction(XrActionSet set, const XrActionCreateInfo* info, XrAction* action)
 {
 	std::lock_guard<std::recursive_mutex> lock(Host().Mutex());
@@ -624,6 +667,7 @@ static XrResult XRAPI_PTR RunXrCreateAction(XrActionSet set, const XrActionCreat
 		return XR_ERROR_VALIDATION_FAILURE;
 	return Host().CurrentInstance()->core->Actions().CreateAction(set, *info, *action);
 }
+
 static XrResult XRAPI_PTR RunXrSuggestInteractionProfileBindings(XrInstance handle,
 																 const XrInteractionProfileSuggestedBinding* info)
 {
@@ -634,6 +678,7 @@ static XrResult XRAPI_PTR RunXrSuggestInteractionProfileBindings(XrInstance hand
 		return XR_ERROR_VALIDATION_FAILURE;
 	return instance->core->Actions().SuggestBindings(*info);
 }
+
 static XrResult XRAPI_PTR RunXrAttachSessionActionSets(XrSession handle, const XrSessionActionSetsAttachInfo* info)
 {
 	auto session = Host().FindSession(handle);
@@ -643,6 +688,7 @@ static XrResult XRAPI_PTR RunXrAttachSessionActionSets(XrSession handle, const X
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Attach(*info);
 }
+
 static XrResult XRAPI_PTR RunXrCreateActionSpace(XrSession handle, const XrActionSpaceCreateInfo* info, XrSpace* out)
 {
 	auto session = Host().FindSession(handle);
@@ -652,6 +698,7 @@ static XrResult XRAPI_PTR RunXrCreateActionSpace(XrSession handle, const XrActio
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Spaces().CreateActionSpace(info->action, info->subactionPath, info->poseInActionSpace, *out);
 }
+
 static XrResult XRAPI_PTR RunXrSyncActions(XrSession handle, const XrActionsSyncInfo* info)
 {
 	auto session = Host().FindSession(handle);
@@ -662,6 +709,7 @@ static XrResult XRAPI_PTR RunXrSyncActions(XrSession handle, const XrActionsSync
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->SyncActions(*info, session->owner->Input().Controls());
 }
+
 static XrResult XRAPI_PTR RunXrGetActionStateBoolean(XrSession handle, const XrActionStateGetInfo* info,
 													 XrActionStateBoolean* state)
 {
@@ -672,6 +720,7 @@ static XrResult XRAPI_PTR RunXrGetActionStateBoolean(XrSession handle, const XrA
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Actions().GetBoolean(*info, *state);
 }
+
 static XrResult XRAPI_PTR RunXrGetActionStateFloat(XrSession handle, const XrActionStateGetInfo* info,
 												   XrActionStateFloat* state)
 {
@@ -682,6 +731,7 @@ static XrResult XRAPI_PTR RunXrGetActionStateFloat(XrSession handle, const XrAct
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Actions().GetFloat(*info, *state);
 }
+
 static XrResult XRAPI_PTR RunXrGetActionStateVector2f(XrSession handle, const XrActionStateGetInfo* info,
 													  XrActionStateVector2f* state)
 {
@@ -692,6 +742,7 @@ static XrResult XRAPI_PTR RunXrGetActionStateVector2f(XrSession handle, const Xr
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Actions().GetVector(*info, *state);
 }
+
 static XrResult XRAPI_PTR RunXrGetActionStatePose(XrSession handle, const XrActionStateGetInfo* info,
 												  XrActionStatePose* state)
 {
@@ -702,6 +753,7 @@ static XrResult XRAPI_PTR RunXrGetActionStatePose(XrSession handle, const XrActi
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Actions().GetPose(*info, *state);
 }
+
 static XrResult XRAPI_PTR RunXrGetCurrentInteractionProfile(XrSession handle, XrPath user,
 															XrInteractionProfileState* state)
 {
@@ -712,6 +764,7 @@ static XrResult XRAPI_PTR RunXrGetCurrentInteractionProfile(XrSession handle, Xr
 		return XR_ERROR_VALIDATION_FAILURE;
 	return session->core->Actions().CurrentProfile(user, state->interactionProfile);
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateBoundSourcesForAction(XrSession handle,
 															  const XrBoundSourcesForActionEnumerateInfo* info,
 															  std::uint32_t capacity, std::uint32_t* count, XrPath* out)
@@ -727,6 +780,7 @@ static XrResult XRAPI_PTR RunXrEnumerateBoundSourcesForAction(XrSession handle,
 		return result;
 	return Enumerate(capacity, count, out, paths);
 }
+
 static XrResult XRAPI_PTR RunXrGetInputSourceLocalizedName(XrSession handle,
 														   const XrInputSourceLocalizedNameGetInfo* info,
 														   std::uint32_t capacity, std::uint32_t* count, char* out)
@@ -748,6 +802,7 @@ static XrResult XRAPI_PTR RunXrGetInputSourceLocalizedName(XrSession handle,
 	std::memcpy(out, name.c_str(), *count);
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrApplyHapticFeedback(XrSession handle, const XrHapticActionInfo* info,
 												   const XrHapticBaseHeader* feedback)
 {
@@ -756,6 +811,7 @@ static XrResult XRAPI_PTR RunXrApplyHapticFeedback(XrSession handle, const XrHap
 		return XR_ERROR_HANDLE_INVALID;
 	return session->core->ApplyHaptic(info, feedback);
 }
+
 static XrResult XRAPI_PTR RunXrStopHapticFeedback(XrSession handle, const XrHapticActionInfo* info)
 {
 	auto session = Host().FindSession(handle);
@@ -763,6 +819,7 @@ static XrResult XRAPI_PTR RunXrStopHapticFeedback(XrSession handle, const XrHapt
 		return XR_ERROR_HANDLE_INVALID;
 	return session->core->StopHaptic(info);
 }
+
 static XrResult XRAPI_PTR RunXrDestroyAction(XrAction action)
 {
 	std::lock_guard<std::recursive_mutex> lock(Host().Mutex());
@@ -774,6 +831,7 @@ static XrResult XRAPI_PTR RunXrDestroyAction(XrAction action)
 	}
 	return Host().CurrentInstance()->core->Actions().DestroyAction(action);
 }
+
 static XrResult XRAPI_PTR RunXrDestroyActionSet(XrActionSet set)
 {
 	std::lock_guard<std::recursive_mutex> lock(Host().Mutex());
@@ -784,10 +842,12 @@ static XrResult XRAPI_PTR RunXrDestroyActionSet(XrActionSet set)
 			RunXrDestroyAction(action.handle);
 	return Host().CurrentInstance()->core->Actions().DestroySet(set);
 }
+
 static XrResult XRAPI_PTR RunXrDestroySession(XrSession handle)
 {
 	return Host().DestroySession(handle);
 }
+
 static XrResult XRAPI_PTR RunXrEnumerateViveTrackerPathsHTCX(XrInstance handle, std::uint32_t capacity,
 															 std::uint32_t* count, XrViveTrackerPathsHTCX* paths)
 {
@@ -796,6 +856,7 @@ static XrResult XRAPI_PTR RunXrEnumerateViveTrackerPathsHTCX(XrInstance handle, 
 		return XR_ERROR_HANDLE_INVALID;
 	return instance->Trackers().Enumerate(capacity, count, paths);
 }
+
 static XrResult XRAPI_PTR RunXrCreateBodyTrackerFB(XrSession handle, const XrBodyTrackerCreateInfoFB* info,
 												   XrBodyTrackerFB* output)
 {
@@ -891,10 +952,12 @@ static XrResult XRAPI_PTR RunXrRequestBodyTrackingFidelityMETA(XrBodyTrackerFB t
 		return XR_ERROR_HANDLE_INVALID;
 	return session->core->Body().RequestFidelityFB(tracker, fidelity);
 }
+
 static XrResult XRAPI_PTR RunXrDestroyInstance(XrInstance iHandle)
 {
 	return Host().DestroyInstance(iHandle);
 }
+
 static XrResult XRAPI_PTR RunXrConvertTimespecTimeToTimeKHR(XrInstance iHandle, const timespec* t, XrTime* p)
 {
 	auto i = Host().FindInstance(iHandle);
@@ -911,6 +974,7 @@ static XrResult XRAPI_PTR RunXrConvertTimespecTimeToTimeKHR(XrInstance iHandle, 
 	*p = t->tv_sec * 1000000000LL + t->tv_nsec;
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrConvertTimeToTimespecTimeKHR(XrInstance iHandle, XrTime t, timespec* p)
 {
 	auto i = Host().FindInstance(iHandle);
@@ -930,6 +994,7 @@ static XrResult XRAPI_PTR RunXrConvertTimeToTimespecTimeKHR(XrInstance iHandle, 
 	p->tv_nsec = static_cast<decltype(p->tv_nsec)>(t % 1000000000);
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR RunXrResultToString(XrInstance handle, XrResult value, char buffer[XR_MAX_RESULT_STRING_SIZE])
 {
 	const auto instance = Host().FindInstance(handle);
@@ -938,6 +1003,7 @@ static XrResult XRAPI_PTR RunXrResultToString(XrInstance handle, XrResult value,
 		return XR_ERROR_HANDLE_INVALID;
 	return simxr::ResultToString(value, buffer);
 }
+
 static XrResult XRAPI_PTR RunXrStructureTypeToString(XrInstance handle, XrStructureType value,
 													 char buffer[XR_MAX_STRUCTURE_NAME_SIZE])
 {
@@ -947,7 +1013,9 @@ static XrResult XRAPI_PTR RunXrStructureTypeToString(XrInstance handle, XrStruct
 		return XR_ERROR_HANDLE_INVALID;
 	return simxr::StructureTypeToString(value, buffer);
 }
+
 #define ENTRY(name) {"xr" #name, reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<RunXr##name>::Invoke)}
+
 static XrResult XRAPI_PTR RunXrGetInstanceProcAddr(XrInstance iHandle, const char* name, PFN_xrVoidFunction* p)
 {
 	auto i = Host().FindInstance(iHandle);
@@ -1042,6 +1110,7 @@ static XrResult XRAPI_PTR RunXrGetInstanceProcAddr(XrInstance iHandle, const cha
 		return XR_ERROR_RUNTIME_FAILURE;
 	return s_table.Resolve(name, i ? &i->core->Extensions() : nullptr, *p);
 }
+
 #undef ENTRY
 
 extern "C" __attribute__((visibility("default"))) XrResult XRAPI_CALL
@@ -1076,8 +1145,7 @@ extern "C" __attribute__((visibility("default"))) int simxrGetGameBridgeApi(std:
 		Host().StartControlEndpoint();
 		if (!Host().Core().Game().FillApi(version, *api))
 			return 0;
-		api->shutdown = [](void*) -> int
-		{
+		api->shutdown = [](void*) -> int {
 			try
 			{
 				return Host().Shutdown() ? 1 : 0;

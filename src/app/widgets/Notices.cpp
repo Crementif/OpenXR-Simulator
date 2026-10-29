@@ -7,13 +7,10 @@ namespace simxr::app
 {
 static constexpr auto Lifetime = std::chrono::seconds(6);
 static constexpr std::size_t MaximumShown = 3, MaximumLogged = 50;
+
 void Notices::Push(Notice notice)
 {
-	std::erase_if(m_entries,
-				  [&](const Entry& entry)
-				  {
-					  return entry.notice.title == notice.title;
-				  });
+	std::erase_if(m_entries, [&](const Entry& entry) { return entry.notice.title == notice.title; });
 	const auto now = std::chrono::steady_clock::now();
 	if (m_log.size() == MaximumLogged)
 		m_log.erase(m_log.begin());
@@ -23,18 +20,16 @@ void Notices::Push(Notice notice)
 	if (m_entries.size() > MaximumShown)
 		m_entries.erase(m_entries.begin());
 }
+
 const Notice* Notices::Latest() const
 {
 	return m_entries.empty() ? nullptr : &m_entries.back().notice;
 }
+
 void Notices::Draw(ShellRect area)
 {
 	const auto now = std::chrono::steady_clock::now();
-	std::erase_if(m_entries,
-				  [&](const Entry& entry)
-				  {
-					  return now - entry.shown > Lifetime;
-				  });
+	std::erase_if(m_entries, [&](const Entry& entry) { return now - entry.shown > Lifetime; });
 	if (m_entries.empty())
 		return;
 	const float scale = ImGui::GetFontSize() / 16, margin = 8 * scale;

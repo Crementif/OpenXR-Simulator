@@ -22,6 +22,7 @@ struct UiRenderer::Resources
 		std::uint32_t image = 0;
 		std::uint64_t serial = 0;
 	};
+
 	std::shared_ptr<ValidationLog> validation;
 	VkInstance instance = VK_NULL_HANDLE;
 	VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;

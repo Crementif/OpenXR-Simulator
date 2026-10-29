@@ -9,23 +9,23 @@ ConnectionLeases::ConnectionLeases()
 {
 	m_leases.reserve(64);
 }
+
 ConnectionLeases::~ConnectionLeases()
 {
 	Close();
 }
+
 const ConnectionLeases::Lease& ConnectionLeases::Own(ControlSessionId session, DebugLeaseId lease) const
 {
 	if (m_closed)
 		throw ControlRequestError{ErrorCode::Closed, "Connection leases are closed"};
 	const auto found = std::find_if(m_leases.begin(), m_leases.end(),
-									[&](const auto& entry)
-									{
-										return entry.session == session && entry.id == lease;
-									});
+									[&](const auto& entry) { return entry.session == session && entry.id == lease; });
 	if (found == m_leases.end())
 		throw ControlRequestError{ErrorCode::LeaseRequired, "Lease belongs to another connection or has expired"};
 	return *found;
 }
+
 DebugLease ConnectionLeases::Acquire(ControlSessionId id, std::shared_ptr<DebugController> controller, Session& session,
 									 SessionGeneration generation, Retired& retired)
 {
@@ -33,11 +33,8 @@ DebugLease ConnectionLeases::Acquire(ControlSessionId id, std::shared_ptr<DebugC
 		throw ControlRequestError{ErrorCode::Closed, "Connection leases are closed"};
 	if (!generation.value)
 		throw ControlRequestError{ErrorCode::Closed, "Session has not started"};
-	const auto previous = std::find_if(m_leases.begin(), m_leases.end(),
-									   [&](const auto& entry)
-									   {
-										   return entry.session == id;
-									   });
+	const auto previous =
+		std::find_if(m_leases.begin(), m_leases.end(), [&](const auto& entry) { return entry.session == id; });
 	if (previous != m_leases.end())
 	{
 		const auto lease = controller->Snapshot().lease;
@@ -58,6 +55,7 @@ DebugLease ConnectionLeases::Acquire(ControlSessionId id, std::shared_ptr<DebugC
 	m_leases.push_back({id, lease->id, std::move(controller)});
 	return *lease;
 }
+
 void ConnectionLeases::Renew(ControlSessionId sessionId, DebugLeaseId lease, Session& session,
 							 SessionGeneration generation)
 {
@@ -68,6 +66,7 @@ void ConnectionLeases::Renew(ControlSessionId sessionId, DebugLeaseId lease, Ses
 		throw ControlRequestError{ErrorCode::StaleGeneration, "Session generation changed"};
 	throw ControlRequestError{ErrorCode::LeaseRequired, "Lease expired"};
 }
+
 void ConnectionLeases::Relinquish(ControlSessionId sessionId, DebugLeaseId lease, Session& session,
 								  SessionGeneration generation, Retired& retired)
 {
@@ -75,17 +74,15 @@ void ConnectionLeases::Relinquish(ControlSessionId sessionId, DebugLeaseId lease
 	retired.m_controllers.push_back(owned.controller);
 	if (!owned.controller->Relinquish(owned.id, generation) && session.Snapshot().generation != generation)
 		throw ControlRequestError{ErrorCode::StaleGeneration, "Session generation changed"};
-	std::erase_if(m_leases,
-				  [&](const auto& entry)
-				  {
-					  return entry.session == sessionId;
-				  });
+	std::erase_if(m_leases, [&](const auto& entry) { return entry.session == sessionId; });
 }
+
 DebugSubmission ConnectionLeases::Submit(ControlSessionId sessionId, DebugLeaseId lease, const DebugRequest& request)
 {
 	const auto& owned = Own(sessionId, lease);
 	return owned.controller->Submit(owned.id, request);
 }
+
 void ConnectionLeases::Acknowledge(ControlSessionId sessionId, DebugLeaseId lease, DebugCommandId command,
 								   Session& session, SessionGeneration generation, Retired& retired)
 {
@@ -96,10 +93,10 @@ void ConnectionLeases::Acknowledge(ControlSessionId sessionId, DebugLeaseId leas
 		throw ControlRequestError{ErrorCode::StaleGeneration, "Session generation changed"};
 	throw ControlRequestError{ErrorCode::Busy, "Cannot acknowledge unfinished operations"};
 }
+
 void ConnectionLeases::Prune(std::span<const ControlSessionId> sessions, Retired& retired)
 {
-	const auto absent = [&](const Lease& lease)
-	{
+	const auto absent = [&](const Lease& lease) {
 		return std::find(sessions.begin(), sessions.end(), lease.session) == sessions.end();
 	};
 	retired.m_controllers.reserve(retired.m_controllers.size() + m_leases.size());
@@ -108,6 +105,7 @@ void ConnectionLeases::Prune(std::span<const ControlSessionId> sessions, Retired
 			retired.m_controllers.push_back(lease.controller);
 	std::erase_if(m_leases, absent);
 }
+
 void ConnectionLeases::Close() noexcept
 {
 	if (m_closed)
@@ -121,8 +119,7 @@ void ConnectionLeases::Close() noexcept
 			lease.controller->Relinquish(lease.id);
 		}
 		catch (...)
-		{
-		}
+		{}
 	}
 }
 } // namespace simxr::control

@@ -87,8 +87,7 @@ static int Run(const std::vector<std::filesystem::path>& arguments)
 				   "Discover requires --parent-control; reports eye sizes without graphics or input forwarding.\n";
 			return 0;
 		}
-		const auto number = [&]()
-		{
+		const auto number = [&]() {
 			if (++index >= arguments.size())
 				throw std::invalid_argument("Missing alignment number");
 			const auto text = arguments[index].string();
@@ -347,18 +346,14 @@ static int Run(const std::vector<std::filesystem::path>& arguments)
 			auto nextTiming = std::chrono::steady_clock::now();
 			session.Run(
 				continuous ? std::nullopt : std::optional<std::uint32_t>{testFrames},
-				[&](const HeadsetInputSample& input)
-				{
+				[&](const HeadsetInputSample& input) {
 					if (!bridge)
 						return;
 					if (rebuild)
 						return;
 					if (continuous && input.trackers &&
 						std::any_of(input.trackers->begin(), input.trackers->end(),
-									[](const PhysicalTrackerSample& tracker)
-									{
-										return tracker.needsBinding;
-									}))
+									[](const PhysicalTrackerSample& tracker) { return tracker.needsBinding; }))
 					{
 						const auto previous = bridge->Status();
 						if (previous.worldFromInitial)
@@ -418,8 +413,7 @@ static int Run(const std::vector<std::filesystem::path>& arguments)
 						}
 					}
 				},
-				[&]
-				{
+				[&] {
 					if (parentControl && HostStopRequested())
 					{
 						parentStopped = true;

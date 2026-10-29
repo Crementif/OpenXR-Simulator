@@ -24,13 +24,15 @@ struct D3D11CompositionSource
 
 class D3D11Frame final : public FrameOutput
 {
-  public:
+public:
 	~D3D11Frame() override;
 	CompletionStatus PollCompletion() const noexcept override;
+
 	bool SourcesUsed() const noexcept
 	{
 		return m_submitted;
 	}
+
 	// Borrowed handles remain valid while the frame is retained. Consumers must
 	// duplicate handles before transferring ownership to another process.
 	HANDLE TextureHandle() const noexcept;
@@ -39,7 +41,7 @@ class D3D11Frame final : public FrameOutput
 	DXGI_FORMAT Format() const noexcept;
 	static constexpr std::uint64_t ReadyValue = 1;
 
-  private:
+private:
 	friend class D3D11Backend;
 	D3D11Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
 			   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views);
@@ -60,7 +62,7 @@ class D3D11Frame final : public FrameOutput
 // The caller owns source acquisition and consumer GPU lifetime.
 class D3D11Backend
 {
-  public:
+public:
 	using Frame = D3D11Frame;
 	using Source = D3D11CompositionSource;
 	explicit D3D11Backend(ID3D11Device* device);
@@ -72,7 +74,7 @@ class D3D11Backend
 						   std::shared_ptr<D3D11Frame>& output, bool retainMipChain = false);
 	HRESULT Submit(const std::shared_ptr<D3D11Frame>& frame);
 
-  private:
+private:
 	HRESULT Allocate(std::uint32_t width, std::uint32_t height, std::uint32_t layers, DXGI_FORMAT format,
 					 std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output, std::uint32_t mipLevels = 1,
 					 bool retained = false);

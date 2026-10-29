@@ -16,6 +16,7 @@ bool PageClose();
 void FieldLabel(const char* label);
 void SectionLabel(const char* label);
 bool Section(const char* label, ImGuiTreeNodeFlags flags = 0);
+
 struct RailStatus
 {
 	ImU32 dot = 0;
@@ -27,6 +28,7 @@ struct RailStatus
 	bool iconOnly = false;
 	ImU32 tint = 0;
 };
+
 bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& status, float height = 0);
 bool DeviceTab(const char* label, Icon icon, bool selected, const RailStatus& status, ImVec2 size, bool named);
 } // namespace simxr::app

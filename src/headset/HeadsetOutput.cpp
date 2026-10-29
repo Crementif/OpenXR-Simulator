@@ -28,11 +28,14 @@ HeadsetOutputResources::~HeadsetOutputResources()
 	if (pool)
 		vkDestroyCommandPool(device, pool, nullptr);
 }
+
 HeadsetOutput::HeadsetOutput(HeadsetGraphics& graphics) : m_graphics(graphics) {}
+
 HeadsetOutput::~HeadsetOutput()
 {
 	Close();
 }
+
 bool HeadsetOutput::Close()
 {
 	if (!m_resources && !m_swapchain)
@@ -71,6 +74,7 @@ bool HeadsetOutput::Close()
 	m_waited = false;
 	return true;
 }
+
 void HeadsetOutput::Open(OpenXrRuntime& runtime, XrSession session)
 {
 	if (m_resources || m_swapchain || m_graphics.ResourcesPreserved())
@@ -197,6 +201,7 @@ void HeadsetOutput::Open(OpenXrRuntime& runtime, XrSession session)
 				"Create output completion fence");
 	}
 }
+
 void HeadsetOutput::Poll()
 {
 	if (!m_resources)
@@ -214,6 +219,7 @@ void HeadsetOutput::Poll()
 	if (m_resources->mapper)
 		m_resources->mapper->RetireCompleted();
 }
+
 void HeadsetOutput::Label(HeadsetOutputImage& target)
 {
 	// Small fixed diagnostic lettering, rendered with attachment clears like the test pattern.
@@ -260,6 +266,7 @@ void HeadsetOutput::Label(HeadsetOutputImage& target)
 		vkCmdEndRenderPass(target.command);
 	}
 }
+
 void HeadsetOutput::Record(HeadsetOutputImage& target, const VulkanImage& pixels, bool inspection)
 {
 	VkFormatProperties properties{};
@@ -308,6 +315,7 @@ void HeadsetOutput::Record(HeadsetOutputImage& target, const VulkanImage& pixels
 		Label(target);
 	CheckVk(vkEndCommandBuffer(target.command), "Finish physical output command");
 }
+
 bool HeadsetOutput::Draw(std::shared_ptr<const HeadsetImageFrame> source, XrPosef physicalFromWorld,
 						 const std::array<XrFovf, 2>& physicalFovs)
 {
@@ -344,18 +352,22 @@ bool HeadsetOutput::Draw(std::shared_ptr<const HeadsetImageFrame> source, XrPose
 	m_projection = projection;
 	return true;
 }
+
 bool HeadsetOutput::DrawScreen(std::shared_ptr<const HeadsetImageFrame> source)
 {
 	return Copy(std::move(source), std::nullopt);
 }
+
 XrSwapchain HeadsetOutput::Swapchain() const
 {
 	return m_swapchain;
 }
+
 XrExtent2Di HeadsetOutput::Extent() const
 {
 	return m_extent;
 }
+
 bool HeadsetOutput::Copy(std::shared_ptr<const HeadsetImageFrame> source,
 						 const std::optional<std::array<XrFovf, 2>>& fovs)
 {
@@ -423,10 +435,12 @@ bool HeadsetOutput::Copy(std::shared_ptr<const HeadsetImageFrame> source,
 	m_waited = false;
 	return true;
 }
+
 const std::array<XrCompositionLayerProjectionView, 2>& HeadsetOutput::Projection() const
 {
 	return m_projection;
 }
+
 std::shared_ptr<VulkanDevice> HeadsetOutput::Device() const
 {
 	return m_resources && m_resources->mapper ? m_resources->mapper->Device() : nullptr;

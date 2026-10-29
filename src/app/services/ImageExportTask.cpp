@@ -10,14 +10,9 @@ namespace simxr::app
 namespace wire = control;
 namespace tag = wire::tag;
 using namespace panel;
-ImageExportWriter::ImageExportWriter()
-	: m_worker(
-		  [this]
-		  {
-			  Run();
-		  })
-{
-}
+
+ImageExportWriter::ImageExportWriter() : m_worker([this] { Run(); }) {}
+
 ImageExportWriter::~ImageExportWriter()
 {
 	{
@@ -27,6 +22,7 @@ ImageExportWriter::~ImageExportWriter()
 	m_changed.notify_all();
 	m_worker.join();
 }
+
 bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, ImageExportMetadata metadata)
 {
 	if (path.empty() || path.find('\0') != std::string::npos || bytes.size() > 512ULL * 1024 * 1024)
@@ -62,16 +58,19 @@ bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, Ima
 	m_changed.notify_all();
 	return true;
 }
+
 bool ImageExportWriter::Busy() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_busy || m_result.has_value();
 }
+
 std::optional<ImageExportWriteResult> ImageExportWriter::TakeResult()
 {
 	std::lock_guard lock(m_mutex);
 	return std::exchange(m_result, {});
 }
+
 void ImageExportWriter::Run() noexcept
 {
 	for (;;)
@@ -79,11 +78,7 @@ void ImageExportWriter::Run() noexcept
 		std::optional<Job> job;
 		{
 			std::unique_lock lock(m_mutex);
-			m_changed.wait(lock,
-						   [&]
-						   {
-							   return m_stopping || m_job.has_value();
-						   });
+			m_changed.wait(lock, [&] { return m_stopping || m_job.has_value(); });
 			if (!m_job)
 				return;
 			job = std::move(m_job);
@@ -101,7 +96,7 @@ void ImageExportWriter::Run() noexcept
 				if (height > FileImageLimits.dimension)
 					throw std::invalid_argument("Image height exceeds the encoding limit");
 				auto encoded = EncodeImage(job->bytes, image.format, image.width, static_cast<std::uint32_t>(height),
-					job->destination.extension() == ".png", 85, FileImageLimits);
+										   job->destination.extension() == ".png", 85, FileImageLimits);
 				SaveExportFile(job->destination, encoded.bytes, true);
 			}
 			else
@@ -121,15 +116,19 @@ void ImageExportWriter::Run() noexcept
 		m_busy = false;
 	}
 }
+
 ImageExportTask::ImageExportTask(RuntimePanelRequests& requests) : m_requests(requests) {}
+
 bool ImageExportTask::Busy() const
 {
 	return m_requested || m_id || m_writer.Busy();
 }
+
 const std::string& ImageExportTask::Detail() const noexcept
 {
 	return m_detail;
 }
+
 void ImageExportTask::ResetEpoch()
 {
 	if (m_requested || m_id)
@@ -142,6 +141,7 @@ void ImageExportTask::ResetEpoch()
 	m_bytes.clear();
 	m_metadata = {};
 }
+
 bool ImageExportTask::Request(std::uint64_t reader, std::string path)
 {
 	if (!reader || Busy())
@@ -155,6 +155,7 @@ bool ImageExportTask::Request(std::uint64_t reader, std::string path)
 								  {wire::Field::U64(tag::ImageReaderId, reader, true)}) != 0;
 	return m_requested;
 }
+
 bool ImageExportTask::RequestVideo(std::uint64_t session, std::uint64_t generation, std::uint64_t first,
 								   std::uint64_t last, std::string path)
 {
@@ -172,23 +173,27 @@ bool ImageExportTask::RequestVideo(std::uint64_t session, std::uint64_t generati
 			 wire::Field::U64(tag::FirstFrame, first, true), wire::Field::U64(tag::LastFrame, last, true)}) != 0;
 	return m_requested;
 }
+
 void ImageExportTask::ReleaseRemote()
 {
 	if (m_id)
 		m_requests.Release(wire::OpCode::ReleaseExport, tag::ExportId, std::exchange(m_id, 0));
 	m_requested = false;
 }
+
 void ImageExportTask::Abort(std::string detail)
 {
 	ReleaseRemote();
 	m_bytes.clear();
 	m_detail = std::move(detail);
 }
+
 void ImageExportTask::Failed(const PanelTask& task, std::string detail)
 {
 	if (task.kind == PanelWork::Export || task.kind == PanelWork::ExportInfo || task.kind == PanelWork::ExportRead)
 		Abort(std::move(detail));
 }
+
 bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message)
 {
 	if (task.kind != PanelWork::Export && task.kind != PanelWork::ExportInfo && task.kind != PanelWork::ExportRead)
@@ -272,6 +277,7 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 	}
 	return true;
 }
+
 void ImageExportTask::Poll()
 {
 	if (auto result = m_writer.TakeResult())
@@ -292,11 +298,12 @@ void ImageExportTask::Poll()
 	{
 		if (m_ready)
 			m_requests.Send(wire::OpCode::ReadExport, PanelWork::ExportRead,
-				{wire::Field::U64(tag::ExportId, m_id, true), wire::Field::U64(tag::Offset, m_offset, true),
-				 wire::Field::U64(tag::Length, wire::MaxPayload - 4096, true)}, m_id);
+							{wire::Field::U64(tag::ExportId, m_id, true), wire::Field::U64(tag::Offset, m_offset, true),
+							 wire::Field::U64(tag::Length, wire::MaxPayload - 4096, true)},
+							m_id);
 		else
 			m_requests.Send(wire::OpCode::ExportInfo, PanelWork::ExportInfo,
-				{wire::Field::U64(tag::ExportId, m_id, true)}, m_id);
+							{wire::Field::U64(tag::ExportId, m_id, true)}, m_id);
 	}
 }
 } // namespace simxr::app

@@ -11,6 +11,7 @@ using panel::Text;
 using panel::U32;
 using panel::U64;
 using Work = PanelWork;
+
 void RuntimeSession::Reply(const PanelReply& response)
 {
 	const auto& task = response.task;
@@ -31,12 +32,10 @@ void RuntimeSession::Reply(const PanelReply& response)
 	}
 	const bool stepReply =
 		(task.kind == Work::Command || task.kind == Work::Operation) &&
-		std::any_of(m_debugger.Operations().begin(), m_debugger.Operations().end(),
-					[&](const auto& operation)
-					{
-						return operation.kind == wire::CommandKind::Step &&
-							   (task.kind == Work::Command ? operation.local : operation.id) == task.id;
-					});
+		std::any_of(m_debugger.Operations().begin(), m_debugger.Operations().end(), [&](const auto& operation) {
+			return operation.kind == wire::CommandKind::Step &&
+				   (task.kind == Work::Command ? operation.local : operation.id) == task.id;
+		});
 	const auto error = U32(message, tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::Internal));
 	if (!reply.error.empty() || error)
 	{

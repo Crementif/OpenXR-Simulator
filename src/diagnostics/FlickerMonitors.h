@@ -30,13 +30,13 @@ struct IncidentUpdate
 
 class IncidentCapture
 {
-  public:
+public:
 	explicit IncidentCapture(std::filesystem::path sessionDirectory);
 	IncidentUpdate Begin(std::string_view reason, uint64_t frame, const std::deque<Sample>& history);
 	std::optional<SampleArtifact> Continue(const Sample& sample);
 	const IncidentStatistics& Statistics() const;
 
-  private:
+private:
 	void Expire(uint64_t frame);
 
 	const std::filesystem::path m_sessionDirectory;
@@ -49,7 +49,7 @@ class IncidentCapture
 
 class PreviewMonitor
 {
-  public:
+public:
 	explicit PreviewMonitor(std::filesystem::path sessionDirectory);
 	IncidentUpdate Submission(uint64_t frame, uint32_t projectionLayers, uint32_t totalLayers);
 	IncidentUpdate Preview(Sample sample, uint64_t generation);
@@ -59,7 +59,7 @@ class PreviewMonitor
 	uint64_t Frame() const;
 	bool TakeDirty();
 
-  private:
+private:
 	PreviewStatistics m_statistics;
 	IncidentCapture m_capture;
 	std::deque<Sample> m_history;
@@ -72,14 +72,15 @@ class PreviewMonitor
 
 class UiMonitor
 {
-  public:
+public:
 	explicit UiMonitor(std::filesystem::path sessionDirectory);
 	IncidentUpdate Observe(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t pitchBytes,
-						   uint64_t generation, uint64_t frame, const UiFrameInfo& info, PixelOrder order = PixelOrder::Bgra);
+						   uint64_t generation, uint64_t frame, const UiFrameInfo& info,
+						   PixelOrder order = PixelOrder::Bgra);
 	UiStatistics Snapshot() const;
 	bool TakeDirty();
 
-  private:
+private:
 	UiStatistics m_statistics;
 	IncidentCapture m_capture;
 	std::deque<Sample> m_history;

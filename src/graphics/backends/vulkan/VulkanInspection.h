@@ -58,12 +58,12 @@ struct VulkanImagePixels
 
 class VulkanImageReadback final : public GpuCompletion
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override;
 	// Explicit CPU export only. Returns empty while the real copy is pending.
 	std::shared_ptr<const VulkanImagePixels> Pixels();
 
-  private:
+private:
 	friend class VulkanInspectionFrame;
 	VulkanImageReadback(std::shared_ptr<VulkanInspectionQueue> queue, std::shared_ptr<VulkanInspectionWork> work);
 	std::shared_ptr<VulkanInspectionQueue> m_queue;
@@ -84,7 +84,7 @@ struct VulkanDeliveryHandles
 // that one-shot completion. Handle duplicates retry that same consumer only.
 class VulkanImageDelivery final : public GpuCompletion
 {
-  public:
+public:
 	~VulkanImageDelivery();
 	SharedImageKey Key() const noexcept;
 	ImageCompletionKind CompletionKind() const noexcept;
@@ -98,7 +98,7 @@ class VulkanImageDelivery final : public GpuCompletion
 	VulkanDeliveryHandles ExportHandles(bool expose = true);
 	void MarkExposed() noexcept;
 
-  private:
+private:
 	friend class VulkanInspectionFrame;
 	struct Resources;
 	explicit VulkanImageDelivery(std::shared_ptr<Resources> resources);
@@ -107,7 +107,7 @@ class VulkanImageDelivery final : public GpuCompletion
 
 class VulkanInspectionFrame final : public FrameOutput
 {
-  public:
+public:
 	~VulkanInspectionFrame();
 	bool CanArchive() const noexcept override;
 	std::shared_ptr<const ArchivedFrame> Archive() const override;
@@ -127,8 +127,8 @@ class VulkanInspectionFrame final : public FrameOutput
 	// This submits on the owned inspection queue. No host XR call is required,
 	// including after the borrowed application device has been destroyed.
 	std::shared_ptr<VulkanImageReadback> Export(std::optional<std::uint32_t> layer = {},
-										std::shared_ptr<const void> retirementOwner = {},
-										std::optional<ImageRegion> region = {}) const;
+												std::shared_ptr<const void> retirementOwner = {},
+												std::optional<ImageRegion> region = {}) const;
 	// Weak queue callback: collection keeps no queue alive and submits no work.
 	std::function<void()> Collector() const;
 	ImageCompletionKind CompletionKind() const noexcept;
@@ -137,7 +137,7 @@ class VulkanInspectionFrame final : public FrameOutput
 	// lifetime. Delivery has its own bounded budget, separate from captures.
 	std::shared_ptr<VulkanImageDelivery> Share() const;
 
-  private:
+private:
 	friend class VulkanInspection;
 	friend class VulkanInspectionTransfer;
 	class Resources;
@@ -149,12 +149,12 @@ class VulkanInspectionFrame final : public FrameOutput
 // merely opens the independent worker's gate after that acceptance succeeds.
 class VulkanInspectionTransfer
 {
-  public:
+public:
 	~VulkanInspectionTransfer();
 	void Commit() noexcept;
 	std::shared_ptr<VulkanInspectionFrame> Output() const;
 
-  private:
+private:
 	friend class VulkanInspection;
 	class State;
 	explicit VulkanInspectionTransfer(std::shared_ptr<State> state);
@@ -163,7 +163,7 @@ class VulkanInspectionTransfer
 
 class VulkanInspection
 {
-  public:
+public:
 	explicit VulkanInspection(const VulkanExternalIdentity& identity, std::size_t capacity = 8,
 							  std::shared_ptr<VulkanInspectionValidation> validation = {});
 	~VulkanInspection();
@@ -180,7 +180,7 @@ class VulkanInspection
 	ImageCompletionKind CompletionKind() const noexcept;
 	bool CanShare() const noexcept;
 
-  private:
+private:
 	std::shared_ptr<FrameReservation> Reserve(VulkanInspectionKind kind);
 	void Publish(const std::shared_ptr<VulkanInspectionTransfer::State>& job);
 	void CheckAdmission() const;

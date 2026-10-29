@@ -18,9 +18,10 @@ class Session;
 class VulkanBackend;
 class VulkanInspection;
 class VulkanInspectionDevice;
+
 class WindowsSessionGraphics final
 {
-  public:
+public:
 	using Source = std::variant<D3D11CompositionSource, D3D12CompositionSource, OpenGLCompositionSource>;
 	using ImageResolver = std::function<Source(XrSwapchain)>;
 	// Called after native source use begins, including failed submission. Must not allocate or throw.
@@ -34,7 +35,7 @@ class WindowsSessionGraphics final
 	control::ImageCapabilities Capabilities() const noexcept;
 	XrResult Close();
 
-  private:
+private:
 	void Configure(const VulkanExternalIdentity& identity);
 	const std::shared_ptr<Session> m_session;
 	std::variant<std::unique_ptr<D3D11Backend>, std::unique_ptr<D3D12Backend>, std::unique_ptr<OpenGLBackend>> m_native;

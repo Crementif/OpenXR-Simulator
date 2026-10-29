@@ -15,6 +15,7 @@ namespace
 {
 thread_local int debugAllocationCountdown = -1;
 }
+
 [[gnu::noinline]] void* operator new(std::size_t size)
 {
 	if (debugAllocationCountdown >= 0 && debugAllocationCountdown-- == 0)
@@ -23,10 +24,12 @@ thread_local int debugAllocationCountdown = -1;
 		return memory;
 	throw std::bad_alloc{};
 }
+
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -39,36 +42,43 @@ namespace
 {
 class TestClock final : public Clock
 {
-  public:
+public:
 	HostTime Now() const override
 	{
 		return HostTime{Duration{time.load()}};
 	}
+
 	void WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime) override
 	{
 		changed.wait_for(lock, 1ms);
 	}
+
 	std::atomic<std::int64_t> time{0};
 };
+
 class Output final : public FrameOutput
 {
-  public:
+public:
 	~Output() override
 	{
 		if (onDestroy)
 			onDestroy();
 	}
+
 	std::function<void()> onDestroy;
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		if (controller)
 			controller->Snapshot();
 		return state.load();
 	}
+
 	std::atomic<CompletionStatus> state{CompletionStatus::Pending};
 	std::shared_ptr<FrameReservation> reservation;
 	DebugController* controller = nullptr;
 };
+
 struct Fixture
 {
 	std::shared_ptr<TestClock> clock = std::make_shared<TestClock>();
@@ -76,6 +86,7 @@ struct Fixture
 		reinterpret_cast<XrInstance>(100), std::span<const char* const>{}, XR_MAKE_VERSION(1, 0, 27));
 	std::shared_ptr<Session> session = std::make_shared<Session>(reinterpret_cast<XrSession>(101), instance, clock);
 	FramePool pool;
+
 	explicit Fixture(std::size_t capacity = 8, bool configure = true, bool layerViews = false) : pool(capacity)
 	{
 		FrameSchedulerConfig timing;
@@ -88,6 +99,7 @@ struct Fixture
 		Require(session->Ready(timing.epoch) == XR_SUCCESS && session->Begin(begin, timing) == XR_SUCCESS,
 				"Begin test session");
 	}
+
 	FramePrediction Issue(bool begin = true)
 	{
 		FramePrediction prediction;
@@ -96,6 +108,7 @@ struct Fixture
 			Require(session->BeginFrame() == XR_SUCCESS, "Begin test frame");
 		return prediction;
 	}
+
 	std::shared_ptr<Output> Image(const FramePrediction& prediction, CaptureTarget target = {})
 	{
 		auto reservation =
@@ -107,6 +120,7 @@ struct Fixture
 		output->reservation = std::move(reservation);
 		return output;
 	}
+
 	void Submit(FramePrediction prediction, std::shared_ptr<Output> output = {})
 	{
 		if (!output)
@@ -124,6 +138,7 @@ struct Fixture
 				"Submit fake producer with immutable metadata");
 	}
 };
+
 DebugControllerConfig ManualConfig()
 {
 	DebugControllerConfig config;
@@ -131,6 +146,7 @@ DebugControllerConfig ManualConfig()
 	config.leaseDuration = 1s;
 	return config;
 }
+
 DebugOperationId Command(DebugController& controller, DebugLeaseId lease, std::uint64_t id, DebugCommand command,
 						 std::uint32_t lookahead = 1, DebugOperationId target = {}, CaptureId capture = {},
 						 CaptureTarget captureTarget = {})
@@ -139,12 +155,14 @@ DebugOperationId Command(DebugController& controller, DebugLeaseId lease, std::u
 	Require(result.result == DebugAdmission::Accepted && result.operation.value, "Command admission failed");
 	return result.operation;
 }
+
 DebugOperation Status(DebugController& controller, DebugOperationId operation)
 {
 	const auto status = controller.Read(operation);
 	Require(status.has_value(), "Missing operation status");
 	return *status;
 }
+
 void CommandCopyAllocationRecovery()
 {
 	Fixture fixture(8, true, true);
@@ -218,6 +236,7 @@ void DisplayStepAllocationRecovery()
 	}
 	throw std::runtime_error("Display step allocation sweep did not complete");
 }
+
 void RealtimeRecordingBudget()
 {
 	Fixture fixture;
@@ -227,40 +246,42 @@ void RealtimeRecordingBudget()
 	const auto start = Command(controller, lease->id, 1, DebugCommand::StartImageRecording);
 	controller.Poll();
 	Require(Status(controller, start).progress == DebugProgress::RecordingStarted &&
-		!controller.Snapshot().pipeline.paused, "Recording changed application pacing");
+				!controller.Snapshot().pipeline.paused,
+			"Recording changed application pacing");
 	const auto first = fixture.Issue();
 	fixture.Submit(first);
 	const auto oldCapture = controller.Snapshot().imageRecording.captures.front();
 	const auto released = Command(controller, lease->id, 2, DebugCommand::Release, 1, {}, oldCapture);
 	controller.Poll();
 	Require(Status(controller, released).progress == DebugProgress::Released &&
-		controller.Snapshot().imageRecording.captures.size() == 2,
-		"Acknowledged recording capture did not replenish its bounded reservation");
+				controller.Snapshot().imageRecording.captures.size() == 2,
+			"Acknowledged recording capture did not replenish its bounded reservation");
 	fixture.Submit(fixture.Issue());
 	fixture.Submit(fixture.Issue());
 	const auto missed = fixture.Issue();
 	fixture.Submit(missed);
 	const auto state = controller.Snapshot();
 	Require(state.imageRecording.phase == ImageRecordingPhase::Overrun &&
-		state.imageRecording.missed == FrameKey{fixture.session->Snapshot().generation, missed.id} &&
-		state.imageRecording.captured == 3 && !state.pipeline.paused && !state.pipeline.permits,
-		"Slow recorder silently dropped a frame or changed normal pacing");
+				state.imageRecording.missed == FrameKey{fixture.session->Snapshot().generation, missed.id} &&
+				state.imageRecording.captured == 3 && !state.pipeline.paused && !state.pipeline.permits,
+			"Slow recorder silently dropped a frame or changed normal pacing");
 	fixture.clock->time = 2000000000;
 	controller.Poll();
 	Require(controller.Snapshot().imageRecording.captures.empty() && !controller.Snapshot().manual,
-		"Expired recording lease kept reservations or paused the application");
+			"Expired recording lease kept reservations or paused the application");
 	FrameSchedulerConfig timing;
 	timing.epoch = {500ns};
 	timing.period = 10ns;
 	timing.mode = ExecutionMode::Deterministic;
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-	Require(fixture.session->RequestExit(timing.epoch) == XR_SUCCESS && fixture.session->End(timing.epoch) == XR_SUCCESS &&
-		fixture.session->Ready(timing.epoch) == XR_SUCCESS && fixture.session->Begin(begin, timing) == XR_SUCCESS,
+	Require(
+		fixture.session->RequestExit(timing.epoch) == XR_SUCCESS && fixture.session->End(timing.epoch) == XR_SUCCESS &&
+			fixture.session->Ready(timing.epoch) == XR_SUCCESS && fixture.session->Begin(begin, timing) == XR_SUCCESS,
 		"Restart recording session");
 	const auto restarted = controller.Snapshot().imageRecording;
 	Require(restarted.phase == ImageRecordingPhase::Idle && !restarted.captured && !restarted.capacity &&
-		!restarted.requested && !restarted.missed && restarted.captures.empty(),
-		"Recording state from an old generation escaped into the replacement run");
+				!restarted.requested && !restarted.missed && restarted.captures.empty(),
+			"Recording state from an old generation escaped into the replacement run");
 }
 
 void Pause(DebugController& controller, DebugLeaseId lease)
@@ -509,7 +530,6 @@ void SelectedLayerViewRequests()
 			"Missing raw target did not remain explicitly unavailable");
 		if (target == targets.front())
 		{
-
 			const auto composedStep = Command(controller, lease, command++, DebugCommand::Step);
 			controller.Poll();
 			Require(Status(controller, composedStep).progress == DebugProgress::SnapshotReady &&
@@ -622,7 +642,8 @@ void RollingStepsAndPins()
 	const auto unpin = Command(controller, lease, command, DebugCommand::UnpinSnapshot, 1, {}, pinned);
 	controller.Poll();
 	Require(Status(controller, unpin).phase == DebugPhase::Complete &&
-		!fixture.session->Captures().Read(pinned)->pinned, "Unpin command failed");
+				!fixture.session->Captures().Read(pinned)->pinned,
+			"Unpin command failed");
 }
 
 void CapacityAndUnsupported()
@@ -821,8 +842,7 @@ void ExpiryOwnershipAndReentrantAcknowledgement()
 	auto image = reentrant.Image(first);
 	image->state.store(CompletionStatus::Complete);
 	bool destroyed = false;
-	image->onDestroy = [&]
-	{
+	image->onDestroy = [&] {
 		debug.Snapshot();
 		destroyed = true;
 	};
@@ -858,7 +878,7 @@ void ExpiryOwnershipAndReentrantAcknowledgement()
 
 class BlockingClock final : public Clock
 {
-  public:
+public:
 	HostTime Now() const override
 	{
 		std::unique_lock lock(mutex);
@@ -871,21 +891,25 @@ class BlockingClock final : public Clock
 		}
 		return HostTime{Duration{0}};
 	}
+
 	void WaitUntil(std::condition_variable& condition, std::unique_lock<std::mutex>& lock, HostTime) override
 	{
 		condition.wait_for(lock, 1ms);
 	}
+
 	void Arm()
 	{
 		std::lock_guard lock(mutex);
 		armed = true;
 		entered = released = false;
 	}
+
 	bool Entered() const
 	{
 		std::lock_guard lock(mutex);
 		return entered;
 	}
+
 	void Release()
 	{
 		std::lock_guard lock(mutex);
@@ -893,7 +917,7 @@ class BlockingClock final : public Clock
 		changed.notify_all();
 	}
 
-  private:
+private:
 	mutable std::mutex mutex;
 	mutable std::condition_variable changed;
 	mutable bool armed = false, entered = false, released = false;
@@ -918,16 +942,13 @@ void BoundLeaseGeneration()
 	auto acquisition = std::async(std::launch::async, [&] { return controller.Acquire(first); });
 	Eventually([&] { return clock->Entered(); }, "Bound Acquire did not reach controlled clock");
 	std::atomic<bool> ending{false};
-	auto restart = std::async(
-		std::launch::async,
-		[&]
-		{
-			Require(session->RequestExit(timing.epoch) == XR_SUCCESS, "Request restart during bound acquisition");
-			ending.store(true);
-			Require(session->End(timing.epoch) == XR_SUCCESS && session->Ready(timing.epoch) == XR_SUCCESS &&
-						session->Begin(begin, timing) == XR_SUCCESS,
-					"Restart generation-bound lease session");
-		});
+	auto restart = std::async(std::launch::async, [&] {
+		Require(session->RequestExit(timing.epoch) == XR_SUCCESS, "Request restart during bound acquisition");
+		ending.store(true);
+		Require(session->End(timing.epoch) == XR_SUCCESS && session->Ready(timing.epoch) == XR_SUCCESS &&
+					session->Begin(begin, timing) == XR_SUCCESS,
+				"Restart generation-bound lease session");
+	});
 	Eventually([&] { return ending.load(); }, "Concurrent restart did not attempt End");
 	Require(restart.wait_for(20ms) == std::future_status::timeout,
 			"Lifecycle restart passed generation-bound lease mutation");
@@ -1016,16 +1037,16 @@ void WorkerAndLifetime()
 	}
 	Require(pool.InUse() == 0, "Controller/session teardown retained unused or completed reservations");
 }
+
 void BundleReservationRollback()
 {
 	Fixture fixture(3, true, true);
 	fixture.session->Scheduler().Pause();
-	const std::array targets{CaptureTarget{CaptureKind::LayerView, 0, 0},
-		CaptureTarget{CaptureKind::LayerView, 0, 1}};
+	const std::array targets{CaptureTarget{CaptureKind::LayerView, 0, 0}, CaptureTarget{CaptureKind::LayerView, 0, 1}};
 	const auto rejected = fixture.session->ReserveCaptureBundle(targets);
 	Require(rejected.result == SnapshotAdmission::Capacity && rejected.captures.empty(), "Bundle must fail atomically");
 	Require(fixture.pool.InUse() == 0 && fixture.session->Captures().Snapshot().heldSlots == 0,
-		"Failed bundle leaked reservations");
+			"Failed bundle leaked reservations");
 	Require(fixture.session->Scheduler().Snapshot().permits == 0, "Failed bundle admitted work");
 	const auto accepted = fixture.session->ReserveCapture();
 	Require(accepted.result == SnapshotAdmission::Accepted, "Rollback did not restore capacity");
@@ -1037,24 +1058,23 @@ void BundleReservationRollback()
 	{
 		const auto frame = room.Issue();
 		room.Submit(frame);
-		const auto pinned = room.session->Captures().Pin(
-			room.session->History().Find({room.session->Snapshot().generation, frame.id}));
+		const auto pinned =
+			room.session->Captures().Pin(room.session->History().Find({room.session->Snapshot().generation, frame.id}));
 		Require(pinned.result == SnapshotAdmission::Accepted, "Retain cleared frame before bundle");
 		id = pinned.id;
 	}
 	room.session->Scheduler().Pause();
 	const auto bundle = room.session->ReserveCaptureBundle(targets);
 	Require(bundle.result == SnapshotAdmission::Accepted && bundle.captures.size() == 2 &&
-		!room.session->Captures().Read(previous[0]) && room.session->Captures().Read(previous[1]),
-		"Bundle reclamation did not make room for all snapshot slots");
+				!room.session->Captures().Read(previous[0]) && room.session->Captures().Read(previous[1]),
+			"Bundle reclamation did not make room for all snapshot slots");
 }
 } // namespace
 
 int main()
 {
 	unsigned failures = 0;
-	const auto run = [&](const char* name, auto test)
-	{
+	const auto run = [&](const char* name, auto test) {
 		try
 		{
 			test();

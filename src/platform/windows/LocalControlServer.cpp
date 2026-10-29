@@ -4,10 +4,10 @@
 #include "control/ControlService.h"
 #include "platform/windows/WindowsControl.h"
 
-
 namespace simxr::control
 {
 namespace native = windows;
+
 static void Read(native::Channel& pipe, std::vector<std::byte>& bytes, std::size_t total, HANDLE stop,
 				 native::Clock::time_point& deadline)
 {
@@ -20,6 +20,7 @@ static void Read(native::Channel& pipe, std::vector<std::byte>& bytes, std::size
 			deadline = native::Clock::now() + std::chrono::seconds(5);
 	}
 }
+
 static void Write(native::Channel& pipe, const ControlPacket& packet, HANDLE stop)
 {
 	auto handles = pipe.Offer(packet);
@@ -46,6 +47,7 @@ static void Write(native::Channel& pipe, const ControlPacket& packet, HANDLE sto
 		pipe.AcknowledgeOffer();
 	}
 }
+
 static std::uint64_t ReadHeaderInteger(std::span<const std::byte> bytes, std::size_t offset, std::size_t count)
 {
 	std::uint64_t result = 0;
@@ -62,6 +64,7 @@ struct LocalControlServer::State
 		std::atomic<bool> finished{false};
 		std::thread thread;
 	};
+
 	ControlService& service;
 	std::string path;
 	std::wstring wide;
@@ -74,6 +77,7 @@ struct LocalControlServer::State
 	std::vector<std::unique_ptr<Worker>> workers;
 	std::mutex lifecycle;
 	bool closed = false;
+
 	State(ControlService& service, std::string path, std::size_t capacity)
 		: service(service), path(std::move(path)), wide(native::PipePath(this->path)), capacity(capacity)
 	{
@@ -92,6 +96,7 @@ struct LocalControlServer::State
 		if (!endpoint.value || error == ERROR_ALREADY_EXISTS)
 			throw native::Error("Local control endpoint already reserved or unavailable", error);
 	}
+
 	std::unique_ptr<native::Channel> Create(bool first)
 	{
 		native::Handle pipe(CreateNamedPipeW(
@@ -102,6 +107,7 @@ struct LocalControlServer::State
 			throw native::Error("Create private local control pipe failed");
 		return std::make_unique<native::Channel>(std::move(pipe));
 	}
+
 	void Serve(Worker& worker, ConnectionId connection) noexcept
 	{
 		try
@@ -151,8 +157,7 @@ struct LocalControlServer::State
 			}
 		}
 		catch (const native::Interrupted&)
-		{
-		}
+		{}
 		catch (const native::Timeout&)
 		{
 			std::fputs("SimXR Windows control partial packet timed out\n", stderr);
@@ -169,6 +174,7 @@ struct LocalControlServer::State
 		worker.pipe->Close();
 		worker.finished = true;
 	}
+
 	void Collect()
 	{
 		for (auto& worker : workers)
@@ -179,6 +185,7 @@ struct LocalControlServer::State
 			}
 		std::erase(workers, nullptr);
 	}
+
 	void Accept() noexcept
 	{
 		while (WaitForSingleObject(stopping.value, 0) != WAIT_OBJECT_0)
@@ -218,11 +225,7 @@ struct LocalControlServer::State
 					workers.push_back(std::move(worker));
 					try
 					{
-						raw->thread = std::thread(
-							[this, raw, id = *connection]
-							{
-								Serve(*raw, id);
-							});
+						raw->thread = std::thread([this, raw, id = *connection] { Serve(*raw, id); });
 					}
 					catch (...)
 					{
@@ -255,24 +258,24 @@ struct LocalControlServer::State
 			listener->Close();
 	}
 };
+
 LocalControlServer::LocalControlServer(ControlService& service, std::string path, std::size_t maxClients)
 	: m_state(std::make_unique<State>(service, std::move(path), maxClients))
 {
 	m_state->listener = m_state->Create(true);
-	m_state->acceptor = std::thread(
-		[state = m_state.get()]
-		{
-			state->Accept();
-		});
+	m_state->acceptor = std::thread([state = m_state.get()] { state->Accept(); });
 }
+
 LocalControlServer::~LocalControlServer()
 {
 	Close();
 }
+
 const std::string& LocalControlServer::Path() const
 {
 	return m_state->path;
 }
+
 void LocalControlServer::Close() noexcept
 {
 	std::lock_guard lock(m_state->lifecycle);

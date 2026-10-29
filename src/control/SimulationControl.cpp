@@ -8,22 +8,26 @@ static InspectionValue Vector(const XrVector3f& vector)
 	return InspectionValue::Array(
 		{InspectionValue::Float(vector.x), InspectionValue::Float(vector.y), InspectionValue::Float(vector.z)});
 }
+
 static InspectionValue Orientation(const XrQuaternionf& orientation)
 {
 	return InspectionValue::Array({InspectionValue::Float(orientation.x), InspectionValue::Float(orientation.y),
 								   InspectionValue::Float(orientation.z), InspectionValue::Float(orientation.w)});
 }
+
 static InspectionValue PoseValue(const PoseSample& sample)
 {
 	return InspectionValue::Object({{"position", Vector(sample.pose.position)},
 									{"orientation", Orientation(sample.pose.orientation)},
 									{"flags", InspectionValue::Unsigned(sample.flags)}});
 }
+
 static InspectionValue PoseValue(const XrPosef& pose)
 {
 	return InspectionValue::Object(
 		{{"position", Vector(pose.position)}, {"orientation", Orientation(pose.orientation)}});
 }
+
 static InspectionValue EyeViews(const std::optional<StereoEyeViews>& views)
 {
 	if (!views)
@@ -41,6 +45,7 @@ static InspectionValue EyeViews(const std::optional<StereoEyeViews>& views)
 	return InspectionValue::Object({{"space_revision", InspectionValue::Unsigned(views->spaceRevision)},
 									{"eyes", InspectionValue::Array(std::move(eyes))}});
 }
+
 static InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
 {
 	return InspectionValue::Object(
@@ -51,6 +56,7 @@ static InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
 														InspectionValue::Float(spaces.stageBounds->height)})
 							  : InspectionValue::Null()}});
 }
+
 static InspectionValue ControlValue(const ControllerControls& controls)
 {
 	return InspectionValue::Object(
@@ -79,11 +85,13 @@ static InspectionValue ControlValue(const ControllerControls& controls)
 		 {"thumbrest_touch", InspectionValue::Boolean(controls.thumbrestTouch)},
 		 {"connected", InspectionValue::Boolean(controls.connected)}});
 }
+
 static InspectionValue SourceValue(CommandSource source)
 {
 	return InspectionValue::Object({{"kind", InspectionValue::Unsigned(static_cast<std::uint32_t>(source.kind))},
 									{"id", InspectionValue::Unsigned(source.id)}});
 }
+
 static InspectionValue BodyValue(const BodyControls& body)
 {
 	std::vector<InspectionValue> controls, joints;
@@ -104,6 +112,7 @@ static InspectionValue BodyValue(const BodyControls& body)
 									{"controls", InspectionValue::Array(std::move(controls))},
 									{"joints", InspectionValue::Array(std::move(joints))}});
 }
+
 static InspectionValue Configuration(const CommandConfiguration& configuration)
 {
 	std::vector<InspectionValue> controllers, trackers, outerFov;
@@ -157,6 +166,7 @@ static InspectionValue Configuration(const CommandConfiguration& configuration)
 								   {"shoulder_width", InspectionValue::Float(configuration.proportions.shoulderWidth)},
 								   {"hip_width", InspectionValue::Float(configuration.proportions.hipWidth)}})}});
 }
+
 static InspectionValue EncodedCommand(const SimulationCommand& command)
 {
 	// The editable recording retains the exact canonical command TLV as hex.
@@ -204,12 +214,12 @@ const char* SimulationResultName(CommandResult result)
 	}
 	return "invalid";
 }
+
 static std::vector<InspectionValue> ConfigurationCommands(const CommandConfiguration& configuration,
 														  std::uint32_t version)
 {
 	std::vector<InspectionValue> initial;
-	const auto add = [&](SimulationCommand command)
-	{
+	const auto add = [&](SimulationCommand command) {
 		if (const auto* body = std::get_if<SetBodyControls>(&command); body && body->observation && version < 4)
 			throw std::invalid_argument("Body observations require recording schema 4");
 		initial.push_back(EncodedCommand(command));
@@ -235,6 +245,7 @@ static std::vector<InspectionValue> ConfigurationCommands(const CommandConfigura
 	add(SetReferenceSpaces{configuration.referenceSpaces});
 	return initial;
 }
+
 static InspectionValue ReleaseSnapshot(const CommandRecordingOrigin& origin)
 {
 	std::vector<InspectionValue> scenarios;
@@ -249,6 +260,7 @@ static InspectionValue ReleaseSnapshot(const CommandRecordingOrigin& origin)
 		 {"initial_commands", InspectionValue::Array(ConfigurationCommands(origin.configuration, 4))},
 		 {"scenarios", InspectionValue::Array(std::move(scenarios))}});
 }
+
 InspectionValue SimulationOutcome(const CommandOutcome& outcome, bool includeCommands)
 {
 	std::vector<InspectionValue> commands;
@@ -300,6 +312,7 @@ InspectionValue SimulationOutcome(const CommandOutcome& outcome, bool includeCom
 		 {"late_policy", InspectionValue::Unsigned(static_cast<std::uint32_t>(outcome.transaction.latePolicy))},
 		 {"commands", InspectionValue::Array(std::move(commands))}});
 }
+
 InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool includeCommands,
 								std::optional<bool> trackerInteraction, std::span<const std::uint64_t> boundTrackers,
 								std::optional<std::array<std::string, 2>> controllerProfiles,
@@ -354,6 +367,7 @@ InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool incl
 	}
 	return InspectionValue::Object(std::move(fields));
 }
+
 InspectionValue SimulationRecording(const CommandRecording& recording)
 {
 	auto initial = ConfigurationCommands(recording.origin.configuration, recording.version);

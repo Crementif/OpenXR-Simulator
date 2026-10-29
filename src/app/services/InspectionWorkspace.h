@@ -16,11 +16,12 @@ struct InspectionCapture
 	control::Message metadata, document;
 	bool released = false;
 };
+
 // Owns historical CPU readers and revision documents. Remote capture identity is
 // always joined with its original epoch/session/generation, never a latest view.
 class InspectionWorkspace
 {
-  public:
+public:
 	explicit InspectionWorkspace(RuntimePanelRequests& requests);
 	void SetScope(PanelScope scope, bool clearSelection = true);
 	void SetCapacity(std::size_t capacity) noexcept;
@@ -44,7 +45,7 @@ class InspectionWorkspace
 	const control::Message* Revision(std::uint64_t id, std::uint64_t documentEpoch) const;
 	std::string TakeError();
 
-  private:
+private:
 	InspectionCapture* Find(std::uint64_t capture);
 	void ReleaseInspection(InspectionCapture& capture);
 	RuntimePanelRequests& m_requests;

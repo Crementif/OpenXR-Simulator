@@ -17,39 +17,45 @@ struct VulkanH264Picture
 // to this session; NV12 conversion is complete or ordered by the input semaphore.
 class VulkanVideoSession
 {
-  public:
+public:
 	VulkanVideoSession(std::shared_ptr<VulkanDevice> device, VkExtent2D extent);
 	~VulkanVideoSession();
 	VulkanVideoSession(const VulkanVideoSession&) = delete;
 	VulkanVideoSession& operator=(const VulkanVideoSession&) = delete;
+
 	VkImage Input() const noexcept
 	{
 		return m_input;
 	}
+
 	VkImage Output() const noexcept
 	{
 		return m_output;
 	}
+
 	VkExtent2D Extent() const noexcept
 	{
 		return m_extent;
 	}
+
 	VulkanH264Picture Encode(VkSemaphore inputReady = VK_NULL_HANDLE);
 	void Decode(const VulkanH264Picture& picture, VkSemaphore outputReady = VK_NULL_HANDLE);
 
-  private:
+private:
 	void Initialize();
 	void Destroy() noexcept;
 	void CreateSession(bool encode);
 	VkImage CreateImage(VkImageUsageFlags usage, bool encode, VkImageView& view);
 	void Begin(bool encode);
 	void Finish(bool encode, VkSemaphore wait, VkSemaphore signal);
+
 	struct FailedOwner
 	{
 		VulkanNativePreservation<FailedOwner, 4>::Reservation preservation{
 			"Four failed video sessions retain native resources"};
 		std::shared_ptr<VulkanDevice> device;
 	};
+
 	std::unique_ptr<FailedOwner> m_failedOwner;
 	bool m_uncertain = false;
 	std::shared_ptr<VulkanDevice> m_device;

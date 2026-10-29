@@ -16,7 +16,7 @@ class Clock;
 
 class Instance
 {
-  public:
+public:
 	Instance(XrInstance handle, std::span<const char* const> extensions, XrVersion apiVersion);
 	XrInstance Handle() const;
 	XrVersion ApiVersion() const;
@@ -27,7 +27,7 @@ class Instance
 	std::unique_ptr<Session> CreateSession(XrSession handle, std::shared_ptr<Instance> owner,
 										   std::shared_ptr<Clock> clock);
 
-  private:
+private:
 	XrInstance m_handle;
 	XrVersion m_apiVersion;
 	const EnabledExtensions m_extensions;

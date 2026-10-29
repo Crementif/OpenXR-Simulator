@@ -12,24 +12,29 @@ static unsigned Modifiers()
 	const auto& io = ImGui::GetIO();
 	return (io.KeyCtrl ? 1u : 0u) | (io.KeyShift ? 2u : 0u) | (io.KeyAlt ? 4u : 0u) | (io.KeySuper ? 8u : 0u);
 }
+
 static bool ButtonsDiffer(const ControllerControls& a, const ControllerControls& b)
 {
 	return a.primary != b.primary || a.secondary != b.secondary || a.menu != b.menu || a.thumbClick != b.thumbClick;
 }
+
 static bool ControlsDiffer(const ControllerControls& a, const ControllerControls& b)
 {
 	return ButtonsDiffer(a, b) || a.trigger != b.trigger || a.grip != b.grip || a.stick.x != b.stick.x ||
 		   a.stick.y != b.stick.y;
 }
+
 static bool AnyHeld(const ControllerControls& value)
 {
 	return value.primary || value.secondary || value.menu || value.thumbClick || value.trigger || value.grip ||
 		   value.stick.x || value.stick.y;
 }
+
 PilotController::PilotController(PlayerRig& rig) : m_rig(rig)
 {
 	Configure(m_keys, m_gamepad);
 }
+
 void PilotController::Configure(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag)
 {
 	if (m_remoteMouseDrag != remoteMouseDrag)
@@ -47,17 +52,20 @@ void PilotController::Configure(const PilotBindings& keys, const GamepadBindings
 			if (keys[action].key == ImGui::GetKeyName(static_cast<ImGuiKey>(key)))
 				m_resolved[action] = static_cast<ImGuiKey>(key);
 }
+
 bool PilotController::Down(PilotAction action) const
 {
 	const auto index = static_cast<std::size_t>(action);
 	return m_resolved[index] != ImGuiKey_None && (Modifiers() & m_keys[index].modifiers) == m_keys[index].modifiers &&
 		   ImGui::IsKeyDown(m_resolved[index]);
 }
+
 bool PilotController::Pressed(PilotAction action) const
 {
 	const auto index = static_cast<std::size_t>(action);
 	return Down(action) && ImGui::IsKeyPressed(m_resolved[index], false);
 }
+
 void PilotController::Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons)
 {
 	const bool wasActive =
@@ -97,6 +105,7 @@ void PilotController::Stop(Window* window, ManualInputController& input, bool di
 	m_handEdits = 0;
 	m_poseEngaged = false;
 }
+
 void PilotController::Submit(ManualInputController& input, const ObservedSetup& observed, bool poseChanged,
 							 const std::array<ControllerControls, 2>& controls, bool final)
 {
@@ -174,6 +183,7 @@ void PilotController::Submit(ManualInputController& input, const ObservedSetup& 
 	}
 	m_controls = controls;
 }
+
 void PilotController::Update(Window& window, ManualInputController& input, bool available, bool hovered,
 							 bool automaticGamepad)
 {
@@ -273,8 +283,7 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 			if (Pressed(action))
 				m_target = target;
 		const auto [dx, dy] = window.TakePointerMotion();
-		const auto axis = [&](PilotAction positive, PilotAction negative)
-		{
+		const auto axis = [&](PilotAction positive, PilotAction negative) {
 			return float(Down(positive)) - float(Down(negative));
 		};
 		XrVector3f velocity{axis(PilotAction::Right, PilotAction::Left), axis(PilotAction::Up, PilotAction::Down),

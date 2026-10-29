@@ -15,6 +15,7 @@ enum class ControllerHand
 	Left,
 	Right
 };
+
 struct ControllerLocalPose
 {
 	XrVector3f position{};
@@ -22,12 +23,14 @@ struct ControllerLocalPose
 	float pitch = 0;
 	float roll = 0;
 };
+
 struct ControllerHeadPose
 {
 	XrVector3f position{};
 	float yaw = 0;
 	float pitch = 0;
 };
+
 struct ControllerKeyboardHand
 {
 	bool trigger = false;
@@ -40,6 +43,7 @@ struct ControllerKeyboardHand
 	std::optional<bool> thumbClick;
 	XrVector2f stick{};
 };
+
 struct ControllerKeyboardSample
 {
 	bool active = false;
@@ -50,6 +54,7 @@ struct ControllerKeyboardSample
 	XrVector2f rotationDirection{}; // yaw, pitch
 	std::array<ControllerKeyboardHand, 2> hands;
 };
+
 struct ControllerPoseEdit
 {
 	ControllerHand hand = ControllerHand::Right;
@@ -67,19 +72,24 @@ enum class OverrideChange
 	Set,
 	Release
 };
-template <typename T> struct ControllerOverrideEdit
+
+template<typename T>
+struct ControllerOverrideEdit
 {
 	OverrideChange change = OverrideChange::Keep;
 	T value{};
+
 	static ControllerOverrideEdit Set(T value)
 	{
 		return {OverrideChange::Set, value};
 	}
+
 	static ControllerOverrideEdit Release()
 	{
 		return {OverrideChange::Release, {}};
 	}
 };
+
 struct ControllerHoldEdit
 {
 	std::optional<ControllerHand> hand; // missing selects both hands
@@ -96,6 +106,7 @@ struct ControllerHoldEdit
 	ControllerOverrideEdit<bool> menu;
 	ControllerOverrideEdit<bool> thumbClick;
 };
+
 struct ControllerMotionFrame
 {
 	double glideSeconds = 0;
@@ -104,39 +115,44 @@ struct ControllerMotionFrame
 	std::optional<ControllerPoseEdit> pose;
 	std::optional<ControllerHoldEdit> hold;
 };
+
 struct ControllerMotionSample
 {
 	ControllerLocalPose local;
 	XrPosef worldPose{};
 	ControllerControls controls;
 };
+
 struct ControllerMotionSnapshot
 {
 	std::array<ControllerMotionSample, 2> hands;
 	bool animationEnabled = false;
 };
+
 struct ControllerMotionResult
 {
 	ControllerMotionSnapshot snapshot;
 	std::optional<bool> animationToggle;
 };
+
 // Windows compatibility motion evaluator. Native polling submits one immutable
 // frame value; readers see the previous or the fully updated two-hand sample.
 // Keyboard/file polling and shared scheduled simulation ownership stay outside.
 class LegacyControllerMotion
 {
-  public:
+public:
 	LegacyControllerMotion();
 	ControllerMotionResult Update(const ControllerMotionFrame& frame);
 	ControllerMotionSnapshot Snapshot() const;
 	ControllerMotionSnapshot Snapshot(ControllerHeadPose head) const;
 
-  private:
+private:
 	struct Controller
 	{
 		ControllerLocalPose local;
 		ControllerControls controls;
 	};
+
 	struct Glide
 	{
 		bool active = false;
@@ -145,6 +161,7 @@ class LegacyControllerMotion
 		double startSeconds = 0;
 		double durationSeconds = 0;
 	};
+
 	struct Hold
 	{
 		std::optional<float> trigger;
@@ -159,6 +176,7 @@ class LegacyControllerMotion
 		std::optional<bool> menu;
 		std::optional<bool> thumbClick;
 	};
+
 	static std::size_t HandIndex(ControllerHand hand);
 	static XrPosef WorldPose(ControllerLocalPose local, ControllerHeadPose head);
 	static void Trigger(Controller& controller, float value);

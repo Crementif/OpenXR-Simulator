@@ -5,30 +5,36 @@ namespace simxr
 {
 class VulkanArchivedFrame final : public ArchivedFrame
 {
-  public:
+public:
 	std::shared_ptr<VulkanVideoHistory> codec;
 	VulkanH264Picture picture;
 	VkExtent2D extent{};
 	std::uint32_t layers = 0;
 	VkExtent2D coded{};
+
 	std::shared_ptr<const ArchivedFrame> Black() const override
 	{
 		return codec->Black(extent, layers);
 	}
+
 	H264Frame Video() const noexcept override
 	{
 		return {picture.bytes, coded.width, coded.height};
 	}
+
 	std::vector<FrameView> views;
+
 	std::uint64_t Bytes() const noexcept override
 	{
 		return sizeof(*this) + picture.bytes.capacity() + views.capacity() * sizeof(FrameView);
 	}
+
 	std::shared_ptr<const FrameOutput> Decode(const FramePool& budget) const override
 	{
 		return codec->Decode(picture, extent, layers, views, budget);
 	}
 };
+
 void VulkanVideoHistory::Configure(VkExtent2D extent, std::uint32_t layers)
 {
 	// Padding also admits small probe/previews on encoders with larger minima.
@@ -40,6 +46,7 @@ void VulkanVideoHistory::Configure(VkExtent2D extent, std::uint32_t layers)
 		m_conversion = std::make_unique<VulkanVideoConversion>(m_device, coded);
 	}
 }
+
 std::shared_ptr<const ArchivedFrame> VulkanVideoHistory::Encode(std::shared_ptr<const VulkanInspectionFrame> source)
 {
 	std::lock_guard lock(m_mutex);
@@ -53,6 +60,7 @@ std::shared_ptr<const ArchivedFrame> VulkanVideoHistory::Encode(std::shared_ptr<
 	result->coded = m_conversion->Extent();
 	return result;
 }
+
 std::shared_ptr<const ArchivedFrame> VulkanVideoHistory::Black(VkExtent2D extent, std::uint32_t layers)
 {
 	std::lock_guard lock(m_mutex);
@@ -65,6 +73,7 @@ std::shared_ptr<const ArchivedFrame> VulkanVideoHistory::Black(VkExtent2D extent
 	result->coded = m_conversion->Extent();
 	return result;
 }
+
 std::shared_ptr<const FrameOutput> VulkanVideoHistory::Decode(const VulkanH264Picture& picture, VkExtent2D extent,
 															  std::uint32_t layers, std::span<const FrameView> views,
 															  const FramePool& budget)

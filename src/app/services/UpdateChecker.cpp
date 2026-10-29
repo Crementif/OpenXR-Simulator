@@ -8,11 +8,10 @@ namespace simxr::app
 bool ValidReleaseRepository(std::string_view repository)
 {
 	const auto slash = repository.find('/');
-	if (slash == 0 || slash == std::string_view::npos || slash + 1 == repository.size() ||
-		repository.size() > 150 || repository.find('/', slash + 1) != std::string_view::npos)
+	if (slash == 0 || slash == std::string_view::npos || slash + 1 == repository.size() || repository.size() > 150 ||
+		repository.find('/', slash + 1) != std::string_view::npos)
 		return false;
-	const auto valid = [](char character, bool owner)
-	{
+	const auto valid = [](char character, bool owner) {
 		return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
 			   (character >= '0' && character <= '9') || character == '-' ||
 			   (!owner && (character == '_' || character == '.'));
@@ -21,6 +20,7 @@ bool ValidReleaseRepository(std::string_view repository)
 		   std::ranges::all_of(repository.substr(slash + 1), [&](char c) { return valid(c, false); }) &&
 		   repository.substr(slash + 1) != "." && repository.substr(slash + 1) != "..";
 }
+
 static std::array<std::uint32_t, 3> ReleaseVersion(std::string_view text)
 {
 	if (text.starts_with('v'))
@@ -41,6 +41,7 @@ static std::array<std::uint32_t, 3> ReleaseVersion(std::string_view text)
 	}
 	return version;
 }
+
 UpdateResult ParseRelease(std::string_view repository, std::string_view current, std::string_view response)
 {
 	if (!ValidReleaseRepository(repository))
@@ -48,27 +49,28 @@ UpdateResult ParseRelease(std::string_view repository, std::string_view current,
 	if (response.size() > 1024 * 1024)
 		throw std::runtime_error("Release response is too large");
 	const auto json = nlohmann::json::parse(response);
-	if (!json.is_object() || !json.contains("tag_name") || !json["tag_name"].is_string() ||
-		!json.contains("draft") || !json["draft"].is_boolean() || json["draft"].get<bool>() ||
-		!json.contains("prerelease") || !json["prerelease"].is_boolean() || json["prerelease"].get<bool>())
+	if (!json.is_object() || !json.contains("tag_name") || !json["tag_name"].is_string() || !json.contains("draft") ||
+		!json["draft"].is_boolean() || json["draft"].get<bool>() || !json.contains("prerelease") ||
+		!json["prerelease"].is_boolean() || json["prerelease"].get<bool>())
 		throw std::runtime_error("GitHub did not return a published stable release");
 	const auto tag = json["tag_name"].get<std::string>();
 	const auto latest = ReleaseVersion(tag);
 	const auto installed = ReleaseVersion(current);
 	if (latest <= installed)
 		return {UpdateStatus::Current};
-	return {UpdateStatus::Available, tag,
-			"https://github.com/" + std::string(repository) + "/releases/tag/" + tag};
+	return {UpdateStatus::Available, tag, "https://github.com/" + std::string(repository) + "/releases/tag/" + tag};
 }
+
 UpdateChecker::UpdateChecker(std::string repository, std::string version, Fetch fetch)
 	: m_repository(std::move(repository)), m_version(std::move(version)), m_fetch(std::move(fetch))
-{
-}
+{}
+
 UpdateChecker::~UpdateChecker()
 {
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 void UpdateChecker::Start()
 {
 	if (m_state.status == UpdateStatus::Checking)
@@ -84,8 +86,7 @@ void UpdateChecker::Start()
 	m_done.store(false, std::memory_order_relaxed);
 	try
 	{
-		m_worker = std::thread([this]
-		{
+		m_worker = std::thread([this] {
 			UpdateResult result;
 			try
 			{
@@ -111,6 +112,7 @@ void UpdateChecker::Start()
 		m_state = {UpdateStatus::Unavailable, {}, {}, error.what()};
 	}
 }
+
 bool UpdateChecker::Poll()
 {
 	if (!m_done.load(std::memory_order_acquire))
@@ -123,6 +125,7 @@ bool UpdateChecker::Poll()
 	m_done.store(false, std::memory_order_relaxed);
 	return true;
 }
+
 const UpdateResult& UpdateChecker::State() const noexcept
 {
 	return m_state;

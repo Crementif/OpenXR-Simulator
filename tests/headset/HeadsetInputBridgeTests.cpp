@@ -78,8 +78,7 @@ static void NeutralRestart(std::optional<BodyJointSet> bodySet = {}, bool forwar
 			body.requestedTime = -1;
 	}
 	input.hands[0].controls.primary = true;
-	const auto publish = [&]
-	{
+	const auto publish = [&] {
 		const auto now = ReadNativeClockSample();
 		Require(bridge.Publish(input, now.domain, now.nanoseconds, now.nanoseconds + 10000000,
 							   input.body && input.body->returnedTime
@@ -136,8 +135,7 @@ static void NeutralRestart(std::optional<BodyJointSet> bodySet = {}, bool forwar
 						"Transport changed the independently converted body sample age");
 			const auto tracked = *input.body;
 			const auto bodyOwner = applied->owners[static_cast<std::size_t>(ControlChannel::Body)];
-			const auto publishBoundary = [&]
-			{
+			const auto publishBoundary = [&] {
 				const auto expected = bridge.Status().sent + 1;
 				publish();
 				while (bridge.Status().sent < expected && bridge.Status().phase == headset::HeadsetInputPhase::Ready &&
@@ -160,10 +158,7 @@ static void NeutralRestart(std::optional<BodyJointSet> bodySet = {}, bool forwar
 			Require(unfocused->owners[static_cast<std::size_t>(ControlChannel::Body)] == bodyOwner && unavailable &&
 						!unavailable->located && !unavailable->active && !unavailable->skeleton &&
 						std::all_of(unavailable->joints.begin(), unavailable->joints.end(),
-									[](const auto& joint)
-									{
-										return !joint || !joint->flags;
-									}),
+									[](const auto& joint) { return !joint || !joint->flags; }),
 					"Focus loss fabricated a body fallback or retained previously valid joints");
 			input.focused = input.controlsReady = true;
 			input.body = tracked;
@@ -188,6 +183,7 @@ static void NeutralRestart(std::optional<BodyJointSet> bodySet = {}, bool forwar
 	server.Close();
 	session->Close();
 }
+
 static void Forwarding()
 {
 	ExtensionRegistry extensions{SimulationExtensions()};
@@ -210,8 +206,7 @@ static void Forwarding()
 			.string();
 	control::LocalControlServer server(service, endpoint);
 	std::uint64_t frame = 0;
-	const auto tick = [&]
-	{
+	const auto tick = [&] {
 		++frame;
 		session->Commands().Apply({frame}, {Duration{static_cast<std::int64_t>(frame) * 1000000}},
 								  {config.epoch.value + Duration{static_cast<std::int64_t>(frame) * 1000000}}, {}, {},
@@ -439,8 +434,7 @@ static void Forwarding()
 						controls.trackpad.y == .8f && controls.trackpadForce == .9f && controls.trackpadTouch,
 					"Physical analog, button and touch observations reach runtime controls");
 			const auto firstTracker = trackers.front().identity;
-			const auto publishTrackers = [&](const headset::HeadsetInputSample& changed)
-			{
+			const auto publishTrackers = [&](const headset::HeadsetInputSample& changed) {
 				const auto sent = bridge.Status().sent;
 				const auto stamp = ReadNativeClockSample();
 				Require(bridge.Publish(changed, stamp.domain, stamp.nanoseconds, stamp.nanoseconds + 10000000),
@@ -542,6 +536,7 @@ static void Forwarding()
 	session->Close();
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

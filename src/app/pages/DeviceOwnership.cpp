@@ -12,18 +12,21 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawAdvanced()
 	DrawOwnership();
 	return std::exchange(m_edit, {});
 }
+
 std::optional<SimulationEdit> DeviceControlPanel::DrawSessionMenu()
 {
 	m_edit.reset();
 	m_continuousEdit = false;
 	const bool ready = m_observed && m_configurationLoaded;
 	ImGui::BeginDisabled(!ready || !CanControl(ControlChannel::Session));
+
 	struct Toggle
 	{
 		FailureScenario scenario;
 		const char* label;
 		const char* tooltip;
 	};
+
 	static constexpr Toggle toggles[]{
 		{FailureScenario::Unfocused, "Unfocused", "The app loses input focus, as when a system menu opens"},
 		{FailureScenario::Hidden, "Hidden", "The app is not visible, as when the headset is taken off"}};
@@ -44,6 +47,7 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawSessionMenu()
 	ImGui::EndDisabled();
 	return std::exchange(m_edit, {});
 }
+
 void DeviceControlPanel::DrawOwnership()
 {
 	ImGui::Text("Target frame");
@@ -66,6 +70,7 @@ void DeviceControlPanel::DrawOwnership()
 		m_edit = ReleaseManualInputs{};
 	ImGui::TextUnformatted("Input sources");
 }
+
 void DeviceControlPanel::DrawTracking(DevicePage page)
 {
 	std::optional<FailureScenario> lost, off;
@@ -95,8 +100,7 @@ void DeviceControlPanel::DrawTracking(DevicePage page)
 	case DevicePage::Player:
 		return;
 	}
-	const auto active = [&](std::optional<FailureScenario> scenario)
-	{
+	const auto active = [&](std::optional<FailureScenario> scenario) {
 		return scenario && m_observed && m_observed->scenarios[static_cast<std::size_t>(*scenario)];
 	};
 	static constexpr const char* tracked[] = {"Tracked", "Lost", "Off"};
@@ -127,8 +131,8 @@ void DeviceControlPanel::DrawTracking(DevicePage page)
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 	{
 		const char* hint = !m_configurationLoaded ? "Waiting for runtime values."
-						 : !ready ? "Another source controls this device."
-								  : "Change connection and tracking state.";
+						   : !ready				  ? "Another source controls this device."
+												  : "Change connection and tracking state.";
 		ImGui::SetTooltip("%s. %s", labels[current], hint);
 	}
 	int choice = -1;
@@ -156,6 +160,7 @@ void DeviceControlPanel::DrawTracking(DevicePage page)
 	commands.emplace_back(SetScenario{*off, choice == last});
 	Apply(std::move(commands));
 }
+
 void DeviceControlPanel::DrawOwner(ControlChannel channel, bool takeover)
 {
 	if (!m_observed)

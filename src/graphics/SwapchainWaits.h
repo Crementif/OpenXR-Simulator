@@ -10,16 +10,16 @@ namespace simxr
 {
 class SwapchainWaits
 {
-  public:
+public:
 	class Registration
 	{
-	  public:
+	public:
 		Registration(Registration&& other) noexcept;
 		~Registration();
 		Registration(const Registration&) = delete;
 		Registration& operator=(const Registration&) = delete;
 
-	  private:
+	private:
 		friend class SwapchainWaits;
 		explicit Registration(SwapchainWaits& owner);
 		SwapchainWaits* m_owner;
@@ -29,7 +29,7 @@ class SwapchainWaits
 	void Close();
 	bool Drain(std::chrono::nanoseconds timeout);
 
-  private:
+private:
 	void Leave();
 	std::mutex m_mutex;
 	std::condition_variable m_changed;

@@ -19,35 +19,36 @@ void CheckNotices(Interaction& test)
 {
 	Notices notices;
 	unsigned opened = 0, replaced = 0;
-	notices.Push({"A saved take is ready", "A long description stays in the tooltip and notice history", "Play", [&]
-	{
-		++opened;
-		notices.Push({"Opened", "The action replaced its own notice collection"});
-	}});
-	test.extraDraw = [&] { notices.Draw({70, 80, 300, 240}); };
+	notices.Push({"A saved take is ready", "A long description stays in the tooltip and notice history", "Play", [&] {
+					  ++opened;
+					  notices.Push({"Opened", "The action replaced its own notice collection"});
+				  }});
+	test.extraDraw = [&] {
+		notices.Draw({70, 80, 300, 240});
+	};
 	test.Frame();
 	test.Frame();
 	auto* window = FindPanel("##Notices");
 	Require(window && window->Pos.x >= 70 && window->Pos.x + window->Size.x <= 370,
-		"Notice escaped the preview's width");
+			"Notice escaped the preview's width");
 	if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "bounded-notice.bmp");
 		test.Frame();
 	}
-	const auto activate = [&](unsigned id, const char* label)
-	{
+	const auto activate = [&](unsigned id, const char* label) {
 		ImGui::ActivateItemByID(ImHashStr(label, 0, window->GetID(std::to_string(id).c_str())));
 		test.Frame();
 	};
 	activate(1, "Play");
 	Require(opened == 1 && notices.Latest() && notices.Latest()->title == "Opened",
-		"Notice action could not safely replace its own entries");
+			"Notice action could not safely replace its own entries");
 	notices.Push({"Unavailable action", "", "Open", [] { throw std::runtime_error("No longer available"); }});
 	test.Frame();
 	activate(3, "Open");
 	Require(notices.Latest() && notices.Latest()->title == "Action failed" &&
-			notices.Latest()->detail == "No longer available", "Notice action failure escaped or lost its explanation");
+				notices.Latest()->detail == "No longer available",
+			"Notice action failure escaped or lost its explanation");
 	notices.Push({"Replacement", "", "Open", [&] { ++opened; }});
 	test.Frame();
 	const auto old = ImHashStr("Open", 0, window->GetID("5"));
@@ -80,8 +81,7 @@ void CheckTimelineCanvas(Interaction& test)
 	TimelineGesture selected, lastGesture;
 	ImVec2 point, clipPoint, markerPoint, snapshotPoint, outsidePoint;
 	int plays = 0, otherPlays = 0, pins = 0, selections = 0;
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		if (!visible)
 			return;
 		ImGui::SetNextWindowPos({30, 170}, ImGuiCond_Always);
@@ -100,11 +100,12 @@ void CheckTimelineCanvas(Interaction& test)
 		const auto bounds = canvas.Bounds();
 		const auto range = canvas.VisibleRange();
 		clipPoint = {bounds.x + float((200 - range.first) / (range.second - range.first)) * bounds.width + 5,
-			bounds.y + canvas.TransportRect().height + 5};
+					 bounds.y + canvas.TransportRect().height + 5};
 		const float scale = ImGui::GetFontSize() / 16;
 		markerPoint = {bounds.x + bounds.width * .8f, bounds.y + canvas.TransportRect().height - 5 * scale};
-		snapshotPoint = {bounds.x + std::floor(float((history.At(49999).seconds - range.first) /
-			(range.second - range.first)) * bounds.width),
+		snapshotPoint = {
+			bounds.x + std::floor(float((history.At(49999).seconds - range.first) / (range.second - range.first)) *
+								  bounds.width),
 			bounds.y + canvas.TransportRect().height + (bounds.height - canvas.TransportRect().height) / 2};
 		outsidePoint = {bounds.x - 12, point.y};
 		if (canvas.DrawClip("Saved take", 200, 250, "Saved take", false, true) == ClipHit::Play)
@@ -170,13 +171,11 @@ void CheckTimelineCanvas(Interaction& test)
 	test.Frame();
 	Require(selected.marker.has_value(), "M did not mark the hovered timeline frame");
 
-	const auto move = [&](ImVec2 position)
-	{
+	const auto move = [&](ImVec2 position) {
 		ImGui::GetIO().AddMousePosEvent(position.x, position.y);
 		test.Frame();
 	};
-	const auto button = [&](bool down)
-	{
+	const auto button = [&](bool down) {
 		ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, down);
 		test.Frame();
 	};
@@ -195,7 +194,7 @@ void CheckTimelineCanvas(Interaction& test)
 	move(snapshotPoint);
 	button(false);
 	Require(pins == 0 && selections == beforeOutside,
-		"Releasing an outside press over a snapshot pinned or selected it");
+			"Releasing an outside press over a snapshot pinned or selected it");
 	test.Click(snapshotPoint);
 	Require(pins == 1, "Owned snapshot click did not pin its frame");
 
@@ -251,8 +250,7 @@ void CheckTimelineCanvas(Interaction& test)
 
 	HistoryStore ghosts{16};
 	const auto appendGhost = [&](std::uint64_t run, std::uint64_t frame, double seconds, std::uint32_t flags,
-		std::uint8_t hand)
-	{
+								 std::uint8_t hand) {
 		HistoryFrame sample{{41, run, frame}, 3, 0, seconds, 11.11f, flags};
 		sample.hands[0] = hand;
 		ghosts.Append(sample);
@@ -273,9 +271,9 @@ void CheckTimelineCanvas(Interaction& test)
 	HistoryStore denseGhosts{6};
 	for (std::uint64_t frame = 0; frame < 6; ++frame)
 	{
-		HistoryFrame sample{{1, frame < 3 ? 1U : 2U, frame < 3 ? frame + 1 : frame + 97}, 1, 0,
-			frame < 3 ? double(frame) : 10 + double(frame - 3) * .0000001, 11.11f,
-			frame < 3 ? 0U : HistoryDriven};
+		HistoryFrame sample{
+			{1, frame < 3 ? 1U : 2U, frame < 3 ? frame + 1 : frame + 97},  1,	   0,
+			frame < 3 ? double(frame) : 10 + double(frame - 3) * .0000001, 11.11f, frame < 3 ? 0U : HistoryDriven};
 		sample.hands[0] = frame == 1 ? 255 : 64;
 		denseGhosts.Append(sample);
 	}
@@ -285,8 +283,7 @@ void CheckTimelineCanvas(Interaction& test)
 	ShellRect ghostBounds;
 	std::pair<double, double> ghostRange;
 	float ghostScale = 1;
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::SetNextWindowPos({30, 170}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({740, 240}, ImGuiCond_Always);
 		ImGui::Begin("Timeline ghost interaction");
@@ -297,8 +294,7 @@ void CheckTimelineCanvas(Interaction& test)
 		ghostScale = ImGui::GetFontSize() / 16;
 		auto* draw = ImGui::GetWindowDrawList();
 		const auto capture = [&](const HistoryStore& samples, std::size_t sourceLast, std::size_t targetFirst,
-			std::size_t targetLast)
-		{
+								 std::size_t targetLast) {
 			const int first = draw->VtxBuffer.Size;
 			ghostCanvas.DrawGhost(samples, 0, sourceLast, targetFirst, targetLast);
 			std::vector<ImVec2> points;
@@ -316,26 +312,23 @@ void CheckTimelineCanvas(Interaction& test)
 		ImGui::End();
 	};
 	test.Frame();
-	const auto painted = [&](const std::vector<ImVec2>& points, double seconds)
-	{
-		const float x = ghostBounds.x + float((seconds - ghostRange.first) /
-			(ghostRange.second - ghostRange.first)) * ghostBounds.width;
-		return std::any_of(points.begin(), points.end(), [&](ImVec2 point)
-		{
-			return std::abs(point.x - x) < 4 * ghostScale;
-		});
+	const auto painted = [&](const std::vector<ImVec2>& points, double seconds) {
+		const float x = ghostBounds.x + float((seconds - ghostRange.first) / (ghostRange.second - ghostRange.first)) *
+											ghostBounds.width;
+		return std::any_of(points.begin(), points.end(),
+						   [&](ImVec2 point) { return std::abs(point.x - x) < 4 * ghostScale; });
 	};
 	Require(painted(boundedGhost, 10) && painted(boundedGhost, 13) && !painted(boundedGhost, 15),
-		"Replay ghost ignored its inclusive completion endpoint");
+			"Replay ghost ignored its inclusive completion endpoint");
 	Require(!painted(scopedGhost, 11) && !painted(scopedGhost, 12),
-		"Replay ghost compressed missing source or target frames");
+			"Replay ghost compressed missing source or target frames");
 	Require(painted(scopedGhost, 10) && painted(scopedGhost, 13) && painted(scopedGhost, 15) &&
-		!painted(scopedGhost, 14) && !painted(scopedGhost, 16) && !painted(scopedGhost, 17),
-		"Replay ghost crossed released input or the original run segment");
+				!painted(scopedGhost, 14) && !painted(scopedGhost, 16) && !painted(scopedGhost, 17),
+			"Replay ghost crossed released input or the original run segment");
 	Require(painted(sourceBoundGhost, 13) && !painted(sourceBoundGhost, 15),
-		"Replay ghost exceeded the take's inclusive source endpoint");
+			"Replay ghost exceeded the take's inclusive source endpoint");
 	Require(!denseDrivenGhost.empty() && denseReleasedGhost.empty(),
-		"A dense replay ghost hid driven input or included a released frame");
+			"A dense replay ghost hid driven input or included a released frame");
 	std::cout << "PASS replay ghost frame gaps, completion bounds and input release\n";
 	test.extraDraw = {};
 	test.Frame();
@@ -354,26 +347,23 @@ void CheckPreferences(Interaction& test)
 	unsigned closed = 0;
 	ImVec2 closeMinimum, closeMaximum;
 	test.workspace.SetScale(1);
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::Begin("Preferences fixture");
 		if (visible)
 		{
-			closed += dialog.Draw(settings, open, dirty, 64ULL << 20, 512ULL << 20, 32ULL << 20, 1024ULL << 20,
-								  {}, 0, 0, &mcp, &update);
+			closed += dialog.Draw(settings, open, dirty, 64ULL << 20, 512ULL << 20, 32ULL << 20, 1024ULL << 20, {}, 0,
+								  0, &mcp, &update);
 			closeMinimum = ImGui::GetItemRectMin();
 			closeMaximum = ImGui::GetItemRectMax();
 		}
 		ImGui::End();
 	};
-	const auto pump = [&]
-	{
+	const auto pump = [&] {
 		test.Frame();
 		test.Frame();
 	};
 	auto& io = ImGui::GetIO();
-	const auto tap = [&](ImGuiKey key)
-	{
+	const auto tap = [&](ImGuiKey key) {
 		io.AddKeyEvent(key, true);
 		test.Frame();
 		io.AddKeyEvent(key, false);
@@ -381,8 +371,7 @@ void CheckPreferences(Interaction& test)
 	};
 	pump();
 	const int action = static_cast<int>(PilotAction::Forward);
-	const auto contentsWindow = []() -> ImGuiWindow*
-	{
+	const auto contentsWindow = []() -> ImGuiWindow* {
 		for (auto* window : ImGui::GetCurrentContext()->Windows)
 			if (window->Active && window->ParentWindow == FindPanel("Workspace settings") &&
 				std::string_view(window->Name).find("/Preference contents_") != std::string_view::npos)
@@ -422,20 +411,19 @@ void CheckPreferences(Interaction& test)
 		std::cout << "PASS typed history budget and rendered preferences\n";
 		return;
 	}
-	const auto capture = [&](const char* step)
-	{
+	const auto capture = [&](const char* step) {
 		auto* contents = contentsWindow();
 		if (!contents || !contents->Active)
 		{
 			const auto* context = ImGui::GetCurrentContext();
 			const auto* modal = FindPanel("Workspace settings");
 			std::cout << "Preferences content missing before " << step << ": open=" << open << " visible=" << visible
-				<< " closed=" << closed << " focusLost=" << io.AppFocusLost
-				<< " active=" << context->ActiveId << " nav=" << context->NavId
-				<< " modalActive=" << (modal && modal->Active) << " popups=" << context->OpenPopupStack.Size << '\n';
+					  << " closed=" << closed << " focusLost=" << io.AppFocusLost << " active=" << context->ActiveId
+					  << " nav=" << context->NavId << " modalActive=" << (modal && modal->Active)
+					  << " popups=" << context->OpenPopupStack.Size << '\n';
 			const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR");
 			const auto image = (directory ? std::filesystem::path(directory) : std::filesystem::temp_directory_path()) /
-				"preferences-content-failure.bmp";
+							   "preferences-content-failure.bmp";
 			test.renderer.RequestScreenshot(image);
 			test.Frame();
 			test.renderer.WaitIdle();
@@ -446,8 +434,7 @@ void CheckPreferences(Interaction& test)
 		ImGui::ActivateItemByID(ImHashStr("###Binding", 0, row));
 		pump();
 	};
-	const auto tab = [&](const char* name)
-	{
+	const auto tab = [&](const char* name) {
 		auto* contents = contentsWindow();
 		Require(contents, "Preferences content missing for tab selection");
 		ImGui::ActivateItemByID(ImHashStr(name, 0, contents->GetID("Preference pages")));
@@ -472,12 +459,15 @@ void CheckPreferences(Interaction& test)
 			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "update-offline.bmp");
 			test.Frame();
 		}
-		const auto resize = [&](int width, int height)
-		{
+		const auto resize = [&](int width, int height) {
 			const auto rebuilds = test.renderer.RebuildCount();
 			test.window.Resize(width, height);
-			Eventually([&] { test.Frame(); return test.renderer.RebuildCount() > rebuilds; },
-					   "Update preferences resize did not rebuild the swapchain");
+			Eventually(
+				[&] {
+					test.Frame();
+					return test.renderer.RebuildCount() > rebuilds;
+				},
+				"Update preferences resize did not rebuild the swapchain");
 		};
 		resize(760, 600);
 		pump();
@@ -526,8 +516,7 @@ void CheckPreferences(Interaction& test)
 		tab("MCP");
 		auto* contents = contentsWindow();
 		const auto mcpTab = ImHashStr("MCP", 0, contents->GetID("Preference pages"));
-		const auto activate = [&](const char* name)
-		{
+		const auto activate = [&](const char* name) {
 			ImGui::ActivateItemByID(ImHashStr(name, 0, mcpTab));
 			pump();
 		};
@@ -562,7 +551,8 @@ void CheckPreferences(Interaction& test)
 		clipboard = SDL_GetClipboardText();
 		std::string codexClipboard = clipboard ? clipboard : "";
 		// The native Windows clipboard adds CR to text line endings.
-		for (auto offset = codexClipboard.find("\r\n"); offset != std::string::npos; offset = codexClipboard.find("\r\n", offset))
+		for (auto offset = codexClipboard.find("\r\n"); offset != std::string::npos;
+			 offset = codexClipboard.find("\r\n", offset))
 			codexClipboard.erase(offset, 1);
 		Require(clipboard && mcp.codexConfiguration == codexClipboard, "Codex configuration was not copied correctly");
 		SDL_free(clipboard);
@@ -602,7 +592,7 @@ void CheckPreferences(Interaction& test)
 	io.AddKeyEvent(ImGuiKey_LeftCtrl, true);
 	test.Frame();
 	Require(settings.pilotBindings[action] == DefaultPilotBindings()[action] && !dirty,
-		"Modifier press finished a binding before its chord key");
+			"Modifier press finished a binding before its chord key");
 	tap(ImGuiKey_K);
 	io.AddKeyEvent(ImGuiKey_LeftCtrl, false);
 	io.AddKeyEvent(ImGuiMod_Ctrl, false);
@@ -612,12 +602,12 @@ void CheckPreferences(Interaction& test)
 	{
 		const auto* context = ImGui::GetCurrentContext();
 		std::cout << "Preferences capture failure: open=" << open << " focusLost=" << io.AppFocusLost
-			<< " active=" << context->ActiveId << " nav=" << context->NavId
-			<< " mouse=" << io.MousePos.x << ',' << io.MousePos.y << " down=" << io.MouseDown[0]
-			<< " binding=" << PilotBindingLabel(settings.pilotBindings[action]) << "\n";
+				  << " active=" << context->ActiveId << " nav=" << context->NavId << " mouse=" << io.MousePos.x << ','
+				  << io.MousePos.y << " down=" << io.MouseDown[0]
+				  << " binding=" << PilotBindingLabel(settings.pilotBindings[action]) << "\n";
 		const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR");
 		const auto image = (directory ? std::filesystem::path(directory) : std::filesystem::temp_directory_path()) /
-			"preferences-failure.bmp";
+						   "preferences-failure.bmp";
 		test.renderer.RequestScreenshot(image);
 		test.Frame();
 		test.renderer.WaitIdle();
@@ -631,7 +621,7 @@ void CheckPreferences(Interaction& test)
 	io.AddKeyEvent(ImGuiMod_Shift, false);
 	test.Frame();
 	Require(settings.pilotBindings[action] == PilotBinding{"RightShift", 0},
-		"A modifier-only binding did not finish on release");
+			"A modifier-only binding did not finish on release");
 	const auto bindings = settings.pilotBindings;
 	dirty = false;
 	capture("tab cancellation");
@@ -674,8 +664,8 @@ void CheckPreferences(Interaction& test)
 	tab("Gamepad");
 	const auto* viewport = ImGui::GetMainViewport();
 	Require(closeMinimum.y >= viewport->WorkPos.y && closeMaximum.y <= viewport->WorkPos.y + viewport->WorkSize.y &&
-		closeMaximum.x <= viewport->WorkPos.x + viewport->WorkSize.x,
-		"Enlarged Preferences put Close outside the visible viewport");
+				closeMaximum.x <= viewport->WorkPos.x + viewport->WorkSize.x,
+			"Enlarged Preferences put Close outside the visible viewport");
 	if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "preferences-enlarged.bmp");
@@ -694,40 +684,33 @@ void CheckTimelineWorkflow(Interaction& test)
 {
 	test.workspace.SetScale(1);
 	test.workspace.Select(FrameSel{});
-	const auto activate = [&](const char* label)
-	{
+	const auto activate = [&](const char* label) {
 		auto* timeline = FindPanel("Timeline");
 		Require(timeline != nullptr, "Timeline missing");
 		ImGui::ActivateItemByID(timeline->GetID(label));
 		test.Frame();
 	};
-	const auto await = [&](auto predicate, const char* failure)
-	{
+	const auto await = [&](auto predicate, const char* failure) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 		do
 		{
 			test.Frame();
 			if (predicate(test.runtime.Snapshot()))
 				return;
-		} while (std::chrono::steady_clock::now() < deadline);
+		}
+		while (std::chrono::steady_clock::now() < deadline);
 		throw std::runtime_error(failure);
 	};
 	test.Frame();
 	activate("Pause");
-	await(
-		[](const auto& state)
-		{
-			return state.manual && !state.operationPending;
-		},
-		"Timeline pause failed");
+	await([](const auto& state) { return state.manual && !state.operationPending; }, "Timeline pause failed");
 	RuntimeView earlier;
 	for (int step = 0; step < 3; ++step)
 	{
 		const auto previous = test.runtime.Snapshot().selectedCapture;
 		activate("Step forward");
 		await(
-			[&](const auto& state)
-			{
+			[&](const auto& state) {
 				return !state.operationPending && state.selectedReady && state.selectedCapture != previous &&
 					   state.inspectedFrame == state.selectedFrame;
 			},
@@ -738,8 +721,7 @@ void CheckTimelineWorkflow(Interaction& test)
 	const auto newest = test.runtime.Snapshot();
 	Require(newest.time.following, "Next frame stopped following the paused live edge");
 	await(
-		[&](const auto&)
-		{
+		[&](const auto&) {
 			return test.runtime.History().Find(earlier.selectedIdentity, earlier.selectedEpoch).has_value() &&
 				   test.runtime.History().Find(newest.selectedIdentity, newest.selectedEpoch).has_value();
 		},
@@ -755,7 +737,8 @@ void CheckTimelineWorkflow(Interaction& test)
 	test.Frame();
 	const auto& beforeZoom = test.workspace.State();
 	const auto latestIndex = *test.runtime.History().Find(newest.selectedIdentity, newest.selectedEpoch);
-	const double snapshotSpan = test.runtime.History().At(latestIndex).seconds - test.runtime.History().At(index).seconds;
+	const double snapshotSpan =
+		test.runtime.History().At(latestIndex).seconds - test.runtime.History().At(index).seconds;
 	const double wantedSpan = std::max(.2, snapshotSpan * 1.5);
 	const double visibleSpan = beforeZoom.timeline.last - beforeZoom.timeline.first;
 	ImGui::GetIO().AddMouseWheelEvent(0, static_cast<float>(std::log(visibleSpan / wantedSpan) / std::log(1.5)));
@@ -763,15 +746,14 @@ void CheckTimelineWorkflow(Interaction& test)
 	test.Frame();
 	const auto& shell = test.workspace.State();
 	const double seconds = test.runtime.History().At(index).seconds;
-	const float x =
-		shell.timelineCanvas.x +
-		float((seconds - shell.timeline.first) / (shell.timeline.last - shell.timeline.first)) * shell.timelineCanvas.width;
+	const float x = shell.timelineCanvas.x +
+					float((seconds - shell.timeline.first) / (shell.timeline.last - shell.timeline.first)) *
+						shell.timelineCanvas.width;
 	Require(x >= shell.timelineCanvas.x && x <= shell.timelineCanvas.x + shell.timelineCanvas.width,
 			"Earlier snapshot not visible after timeline zoom");
 	test.Click({x, shell.timelineCanvas.y + shell.timelineCanvas.height * .35f});
 	await(
-		[&](const auto& state)
-		{
+		[&](const auto& state) {
 			return state.manual && !state.time.following && state.selectedFrame == earlier.selectedFrame &&
 				   state.selectedReady && state.inspectedFrame == earlier.selectedFrame;
 		},
@@ -834,8 +816,7 @@ void CheckTimelineWorkflow(Interaction& test)
 	}
 	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
-		const auto setPath = [&](const std::filesystem::path& destination)
-		{
+		const auto setPath = [&](const std::filesystem::path& destination) {
 			ImGui::ActivateItemByID(inspector->GetID("##Range export file"));
 			ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
 			test.Frame();
@@ -856,6 +837,7 @@ void CheckTimelineWorkflow(Interaction& test)
 		setPath(invalid);
 		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
 		test.Frame();
+
 		struct CommaNumbers final : std::numpunct<char>
 		{
 			char do_decimal_point() const override
@@ -863,31 +845,35 @@ void CheckTimelineWorkflow(Interaction& test)
 				return ',';
 			}
 		};
+
 		struct RestoreLocale
 		{
 			std::locale previous;
+
 			~RestoreLocale()
 			{
 				std::locale::global(previous);
 			}
 		} restoreLocale{std::locale()};
+
 		std::locale::global(std::locale(std::locale::classic(), new CommaNumbers));
 		const auto destination = directory / Utf8Path("range-\u65e5\u672c\u8a9e.csv");
 		setPath(destination);
 		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
 		test.Frame();
-		await([&](const auto&)
-		{
-			std::size_t images = 0;
-			for (const auto& file : std::filesystem::directory_iterator(directory))
-				if (PathText(file.path().filename()).starts_with("range-\u65e5\u672c\u8a9e-frame-") &&
-					file.path().extension() == ".png" && file.file_size() > 100)
-					++images;
-			const bool metadataReady = std::filesystem::exists(destination);
-			if (!metadataReady)
-				ImGui::ActivateItemByID(inspector->GetID("Export frames"));
-			return metadataReady && images >= 3;
-		}, "Range export did not recover from the invalid destination and save three snapshots");
+		await(
+			[&](const auto&) {
+				std::size_t images = 0;
+				for (const auto& file : std::filesystem::directory_iterator(directory))
+					if (PathText(file.path().filename()).starts_with("range-\u65e5\u672c\u8a9e-frame-") &&
+						file.path().extension() == ".png" && file.file_size() > 100)
+						++images;
+				const bool metadataReady = std::filesystem::exists(destination);
+				if (!metadataReady)
+					ImGui::ActivateItemByID(inspector->GetID("Export frames"));
+				return metadataReady && images >= 3;
+			},
+			"Range export did not recover from the invalid destination and save three snapshots");
 		Require(!std::filesystem::exists(invalid), "Failed range export reported a saved destination");
 		std::ifstream metadata(destination);
 		std::string row;
@@ -900,12 +886,8 @@ void CheckTimelineWorkflow(Interaction& test)
 		Require(metadata.eof() && rows > 3, "Range metadata was incomplete after export recovery");
 	}
 	activate("Continue");
-	await(
-		[](const auto& state)
-		{
-			return !state.manual && state.time.following && !state.operationPending;
-		},
-		"Continue did not return to LIVE");
+	await([](const auto& state) { return !state.manual && state.time.following && !state.operationPending; },
+		  "Continue did not return to LIVE");
 	Require(test.runtime.Snapshot().error.empty(), "Timeline workflow reported runtime error");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0,
@@ -918,30 +900,28 @@ void CheckShell()
 {
 	Interaction test{std::getenv("SIMXR_SHELL_QA_APP_NAME") != nullptr};
 	test.live = true;
-	const auto checkTimeline = [&]
-	{
+	const auto checkTimeline = [&] {
 		const auto* viewport = ImGui::GetMainViewport();
 		const auto* timeline = FindPanel("Timeline");
 		const auto* preview = FindPanel("GPU preview");
 		Require(timeline && preview, "Shell regions missing");
 		Require(std::abs(timeline->Pos.x - viewport->WorkPos.x) < 1 &&
-				std::abs(timeline->Pos.y + timeline->Size.y - viewport->WorkPos.y - viewport->WorkSize.y) < 1,
+					std::abs(timeline->Pos.y + timeline->Size.y - viewport->WorkPos.y - viewport->WorkSize.y) < 1,
 				"Timeline has outer left or bottom margins");
 		Require(std::abs(timeline->Pos.x + timeline->Size.x - preview->Pos.x - preview->Size.x) < 1,
 				"Timeline does not align with the preview's right edge");
 		Require(!timeline->ScrollbarX && !timeline->ScrollbarY && timeline->ContentSize.x <= timeline->Size.x + 1,
 				"Timeline controls overflow their region");
 	};
-	const auto checkToolbar = [&]
-	{
+	const auto checkToolbar = [&] {
 		auto* toolbar = FindPanel("Top bar");
 		const auto* viewport = ImGui::GetMainViewport();
 		Require(toolbar && !toolbar->ScrollbarX && !toolbar->ScrollbarY &&
-				toolbar->ContentSize.x <= toolbar->Size.x + 1 && toolbar->ContentSize.y <= toolbar->Size.y + 1,
+					toolbar->ContentSize.x <= toolbar->Size.x + 1 && toolbar->ContentSize.y <= toolbar->Size.y + 1,
 				"Top-bar controls overflow their region");
 		Require(std::abs(toolbar->Pos.x - viewport->WorkPos.x) < 1 &&
-				std::abs(toolbar->Pos.y - viewport->WorkPos.y) < 1 &&
-				std::abs(toolbar->Pos.x + toolbar->Size.x - viewport->WorkPos.x - viewport->WorkSize.x) < 1,
+					std::abs(toolbar->Pos.y - viewport->WorkPos.y) < 1 &&
+					std::abs(toolbar->Pos.x + toolbar->Size.x - viewport->WorkPos.x - viewport->WorkSize.x) < 1,
 				"Top bar does not reach the window edges");
 		for (const char* action : {"History", "Settings", "##App picker"})
 		{
@@ -956,8 +936,7 @@ void CheckShell()
 			Require(ImGui::GetCurrentContext()->OpenPopupStack.empty(), "Top-bar popup did not close on Escape");
 		}
 	};
-	const auto capture = [&](const char* name)
-	{
+	const auto capture = [&](const char* name) {
 		checkTimeline();
 		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 		{
@@ -978,9 +957,9 @@ void CheckShell()
 	const auto* toolbar = FindPanel("Top bar");
 	const auto* deviceTabs = FindPanel("Device tabs");
 	Require(deviceTabs && std::abs(deviceTabs->Pos.y - toolbar->Pos.y - toolbar->Size.y) < 1 &&
-			std::abs(deviceTabs->Pos.y + deviceTabs->Size.y - inspector->Pos.y) < 1 &&
-			std::abs(inspector->Pos.x + inspector->Size.x - viewport->WorkPos.x - viewport->WorkSize.x) < 1 &&
-			std::abs(inspector->Pos.y + inspector->Size.y - viewport->WorkPos.y - viewport->WorkSize.y) < 1,
+				std::abs(deviceTabs->Pos.y + deviceTabs->Size.y - inspector->Pos.y) < 1 &&
+				std::abs(inspector->Pos.x + inspector->Size.x - viewport->WorkPos.x - viewport->WorkSize.x) < 1 &&
+				std::abs(inspector->Pos.y + inspector->Size.y - viewport->WorkPos.y - viewport->WorkSize.y) < 1,
 			"Inspector is not joined to the toolbar and window edges");
 	static constexpr const char* tabs[]{"Player", "Head", "Left", "Right", "Body", "Gaze", "Trackers"};
 	for (const int index : {1, 2, 3, 4, 5, 6, 0})
@@ -1019,22 +998,22 @@ void CheckShell()
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Shell generated validation errors");
 }
+
 static void CheckCoreAssertions()
 {
 	{
 		RuntimeView view;
 		view.connected = view.sessionAvailable = true;
 		Require(DeriveRunState(view, false, {}).state == RunState::WaitingForSession,
-			"A session that has not started was labeled running");
+				"A session that has not started was labeled running");
 		view.sessionRunning = true;
 		Require(DeriveRunState(view, false, {}).state == RunState::Running,
-			"A started session was not labeled running");
+				"A started session was not labeled running");
 		view.manual = true;
-		Require(DeriveRunState(view, false, {}).state == RunState::Paused,
-			"A paused session was not labeled paused");
+		Require(DeriveRunState(view, false, {}).state == RunState::Paused, "A paused session was not labeled paused");
 		view.sessionRunning = false;
 		Require(DeriveRunState(view, false, {}).state == RunState::WaitingForSession,
-			"A stopped session retained its paused state");
+				"A stopped session retained its paused state");
 	}
 	{
 		simxr::app::LaunchProfile source;
@@ -1049,14 +1028,14 @@ static void CheckCoreAssertions()
 		settings.profiles.push_back(source);
 		simxr::app::LaunchProfilesDialog editor;
 		editor.Edit(settings, 0);
-		const auto check = [&](const auto& actual)
-		{
+		const auto check = [&](const auto& actual) {
 			Require(actual.name == source.name && actual.executable == source.executable &&
-				actual.arguments == source.arguments && actual.environment == source.environment &&
-				actual.workingDirectory == source.workingDirectory && actual.runtimeManifest == source.runtimeManifest &&
-				actual.rig == source.rig && actual.headsetProfile == source.headsetProfile &&
-				actual.privateProtonPrefix == source.privateProtonPrefix,
-				"Launch editor truncated stored fields or changed argument boundaries");
+						actual.arguments == source.arguments && actual.environment == source.environment &&
+						actual.workingDirectory == source.workingDirectory &&
+						actual.runtimeManifest == source.runtimeManifest && actual.rig == source.rig &&
+						actual.headsetProfile == source.headsetProfile &&
+						actual.privateProtonPrefix == source.privateProtonPrefix,
+					"Launch editor truncated stored fields or changed argument boundaries");
 		};
 		check(editor.Profile());
 		source.headsetProfile.clear(); // Saving requires a known headset profile or the default.
@@ -1067,7 +1046,7 @@ static void CheckCoreAssertions()
 		simxr::app::LaunchProfile newProfile;
 		newProfile.useBundledRuntime = true;
 		Require(editor.Selected() == -1 && editor.Profile() == newProfile,
-			"A retired launch-profile index did not open a new draft");
+				"A retired launch-profile index did not open a new draft");
 	}
 }
 
@@ -1089,8 +1068,7 @@ void CheckDefaultInteraction()
 			const auto rebuilds = test.renderer.RebuildCount();
 			test.window.Resize(static_cast<int>(size.x), static_cast<int>(size.y));
 			Eventually(
-				[&]
-				{
+				[&] {
 					test.Frame();
 					return test.renderer.RebuildCount() > rebuilds;
 				},
@@ -1103,8 +1081,7 @@ void CheckDefaultInteraction()
 			LaunchProfilesDialog editor;
 			editor.Edit(profiles, 0);
 			bool open = true, changed = false;
-			test.extraDraw = [&]
-			{
+			test.extraDraw = [&] {
 				ImGui::Begin("Launch editor fixture");
 				editor.Draw(profiles, {}, open, changed);
 				ImGui::End();
@@ -1126,18 +1103,18 @@ void CheckDefaultInteraction()
 			io.AddInputCharactersUTF8(longName.c_str());
 			test.Frame();
 			Require(changed && profiles.profiles[0].name == longName && ImGui::GetActiveID() != 0,
-				"Launch profile typing was truncated or waited for blur before saving");
+					"Launch profile typing was truncated or waited for blur before saving");
 			auto* names = FindPanel("Profile names");
 			Require(names, "Launch profile list missing");
 			test.Click({names->DC.CursorStartPos.x + 20,
-				names->DC.CursorStartPos.y + ImGui::GetTextLineHeightWithSpacing() * 1.5f});
+						names->DC.CursorStartPos.y + ImGui::GetTextLineHeightWithSpacing() * 1.5f});
 			Require(editor.Selected() == 1 && editor.Profile().name == "Two##literal" &&
-				profiles.profiles[0].name == longName,
-				"Switching launch profiles lost the outgoing edit or replaced the new form");
+						profiles.profiles[0].name == longName,
+					"Switching launch profiles lost the outgoing edit or replaced the new form");
 			profiles.profiles.insert(profiles.profiles.begin(), {"Inserted", "/missing-inserted"});
 			test.Frame();
 			Require(editor.Selected() == 2 && editor.Profile().name == "Two##literal",
-				"Launch editor followed a shifted profile index");
+					"Launch editor followed a shifted profile index");
 			test.workspace.SetScale(2);
 			for (int frame = 0; frame < 3; ++frame)
 				test.Frame();
@@ -1150,8 +1127,8 @@ void CheckDefaultInteraction()
 			profiles.profiles.erase(profiles.profiles.begin() + 2);
 			test.Frame();
 			Require(editor.Selected() == -1 && profiles.profiles.size() == 2 &&
-				profiles.profiles[0].name == "Inserted" && profiles.profiles[1].name == longName,
-				"Removing the edited profile overwrote another profile");
+						profiles.profiles[0].name == "Inserted" && profiles.profiles[1].name == longName,
+					"Removing the edited profile overwrote another profile");
 			open = false;
 			test.Frame();
 			test.extraDraw = {};
@@ -1162,8 +1139,7 @@ void CheckDefaultInteraction()
 			recording.SetTarget({"retired-recording-target", 1, 1});
 			recording.RequestStart();
 			recording.SetTarget({"replacement-recording-target", 2, 1});
-			test.extraDraw = [&]
-			{
+			test.extraDraw = [&] {
 				ImGui::Begin("Recording scope probe");
 				recording.DrawPopovers(true);
 				ImGui::End();
@@ -1177,7 +1153,7 @@ void CheckDefaultInteraction()
 			test.Frame();
 			const auto stopped = recording.Snapshot();
 			Require(!stopped.busy && stopped.error.empty(),
-				"An earlier Start or background read overrode the queued Stop");
+					"An earlier Start or background read overrode the queued Stop");
 			test.extraDraw = {};
 		}
 		CheckNotices(test);
@@ -1205,22 +1181,27 @@ void CheckDiscoveryFailure()
 {
 	Interaction test;
 	const auto notices = test.runtime.TakeNotices();
-	Require(std::any_of(notices.begin(), notices.end(), [](const auto& notice)
-	{
-		return notice.title == "Application discovery failed" && !notice.detail.empty();
-	}), "Discovery failure did not become a notice during startup");
+	Require(std::any_of(notices.begin(), notices.end(),
+						[](const auto& notice) {
+							return notice.title == "Application discovery failed" && !notice.detail.empty();
+						}),
+			"Discovery failure did not become a notice during startup");
 	AppPicker picker;
 	std::string failure;
 	bool open = true;
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::Begin("Discovery failure fixture");
 		const auto choice = picker.Draw({}, {}, "Apps", 0, "", std::exchange(open, false), {});
 		if (!choice.discoveryError.empty())
 			failure = choice.discoveryError;
 		ImGui::End();
 	};
-	Eventually([&] { test.Frame(); return !failure.empty(); }, "Picker hid a discovery failure");
+	Eventually(
+		[&] {
+			test.Frame();
+			return !failure.empty();
+		},
+		"Picker hid a discovery failure");
 	Require(!failure.empty(), "Picker hid a discovery failure");
 	if (const auto path = std::getenv("SIMXR_DISCOVERY_QA_SCREENSHOT"))
 	{
@@ -1230,7 +1211,6 @@ void CheckDiscoveryFailure()
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Discovery failure UI validation errors");
 	std::cout << "PASS startup notice and usable app picker after discovery failure\n";
-
 }
 #endif
 
@@ -1246,7 +1226,8 @@ void CheckShellScenario()
 		SaveSettings(path, settings);
 	}
 	CheckShell();
-	std::cout << "PASS fixed shell, toolbar actions, focus restore and timeline edges at normal, folded and narrow enlarged layouts\n";
+	std::cout << "PASS fixed shell, toolbar actions, focus restore and timeline edges at normal, folded and narrow "
+				 "enlarged layouts\n";
 }
 
 }

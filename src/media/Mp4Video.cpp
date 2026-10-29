@@ -5,27 +5,32 @@ namespace simxr
 {
 class Mp4Boxes
 {
-  public:
+public:
 	std::vector<std::byte> bytes;
+
 	void Number(std::uint64_t value, unsigned count = 4)
 	{
 		for (unsigned i = count; i; --i)
 			bytes.push_back(static_cast<std::byte>(value >> ((i - 1) * 8)));
 	}
+
 	void Text(std::string_view text)
 	{
 		for (auto c : text)
 			bytes.push_back(static_cast<std::byte>(c));
 	}
+
 	void Zero(std::size_t count)
 	{
 		bytes.insert(bytes.end(), count, std::byte{});
 	}
+
 	void Data(std::span<const std::uint8_t> data)
 	{
 		const auto raw = std::as_bytes(data);
 		bytes.insert(bytes.end(), raw.begin(), raw.end());
 	}
+
 	std::size_t Begin(std::string_view type)
 	{
 		const auto offset = bytes.size();
@@ -33,6 +38,7 @@ class Mp4Boxes
 		Text(type);
 		return offset;
 	}
+
 	void End(std::size_t offset)
 	{
 		const auto size = bytes.size() - offset;
@@ -41,12 +47,14 @@ class Mp4Boxes
 		for (unsigned i = 0; i < 4; ++i)
 			bytes[offset + i] = static_cast<std::byte>(size >> ((3 - i) * 8));
 	}
+
 	void Matrix()
 	{
 		for (auto value : {0x10000u, 0u, 0u, 0u, 0x10000u, 0u, 0u, 0u, 0x40000000u})
 			Number(value);
 	}
 };
+
 static std::vector<std::span<const std::uint8_t>> NalUnits(std::span<const std::uint8_t> data)
 {
 	std::vector<std::span<const std::uint8_t>> result;
@@ -74,6 +82,7 @@ static std::vector<std::span<const std::uint8_t>> NalUnits(std::span<const std::
 		throw std::invalid_argument("The clip contains invalid H.264 data.");
 	return result;
 }
+
 std::vector<std::byte> WriteMp4Video(std::span<const VideoSample> samples)
 {
 	if (samples.empty() || samples.size() > 1000000)

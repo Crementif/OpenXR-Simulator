@@ -24,7 +24,7 @@ namespace simxr::app
 {
 class McpConnector
 {
-  public:
+public:
 	McpConnector(std::uint16_t port, std::string token);
 #ifdef SIMXR_MCP_DISCOVERY
 	explicit McpConnector(std::unique_ptr<McpInstanceDiscovery> discovery);
@@ -34,7 +34,7 @@ class McpConnector
 	McpConnector& operator=(const McpConnector&) = delete;
 	void Run();
 
-  private:
+private:
 	struct Connection
 	{
 		McpEndpoint endpoint;
@@ -42,6 +42,7 @@ class McpConnector
 		nlohmann::json initialization;
 		std::uint64_t generation = 0;
 	};
+
 	struct Job
 	{
 		nlohmann::json message;
@@ -49,6 +50,7 @@ class McpConnector
 		bool started = false, cancelled = false;
 		std::shared_ptr<httplib::Client> transport;
 	};
+
 	void Monitor();
 	void Work(bool notifications);
 	void Handle(const std::shared_ptr<Job>& job);

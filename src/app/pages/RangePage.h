@@ -13,25 +13,30 @@
 namespace simxr::app
 {
 class RuntimeSession;
+
 class RangePage
 {
-  public:
+public:
 	explicit RangePage(RuntimeSession& session) : m_session(session), m_export(session) {}
+
 	std::optional<automation::SavedRecording> Draw(const RangeSel& range, ShellState& shell);
+
 	void Poll()
 	{
 		m_export.Poll();
 	}
+
 	bool Exporting() const
 	{
 		return m_export.Busy();
 	}
+
 	std::optional<automation::SavedRecording> TakePlayRequest()
 	{
 		return std::exchange(m_play, {});
 	}
 
-  private:
+private:
 	void SaveTake(const RangeSel& range, std::size_t first, std::size_t last, ShellState& shell, bool replace);
 	RuntimeSession& m_session;
 	RangeExportTask m_export;

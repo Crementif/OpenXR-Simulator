@@ -28,7 +28,8 @@ static DWORD ParentProcess()
 		throw windows::Error("Cannot inspect profile fixture parent");
 	PROCESSENTRY32W entry{};
 	entry.dwSize = sizeof(entry);
-	for (bool found = Process32FirstW(snapshot.Get(), &entry) != FALSE; found; found = Process32NextW(snapshot.Get(), &entry) != FALSE)
+	for (bool found = Process32FirstW(snapshot.Get(), &entry) != FALSE; found;
+		 found = Process32NextW(snapshot.Get(), &entry) != FALSE)
 		if (entry.th32ProcessID == GetCurrentProcessId())
 			return entry.th32ParentProcessID;
 	throw std::runtime_error("Cannot find profile fixture parent");
@@ -67,10 +68,13 @@ static int Child()
 	const std::unique_ptr<wchar_t*, decltype(&LocalFree)> arguments(raw, LocalFree);
 	const auto root = Utf8Path(windows::Environment("SIMXR_PROFILE_FIXTURE_ROOT"));
 	std::ofstream output(root / "result.txt", std::ios::binary);
-	output << ParentProcess() << '\n' << GetCurrentProcessId() << '\n' << PathText(std::filesystem::current_path()) << '\n'
+	output << ParentProcess() << '\n'
+		   << GetCurrentProcessId() << '\n'
+		   << PathText(std::filesystem::current_path()) << '\n'
 		   << windows::Environment("SIMXR_PROFILE_SENTINEL") << '\n'
 		   << windows::Environment("SIMXR_HEADSET_PROFILE") << '\n'
-		   << windows::Environment("XR_RUNTIME_JSON") << '\n' << count << '\n';
+		   << windows::Environment("XR_RUNTIME_JSON") << '\n'
+		   << count << '\n';
 	for (int index = 1; index < count; ++index)
 		output << windows::Utf8(arguments.get()[index]) << '\n';
 	output << "done\n";

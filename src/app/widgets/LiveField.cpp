@@ -2,6 +2,7 @@
 #include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 #include <imgui_internal.h>
+
 namespace simxr::app
 {
 static std::string Format(const char* format, float value)
@@ -10,6 +11,7 @@ static std::string Format(const char* format, float value)
 	std::snprintf(text, sizeof(text), format, value);
 	return text;
 }
+
 void DrawLiveField(bool pending, std::string_view rejection)
 {
 	const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
@@ -32,6 +34,7 @@ void DrawLiveField(bool pending, std::string_view rejection)
 		}
 	}
 }
+
 bool FieldActions(const char* id, const FieldValue& value)
 {
 	bool changed = false;
@@ -46,8 +49,7 @@ bool FieldActions(const char* id, const FieldValue& value)
 		ImGui::GetWindowDrawList()->AddRectFilled({minimum.x + 1, minimum.y + inset},
 												  {minimum.x + 3, minimum.y + height - inset}, theme::Accent, 1);
 	}
-	const auto reset = [&](const std::function<void()>& restore)
-	{
+	const auto reset = [&](const std::function<void()>& restore) {
 		if (editable && restore)
 		{
 			restore();
@@ -107,42 +109,40 @@ bool FieldActions(const char* id, const FieldValue& value)
 	ImGui::GetCurrentContext()->LastItemData = item;
 	return changed;
 }
+
 FieldValue NumberValue(float& value, float fallback, float step, float minimum, float maximum, const char* format)
 {
 	FieldValue result;
-	result.reset = [&value, fallback]
-	{
+	result.reset = [&value, fallback] {
 		value = fallback;
 	};
 	result.modified = std::abs(value - fallback) > step * .01f;
-	result.nudge = [&value, step, minimum, maximum](float steps)
-	{
+	result.nudge = [&value, step, minimum, maximum](float steps) {
 		value = std::clamp(value + steps * step, minimum, maximum);
 	};
 	result.text = Format(format, value);
 	return result;
 }
+
 FieldValue AngleValue(float& radians, float fallback, float minimumDegrees, float maximumDegrees)
 {
 	constexpr float degrees = 180 / std::numbers::pi_v<float>;
 	FieldValue result;
-	result.reset = [&radians, fallback]
-	{
+	result.reset = [&radians, fallback] {
 		radians = fallback;
 	};
 	result.modified = std::abs(radians - fallback) * degrees > .05f;
-	result.nudge = [&radians, minimumDegrees, maximumDegrees](float steps)
-	{
+	result.nudge = [&radians, minimumDegrees, maximumDegrees](float steps) {
 		radians = std::clamp(radians * degrees + steps, minimumDegrees, maximumDegrees) / degrees;
 	};
 	result.text = Format("%.1f", radians * degrees);
 	return result;
 }
+
 FieldValue SwitchValue(bool& value, bool fallback)
 {
 	FieldValue result;
-	result.reset = [&value, fallback]
-	{
+	result.reset = [&value, fallback] {
 		value = fallback;
 	};
 	result.modified = value != fallback;

@@ -11,14 +11,14 @@ namespace simxr
 {
 class LegacyInput
 {
-  public:
+public:
 	LegacyInput();
 	TrackingState Tracking(bool focused = true) const;
 	std::array<ControllerControls, 2> Controls() const;
 	const ViewSettings& Views() const;
 	void SetViews(ViewSettings settings);
 
-  private:
+private:
 	struct Controller
 	{
 		XrPosef offset;

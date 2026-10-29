@@ -14,34 +14,40 @@ namespace
 {
 class Output final : public FrameOutput
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return state.load();
 	}
+
 	std::atomic<CompletionStatus> state{CompletionStatus::Pending};
 };
+
 std::shared_ptr<Output> Complete()
 {
 	auto result = std::make_shared<Output>();
 	result->state = CompletionStatus::Complete;
 	return result;
 }
+
 PoseSample Head(float yaw = 0, std::int64_t time = 100)
 {
 	return {{EulerAngles(yaw, 0, 0), {1, 2, 3}}, TrackedPoseFlags, {Duration{time}}};
 }
+
 class Source final : public RotationalSource
 {
-  public:
+public:
 	PoseSample SubmittedHead() const noexcept override
 	{
 		return Head();
 	}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	XrResult Reproject(const PoseSample& head, std::shared_ptr<const FrameOutput>& output) const override
 	{
 		++calls;
@@ -57,6 +63,7 @@ class Source final : public RotationalSource
 		output = std::move(image);
 		return XR_SUCCESS;
 	}
+
 	mutable unsigned calls = 0;
 	mutable std::weak_ptr<Output> latest;
 	mutable PoseSample requested;
@@ -64,24 +71,22 @@ class Source final : public RotationalSource
 	bool allocationFailure = false;
 	std::function<void()> observe;
 };
+
 void PendingCompletionAndReplacement()
 {
 	VirtualDisplay display;
 	auto head = Head();
 	bool samplingAllocationFailure = false;
-	display.ConfigurePolicy(PresentationPolicy::Rotational,
-							[&](RuntimeTime)
-							{
-								if (samplingAllocationFailure)
-									throw std::bad_alloc{};
-								return head;
-							});
+	display.ConfigurePolicy(PresentationPolicy::Rotational, [&](RuntimeTime) {
+		if (samplingAllocationFailure)
+			throw std::bad_alloc{};
+		return head;
+	});
 	display.Start({1}, {{Duration{100}}, 10ns}, ExecutionMode::Deterministic);
 	Require(display.Pause(), "Pause deterministic policy fixture");
 	auto baseline = Complete();
 	auto source = std::make_shared<Source>();
-	source->observe = [&]
-	{
+	source->observe = [&] {
 		display.Snapshot();
 	};
 	Require(display.Submit({{{1}, {1}}, {Duration{100}}, baseline, {}, {source}}) == PresentationAdmission::Accepted,
@@ -139,17 +144,16 @@ void PendingCompletionAndReplacement()
 	Require(newerSource->latest.expired() && !display.Snapshot().latest->output && retained.output == pending,
 			"Stop retained policy work or destroyed an independent displayed-image reader");
 }
+
 void FallbackAndPolicySelection()
 {
 	VirtualDisplay display;
 	auto head = Head(0.25f, 110);
 	unsigned samples = 0;
-	display.ConfigurePolicy(PresentationPolicy::Repeat,
-							[&](RuntimeTime)
-							{
-								++samples;
-								return head;
-							});
+	display.ConfigurePolicy(PresentationPolicy::Repeat, [&](RuntimeTime) {
+		++samples;
+		return head;
+	});
 	display.Start({1}, {{Duration{100}}, 10ns}, ExecutionMode::Deterministic);
 	display.Pause();
 	auto baseline = Complete();
@@ -160,11 +164,7 @@ void FallbackAndPolicySelection()
 	bool rejected = false;
 	try
 	{
-		display.ConfigurePolicy(PresentationPolicy::Rotational,
-								[&](RuntimeTime)
-								{
-									return head;
-								});
+		display.ConfigurePolicy(PresentationPolicy::Rotational, [&](RuntimeTime) { return head; });
 	}
 	catch (const std::logic_error&)
 	{
@@ -172,12 +172,10 @@ void FallbackAndPolicySelection()
 	}
 	Require(rejected, "Active policy changed without a lifecycle boundary");
 	display.Stop();
-	display.ConfigurePolicy(PresentationPolicy::Rotational,
-							[&](RuntimeTime)
-							{
-								++samples;
-								return head;
-							});
+	display.ConfigurePolicy(PresentationPolicy::Rotational, [&](RuntimeTime) {
+		++samples;
+		return head;
+	});
 	display.Start({2}, {{Duration{100}}, 10ns}, ExecutionMode::Deterministic);
 	display.Pause();
 	display.Submit({{{2}, {1}}, {Duration{100}}, baseline, {}, {{}, XR_ERROR_LIMIT_REACHED}});
@@ -209,77 +207,61 @@ void FallbackAndPolicySelection()
 	pending->state = CompletionStatus::Complete;
 	Require(!display.Step()->output, "Late completion replaced a submitted clear");
 }
+
 class TestClock final : public Clock
 {
-  public:
+public:
 	HostTime Now() const override
 	{
 		return HostTime{Duration{time.load()}};
 	}
+
 	void WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime) override
 	{
 		changed.wait_for(lock, 1ms);
 	}
+
 	std::atomic<std::int64_t> time{0};
 };
+
 void StopInvalidatesUnpublishedWork()
 {
 	auto clock = std::make_shared<TestClock>();
 	VirtualDisplay display(clock);
 	std::atomic<bool> entered{false}, released{false};
 	std::future<void> stopped;
+
 	struct Cleanup
 	{
 		VirtualDisplay& display;
 		std::atomic<bool>& released;
+
 		~Cleanup()
 		{
 			released = true;
 			display.Stop();
 		}
 	} cleanup{display, released};
+
 	auto source = std::make_shared<Source>();
-	source->observe = [&]
-	{
+	source->observe = [&] {
 		entered = true;
 		while (!released.load())
 			std::this_thread::yield();
 	};
 	display.ConfigurePolicy(PresentationPolicy::Rotational,
-							[](RuntimeTime time)
-							{
-								return Head(0.25f, time.value.count());
-							});
+							[](RuntimeTime time) { return Head(0.25f, time.value.count()); });
 	display.Start({1}, {{Duration{100}}, 10ns}, ExecutionMode::RealTime, HostTime{});
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest.has_value();
-		},
-		"Real-time worker did not start");
+	Eventually([&] { return display.Snapshot().latest.has_value(); }, "Real-time worker did not start");
 	auto baseline = Complete();
 	display.Submit({{{1}, {1}}, {Duration{110}}, baseline, {}, {source}});
 	clock->time = 10;
-	Eventually(
-		[&]
-		{
-			return entered.load();
-		},
-		"Worker did not prepare a warp independently of XR submission");
+	Eventually([&] { return entered.load(); }, "Worker did not prepare a warp independently of XR submission");
 	const auto before = display.Snapshot();
 	Require(before.latest->tick == DisplayTick{0} && !before.latest->output,
 			"Snapshot observed a partially published display tick");
-	stopped = std::async(std::launch::async,
-						 [&]
-						 {
-							 display.Stop();
-						 });
-	Eventually(
-		[&]
-		{
-			return !display.Snapshot().running;
-		},
-		"Stop waited for GPU preparation before closing admission");
+	stopped = std::async(std::launch::async, [&] { display.Stop(); });
+	Eventually([&] { return !display.Snapshot().running; }, "Stop waited for GPU preparation before closing admission");
 	released = true;
 	Require(stopped.wait_for(1s) == std::future_status::ready, "Stop could not join display preparation");
 	stopped.get();
@@ -291,6 +273,7 @@ void StopInvalidatesUnpublishedWork()
 	Require(!display.Step()->output, "Restart inherited an old display image");
 }
 } // namespace
+
 int main()
 {
 	PendingCompletionAndReplacement();

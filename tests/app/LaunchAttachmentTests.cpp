@@ -23,28 +23,33 @@ namespace wire = simxr::control;
 struct Directory
 {
 	std::filesystem::path path;
+
 	Directory()
 	{
 		char pattern[] = "/tmp/simxr-rig-launch-XXXXXX";
 		Require(::mkdtemp(pattern) != nullptr, "Create launch directory");
 		path = pattern;
 	}
+
 	~Directory()
 	{
 		std::error_code ignored;
 		std::filesystem::remove_all(path, ignored);
 	}
+
 	app::LaunchProfile Profile() const
 	{
 		app::LaunchProfile profile;
 		profile.environment = {{"SIMXR_DATA_DIR", path.string()}, {"SIMXR_CONTROL_SOCKET", ""}};
 		return profile;
 	}
+
 	std::string Endpoint() const
 	{
 		return (path / ("control." + std::to_string(::getpid()) + ".sock")).string();
 	}
 };
+
 struct RuntimeFixture
 {
 	Runtime runtime{ExtensionRegistry{std::span<const ExtensionDefinition>{}}};
@@ -52,6 +57,7 @@ struct RuntimeFixture
 	Runtime::SessionRef session;
 	wire::ControlService service{runtime};
 	std::unique_ptr<wire::LocalControlServer> server;
+
 	RuntimeFixture()
 	{
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -61,10 +67,12 @@ struct RuntimeFixture
 					runtime.CreateSession(instance, session) == XR_SUCCESS,
 				"Create runtime session");
 	}
+
 	void Listen(const std::string& endpoint)
 	{
 		server = std::make_unique<wire::LocalControlServer>(service, endpoint);
 	}
+
 	void Begin()
 	{
 		FrameSchedulerConfig timing;
@@ -74,7 +82,9 @@ struct RuntimeFixture
 				"Begin launched session");
 	}
 };
-template <class Work> void Reject(Work&& work, std::string_view reason)
+
+template<class Work>
+void Reject(Work&& work, std::string_view reason)
 {
 	try
 	{
@@ -88,6 +98,7 @@ template <class Work> void Reject(Work&& work, std::string_view reason)
 	}
 	throw std::runtime_error("Invalid launch attachment was accepted");
 }
+
 app::LaunchSnapshot Running()
 {
 	app::LaunchSnapshot process;
@@ -95,6 +106,7 @@ app::LaunchSnapshot Running()
 	process.process = static_cast<std::uint64_t>(::getpid());
 	return process;
 }
+
 void FreshEndpointAndRunningSession()
 {
 	Directory directory;
@@ -108,8 +120,7 @@ void FreshEndpointAndRunningSession()
 		Require(!attachment.Poll(), "Absent endpoint attached");
 		runtime.Listen(directory.Endpoint());
 		Eventually(
-			[&]
-			{
+			[&] {
 				Require(!attachment.Poll(), "Non-running session attached");
 				return discovery.Snapshot().state == app::RuntimeConnectionState::Connected;
 			},
@@ -117,8 +128,7 @@ void FreshEndpointAndRunningSession()
 		runtime.Begin();
 		std::optional<app::LaunchedSession> result;
 		Eventually(
-			[&]
-			{
+			[&] {
 				result = attachment.Poll();
 				return result.has_value();
 			},
@@ -133,6 +143,7 @@ void FreshEndpointAndRunningSession()
 	}
 	Require(discovery.Snapshot().epoch == completedEpoch, "Completed attachment disconnected twice");
 }
+
 void ExistingEndpointAndChangedProcess()
 {
 	Directory directory;
@@ -141,40 +152,21 @@ void ExistingEndpointAndChangedProcess()
 	{
 		app::LaunchAttachment attachment{discovery, directory.Profile()};
 		attachment.Observe(Running());
-		Reject(
-			[&]
-			{
-				attachment.Poll();
-			},
-			"pre-existing endpoint");
+		Reject([&] { attachment.Poll(); }, "pre-existing endpoint");
 	}
 	auto invalidDirectory = directory.Profile();
 	invalidDirectory.environment.front().second = directory.Endpoint();
-	Reject(
-		[&]
-		{
-			app::LaunchAttachment invalid{discovery, invalidDirectory};
-		},
-		"Cannot enumerate launch endpoints");
+	Reject([&] { app::LaunchAttachment invalid{discovery, invalidDirectory}; }, "Cannot enumerate launch endpoints");
 	auto custom = directory.Profile();
 	custom.environment.back().second = directory.Endpoint();
-	Reject(
-		[&]
-		{
-			app::LaunchAttachment attachment{discovery, custom};
-		},
-		"new absolute local control endpoint");
+	Reject([&] { app::LaunchAttachment attachment{discovery, custom}; }, "new absolute local control endpoint");
 	app::LaunchAttachment attachment{discovery, directory.Profile()};
 	attachment.Observe(Running());
 	auto changed = Running();
 	++changed.process;
-	Reject(
-		[&]
-		{
-			attachment.Observe(changed);
-		},
-		"process identity changed");
+	Reject([&] { attachment.Observe(changed); }, "process identity changed");
 }
+
 void RecreatedEndpointBeforeSession()
 {
 	Directory directory;
@@ -184,8 +176,7 @@ void RecreatedEndpointBeforeSession()
 	RuntimeFixture probing;
 	probing.Listen(directory.Endpoint());
 	Eventually(
-		[&]
-		{
+		[&] {
 			Require(!attachment.Poll(), "Probing instance attached without a running session");
 			return discovery.Snapshot().state == app::RuntimeConnectionState::Connected;
 		},
@@ -193,8 +184,7 @@ void RecreatedEndpointBeforeSession()
 	const auto firstEpoch = discovery.Snapshot().epoch;
 	probing.server.reset();
 	Eventually(
-		[&]
-		{
+		[&] {
 			Require(!attachment.Poll(), "Retired probing instance attached");
 			return discovery.Snapshot().epoch != firstEpoch;
 		},
@@ -204,8 +194,7 @@ void RecreatedEndpointBeforeSession()
 	replacement.Listen(directory.Endpoint());
 	std::optional<app::LaunchedSession> result;
 	Eventually(
-		[&]
-		{
+		[&] {
 			result = attachment.Poll();
 			return result.has_value();
 		},
@@ -229,8 +218,7 @@ void ExitWhileRetrying()
 		Require(!attachment.Poll(), "Discovery attached synchronously");
 		probing.server.reset();
 		Eventually(
-			[&]
-			{
+			[&] {
 				Require(!attachment.Poll(), "Retired endpoint attached");
 				return discovery.Snapshot().state == app::RuntimeConnectionState::Disconnected;
 			},
@@ -242,6 +230,7 @@ void ExitWhileRetrying()
 	Require(discovery.Snapshot().state == app::RuntimeConnectionState::Disconnected,
 			"Exiting during discovery retained a connection");
 }
+
 void DiscoveryEpochOwnership()
 {
 	Directory directory;
@@ -254,12 +243,7 @@ void DiscoveryEpochOwnership()
 		attachment.Observe(Running());
 		Require(!attachment.Poll(), "Connecting discovery attached synchronously");
 		replacementEpoch = discovery.Connect(directory.Endpoint());
-		Reject(
-			[&]
-			{
-				attachment.Poll();
-			},
-			"connection changed unexpectedly");
+		Reject([&] { attachment.Poll(); }, "connection changed unexpectedly");
 	}
 	Require(discovery.Snapshot().epoch == replacementEpoch &&
 				discovery.Snapshot().state != app::RuntimeConnectionState::Disconnected,
@@ -269,13 +253,13 @@ void DiscoveryEpochOwnership()
 	}
 	Require(discovery.Snapshot().epoch == replacementEpoch, "Unstarted attachment changed discovery lifetime");
 }
+
 void DiscoveryFailures()
 {
 	Directory directory;
 	const char* prior = std::getenv("SIMXR_DATA_DIR");
 	const std::optional<std::string> original = prior ? std::optional<std::string>{prior} : std::nullopt;
-	const auto restore = [&]
-	{
+	const auto restore = [&] {
 		if (original)
 			::setenv("SIMXR_DATA_DIR", original->c_str(), 1);
 		else
@@ -299,6 +283,7 @@ void DiscoveryFailures()
 	restore();
 }
 } // namespace
+
 int main()
 {
 	try

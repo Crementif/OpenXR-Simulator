@@ -11,6 +11,7 @@ ConnectionDialog::ConnectionDialog(std::string_view endpoint)
 {
 	std::copy(endpoint.begin(), endpoint.end(), m_endpoint.begin());
 }
+
 static int ResizeEndpoint(ImGuiInputTextCallbackData* data)
 {
 	auto& endpoint = *static_cast<std::vector<char>*>(data->UserData);
@@ -18,6 +19,7 @@ static int ResizeEndpoint(ImGuiInputTextCallbackData* data)
 	data->Buf = endpoint.data();
 	return 0;
 }
+
 void ConnectionDialog::Draw(RuntimeSession& session, bool* open, const std::function<void(std::string)>& connect,
 							const std::function<void()>& disconnect)
 {

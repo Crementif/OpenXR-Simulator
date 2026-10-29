@@ -71,14 +71,14 @@ bool ValidViewFieldOfView(XrFovf fov) noexcept;
 
 class ViewConfiguration
 {
-  public:
+public:
 	explicit ViewConfiguration(ViewLayout layout = ViewLayout::Stereo, const ViewSettings& settings = {});
 	std::vector<ViewDescription> Describe() const;
 	LocatedViews Locate(const TrackingSnapshot& snapshot, bool foveated = false) const;
 	std::uint32_t EyeCount() const;
 	const ViewSettings& Settings() const;
 
-  private:
+private:
 	ViewLayout m_layout;
 	ViewSettings m_settings;
 };

@@ -26,8 +26,7 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 	if (view.connected)
 		tooltip += "\n" + view.endpoint;
 	tooltip += "\nLaunch, connect or switch apps";
-	const auto session = [&]
-	{
+	const auto session = [&] {
 		runtime.DrawSessionMenu();
 		ImGui::Separator();
 		if (ImGui::MenuItem("Release inputs"))
@@ -36,8 +35,8 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 		if (ImGui::MenuItem("Cancel pending", "Shift+F7"))
 			runtime.CancelPending();
 	};
-	auto choice = m_picker.Draw(m_settings, view, label, dot, tooltip,
-									  std::exchange(m_shell.openAppPicker, false), session, maximumWidth, compact);
+	auto choice = m_picker.Draw(m_settings, view, label, dot, tooltip, std::exchange(m_shell.openAppPicker, false),
+								session, maximumWidth, compact);
 	if (choice.connect && m_openRunning && m_openRunning(*choice.connect))
 		choice.connect.reset();
 	if (!choice.discoveryError.empty())
@@ -103,8 +102,8 @@ void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
 {
 	const bool unseen = m_notices.Unseen();
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
-	const bool pressed = IconButton("History", Icon::History, "Recent changes and notices",
-									ImGui::IsPopupOpen("History"));
+	const bool pressed =
+		IconButton("History", Icon::History, "Recent changes and notices", ImGui::IsPopupOpen("History"));
 	ImGui::PopStyleColor();
 	if (pressed)
 	{
@@ -124,8 +123,7 @@ void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
 	if (!ImGui::BeginPopup("History"))
 		return;
 	const auto now = std::chrono::steady_clock::now();
-	const auto ago = [&](std::chrono::steady_clock::time_point time)
-	{
+	const auto ago = [&](std::chrono::steady_clock::time_point time) {
 		const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now - time).count();
 		if (seconds < 5)
 			return std::string("now");
@@ -135,8 +133,7 @@ void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
 			return std::to_string(seconds / 60) + " min";
 		return std::to_string(seconds / 3600) + " h";
 	};
-	const auto time = [&](const std::string& text)
-	{
+	const auto time = [&](const std::string& text) {
 		ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(text.c_str()).x);
 		ImGui::TextDisabled("%s", text.c_str());
 	};

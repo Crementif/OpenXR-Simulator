@@ -24,18 +24,19 @@ struct CachedImage
 // current connection and export before looking up an identity.
 class ImageCache
 {
-  public:
+public:
 	ImageCache(std::size_t maxBytes, std::size_t maxEntries);
 	std::shared_ptr<const CachedImage> Find(const std::string& key);
 	void Insert(std::string key, std::shared_ptr<const CachedImage> image);
 
-  private:
+private:
 	struct Entry
 	{
 		std::string key;
 		std::shared_ptr<const CachedImage> image;
 		std::size_t bytes = 0;
 	};
+
 	std::mutex m_mutex;
 	std::list<Entry> m_entries;
 	std::size_t m_bytes = 0;

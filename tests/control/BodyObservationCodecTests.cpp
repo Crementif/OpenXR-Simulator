@@ -10,6 +10,7 @@
 namespace simxr::tests
 {
 namespace wire = control;
+
 static BodyObservation Sample(BodyJointSet set)
 {
 	BodyObservation value;
@@ -39,16 +40,14 @@ static BodyObservation Sample(BodyJointSet set)
 	}
 	return value;
 }
+
 static wire::Field& Find(std::vector<wire::Field>& fields, std::uint16_t tag)
 {
-	const auto found = std::find_if(fields.begin(), fields.end(),
-									[&](const auto& field)
-									{
-										return field.tag == tag;
-									});
+	const auto found = std::find_if(fields.begin(), fields.end(), [&](const auto& field) { return field.tag == tag; });
 	Require(found != fields.end(), "Fixture field");
 	return *found;
 }
+
 static void RoundTrips()
 {
 	for (const auto set :
@@ -147,6 +146,7 @@ static void RoundTrips()
 	Require(!std::get<SetBodyControls>(authored).observation, "Legacy authored body command unchanged");
 }
 } // namespace simxr::tests
+
 int main(int argc, char** argv)
 {
 	try

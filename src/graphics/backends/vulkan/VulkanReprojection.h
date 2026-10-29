@@ -18,7 +18,7 @@ namespace simxr
 // The resulting source owns only private images on the inspection device.
 class VulkanReprojectionPreparation final
 {
-  public:
+public:
 	static XrResult Prepare(VulkanBackend& backend, VulkanInspection& inspection, const FrameLayers& layers,
 							const CompositionTarget& target, const PoseSample& head, const VulkanImageResolver& resolve,
 							std::size_t capacity, std::unique_ptr<VulkanReprojectionPreparation>& output,
@@ -34,7 +34,7 @@ class VulkanReprojectionPreparation final
 	std::shared_ptr<const RotationalSource> Source() const noexcept;
 	void Commit() noexcept;
 
-  private:
+private:
 	VulkanReprojectionPreparation() = default;
 	std::vector<std::shared_ptr<VulkanFrame>> m_frames;
 	std::vector<XrSwapchain> m_swapchains;

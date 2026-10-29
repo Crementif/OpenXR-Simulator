@@ -10,18 +10,16 @@ namespace simxr::probe
 static bool Has(std::span<const VkExtensionProperties> extensions, const char* name)
 {
 	return std::any_of(extensions.begin(), extensions.end(),
-					   [&](const auto& entry)
-					   {
-						   return std::strcmp(entry.extensionName, name) == 0;
-					   });
+					   [&](const auto& entry) { return std::strcmp(entry.extensionName, name) == 0; });
 }
 
 class DensityMap
 {
-  public:
+public:
 	DensityMap() = default;
 	DensityMap(const DensityMap&) = delete;
 	DensityMap& operator=(const DensityMap&) = delete;
+
 	~DensityMap()
 	{
 		if (m_view)
@@ -40,11 +38,9 @@ class DensityMap
 		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, nullptr);
 		std::vector<VkQueueFamilyProperties> queues(count);
 		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, queues.data());
-		auto queue = std::find_if(queues.begin(), queues.end(),
-								  [](const auto& entry)
-								  {
-									  return entry.queueCount && (entry.queueFlags & VK_QUEUE_GRAPHICS_BIT);
-								  });
+		auto queue = std::find_if(queues.begin(), queues.end(), [](const auto& entry) {
+			return entry.queueCount && (entry.queueFlags & VK_QUEUE_GRAPHICS_BIT);
+		});
 		if (queue == queues.end())
 			throw std::runtime_error("Density-map device has no graphics queue");
 		const float priority = 1;
@@ -98,7 +94,7 @@ class DensityMap
 				  "rendering=not-qualified");
 	}
 
-  private:
+private:
 	VkDevice m_device = VK_NULL_HANDLE;
 	VkImage m_image = VK_NULL_HANDLE;
 	VkImageView m_view = VK_NULL_HANDLE;

@@ -26,11 +26,11 @@ struct ApplicationOptions
 
 class Application
 {
-  public:
+public:
 	explicit Application(ApplicationOptions options);
 	int Run();
 
-  private:
+private:
 	ApplicationOptions m_options;
 };
 } // namespace simxr::app

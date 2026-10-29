@@ -17,8 +17,7 @@ static void Remember(std::deque<Sample>& history, Sample sample)
 
 IncidentCapture::IncidentCapture(std::filesystem::path sessionDirectory)
 	: m_sessionDirectory(std::move(sessionDirectory))
-{
-}
+{}
 
 IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, const std::deque<Sample>& history)
 {
@@ -252,7 +251,8 @@ IncidentUpdate UiMonitor::Observe(const uint8_t* pixels, uint32_t width, uint32_
 	std::optional<Sample> current;
 	const bool validRects =
 		info.rects[0][2] > 0 && info.rects[0][3] > 0 && info.rects[1][2] > 0 && info.rects[1][3] > 0;
-	if (ValidPixels(pixels, width, height, pitchBytes) && validRects && generation != 0 && generation != m_lastGeneration)
+	if (ValidPixels(pixels, width, height, pitchBytes) && validRects && generation != 0 &&
+		generation != m_lastGeneration)
 	{
 		m_lastGeneration = generation;
 		current = CropUi(pixels, width, height, pitchBytes ? pitchBytes : width * 4, info.rects, frame, order);

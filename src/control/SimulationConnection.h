@@ -14,6 +14,7 @@ namespace simxr
 class Session;
 class GameBridge;
 } // namespace simxr
+
 namespace simxr::control
 {
 struct ControlSession;
@@ -22,7 +23,7 @@ struct ControlSession;
 // after that gate and its mutex are released.
 class SimulationConnection
 {
-  public:
+public:
 	SimulationConnection(ConnectionId connection, GameBridge& game);
 	~SimulationConnection();
 	SimulationConnection(const SimulationConnection&) = delete;
@@ -31,16 +32,18 @@ class SimulationConnection
 					 std::vector<SnapshotRecord>& held);
 	bool OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept;
 
-  private:
+private:
 	Message DispatchLiveInput(const Message& request, const ControlSession& binding, Message response);
 	std::optional<CommandSource> Source(std::optional<CommandSourceKind> requested) const;
 	CommandSource RequestSource(const Message& request) const;
 	void Track(const std::shared_ptr<Session>& session, CommandSource source);
+
 	struct Use
 	{
 		std::shared_ptr<Session> session;
 		CommandSource source;
 	};
+
 	ConnectionId m_connection;
 	GameBridge& m_game;
 	std::optional<CommandSourceKind> m_kind;

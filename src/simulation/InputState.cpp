@@ -2,15 +2,13 @@
 #include "Pch.h"
 #include "runtime/validation/Path.h"
 
-
 namespace simxr
 {
 XrResult InputState::Validate(const InputSnapshot& snapshot)
 {
 	if (snapshot.time.value.count() < 0)
 		return XR_ERROR_TIME_INVALID;
-	auto validControls = [](const ControllerControls& controller)
-	{
+	auto validControls = [](const ControllerControls& controller) {
 		for (float value : {controller.trigger, controller.grip, controller.gripForce, controller.trackpadForce})
 			if (!std::isfinite(value) || value < 0 || value > 1)
 				return false;
@@ -85,6 +83,7 @@ void InputState::Reset()
 	std::lock_guard lock(m_mutex);
 	m_snapshot = {};
 }
+
 void InputState::ReleaseControls(std::array<bool, 2> hands)
 {
 	if (!hands[0] && !hands[1])

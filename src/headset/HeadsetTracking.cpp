@@ -13,8 +13,7 @@ XrPosef AlignHeadset(const HeadsetInputSample& input, const HeadsetAlignment& al
 	if (!physicalHead || !target || !origin || !input.space.revision || !std::isfinite(alignment.worldFloor) ||
 		(input.head.locationFlags & ValidPoseFlags) != ValidPoseFlags)
 		throw std::invalid_argument("Headset alignment requires valid head poses and floor calibration");
-	const auto yaw = [](const XrPosef& pose)
-	{
+	const auto yaw = [](const XrPosef& pose) {
 		const auto forward = Rotate(pose.orientation, {0, 0, -1});
 		if (std::hypot(forward.x, forward.z) < .0001f)
 			throw std::invalid_argument("Look horizontally to establish headset alignment");
@@ -94,6 +93,7 @@ static RuntimeTime MapNativeTime(const FrameNativeClockMapping& clock, std::int6
 		throw std::overflow_error("Mapped physical timestamp is outside runtime range");
 	return {Duration{anchor + offset}};
 }
+
 static PoseSample MapPose(const XrSpaceLocation& location, RuntimeTime target, XrPosef transform)
 {
 	PoseSample result;
@@ -120,6 +120,7 @@ static PoseSample MapPose(const XrSpaceLocation& location, RuntimeTime target, X
 	result.sampleTime = target;
 	return result;
 }
+
 LiveInputSample MapHeadsetTracking(const HeadsetInputSample& input, const FrameNativeClockMapping& clock,
 								   NativeClockDomain domain, std::int64_t observed, std::int64_t predicted,
 								   XrPosef worldFromPhysical, std::uint64_t attachment, std::uint64_t sequence,

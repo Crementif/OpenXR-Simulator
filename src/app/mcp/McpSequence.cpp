@@ -18,6 +18,7 @@ static void Keys(const Json& object, std::initializer_list<std::string_view> all
 		if (std::find(allowed.begin(), allowed.end(), it.key()) == allowed.end())
 			throw std::invalid_argument("Unknown argument: " + it.key());
 }
+
 static std::uint64_t Number(const Json& object, const char* key, bool allowZero = false)
 {
 	const auto& value = object.at(key);
@@ -34,6 +35,7 @@ static std::uint64_t Number(const Json& object, const char* key, bool allowZero 
 		throw std::invalid_argument(std::string(key) + " requires a canonical decimal integer");
 	return number;
 }
+
 static Json Result(const Json& value, bool error = false)
 {
 	return {{"content", Json::array({{{"type", "text"}, {"text", value.dump()}}})}, {"isError", error}};
@@ -42,55 +44,76 @@ static Json Result(const Json& value, bool error = false)
 bool SequenceHandles(const std::string& name)
 {
 	static const std::set<std::string> names{"upload_pose_sequence", "run_pose_sequence", "get_pose_sequence",
-		"stop_pose_sequence", "release_pose_sequence_capture"};
+											 "stop_pose_sequence", "release_pose_sequence_capture"};
 	return names.contains(name);
 }
+
 Json SequenceDefinitions()
 {
 	const Json id = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}},
-		{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
-	const Json zero = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
-		{{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
+											{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
+	const Json zero = {
+		{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
+							   {{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
 	const Json common = {{"connection", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
-		{"session", id}, {"generation", id}};
-	const auto tool = [](const char* name, const char* description, Json properties, Json required)
-	{
-		return Json{{"name", name}, {"description", description}, {"inputSchema", {{"type", "object"},
-			{"properties", std::move(properties)}, {"required", std::move(required)}, {"additionalProperties", false}}}};
+						 {"session", id},
+						 {"generation", id}};
+	const auto tool = [](const char* name, const char* description, Json properties, Json required) {
+		return Json{{"name", name},
+					{"description", description},
+					{"inputSchema",
+					 {{"type", "object"},
+					  {"properties", std::move(properties)},
+					  {"required", std::move(required)},
+					  {"additionalProperties", false}}}};
 	};
 	Json result = Json::array();
 	auto upload = common;
 	upload["program_id"] = id;
 	upload["offset"] = zero;
 	upload["total_bytes"] = zero;
-	upload["data"] = {{"type", "string"}, {"description", "UTF-8 JSONL chunk, at most 256 KiB; offsets and total are byte counts."}};
-	result.push_back(tool("upload_pose_sequence", "Upload one ordered JSONL program chunk without executing it. Identical chunk retries are safe; total is limited to 16 MiB.", upload,
-		Json::array({"connection", "program_id", "offset", "total_bytes", "data"})));
+	upload["data"] = {{"type", "string"},
+					  {"description", "UTF-8 JSONL chunk, at most 256 KiB; offsets and total are byte counts."}};
+	result.push_back(tool("upload_pose_sequence",
+						  "Upload one ordered JSONL program chunk without executing it. Identical chunk retries are "
+						  "safe; total is limited to 16 MiB.",
+						  upload, Json::array({"connection", "program_id", "offset", "total_bytes", "data"})));
 	auto run = common;
 	run["program_id"] = id;
 	run["loop"] = {{"type", "boolean"}};
-	run["program"] = {{"type", "string"}, {"description", "Optional complete UTF-8 JSONL program, at most 512 KiB. Larger programs can be staged with upload_pose_sequence."}};
-	result.push_back(tool("run_pose_sequence", "Upload an optional JSONL program and start it at an ordinary frame boundary. Repeating the same program and loop returns its current execution, not a restart.", run,
-		Json::array({"connection", "program_id"})));
+	run["program"] = {{"type", "string"},
+					  {"description", "Optional complete UTF-8 JSONL program, at most 512 KiB. Larger programs can be "
+									  "staged with upload_pose_sequence."}};
+	result.push_back(tool("run_pose_sequence",
+						  "Upload an optional JSONL program and start it at an ordinary frame boundary. Repeating the "
+						  "same program and loop returns its current execution, not a restart.",
+						  run, Json::array({"connection", "program_id"})));
 	auto status = common;
 	status["sequence_id"] = id;
 	status["after"] = zero;
 	status["count"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 64}};
-	result.push_back(tool("get_pose_sequence", "Read an owned execution and its paged exact-frame capture receipts; held captures survive history eviction.", status,
-		Json::array({"connection", "sequence_id"})));
+	result.push_back(tool(
+		"get_pose_sequence",
+		"Read an owned execution and its paged exact-frame capture receipts; held captures survive history eviction.",
+		status, Json::array({"connection", "sequence_id"})));
 	auto stop = common;
 	stop["sequence_id"] = id;
-	result.push_back(tool("stop_pose_sequence", "Stop the identified current owned sequence; retained captures still require release.", stop,
-		Json::array({"connection", "sequence_id"})));
+	result.push_back(tool("stop_pose_sequence",
+						  "Stop the identified current owned sequence; retained captures still require release.", stop,
+						  Json::array({"connection", "sequence_id"})));
 	auto release = common;
 	release["capture"] = id;
-	result.push_back(tool("release_pose_sequence_capture", "Release a sequence-owned capture after retaining or exporting its image.", release,
-		Json::array({"connection", "capture"})));
+	result.push_back(tool("release_pose_sequence_capture",
+						  "Release a sequence-owned capture after retaining or exporting its image.", release,
+						  Json::array({"connection", "capture"})));
 	return result;
 }
-SequenceRequest PrepareSequence(const std::string& name, const Json& args, std::uint64_t session, std::uint64_t generation)
+
+SequenceRequest PrepareSequence(const std::string& name, const Json& args, std::uint64_t session,
+								std::uint64_t generation)
 {
-	SequenceRequest result{wire::OpCode::ReadSequence,
+	SequenceRequest result{
+		wire::OpCode::ReadSequence,
 		{wire::Field::U64(tag::Session, session, true), wire::Field::U64(tag::Generation, generation, true)}};
 	if (name != "release_pose_sequence_capture")
 		result.fields.push_back(wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)));
@@ -101,24 +124,25 @@ SequenceRequest PrepareSequence(const std::string& name, const Json& args, std::
 		if (!args.at("data").is_string())
 			throw std::invalid_argument("data must be a UTF-8 string");
 		const auto& data = args.at("data").get_ref<const std::string&>();
-		if (total > wire::SequenceControl::MaxBytes || offset > total || data.size() > wire::SequenceControl::ChunkBytes ||
-			data.size() > total - offset || (data.empty() && total) || data.find('\0') != std::string::npos)
+		if (total > wire::SequenceControl::MaxBytes || offset > total ||
+			data.size() > wire::SequenceControl::ChunkBytes || data.size() > total - offset ||
+			(data.empty() && total) || data.find('\0') != std::string::npos)
 			throw std::invalid_argument("Invalid bounded sequence chunk, byte offset or total");
 		result.opcode = wire::OpCode::UploadSequence;
 		result.fields.push_back(wire::Field::U64(tag::ProgramId, Number(args, "program_id"), true));
 		result.fields.push_back(wire::Field::U64(tag::Offset, offset, true));
 		result.fields.push_back(wire::Field::U64(tag::TotalBytes, total, true));
-		result.fields.push_back(wire::Field::Bytes(tag::Bytes,
-			std::as_bytes(std::span(data.data(), data.size())), true));
+		result.fields.push_back(
+			wire::Field::Bytes(tag::Bytes, std::as_bytes(std::span(data.data(), data.size())), true));
 	}
 	else if (name == "run_pose_sequence")
 	{
 		Keys(args, {"connection", "session", "generation", "program_id", "loop", "program"});
 		if (args.contains("loop") && !args["loop"].is_boolean())
 			throw std::invalid_argument("loop must be boolean");
-		if (args.contains("program") && (!args["program"].is_string() ||
-			args["program"].get_ref<const std::string&>().size() > 512 * 1024 ||
-			args["program"].get_ref<const std::string&>().find('\0') != std::string::npos))
+		if (args.contains("program") &&
+			(!args["program"].is_string() || args["program"].get_ref<const std::string&>().size() > 512 * 1024 ||
+			 args["program"].get_ref<const std::string&>().find('\0') != std::string::npos))
 			throw std::invalid_argument("program must be JSONL text of at most 512 KiB without NUL bytes");
 		result.opcode = wire::OpCode::StartSequence;
 		result.fields.push_back(wire::Field::U64(tag::ProgramId, Number(args, "program_id"), true));
@@ -155,6 +179,7 @@ SequenceRequest PrepareSequence(const std::string& name, const Json& args, std::
 		throw std::invalid_argument("Unknown sequence operation");
 	return result;
 }
+
 void DecimalSequenceIdentities(Json& value)
 {
 	if (value.is_array())
@@ -164,8 +189,9 @@ void DecimalSequenceIdentities(Json& value)
 	}
 	else if (value.is_object())
 	{
-		static const std::set<std::string_view> names{"frame", "origin", "last_frame", "next_frame", "oldest_frame",
-			"current_sequence", "program_id", "sequence_id", "capture_id", "id"};
+		static const std::set<std::string_view> names{
+			"frame",	  "origin",		 "last_frame", "next_frame", "oldest_frame", "current_sequence",
+			"program_id", "sequence_id", "capture_id", "id"};
 		for (auto it = value.begin(); it != value.end(); ++it)
 		{
 			if (it->is_number_unsigned() && (names.contains(it.key()) || it->get<std::uint64_t>() > ((1ULL << 53) - 1)))
@@ -175,6 +201,7 @@ void DecimalSequenceIdentities(Json& value)
 		}
 	}
 }
+
 std::uint64_t SequenceInteger(const Json& object, const char* key, bool zero)
 {
 	const auto& value = object.at(key);
@@ -182,6 +209,7 @@ std::uint64_t SequenceInteger(const Json& object, const char* key, bool zero)
 		throw std::runtime_error(std::string("Invalid sequence integer: ") + key);
 	return value.get<std::uint64_t>();
 }
+
 Json SequenceDocument(const wire::Message& response, const SequenceRequest& request)
 {
 	const auto* error = response.Find(tag::Error);
@@ -215,10 +243,9 @@ Json SequenceDocument(const wire::Message& response, const SequenceRequest& requ
 	{
 		result["document"] = InspectionJson(document->value, true);
 	}
-	const auto field = [&](std::uint16_t wanted)
-	{
+	const auto field = [&](std::uint16_t wanted) {
 		const auto found = std::find_if(request.fields.begin(), request.fields.end(),
-			[wanted](const auto& item) { return item.tag == wanted; });
+										[wanted](const auto& item) { return item.tag == wanted; });
 		if (found == request.fields.end() || !found->AsU64())
 			throw std::runtime_error("Sequence request omitted an identity");
 		return *found->AsU64();
@@ -228,27 +255,31 @@ Json SequenceDocument(const wire::Message& response, const SequenceRequest& requ
 		const auto& data = result.at("document");
 		const auto total = field(tag::TotalBytes), offset = field(tag::Offset);
 		const auto bytes = std::find_if(request.fields.begin(), request.fields.end(),
-			[](const auto& item) { return item.tag == tag::Bytes; });
+										[](const auto& item) { return item.tag == tag::Bytes; });
 		if (bytes == request.fields.end() || SequenceInteger(data, "program_id") != field(tag::ProgramId) ||
-			SequenceInteger(data, "total", true) != total || SequenceInteger(data, "received", true) < offset + bytes->value.size() ||
-			SequenceInteger(data, "received", true) > total || data.at("complete") != (SequenceInteger(data, "received", true) == total))
+			SequenceInteger(data, "total", true) != total ||
+			SequenceInteger(data, "received", true) < offset + bytes->value.size() ||
+			SequenceInteger(data, "received", true) > total ||
+			data.at("complete") != (SequenceInteger(data, "received", true) == total))
 			throw std::runtime_error("Runtime returned an inconsistent sequence upload acknowledgement");
 	}
 	else if (request.opcode == wire::OpCode::StartSequence)
 	{
-		if (!result.contains("sequence_id") || SequenceInteger(result.at("document"), "id") != SequenceInteger(result, "sequence_id"))
+		if (!result.contains("sequence_id") ||
+			SequenceInteger(result.at("document"), "id") != SequenceInteger(result, "sequence_id"))
 			throw std::runtime_error("Runtime returned an inconsistent sequence execution identity");
 	}
 	else if (request.opcode == wire::OpCode::ReadSequence &&
-		SequenceInteger(result.at("document"), "sequence_id") != field(tag::SequenceId))
+			 SequenceInteger(result.at("document"), "sequence_id") != field(tag::SequenceId))
 		throw std::runtime_error("Runtime returned a different sequence history");
 	else if (request.opcode == wire::OpCode::StopSequence &&
-		SequenceInteger(result.at("document"), "id") != field(tag::SequenceId))
+			 SequenceInteger(result.at("document"), "id") != field(tag::SequenceId))
 		throw std::runtime_error("Runtime returned a different stopped sequence");
 	else if (request.opcode == wire::OpCode::ReleaseSequenceCapture && !result.contains("released"))
 		throw std::runtime_error("Runtime omitted sequence capture release status");
 	return result;
 }
+
 Json SequenceReply(const wire::Message& response, const SequenceRequest& request)
 {
 	auto result = SequenceDocument(response, request);

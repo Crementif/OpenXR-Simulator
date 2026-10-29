@@ -11,6 +11,7 @@ static std::uint32_t Number(std::span<const std::byte> data)
 		result = result * 256 + std::to_integer<unsigned>(value);
 	return result;
 }
+
 int main()
 {
 	try

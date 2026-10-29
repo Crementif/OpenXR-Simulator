@@ -12,6 +12,7 @@ void TimelineCanvas::Zoom(double first, double last) noexcept
 	m_start = (first + last - m_span) / 2;
 	m_fit = false;
 }
+
 void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 {
 	const auto top = ImGui::GetCursorScreenPos();
@@ -71,6 +72,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 					  theme::Line);
 	}
 }
+
 TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following,
 									 std::optional<double> cursor, std::optional<std::pair<double, double>> selection)
 {
@@ -143,8 +145,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		m_span = m_zoomSpan;
 		m_start = latest - m_span + .001;
 	}
-	const auto timeAt = [&](float px)
-	{
+	const auto timeAt = [&](float px) {
 		return m_start + std::clamp(double(px - left) / pixels, 0., 1.) * m_span;
 	};
 	if (hovered && io.MouseWheel)
@@ -184,8 +185,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	std::optional<std::size_t> snapshotHit, markerHit;
 	float snapshotDistance = 6 * scale, markerDistance = 6 * scale;
 	// Finds one flagged frame within a dense pixel column without scanning its frames.
-	const auto findFlag = [&](std::size_t a, std::size_t b, std::uint32_t flag)
-	{
+	const auto findFlag = [&](std::size_t a, std::size_t b, std::uint32_t flag) {
 		while (a + 1 < b)
 		{
 			const auto middle = a + (b - a) / 2;
@@ -196,8 +196,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		}
 		return a;
 	};
-	const auto near = [&](float x, float y, float radius)
-	{
+	const auto near = [&](float x, float y, float radius) {
 		return hovered && std::abs(io.MousePos.x - x) < radius && std::abs(io.MousePos.y - y) < radius;
 	};
 	draw->PushClipRect({left, top}, {right, top + height}, true);
@@ -327,8 +326,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 			result.stopFollowing = true;
 		}
 	}
-	const auto clearOfRuns = [&](float x, const char* text)
-	{
+	const auto clearOfRuns = [&](float x, const char* text) {
 		const float end = x + ImGui::CalcTextSize(text).x;
 		for (const auto& [runX, label] : m_runLabels)
 			if (x < runX + ImGui::CalcTextSize(label.c_str()).x + 12 * scale && end > runX - 4 * scale)
@@ -439,6 +437,7 @@ void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory&
 	}
 	draw->PopClipRect();
 }
+
 void TimelineCanvas::DrawEvent(double time, double observed, const char* text, bool failed, bool dim)
 {
 	const float scale = ImGui::GetFontSize() / 16, x = X(time);
@@ -453,6 +452,7 @@ void TimelineCanvas::DrawEvent(double time, double observed, const char* text, b
 		ImGui::SetTooltip("%s%s\nObserved +%.2fs (nearest observed frame)", text,
 						  dim ? " (another app or session)" : "", observed);
 }
+
 ClipHit TimelineCanvas::DrawClip(const char* id, double first, double last, const char* label, bool replay,
 								 bool playable, bool stoppable)
 {
@@ -527,6 +527,7 @@ ClipHit TimelineCanvas::DrawClip(const char* id, double first, double last, cons
 		ImGui::SetTooltip("%s\nClick selects its frames. Double-click opens it", label);
 	return result;
 }
+
 void TimelineCanvas::DrawPause(double first, double last)
 {
 	if (last < m_start || first > m_start + m_span)
@@ -546,6 +547,7 @@ void TimelineCanvas::DrawPause(double first, double last)
 	if (mouse.x >= x && mouse.x < end && mouse.y >= y && mouse.y < y + m_lane && ImGui::IsWindowHovered())
 		ImGui::SetTooltip("App paused for %.1f s\nIt only advanced when stepped. Continue resumes it", last - first);
 }
+
 void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t sourceFirst, std::size_t sourceLast,
 							   std::size_t targetFirst, std::size_t targetLast)
 {
@@ -558,8 +560,7 @@ void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t sourceFi
 	const auto targetFrame = history.At(targetFirst).identity.frame;
 	const auto offset = std::min(history.At(sourceLast).identity.frame - sourceFrame,
 								 history.At(targetLast).identity.frame - targetFrame);
-	const auto frameBound = [&](std::size_t first, std::size_t end, std::uint64_t frame, bool after)
-	{
+	const auto frameBound = [&](std::size_t first, std::size_t end, std::uint64_t frame, bool after) {
 		while (first < end)
 		{
 			const auto middle = first + (end - first) / 2;

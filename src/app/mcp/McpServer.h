@@ -18,7 +18,7 @@ namespace simxr::app
 // An explicitly enabled loopback endpoint. Credentials never enter a launch profile.
 class McpServer
 {
-  public:
+public:
 	McpServer(McpApplication& application, std::uint16_t port, std::string token);
 	~McpServer();
 	McpServer(const McpServer&) = delete;
@@ -27,7 +27,7 @@ class McpServer
 	std::size_t ClientSessions() const;
 	void Stop() noexcept;
 
-  private:
+private:
 	void Route(const httplib::Request& request, httplib::Response& response);
 	void DownloadArtifact(const httplib::Request& request, httplib::Response& response);
 	void DeleteSession(const httplib::Request& request, httplib::Response& response);

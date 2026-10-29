@@ -5,8 +5,7 @@ namespace simxr
 {
 SwapchainAccess::SwapchainAccess(std::uint32_t imageCount, bool staticImage)
 	: m_state(imageCount, staticImage), m_lastUse(imageCount)
-{
-}
+{}
 
 XrResult SwapchainAccess::Acquire(std::uint32_t& index, const InitializeImage& initialize)
 {
@@ -14,17 +13,15 @@ XrResult SwapchainAccess::Acquire(std::uint32_t& index, const InitializeImage& i
 	std::lock_guard lock(m_mutex);
 	if (m_closed)
 		return XR_ERROR_SESSION_LOST;
-	return m_state.Acquire(index,
-						   [&](std::uint32_t candidate)
-						   {
-							   if (initialize)
-							   {
-								   initialized = initialize(candidate);
-								   if (initialized)
-									   m_lastUse[candidate] = initialized;
-							   }
-							   return XR_SUCCESS;
-						   });
+	return m_state.Acquire(index, [&](std::uint32_t candidate) {
+		if (initialize)
+		{
+			initialized = initialize(candidate);
+			if (initialized)
+				m_lastUse[candidate] = initialized;
+		}
+		return XR_SUCCESS;
+	});
 }
 
 XrResult SwapchainAccess::Wait(XrDuration timeout)
@@ -42,14 +39,17 @@ XrResult SwapchainAccess::Wait(XrDuration timeout)
 		index = *m_state.PendingImage();
 		m_waiting = true;
 	}
+
 	struct WaitRegistration
 	{
 		SwapchainAccess& owner;
+
 		~WaitRegistration()
 		{
 			owner.FinishWait();
 		}
 	} registration{*this};
+
 	return WaitForImage(index, timeout);
 }
 

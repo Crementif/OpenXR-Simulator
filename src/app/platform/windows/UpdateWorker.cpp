@@ -6,7 +6,7 @@ namespace simxr::app::windows
 {
 class UpdateInheritedHandles
 {
-  public:
+public:
 	explicit UpdateInheritedHandles(const std::array<HANDLE, 2>& handles)
 	{
 		SIZE_T size = 0;
@@ -29,28 +29,31 @@ class UpdateInheritedHandles
 			throw failure;
 		}
 	}
+
 	~UpdateInheritedHandles()
 	{
 		if (m_attributes)
 			DeleteProcThreadAttributeList(m_attributes);
 	}
+
 	UpdateInheritedHandles(const UpdateInheritedHandles&) = delete;
 	UpdateInheritedHandles& operator=(const UpdateInheritedHandles&) = delete;
+
 	LPPROC_THREAD_ATTRIBUTE_LIST Get() const noexcept
 	{
 		return m_attributes;
 	}
 
-  private:
+private:
 	std::vector<std::byte> m_storage;
 	LPPROC_THREAD_ATTRIBUTE_LIST m_attributes = nullptr;
 };
+
 class UpdateChild
 {
-  public:
-	explicit UpdateChild(PROCESS_INFORMATION info) : m_process(info.hProcess), m_thread(info.hThread)
-	{
-	}
+public:
+	explicit UpdateChild(PROCESS_INFORMATION info) : m_process(info.hProcess), m_thread(info.hThread) {}
+
 	~UpdateChild()
 	{
 		if (!m_finished && WaitForSingleObject(m_process.Get(), 0) == WAIT_TIMEOUT)
@@ -59,23 +62,27 @@ class UpdateChild
 			WaitForSingleObject(m_process.Get(), 2000);
 		}
 	}
+
 	HANDLE Process() const noexcept
 	{
 		return m_process.Get();
 	}
+
 	HANDLE Thread() const noexcept
 	{
 		return m_thread.Get();
 	}
+
 	void Finished() noexcept
 	{
 		m_finished = true;
 	}
 
-  private:
+private:
 	Handle m_process, m_thread;
 	bool m_finished = false;
 };
+
 std::string RunUpdateWorker(std::wstring_view argument, std::wstring_view target)
 {
 	std::array<wchar_t, 32768> executable{};
@@ -94,8 +101,8 @@ std::string RunUpdateWorker(std::wstring_view argument, std::wstring_view target
 	Handle read(rawRead), write(rawWrite);
 	if (!SetHandleInformation(read.Get(), HANDLE_FLAG_INHERIT, 0))
 		throw Error("Cannot protect update worker pipe");
-	Handle nullFile(CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-							   &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+	Handle nullFile(CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
+								OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
 	if (nullFile.Get() == INVALID_HANDLE_VALUE)
 		throw Error("Cannot open update worker input");
 	const std::array<HANDLE, 2> handles{write.Get(), nullFile.Get()};
@@ -151,7 +158,8 @@ std::string RunUpdateWorker(std::wstring_view argument, std::wstring_view target
 		if (status == WAIT_OBJECT_0)
 		{
 			DWORD remaining = 0;
-			if (!PeekNamedPipe(read.Get(), nullptr, 0, nullptr, &remaining, nullptr) && GetLastError() != ERROR_BROKEN_PIPE)
+			if (!PeekNamedPipe(read.Get(), nullptr, 0, nullptr, &remaining, nullptr) &&
+				GetLastError() != ERROR_BROKEN_PIPE)
 				throw Error("Cannot inspect update worker output");
 			if (remaining)
 				continue;

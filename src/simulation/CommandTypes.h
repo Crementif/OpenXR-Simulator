@@ -25,12 +25,14 @@ enum class CommandSourceKind
 	Sequence,
 	Device
 };
+
 struct CommandSource
 {
 	CommandSourceKind kind = CommandSourceKind::Manual;
 	std::uint64_t id = 0;
 	bool operator==(const CommandSource&) const = default;
 };
+
 inline constexpr CommandSource ApplicationAutomationSource{CommandSourceKind::Rig, UINT64_MAX};
 
 enum class ControlChannel
@@ -74,24 +76,29 @@ struct TakeControl
 	ControlChannel channel;
 	bool replace = false;
 };
+
 struct ReleaseControl
 {
 	ControlChannel channel;
 };
+
 struct SetHeadPose
 {
 	PoseSample value;
 };
+
 struct SetControllerPose
 {
 	std::uint32_t hand = 0;
 	ControllerPose value;
 };
+
 struct SetControllerControls
 {
 	std::uint32_t hand = 0;
 	ControllerControls value;
 };
+
 struct SetBodyControls
 {
 	BodyControls value;
@@ -99,45 +106,55 @@ struct SetBodyControls
 	// Replay maps this recorded runtime boundary to the actual application boundary.
 	std::optional<RuntimeTime> observationOrigin;
 };
+
 struct SetGaze
 {
 	GazeInput value;
 };
+
 struct SetTracker
 {
 	std::uint32_t index = 0;
 	TrackerDevice value;
 };
+
 struct SetTrackers
 {
 	std::vector<TrackerDevice> value;
 };
+
 struct SetViewSettings
 {
 	ViewSettings value;
 };
+
 struct SetEyeViews
 {
 	std::optional<StereoEyeViews> value;
 };
+
 struct SetBodyProportions
 {
 	BodyProportions value;
 };
+
 struct SetControllerProfile
 {
 	std::uint32_t hand = 0;
 	std::string path;
 };
+
 struct SetScenario
 {
 	FailureScenario scenario;
 	bool enabled = true;
 };
+
 struct SetReferenceSpaces
 {
 	ReferenceSpaceState value;
 };
+
 using SimulationCommand =
 	std::variant<TakeControl, ReleaseControl, SetHeadPose, SetControllerPose, SetControllerControls, SetBodyControls,
 				 SetGaze, SetTracker, SetViewSettings, SetBodyProportions, SetControllerProfile, SetScenario,
@@ -147,12 +164,14 @@ enum class CommandLatePolicy
 	Reject,
 	RescheduleNext
 };
+
 struct CommandTarget
 {
 	// Exactly one selector. Time targets apply at the first boundary >= time.
 	std::optional<FrameId> frame;
 	std::optional<SimulationTime> time;
 };
+
 struct CommandTransaction
 {
 	std::uint64_t id = 0;
@@ -186,6 +205,7 @@ enum class CommandResult
 	NotFound,
 	Released
 };
+
 struct LiveInputCorrelation
 {
 	std::uint64_t connection = 0, sequence = 0;
@@ -195,6 +215,7 @@ struct LiveInputCorrelation
 	std::optional<RuntimeTime> trackersObservedTime;
 };
 struct CommandRecordingOrigin;
+
 struct CommandOutcome
 {
 	CommandTransaction transaction;
@@ -213,6 +234,7 @@ struct CommandOutcome
 	// Shared by publication history and the recorder; captures the underlying state after a release.
 	std::shared_ptr<const CommandRecordingOrigin> releaseState;
 };
+
 struct CommandConfiguration
 {
 	TrackingState tracking;
@@ -221,12 +243,14 @@ struct CommandConfiguration
 	BodyProportions proportions;
 	ReferenceSpaceState referenceSpaces;
 };
+
 struct SequenceCaptureIntent
 {
 	std::uint64_t sequence = 0;
 	FrameId frame;
 	CommandSource owner;
 };
+
 struct AppliedCommandSnapshot
 {
 	std::uint64_t seed = 0, revision = 0;
@@ -240,6 +264,7 @@ struct AppliedCommandSnapshot
 	std::vector<CommandOutcome> outcomes;
 	std::optional<SequenceCaptureIntent> sequenceCapture;
 };
+
 struct CommandSchedulerSnapshot
 {
 	bool closed = false;
@@ -248,6 +273,7 @@ struct CommandSchedulerSnapshot
 	std::shared_ptr<const AppliedCommandSnapshot> applied;
 	std::uint64_t seed = 0;
 };
+
 // A recording starts at one atomic command boundary. Configuration deliberately
 // precedes scenario effects so disabling a recorded failure can recover its pose
 // flags/activity. Trigger flags describe history, not events to replay at origin.
@@ -260,6 +286,7 @@ struct CommandRecordingOrigin
 	SimulationTime time;
 	std::optional<RuntimeTime> runtimeTime;
 };
+
 struct CommandRecording
 {
 	std::uint32_t version = 3;

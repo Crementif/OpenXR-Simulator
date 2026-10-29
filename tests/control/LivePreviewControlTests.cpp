@@ -9,18 +9,21 @@ namespace
 using namespace simxr;
 namespace wire = simxr::control;
 namespace tag = wire::tag;
+
 wire::ErrorCode Error(const wire::ControlPacket& packet)
 {
 	const auto* field = packet.message.Find(tag::Error);
 	Require(field && field->AsU32(), "Missing live-preview response error");
 	return static_cast<wire::ErrorCode>(*field->AsU32());
 }
+
 std::uint64_t Id(const wire::Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
 	Require(field && field->AsU64(), "Missing live-preview uint64 metadata");
 	return *field->AsU64();
 }
+
 wire::Message Nested(const wire::Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
@@ -31,6 +34,7 @@ wire::Message Nested(const wire::Message& message, std::uint16_t tag)
 	result.fields = std::move(decoded.fields);
 	return result;
 }
+
 struct Client
 {
 	wire::ControlService& service;
@@ -38,6 +42,7 @@ struct Client
 	std::uint16_t minor;
 	std::uint64_t next = 1, session = 0, generation = 0;
 	wire::ControlPacket hello;
+
 	Client(wire::ControlService& service, std::uint16_t minor = wire::ProtocolMinor)
 		: service(service), connection(*service.Connect(true)), minor(minor)
 	{
@@ -50,6 +55,7 @@ struct Client
 		session = Id(entry, tag::Session);
 		generation = Id(entry, tag::Generation);
 	}
+
 	wire::ControlPacket Call(wire::OpCode opcode, std::vector<wire::Field> fields = {})
 	{
 		wire::ControlPacket request;
@@ -59,10 +65,12 @@ struct Client
 		request.message.fields = std::move(fields);
 		return service.HandlePacket(connection, request);
 	}
+
 	std::vector<wire::Field> Common() const
 	{
 		return {wire::Field::U64(tag::Session, session), wire::Field::U64(tag::Generation, generation)};
 	}
+
 	wire::ControlPacket Preview(std::vector<wire::Field> extra = {})
 	{
 		auto fields = Common();
@@ -70,17 +78,21 @@ struct Client
 		return Call(wire::OpCode::RetainPreview, std::move(fields));
 	}
 };
+
 class PendingOutput final : public FrameOutput
 {
-  public:
+public:
 	explicit PendingOutput(std::shared_ptr<FrameReservation> slot) : slot(std::move(slot)) {}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return status.load();
 	}
+
 	std::shared_ptr<FrameReservation> slot;
 	std::atomic<CompletionStatus> status{CompletionStatus::Pending};
 };
+
 FramePrediction Submit(wire::test::Fixture& fixture, std::shared_ptr<const FrameOutput> output)
 {
 	FramePrediction prediction;
@@ -101,6 +113,7 @@ FramePrediction Submit(wire::test::Fixture& fixture, std::shared_ptr<const Frame
 			"Submit CPU live-preview image frame");
 	return prediction;
 }
+
 std::shared_ptr<PendingOutput> NewOutput(wire::test::Fixture& fixture, CompletionStatus status)
 {
 	auto slot = fixture.pool.Reserve();
@@ -109,6 +122,7 @@ std::shared_ptr<PendingOutput> NewOutput(wire::test::Fixture& fixture, Completio
 	output->status = status;
 	return output;
 }
+
 void Through(wire::test::Fixture& fixture, DisplayTick tick)
 {
 	if (fixture.session->Display().NextTick() > tick)
@@ -116,6 +130,7 @@ void Through(wire::test::Fixture& fixture, DisplayTick tick)
 	while (fixture.session->Display().NextTick() <= tick)
 		Require(fixture.session->Display().Step().has_value(), "Advance actual selected virtual display");
 }
+
 void CheckIdentity(const wire::ControlPacket& packet, const Client& client, FrameKey frame)
 {
 	Require(Error(packet) == wire::ErrorCode::Ok && packet.message.Find(tag::ImageAvailable)->AsBool() == true &&
@@ -129,14 +144,14 @@ void CheckIdentity(const wire::ControlPacket& packet, const Client& client, Fram
 				target.Find(tag::Layer)->AsU32() == 0 && target.Find(tag::View)->AsU32() == 0,
 			"Live reader lost virtual-display target identity");
 }
+
 void DistinctDisplayImagesFromOneFrame()
 {
 	wire::ConnectionImages images;
 	auto state = std::make_shared<wire::test::State>();
 	wire::test::Provider provider(state);
 	const wire::ImageSource source{{7}, {{3}, {21}}, {}, {CaptureKind::VirtualDisplay}};
-	auto retain = [&](const std::shared_ptr<const FrameOutput>& output, std::uint64_t imageTick)
-	{
+	auto retain = [&](const std::shared_ptr<const FrameOutput>& output, std::uint64_t imageTick) {
 		wire::ConnectionImages::RetiredResource retired;
 		wire::ConnectionImages::Publication publication(images, retired);
 		wire::Message response;
@@ -151,8 +166,7 @@ void DistinctDisplayImagesFromOneFrame()
 				"Changed display image lost its original submitted-frame identity");
 		return Id(response, tag::ImageReaderId);
 	};
-	auto release = [&](std::uint64_t reader)
-	{
+	auto release = [&](std::uint64_t reader) {
 		wire::ConnectionImages::RetiredResource retired;
 		wire::ConnectionImages::Publication publication(images, retired);
 		wire::ControlPacket request, outgoing;
@@ -178,8 +192,7 @@ void DistinctDisplayImagesFromOneFrame()
 		throw std::runtime_error("Failed display-image publication was accepted");
 	}
 	catch (const std::bad_alloc&)
-	{
-	}
+	{}
 	Require(state->readersDestroyed == 1 && retain(rotated, 6) == rotatedReader,
 			"Publication rollback replaced an existing image or retained its failed reader");
 	for (std::size_t index = 2; index < SnapshotBudget::Capacity(); ++index)
@@ -205,6 +218,7 @@ void DistinctDisplayImagesFromOneFrame()
 	release(rotatedReader);
 	Require(rotatedLifetime.expired(), "Releasing the second image retained its output");
 }
+
 void ReaderReleasePreservesImageTick()
 {
 	wire::test::Fixture fixture;
@@ -232,6 +246,7 @@ void ReaderReleasePreservesImageTick()
 	Require(!cleared.message.Find(tag::ImageTick) && !Nested(cleared.message, tag::Display).Find(tag::ImageTick),
 			"A selected clear retained an image identity");
 }
+
 void SelectionLifetimeAndNoAdmission()
 {
 	wire::test::Fixture fixture;
@@ -295,6 +310,7 @@ void SelectionLifetimeAndNoAdmission()
 			"Release live reader after source session destruction");
 	Require(fixture.pool.InUse() == 0, "Final live reader leaked the retired source image budget");
 }
+
 void CompleteSelectionAndClear()
 {
 	wire::test::Fixture fixture;
@@ -329,12 +345,12 @@ void CompleteSelectionAndClear()
 			"Selected clear mutated old immutable live reader");
 	Require(fixture.state->reads == 0, "Live selection/clear performed implicit readback");
 }
+
 void SourceAge()
 {
 	wire::test::Fixture fixture(ExecutionMode::RealTime);
 	Client client(fixture.service);
-	const auto resume = [&]
-	{
+	const auto resume = [&] {
 		Require(fixture.session->Scheduler().Resume(std::chrono::steady_clock::now(),
 													fixture.session->Scheduler().Snapshot().nextAdmission) ==
 					XR_SUCCESS,
@@ -404,6 +420,7 @@ void ValidationAndRollback()
 			"Bounded live preview allocated captures or implicitly read pixels");
 }
 } // namespace
+
 int main()
 {
 	try

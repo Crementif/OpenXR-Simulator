@@ -38,7 +38,7 @@ static bool IsCompletePng(const std::filesystem::path& path)
 	input.seekg(-static_cast<std::streamoff>(trailer.size()), std::ios::end);
 	input.read(reinterpret_cast<char*>(trailer.data()), trailer.size());
 	return input && signature == std::array<unsigned char, 8>{137, 80, 78, 71, 13, 10, 26, 10} &&
-		trailer == std::array<unsigned char, 12>{0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130};
+		   trailer == std::array<unsigned char, 12>{0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130};
 }
 
 #ifdef __linux__
@@ -54,7 +54,8 @@ int RunTabLaunchFixture()
 	XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 	create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
 	std::strcpy(create.applicationInfo.applicationName, "Launched tab fixture");
-	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS && engine.CreateSession(instance, session) == XR_SUCCESS,
+	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS &&
+				engine.CreateSession(instance, session) == XR_SUCCESS,
 			"Create launched tab fixture");
 	FrameSchedulerConfig configuration;
 	configuration.mode = ExecutionMode::Deterministic;
@@ -64,28 +65,31 @@ int RunTabLaunchFixture()
 			"Start launched tab fixture");
 	FramePrediction frame;
 	Require(session->WaitFrame(frame) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS &&
-				session->EndFrame(frame) == XR_SUCCESS, "Publish launched tab fixture frame");
+				session->EndFrame(frame) == XR_SUCCESS,
+			"Publish launched tab fixture frame");
 	control::ControlService service{engine};
-	control::LocalControlServer server{service,
-		(std::filesystem::path(data) / ("control." + std::to_string(::getpid()) + ".sock")).string()};
+	control::LocalControlServer server{
+		service, (std::filesystem::path(data) / ("control." + std::to_string(::getpid()) + ".sock")).string()};
 	for (;;)
 		std::this_thread::sleep_for(100ms);
 }
 
 void CheckTabLaunches()
 {
-	const auto directory = std::filesystem::temp_directory_path() /
+	const auto directory =
+		std::filesystem::temp_directory_path() /
 		("simxr-tab-launch-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 	std::filesystem::create_directories(directory);
-	const auto saveEnvironment = [](const char* name) -> std::optional<std::string>
-	{
+	const auto saveEnvironment = [](const char* name) -> std::optional<std::string> {
 		const auto* value = std::getenv(name);
 		return value ? std::optional<std::string>{value} : std::nullopt;
 	};
+
 	struct Cleanup
 	{
 		std::filesystem::path directory;
 		std::optional<std::string> settings, data, endpoint;
+
 		~Cleanup()
 		{
 			std::error_code ignored;
@@ -108,10 +112,10 @@ void CheckTabLaunches()
 							::kill(static_cast<pid_t>(pid), SIGTERM);
 					}
 				}
-				catch (const std::exception&) {}
+				catch (const std::exception&)
+				{}
 			}
-			const auto restore = [](const char* name, const std::optional<std::string>& value)
-			{
+			const auto restore = [](const char* name, const std::optional<std::string>& value) {
 				if (value)
 					::setenv(name, value->c_str(), 1);
 				else
@@ -124,6 +128,7 @@ void CheckTabLaunches()
 		}
 	} cleanup{directory, saveEnvironment("SIMXR_COMPANION_SETTINGS"), saveEnvironment("SIMXR_DATA_DIR"),
 			  saveEnvironment("SIMXR_CONTROL_SOCKET")};
+
 	const auto settingsPath = directory / "settings.json";
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0 &&
 				::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 && ::unsetenv("SIMXR_CONTROL_SOCKET") == 0,
@@ -146,16 +151,15 @@ void CheckTabLaunches()
 	Interaction test;
 	{
 		ApplicationTabs tabs{test.processes, test.renderer, test.window, true, "", true};
-		const auto frame = [&]
-		{
+		const auto frame = [&] {
 			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Launch tab UI stalled");
 			tabs.Draw();
-			Require(test.renderer.Render(tabs.ReadyWaits(), [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
+			Require(test.renderer.Render(tabs.ReadyWaits(),
+										 [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
 					"Launch tab frame was not rendered");
 			tabs.Submitted(test.renderer.SubmittedFrames());
 		};
-		const auto launch = [&]
-		{
+		const auto launch = [&] {
 			frame();
 			auto* toolbar = FindPanel("Top bar");
 			Require(toolbar, "Launch picker toolbar missing");
@@ -171,44 +175,82 @@ void CheckTabLaunches()
 			frame();
 		};
 		launch();
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().sessionRunning; },
-				   "First launch did not attach to its own session");
-		Eventually([&] { frame(); return tabs.ActiveWorkspace().HasActiveAutomation(); },
-				   "First launch did not start its script");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"First launch did not attach to its own session");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveWorkspace().HasActiveAutomation();
+			},
+			"First launch did not start its script");
 		const auto first = tabs.ActiveRuntime().Endpoint();
 		Require(std::filesystem::path(first).parent_path() == directory, "First launch escaped its fixture directory");
 		launch();
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() != first &&
-									 tabs.ActiveRuntime().Snapshot().sessionRunning; },
-				   "Second launch of the same profile did not attach independently");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() != first && tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"Second launch of the same profile did not attach independently");
 		const auto second = tabs.ActiveRuntime().Endpoint();
-		const auto pid = [](const std::string& endpoint)
-		{
+		const auto pid = [](const std::string& endpoint) {
 			const auto name = std::filesystem::path(endpoint).filename().string();
 			return static_cast<pid_t>(std::stol(name.substr(8, name.size() - 13)));
 		};
 		Require(std::filesystem::path(second).parent_path() == directory && tabs.Count() == 2,
 				"The two launches did not retain separate tabs and endpoints");
-		Eventually([&] { frame(); return tabs.ActiveWorkspace().HasActiveAutomation(); },
-				   "Second launch did not start its independent script");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveWorkspace().HasActiveAutomation();
+			},
+			"Second launch did not start its independent script");
 		tabs.OpenApplication(RunningApp{first});
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first; }, "Return to first launched player");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == first;
+			},
+			"Return to first launched player");
 		Require(tabs.ActiveWorkspace().HasActiveAutomation(), "Background launch script stopped when switching tabs");
 		tabs.ActiveWorkspace().StopAutomation();
-		Eventually([&] { frame(); return !tabs.ActiveWorkspace().HasActiveAutomation(); }, "First script did not stop");
+		Eventually(
+			[&] {
+				frame();
+				return !tabs.ActiveWorkspace().HasActiveAutomation();
+			},
+			"First script did not stop");
 		tabs.OpenApplication(RunningApp{second});
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second; }, "Return to second launched player");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == second;
+			},
+			"Return to second launched player");
 		Require(tabs.ActiveWorkspace().HasActiveAutomation(), "Stopping the first script stopped the second script");
 		tabs.OpenApplication(RunningApp{first});
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first; }, "Select the first player for restart");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == first;
+			},
+			"Select the first player for restart");
 		auto& restarting = tabs.ActiveRuntime();
 		auto& restartWorkspace = tabs.ActiveWorkspace();
 		HeadsetHostOptions discovery;
 		discovery.executable = Utf8Path(SDL_GetBasePath()) / "headset_host_service_tests";
 		discovery.discover = true;
 		restarting.ConnectHeadset(discovery);
-		Eventually([&] { frame(); return restarting.HeadsetStatus().recommendedEyes.has_value(); },
-				   "Restart tab did not discover headset dimensions");
+		Eventually(
+			[&] {
+				frame();
+				return restarting.HeadsetStatus().recommendedEyes.has_value();
+			},
+			"Restart tab did not discover headset dimensions");
 		ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("##App picker"));
 		frame();
 		frame();
@@ -226,7 +268,8 @@ void CheckTabLaunches()
 		for (int revision = 1; revision <= 8 && !review; ++revision)
 		{
 			const auto scope = std::to_string(revision);
-			ImGui::ActivateItemByID(ImHashStr("Restart with headset settings", 0, ImHashStr(scope.c_str(), 0, form->ID)));
+			ImGui::ActivateItemByID(
+				ImHashStr("Restart with headset settings", 0, ImHashStr(scope.c_str(), 0, form->ID)));
 			frame();
 			frame();
 			if (auto* window = FindPanel("Restart application?"); window && window->Active)
@@ -237,21 +280,41 @@ void CheckTabLaunches()
 		frame();
 		ImGui::ClosePopupToLevel(0, true);
 		tabs.OpenApplication(RunningApp{second});
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second; }, "Switch away during restart");
-		Eventually([&] { frame(); return restarting.Endpoint() != first && restarting.Snapshot().sessionRunning; },
-				   "Background restart did not attach its replacement");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == second;
+			},
+			"Switch away during restart");
+		Eventually(
+			[&] {
+				frame();
+				return restarting.Endpoint() != first && restarting.Snapshot().sessionRunning;
+			},
+			"Background restart did not attach its replacement");
 		const auto replacement = restarting.Endpoint();
-		Require(pid(replacement) != pid(first) && restartWorkspace.Process().process == static_cast<std::uint64_t>(pid(replacement)) &&
+		Require(pid(replacement) != pid(first) &&
+					restartWorkspace.Process().process == static_cast<std::uint64_t>(pid(replacement)) &&
 					::kill(pid(first), 0) != 0 && errno == ESRCH && ::kill(pid(second), 0) == 0 &&
 					tabs.ActiveWorkspace().HasActiveAutomation(),
 				"Restart changed the other application or its running script");
 		tabs.ActiveWorkspace().StopAutomation();
-		Eventually([&] { frame(); return !tabs.ActiveWorkspace().HasActiveAutomation(); }, "Second script did not stop");
+		Eventually(
+			[&] {
+				frame();
+				return !tabs.ActiveWorkspace().HasActiveAutomation();
+			},
+			"Second script did not stop");
 		Require(pid(replacement) != pid(second) && ::kill(pid(replacement), 0) == 0 && ::kill(pid(second), 0) == 0,
 				"Same-profile launches did not leave both applications running");
 		::kill(pid(replacement), SIGTERM);
 		::kill(pid(second), SIGTERM);
-		Eventually([&] { frame(); return test.processes.Outstanding() == 0; }, "Launch fixtures did not exit");
+		Eventually(
+			[&] {
+				frame();
+				return test.processes.Outstanding() == 0;
+			},
+			"Launch fixtures did not exit");
 	}
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Vulkan validation errors during same-profile launches");
@@ -263,53 +326,73 @@ void CheckGpuTabInput(const std::string& firstEndpoint, const std::string& secon
 	Interaction test;
 	{
 		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
-		const auto frame = [&]
-		{
+		const auto frame = [&] {
 			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Input tab UI stalled");
 			tabs.Draw();
-			Require(test.renderer.Render(tabs.ReadyWaits(), [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
+			Require(test.renderer.Render(tabs.ReadyWaits(),
+										 [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
 					"Input tab frame was not rendered");
 			tabs.Submitted(test.renderer.SubmittedFrames());
 		};
-		const auto gate = [&](const std::string& endpoint, int number)
-		{
+		const auto gate = [&](const std::string& endpoint, int number) {
 			const auto directory = std::filesystem::path(endpoint).parent_path();
 			const auto name = "rendering." + std::to_string(number);
-			Eventually([&] { frame(); return std::filesystem::exists(directory / (name + ".ready")); },
-					   "Input producer did not reach its frame gate");
+			Eventually(
+				[&] {
+					frame();
+					return std::filesystem::exists(directory / (name + ".ready"));
+				},
+				"Input producer did not reach its frame gate");
 			std::ofstream release(directory / (name + ".continue"));
 			Require(bool(release), "Cannot release input producer frame");
 		};
 		const RunningApp first{firstEndpoint, "Input player one"}, second{secondEndpoint, "Input player two"};
 		tabs.OpenApplication(first);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().sessionRunning; }, "First input tab did not connect");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"First input tab did not connect");
 		const auto firstSession = tabs.ActiveRuntime().Snapshot();
 		tabs.OpenApplication(second);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
-									 tabs.ActiveRuntime().Snapshot().sessionRunning; }, "Second input tab did not connect");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+					   tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"Second input tab did not connect");
 		const auto secondSession = tabs.ActiveRuntime().Snapshot();
 		for (int index = 3; index <= 6; ++index)
 			for (const auto& app : {first, second})
 				gate(app.endpoint, index);
 		tabs.OpenApplication(first);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == firstEndpoint &&
-									 tabs.ActiveRuntime().Snapshot().selectedReady; }, "First input preview unavailable");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == firstEndpoint &&
+					   tabs.ActiveRuntime().Snapshot().selectedReady;
+			},
+			"First input preview unavailable");
 		ManualInputController firstObserver, secondObserver;
 		firstObserver.SetTarget({firstEndpoint, firstSession.session, firstSession.generation});
 		secondObserver.SetTarget({secondEndpoint, secondSession.session, secondSession.generation});
-		const auto observed = [&](ManualInputController& observer)
-		{
+		const auto observed = [&](ManualInputController& observer) {
 			const auto before = observer.Snapshot().observation;
 			observer.Refresh();
-			Eventually([&] { frame(); return observer.Snapshot().observation > before; }, "Input observation stalled");
+			Eventually(
+				[&] {
+					frame();
+					return observer.Snapshot().observation > before;
+				},
+				"Input observation stalled");
 			return ReadObservedSetup(observer.Snapshot().state).values.input.controllers[1].primary;
 		};
-		const auto pendingInputs = [](const control::Message& state)
-		{
+		const auto pendingInputs = [](const control::Message& state) {
 			const auto* document = state.Find(control::tag::Document);
 			Require(document, "Input status omitted its document");
-			const auto decode = [](std::span<const std::byte> bytes)
-			{
+			const auto decode = [](std::span<const std::byte> bytes) {
 				auto decoded = control::DecodeFields(bytes);
 				Require(decoded.error == control::DecodeError::None, "Malformed input status");
 				control::Message result;
@@ -330,25 +413,29 @@ void CheckGpuTabInput(const std::string& firstEndpoint, const std::string& secon
 			throw std::runtime_error("Input status omitted pending transactions");
 		};
 		int firstGate = 7, secondGate = 7;
-		const auto applyButton = [&](ManualInputController& observer, const std::string& endpoint,
-									int& nextGate, bool pressed, const char* failure)
-		{
-			Eventually([&]
-			{
-				frame();
-				if (observed(observer) == pressed)
-					return true;
-				if (pendingInputs(observer.Snapshot().state))
-				{
-					Require(nextGate < 14, "Input handoff exhausted the producer frame budget");
-					gate(endpoint, nextGate++);
-					const auto boundary = std::filesystem::path(endpoint).parent_path() /
-						("rendering." + std::to_string(nextGate) + ".ready");
-					Eventually([&] { frame(); return std::filesystem::exists(boundary); },
-						"Input producer did not finish an admitted frame");
-				}
-				return false;
-			}, failure);
+		const auto applyButton = [&](ManualInputController& observer, const std::string& endpoint, int& nextGate,
+									 bool pressed, const char* failure) {
+			Eventually(
+				[&] {
+					frame();
+					if (observed(observer) == pressed)
+						return true;
+					if (pendingInputs(observer.Snapshot().state))
+					{
+						Require(nextGate < 14, "Input handoff exhausted the producer frame budget");
+						gate(endpoint, nextGate++);
+						const auto boundary = std::filesystem::path(endpoint).parent_path() /
+											  ("rendering." + std::to_string(nextGate) + ".ready");
+						Eventually(
+							[&] {
+								frame();
+								return std::filesystem::exists(boundary);
+							},
+							"Input producer did not finish an admitted frame");
+					}
+					return false;
+				},
+				failure);
 		};
 		SDL_VirtualJoystickDesc description{};
 		SDL_INIT_INTERFACE(&description);
@@ -360,11 +447,13 @@ void CheckGpuTabInput(const std::string& firstEndpoint, const std::string& secon
 		description.name = "SimXR tab controls QA";
 		const auto id = SDL_AttachVirtualJoystick(&description);
 		Require(id, "Attach tab controls gamepad");
+
 		struct Gamepad
 		{
 			SDL_JoystickID id;
 			SDL_Joystick* joystick = nullptr;
 			Window& window;
+
 			~Gamepad()
 			{
 				if (joystick)
@@ -373,22 +462,37 @@ void CheckGpuTabInput(const std::string& firstEndpoint, const std::string& secon
 				window.PollEvents();
 			}
 		} pad{id, SDL_OpenJoystick(id), test.window};
+
 		Require(pad.joystick, "Open tab controls gamepad");
 		Require(SDL_SetJoystickVirtualAxis(pad.joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768) &&
 					SDL_SetJoystickVirtualAxis(pad.joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768),
 				"Set neutral gamepad triggers");
-		Require(SDL_ShowWindow(test.window.Native()) && SDL_RaiseWindow(test.window.Native()), "Show tab controls window");
-		Eventually([&] { frame(); return test.window.Focused(); }, "Tab controls window did not receive focus");
+		Require(SDL_ShowWindow(test.window.Native()) && SDL_RaiseWindow(test.window.Native()),
+				"Show tab controls window");
+		Eventually(
+			[&] {
+				frame();
+				return test.window.Focused();
+			},
+			"Tab controls window did not receive focus");
 		Require(!observed(firstObserver) && !observed(secondObserver), "Input fixtures started with a held button");
-		Require(SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_SOUTH, true), "Press virtual gamepad button");
+		Require(SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_SOUTH, true),
+				"Press virtual gamepad button");
 		applyButton(firstObserver, firstEndpoint, firstGate, true, "Button did not reach the first application");
 		Require(!observed(secondObserver), "Background application received the first application's button");
 		tabs.OpenApplication(second);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
-									 tabs.ActiveRuntime().Snapshot().selectedReady; }, "Second input preview unavailable");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+					   tabs.ActiveRuntime().Snapshot().selectedReady;
+			},
+			"Second input preview unavailable");
 		applyButton(firstObserver, firstEndpoint, firstGate, false, "Switching tabs left the first button held");
-		applyButton(secondObserver, secondEndpoint, secondGate, true, "Held button did not reach the selected application");
-		Require(SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_SOUTH, false), "Release virtual gamepad button");
+		applyButton(secondObserver, secondEndpoint, secondGate, true,
+					"Held button did not reach the selected application");
+		Require(SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_SOUTH, false),
+				"Release virtual gamepad button");
 		applyButton(secondObserver, secondEndpoint, secondGate, false, "Selected application's button did not release");
 		Require(!observed(firstObserver), "Released button reappeared in the background application");
 		Require(SDL_HideWindow(test.window.Native()), "Hide tab controls window");
@@ -401,8 +505,8 @@ void CheckGpuTabInput(const std::string& firstEndpoint, const std::string& secon
 #endif
 
 static void CheckReplayTabClose(ApplicationTabs& tabs, Interaction& test, RuntimePanels& replayRuntime,
-						 WorkspacePanels& replayWorkspace, const std::string& firstEndpoint,
-						 const std::string& secondEndpoint, const std::function<void()>& frame)
+								WorkspacePanels& replayWorkspace, const std::string& firstEndpoint,
+								const std::string& secondEndpoint, const std::function<void()>& frame)
 {
 	ImGui::ClosePopupsExceptModals();
 	frame();
@@ -429,8 +533,7 @@ static void CheckReplayTabClose(ApplicationTabs& tabs, Interaction& test, Runtim
 	Require(SDL_PushEvent(&motion), "Cannot hover the background replay close button");
 	frame();
 	frame();
-	const auto close = [&]
-	{
+	const auto close = [&] {
 		ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, id));
 		frame();
 		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
@@ -449,8 +552,7 @@ static void CheckReplayTabClose(ApplicationTabs& tabs, Interaction& test, Runtim
 	frame();
 	RuntimeSession observer{test.renderer, firstEndpoint};
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			observer.Poll(false, false);
 			const auto view = observer.View();
@@ -467,20 +569,12 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 	Interaction test;
 	{
 		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
-		const auto frame = [&]
-		{
-			Eventually(
-				[&]
-				{
-					return test.PollEvents() && test.renderer.BeginFrame();
-				},
-				"GPU tab frame admission stalled");
+		const auto frame = [&] {
+			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); },
+					   "GPU tab frame admission stalled");
 			tabs.Draw();
 			Require(test.renderer.Render(tabs.ReadyWaits(),
-										 [&](VkCommandBuffer command)
-										 {
-											 tabs.RecordTransfers(command);
-										 }),
+										 [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
 					"GPU tab frame was not rendered");
 			tabs.Submitted(test.renderer.SubmittedFrames());
 		};
@@ -495,24 +589,21 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 		}
 		tabs.OpenApplication(first);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Snapshot().sessionRunning;
 			},
 			"First GPU tab did not connect");
 		tabs.ActiveRuntime().StartRecording();
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Snapshot().recording;
 			},
 			"First GPU tab did not begin recording");
 		tabs.OpenApplication(second);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
 					   tabs.ActiveRuntime().Snapshot().sessionRunning;
@@ -522,8 +613,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 		{
 			tabs.OpenApplication(apps[index]);
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					return tabs.ActiveRuntime().Endpoint() == apps[index].endpoint &&
 						   tabs.ActiveRuntime().Snapshot().sessionRunning;
@@ -537,8 +627,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 				const auto directory = std::filesystem::path(app.endpoint).parent_path();
 				const auto gate = "rendering." + std::to_string(index);
 				Eventually(
-					[&]
-					{
+					[&] {
 						frame();
 						return std::filesystem::exists(directory / (gate + ".ready"));
 					},
@@ -563,8 +652,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 			try
 			{
 				Eventually(
-					[&]
-					{
+					[&] {
 						frame();
 						return tabs.ActiveRuntime().Endpoint() == apps[index].endpoint &&
 							   tabs.ActiveRuntime().History().Size() >= 5 &&
@@ -577,15 +665,14 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 			{
 				const auto view = tabs.ActiveRuntime().Snapshot();
 				std::cerr << "GPU tab " << index << " history=" << tabs.ActiveRuntime().History().Size()
-					<< " frame=" << view.selectedFrame << " ready=" << view.selectedReady
-					<< " error=" << view.error << " notice=" << view.notice << '\n';
+						  << " frame=" << view.selectedFrame << " ready=" << view.selectedReady
+						  << " error=" << view.error << " notice=" << view.notice << '\n';
 				throw;
 			}
 		}
 		tabs.OpenApplication(second);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == secondEndpoint;
 			},
@@ -593,8 +680,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 		try
 		{
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					return tabs.ActiveRuntime().Snapshot().selectedReady &&
 						   tabs.ActiveRuntime().Snapshot().selectedFrame >= 5;
@@ -611,16 +697,14 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 		}
 		tabs.OpenApplication(first);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == firstEndpoint && tabs.ActiveRuntime().History().Size() >= 5;
 			},
 			"Background GPU history unavailable");
 		tabs.ActiveRuntime().StopRecording();
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return !tabs.ActiveRuntime().Snapshot().recordingBusy &&
 					   std::holds_alternative<TakeSel>(tabs.ActiveWorkspace().State().selection);
@@ -632,16 +716,14 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 		Require(replayRuntime.CanReplay(), "GPU recording is not available for replay");
 		replayRuntime.RequestReplay(OpenSavedRecording(saved));
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return replayWorkspace.State().timeline.playing && replayRuntime.Snapshot().manual;
 			},
 			"GPU recording did not enter replay");
 		tabs.OpenApplication(second);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == secondEndpoint;
 			},
@@ -655,16 +737,14 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 		{
 			replayWorkspace.StopAutomation();
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					return !replayWorkspace.HasActiveAutomation() && !replayRuntime.Snapshot().manual;
 				},
 				"Stopping background GPU replay did not release its frame control");
 			tabs.OpenApplication(first);
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					return tabs.ActiveRuntime().Endpoint() == firstEndpoint;
 				},
@@ -674,8 +754,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 			const auto expected = history.At(index).identity.frame;
 			tabs.ActiveRuntime().LookAt(index);
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					const auto view = tabs.ActiveRuntime().Snapshot();
 					return view.selectedReady && view.selectedFrame == expected;
@@ -683,8 +762,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 				"Background GPU frame did not import exactly");
 			tabs.OpenApplication(second);
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
 						   tabs.ActiveRuntime().Snapshot().selectedReady;
@@ -692,8 +770,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 				"Second GPU preview did not recover");
 			tabs.OpenApplication(first);
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					const auto view = tabs.ActiveRuntime().Snapshot();
 					return tabs.ActiveRuntime().Endpoint() == firstEndpoint && view.selectedReady &&
@@ -704,8 +781,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 			{
 				tabs.OpenApplication(second);
 				Eventually(
-					[&]
-					{
+					[&] {
 						frame();
 						return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
 							   tabs.ActiveRuntime().Snapshot().selectedReady;
@@ -713,8 +789,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 					"Repeated switching lost the second GPU preview");
 				tabs.OpenApplication(first);
 				Eventually(
-					[&]
-					{
+					[&] {
 						frame();
 						const auto view = tabs.ActiveRuntime().Snapshot();
 						return tabs.ActiveRuntime().Endpoint() == firstEndpoint && view.selectedReady &&
@@ -767,8 +842,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 			ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, firstTab));
 			frame();
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					return tabs.Count() == beforeClose - 1;
 				},
@@ -776,8 +850,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 			Require(IsCompletePng(exportPath), "Closing a tab interrupted its accepted GPU export");
 			tabs.OpenApplication(second);
 			Eventually(
-				[&]
-				{
+				[&] {
 					frame();
 					return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
 						   tabs.ActiveRuntime().Snapshot().selectedReady;
@@ -793,6 +866,7 @@ void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& seco
 void CheckApplicationTabs()
 {
 	using namespace std::chrono_literals;
+
 	struct Fixture
 	{
 		ExtensionRegistry extensions{SimulationExtensions()};
@@ -803,6 +877,7 @@ void CheckApplicationTabs()
 		control::ControlService service{engine};
 		std::unique_ptr<control::LocalControlServer> server;
 		std::string endpoint;
+
 		Fixture(const std::string& suffix)
 		{
 			XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -824,6 +899,7 @@ void CheckApplicationTabs()
 						   .string();
 			server = std::make_unique<control::LocalControlServer>(service, endpoint);
 		}
+
 		void Submit()
 		{
 			FramePrediction frame;
@@ -832,6 +908,7 @@ void CheckApplicationTabs()
 					"Submit tab fixture frame");
 		}
 	};
+
 	Fixture first{"-one"}, second{"-two"}, third{"-three"}, fourth{"-four"};
 	first.Submit();
 	second.Submit();
@@ -848,11 +925,13 @@ void CheckApplicationTabs()
 	const auto* previousEndpoint = std::getenv("SIMXR_CONTROL_SOCKET");
 	const std::optional<std::string> savedEndpoint =
 		previousEndpoint ? std::optional<std::string>{previousEndpoint} : std::nullopt;
+
 	struct RestoreSettings
 	{
 		std::filesystem::path directory;
 		std::optional<std::string> previous;
 		std::optional<std::string> data, endpoint;
+
 		~RestoreSettings()
 		{
 			if (previous)
@@ -871,6 +950,7 @@ void CheckApplicationTabs()
 			std::filesystem::remove_all(directory, ignored);
 		}
 	} restore{directory, saved, savedData, savedEndpoint};
+
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", (directory / "settings.json").c_str(), 1) == 0,
 			"Set isolated tab recording directory");
 	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 &&
@@ -879,25 +959,16 @@ void CheckApplicationTabs()
 	Interaction test;
 	{
 		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
-		const auto frame = [&]
-		{
-			Eventually(
-				[&]
-				{
-					return test.PollEvents() && test.renderer.BeginFrame();
-				},
-				"Tab UI frame admission stalled");
+		const auto frame = [&] {
+			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); },
+					   "Tab UI frame admission stalled");
 			tabs.Draw();
 			Require(test.renderer.Render(tabs.ReadyWaits(),
-										 [&](VkCommandBuffer command)
-										 {
-											 tabs.RecordTransfers(command);
-										 }),
+										 [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
 					"Tab UI frame was not rendered");
 			tabs.Submitted(test.renderer.SubmittedFrames());
 		};
-		const auto closeTab = [&](std::string_view suffix)
-		{
+		const auto closeTab = [&](std::string_view suffix) {
 			frame();
 			auto* window = FindPanel("Applications");
 			Require(window, "Application tab bar is missing");
@@ -939,30 +1010,28 @@ void CheckApplicationTabs()
 		const RunningApp app1{first.endpoint, "Player one"}, app2{second.endpoint, "Player two"};
 		tabs.OpenApplication(app1);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Snapshot().sessionRunning;
 			},
 			"First tab did not connect");
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().History().Size() != 0;
 			},
 			"First tab has no history");
 		tabs.ActiveRuntime().StartRecording();
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Snapshot().recording;
 			},
 			"First tab did not start recording");
 		closeTab("###application-2");
 		const auto& closePopup = ImGui::GetCurrentContext()->OpenPopupStack;
-		Require(!closePopup.empty() && closePopup.back().Window, "Closing a recording tab did not ask for confirmation");
+		Require(!closePopup.empty() && closePopup.back().Window,
+				"Closing a recording tab did not ask for confirmation");
 		ImGui::ActivateItemByID(closePopup.back().Window->GetID("Cancel"));
 		frame();
 		Require(tabs.ActiveRuntime().Snapshot().recording, "Cancelling tab closure stopped its recording");
@@ -974,11 +1043,15 @@ void CheckApplicationTabs()
 		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 		Require(!popups.empty() && popups.back().Window, "Application picker did not open");
 		const auto connect = ImHashStr("Connect", 0, ImHashStr(second.endpoint.c_str(), 0, popups.back().Window->ID));
-		Eventually([&] { ImGui::ActivateItemByID(connect); frame();
-			return tabs.ActiveRuntime().Endpoint() == second.endpoint; }, "Picker did not open the discovered application");
 		Eventually(
-			[&]
-			{
+			[&] {
+				ImGui::ActivateItemByID(connect);
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == second.endpoint;
+			},
+			"Picker did not open the discovered application");
+		Eventually(
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == second.endpoint &&
 					   tabs.ActiveRuntime().Snapshot().sessionRunning;
@@ -987,11 +1060,13 @@ void CheckApplicationTabs()
 		{
 			std::atomic<std::uint32_t> delivered{0};
 			std::atomic<unsigned> stops{0};
+
 			struct RumbleState
 			{
 				std::atomic<std::uint32_t>& delivered;
 				std::atomic<unsigned>& stops;
 			} rumble{delivered, stops};
+
 			SDL_VirtualJoystickDesc gamepad{};
 			SDL_INIT_INTERFACE(&gamepad);
 			gamepad.type = SDL_JOYSTICK_TYPE_GAMEPAD;
@@ -1001,8 +1076,7 @@ void CheckApplicationTabs()
 			gamepad.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
 			gamepad.name = "SimXR tab input QA";
 			gamepad.userdata = &rumble;
-			gamepad.Rumble = [](void* data, Uint16 left, Uint16 right)
-			{
+			gamepad.Rumble = [](void* data, Uint16 left, Uint16 right) {
 				auto& state = *static_cast<RumbleState*>(data);
 				const auto previous = state.delivered.exchange((std::uint32_t(left) << 16) | right);
 				if (previous && !left && !right)
@@ -1011,10 +1085,12 @@ void CheckApplicationTabs()
 			};
 			const auto joystick = SDL_AttachVirtualJoystick(&gamepad);
 			Require(joystick, "Attach tab input test gamepad");
+
 			struct Detach
 			{
 				SDL_JoystickID id;
 				Window& window;
+
 				~Detach()
 				{
 					if (id)
@@ -1024,6 +1100,7 @@ void CheckApplicationTabs()
 					}
 				}
 			} detach{joystick, test.window};
+
 			test.PollEvents();
 			test.window.ReadGamepad(GamepadBindings{});
 			Require(test.window.GamepadIdentity() == joystick, "Open tab input test gamepad");
@@ -1033,52 +1110,85 @@ void CheckApplicationTabs()
 				Require(test.window.Rumble({10000, 20000}) && delivered.load() == ((10000u << 16) | 20000u),
 						"Start the foreground tab's rumble");
 				retiring.Poll(false);
-				Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) && delivered.load() == ((10000u << 16) | 20000u),
+				Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) &&
+							delivered.load() == ((10000u << 16) | 20000u),
 						"A background session change disturbed foreground input");
 			}
-			Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) && delivered.load() == ((10000u << 16) | 20000u),
+			Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) &&
+						delivered.load() == ((10000u << 16) | 20000u),
 					"Closing a background runtime disturbed foreground input");
 			tabs.OpenApplication(app1);
 			frame();
 			Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()) && delivered.load() == 0,
 					"Switching tabs did not release the previous tab's pointer and rumble");
 			tabs.OpenApplication(app2);
-			Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second.endpoint; },
-					   "Return after foreground input switch");
+			Eventually(
+				[&] {
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == second.endpoint;
+				},
+				"Return after foreground input switch");
 			Require(SDL_ShowWindow(test.window.Native()) && SDL_RaiseWindow(test.window.Native()),
 					"Show the tab haptic test window");
-			Eventually([&] { frame(); return test.window.Focused(); }, "Tab haptic test window did not receive focus");
+			Eventually(
+				[&] {
+					frame();
+					return test.window.Focused();
+				},
+				"Tab haptic test window did not receive focus");
 			const auto action = reinterpret_cast<XrAction>(1);
 			const std::array left{HapticDevice::LeftController}, right{HapticDevice::RightController};
 			XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, XR_INFINITE_DURATION, 160, .25f};
-			Require(second.session->Haptics().Apply(left, action, XR_NULL_PATH, vibration, second.configuration.epoch, true) == XR_SUCCESS,
+			Require(second.session->Haptics().Apply(left, action, XR_NULL_PATH, vibration, second.configuration.epoch,
+													true) == XR_SUCCESS,
 					"Send the foreground application's haptic event");
-			Eventually([&] { frame(); return delivered.load() == (16384u << 16); },
-					   "Foreground application rumble did not reach the gamepad");
+			Eventually(
+				[&] {
+					frame();
+					return delivered.load() == (16384u << 16);
+				},
+				"Foreground application rumble did not reach the gamepad");
 			vibration.amplitude = .75f;
-			Require(first.session->Haptics().Apply(right, action, XR_NULL_PATH, vibration, first.configuration.epoch, true) == XR_SUCCESS,
+			Require(first.session->Haptics().Apply(right, action, XR_NULL_PATH, vibration, first.configuration.epoch,
+												   true) == XR_SUCCESS,
 					"Send a background application's haptic event");
 			for (int index = 0; index < 4; ++index)
 				frame();
 			Require(delivered.load() == (16384u << 16), "Background application drove the gamepad");
 			const auto beforeSwitch = stops.load();
 			tabs.OpenApplication(app1);
-			Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first.endpoint; },
-					   "Switch to the other haptic application");
+			Eventually(
+				[&] {
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == first.endpoint;
+				},
+				"Switch to the other haptic application");
 			Require(stops.load() > beforeSwitch, "Tab switching did not stop the previous application's rumble");
-			Eventually([&] { frame(); return delivered.load() == 49151u; },
-					   "New foreground application's rumble did not reach the gamepad");
+			Eventually(
+				[&] {
+					frame();
+					return delivered.load() == 49151u;
+				},
+				"New foreground application's rumble did not reach the gamepad");
 			tabs.OpenApplication(app2);
-			Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second.endpoint; },
-					   "Restore the second tab after haptic test");
+			Eventually(
+				[&] {
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == second.endpoint;
+				},
+				"Restore the second tab after haptic test");
 			Require(SDL_HideWindow(test.window.Native()), "Hide the tab haptic test window");
 			Require(test.window.Rumble({}) && SDL_DetachVirtualJoystick(joystick), "Detach the tab input test gamepad");
 			detach.id = 0;
 			test.PollEvents();
 		}
 		tabs.ActiveRuntime().StartRecording();
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().recording; },
-				   "Second tab did not start its independent recording");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Snapshot().recording;
+			},
+			"Second tab did not start its independent recording");
 		const auto count = tabs.Count();
 		for (int index = 0; index < 4; ++index)
 		{
@@ -1088,8 +1198,7 @@ void CheckApplicationTabs()
 		}
 		tabs.OpenApplication(app1);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == first.endpoint && tabs.ActiveRuntime().History().Size() >= 5;
 			},
@@ -1098,8 +1207,7 @@ void CheckApplicationTabs()
 		Require(tabs.ActiveRuntime().Snapshot().recording, "Switching tabs stopped the background recording");
 		tabs.ActiveRuntime().StopRecording();
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return !tabs.ActiveRuntime().Snapshot().recording && !tabs.ActiveRuntime().Snapshot().recordingBusy &&
 					   std::holds_alternative<TakeSel>(tabs.ActiveWorkspace().State().selection);
@@ -1109,8 +1217,7 @@ void CheckApplicationTabs()
 		const auto selected = tabs.ActiveRuntime().Snapshot().time.cursor;
 		tabs.OpenApplication(app2);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == second.endpoint;
 			},
@@ -1119,8 +1226,7 @@ void CheckApplicationTabs()
 		Require(tabs.ActiveRuntime().Snapshot().time.following, "Historical selection leaked into another tab");
 		tabs.OpenApplication(app1);
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.ActiveRuntime().Endpoint() == first.endpoint;
 			},
@@ -1136,8 +1242,7 @@ void CheckApplicationTabs()
 		ImGui::ActivateItemByID(closingPopup.back().Window->GetID("Stop and close"));
 		frame();
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				return tabs.Count() == count - 1;
 			},
@@ -1148,34 +1253,74 @@ void CheckApplicationTabs()
 				++takes;
 		Require(takes == 2, "Independent recordings did not create two distinct archives");
 		second.Submit();
-		Require(tabs.ActiveRuntime().Endpoint() == first.endpoint, "Closing another tab changed the active application");
+		Require(tabs.ActiveRuntime().Endpoint() == first.endpoint,
+				"Closing another tab changed the active application");
 		const RunningApp app3{third.endpoint, "Player three"}, app4{fourth.endpoint, "Player four"};
 		tabs.OpenApplication(app3);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint &&
-									 tabs.ActiveRuntime().Snapshot().sessionRunning; }, "Third tab did not connect");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == third.endpoint &&
+					   tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"Third tab did not connect");
 		tabs.OpenApplication(app4);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == fourth.endpoint &&
-									 tabs.ActiveRuntime().Snapshot().sessionRunning; }, "Fourth tab did not connect");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == fourth.endpoint &&
+					   tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"Fourth tab did not connect");
 		tabs.ActiveRuntime().Pause();
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().manual; }, "Fourth player did not pause");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Snapshot().manual;
+			},
+			"Fourth player did not pause");
 		third.Submit();
 		tabs.OpenApplication(app3);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint &&
-									 tabs.ActiveRuntime().History().Size() >= 2; }, "Third tab lost background history");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == third.endpoint && tabs.ActiveRuntime().History().Size() >= 2;
+			},
+			"Third tab lost background history");
 		Require(!tabs.ActiveRuntime().Snapshot().manual, "Pausing one player paused another player");
 		tabs.OpenApplication(app4);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == fourth.endpoint; }, "Return to fourth player");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == fourth.endpoint;
+			},
+			"Return to fourth player");
 		Require(tabs.ActiveRuntime().Snapshot().manual, "Paused state did not stay with the fourth player");
 		tabs.ActiveRuntime().ResumeLive();
-		Eventually([&] { frame(); return !tabs.ActiveRuntime().Snapshot().manual; }, "Fourth player did not resume");
+		Eventually(
+			[&] {
+				frame();
+				return !tabs.ActiveRuntime().Snapshot().manual;
+			},
+			"Fourth player did not resume");
 		HeadsetHostOptions discovery;
-		discovery.executable = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "headset_host_service_tests";
+		discovery.executable =
+			std::filesystem::read_symlink("/proc/self/exe").parent_path() / "headset_host_service_tests";
 		discovery.discover = true;
 		tabs.ActiveRuntime().ConnectHeadset(discovery);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running; },
-				   "Fourth player did not start headset detection");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running;
+			},
+			"Fourth player did not start headset detection");
 		tabs.OpenApplication(app3);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint; }, "Return to third player");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == third.endpoint;
+			},
+			"Return to third player");
 		bool rejected = false;
 		try
 		{
@@ -1187,24 +1332,52 @@ void CheckApplicationTabs()
 		}
 		Require(rejected, "A second tab claimed the headset while the first was still using it");
 		tabs.OpenApplication(app4);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == fourth.endpoint; }, "Return to headset owner");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == fourth.endpoint;
+			},
+			"Return to headset owner");
 		Require(tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running,
 				"Switching tabs stopped the owning headset host");
 		tabs.ActiveRuntime().DisconnectHeadset();
-		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Exited; },
-				   "Headset owner did not stop cleanly");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Exited;
+			},
+			"Headset owner did not stop cleanly");
 		tabs.OpenApplication(app3);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint; }, "Return to third player");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == third.endpoint;
+			},
+			"Return to third player");
 		tabs.ActiveRuntime().ConnectHeadset(discovery);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running; },
-				   "A different tab could not detect the released headset");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running;
+			},
+			"A different tab could not detect the released headset");
 		tabs.ActiveRuntime().DisconnectHeadset();
-		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Exited; },
-				   "Second headset detection did not stop cleanly");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Exited;
+			},
+			"Second headset detection did not stop cleanly");
 		Require(tabs.Count() == count + 1, "Opening four applications changed the wrong tab");
 		tabs.OpenApplication(app1);
-		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first.endpoint; }, "Return to first player");
-		Require(!tabs.ActiveRuntime().Snapshot().time.following && tabs.ActiveRuntime().Snapshot().time.cursor == selected,
+		Eventually(
+			[&] {
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == first.endpoint;
+			},
+			"Return to first player");
+		Require(!tabs.ActiveRuntime().Snapshot().time.following &&
+					tabs.ActiveRuntime().Snapshot().time.cursor == selected,
 				"Other tabs changed the first player's inspection cursor");
 		ImGui::ClosePopupsExceptModals();
 		frame();
@@ -1214,14 +1387,24 @@ void CheckApplicationTabs()
 		Require(bar, "Application tab bar disappeared");
 		const auto beforeAdd = tabs.Count();
 		ImGui::ActivateItemByID(ImHashStr("+", 0, bar->ID));
-		Eventually([&] { frame(); return tabs.Count() == beforeAdd + 1 && tabs.ActiveRuntime().Endpoint().empty(); },
-				   "Add tab did not open a fresh application workspace");
+		Eventually(
+			[&] {
+				frame();
+				return tabs.Count() == beforeAdd + 1 && tabs.ActiveRuntime().Endpoint().empty();
+			},
+			"Add tab did not open a fresh application workspace");
 		frame();
 		const auto& addPopups = ImGui::GetCurrentContext()->OpenPopupStack;
 		Require(!addPopups.empty() && addPopups.back().Window, "Add tab did not open the application picker");
-		const auto reconnect = ImHashStr("Connect", 0, ImHashStr(second.endpoint.c_str(), 0, addPopups.back().Window->ID));
-		Eventually([&] { ImGui::ActivateItemByID(reconnect); frame();
-			return tabs.ActiveRuntime().Endpoint() == second.endpoint && tabs.ActiveRuntime().Snapshot().sessionRunning; },
+		const auto reconnect =
+			ImHashStr("Connect", 0, ImHashStr(second.endpoint.c_str(), 0, addPopups.back().Window->ID));
+		Eventually(
+			[&] {
+				ImGui::ActivateItemByID(reconnect);
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == second.endpoint &&
+					   tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
 			"Fresh tab did not connect the selected running application");
 		Require(tabs.Count() == beforeAdd + 1, "Connecting from a fresh tab created another blank tab");
 		tabs.ActiveWorkspace().SetScale(1.5f);
@@ -1282,18 +1465,24 @@ void CheckLiveHaptics()
 	description.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
 	description.name = "SimXR isolated haptic QA";
 	description.userdata = &delivered;
-	description.Rumble = [](void* data, Uint16 left, Uint16 right)
-	{
+	description.Rumble = [](void* data, Uint16 left, Uint16 right) {
 		static_cast<std::atomic<std::uint32_t>*>(data)->store((std::uint32_t(left) << 16) | right);
 		return true;
 	};
 	const auto joystick = SDL_AttachVirtualJoystick(&description);
 	Require(joystick != 0, "Attach haptic virtual gamepad");
+
 	struct Detach
 	{
 		SDL_JoystickID id;
-		~Detach() { if (id) SDL_DetachVirtualJoystick(id); }
+
+		~Detach()
+		{
+			if (id)
+				SDL_DetachVirtualJoystick(id);
+		}
 	} detach{joystick};
+
 	test.PollEvents();
 	test.window.ReadGamepad(GamepadBindings{});
 	Require(test.window.GamepadIdentity() == joystick, "Open isolated virtual gamepad");
@@ -1304,44 +1493,52 @@ void CheckLiveHaptics()
 	XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 	create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
 	std::strcpy(create.applicationInfo.applicationName, "Live haptic QA");
-	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS && engine.CreateSession(instance, session) == XR_SUCCESS,
-		"Create isolated live haptic runtime");
+	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS &&
+				engine.CreateSession(instance, session) == XR_SUCCESS,
+			"Create isolated live haptic runtime");
 	FrameSchedulerConfig configuration;
 	configuration.mode = ExecutionMode::Deterministic;
 	configuration.epoch = RuntimeTime{1s};
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 	Require(session->Ready(configuration.epoch) == XR_SUCCESS && session->Begin(begin, configuration) == XR_SUCCESS,
-		"Start isolated haptic session");
+			"Start isolated haptic session");
 	FramePrediction firstFrame;
 	Require(session->WaitFrame(firstFrame) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS &&
-		session->EndFrame(firstFrame) == XR_SUCCESS,
-		"Publish the initial live haptic device configuration");
+				session->EndFrame(firstFrame) == XR_SUCCESS,
+			"Publish the initial live haptic device configuration");
 	control::ControlService service{engine};
-	const auto endpoint = (std::filesystem::temp_directory_path() /
-		("simxr-haptics-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".sock")).string();
+	const auto endpoint =
+		(std::filesystem::temp_directory_path() /
+		 ("simxr-haptics-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".sock"))
+			.string();
 	control::LocalControlServer server{service, endpoint};
 	RuntimeSession observed{test.renderer, endpoint};
-	const auto poll = [&]
-	{
+	const auto poll = [&] {
 		observed.Poll(false);
 		test.PollEvents();
 		return observed.Haptics().Recent().events.size();
 	};
-	Eventually([&] { poll(); return observed.Haptics().Fresh(HapticFeedback::Clock::now()); }, "Live haptic observation never connected");
+	Eventually(
+		[&] {
+			poll();
+			return observed.Haptics().Fresh(HapticFeedback::Clock::now());
+		},
+		"Live haptic observation never connected");
 	const std::array left{HapticDevice::LeftController}, right{HapticDevice::RightController};
 	const auto action = reinterpret_cast<XrAction>(1);
 	XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, XR_INFINITE_DURATION, 160, .25f};
 	Require(session->Haptics().Apply(left, action, XR_NULL_PATH, vibration, configuration.epoch, true) == XR_SUCCESS,
-		"Apply left application output");
+			"Apply left application output");
 	vibration.amplitude = .75f;
 	Require(session->Haptics().Apply(right, action, XR_NULL_PATH, vibration, configuration.epoch, true) == XR_SUCCESS,
-		"Apply right application output");
+			"Apply right application output");
 	Eventually([&] { return poll() == 2; }, "Both hands did not reach the live companion feed");
-	Require(test.window.Rumble(observed.Haptics().Motors(HapticFeedback::Clock::now(), true), observed.Haptics().Deadline()) &&
-		delivered.load() == ((16384u << 16) | 49151u), "Live hand amplitudes did not reach the SDL motors");
+	Require(test.window.Rumble(observed.Haptics().Motors(HapticFeedback::Clock::now(), true),
+							   observed.Haptics().Deadline()) &&
+				delivered.load() == ((16384u << 16) | 49151u),
+			"Live hand amplitudes did not reach the SDL motors");
 	Eventually([&] { return delivered.load() == 0; }, "Watchdog must stop motors without SDL/UI event pumping");
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::SetNextWindowPos({430, 180}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({370, 260}, ImGuiCond_Always);
 		ImGui::Begin("Live haptic output QA");
@@ -1355,10 +1552,16 @@ void CheckLiveHaptics()
 		test.renderer.RequestScreenshot(screenshot);
 	test.Frame();
 	Require(session->Haptics().Stop(left, action, configuration.epoch, true) == XR_SUCCESS, "Stop left haptic output");
-	Eventually([&] { poll(); return observed.Haptics().Recent().events.front().status == HapticStatus::Stopped; },
+	Eventually(
+		[&] {
+			poll();
+			return observed.Haptics().Recent().events.front().status == HapticStatus::Stopped;
+		},
 		"Live stop event did not reach companion");
-	Require(test.window.Rumble(observed.Haptics().Motors(HapticFeedback::Clock::now(), true), observed.Haptics().Deadline()) && delivered.load() == 49151,
-		"Stopping left output changed the right motor");
+	Require(test.window.Rumble(observed.Haptics().Motors(HapticFeedback::Clock::now(), true),
+							   observed.Haptics().Deadline()) &&
+				delivered.load() == 49151,
+			"Stopping left output changed the right motor");
 	SDL_Event focus{};
 	focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
 	focus.window.windowID = SDL_GetWindowID(test.window.Native());
@@ -1366,49 +1569,55 @@ void CheckLiveHaptics()
 	test.PollEvents();
 	Require(delivered.load() == 0, "Window focus loss did not stop native rumble");
 	observed.Haptics().Motors(HapticFeedback::Clock::now(), false);
-	Eventually([&]
-		{
+	Eventually(
+		[&] {
 			poll();
 			return observed.Setup() && observed.Setup()->frame == firstFrame.id.value &&
-				observed.Input().observation != 0;
+				   observed.Input().observation != 0;
 		},
 		"Live input observation did not become available");
 	const auto connected = observed.View();
 	Require(connected.sessionAvailable && connected.sessionRunning, "Failure fixture has no active session");
 	observed.TakeScopeChanged();
 	server.Close();
-	Eventually([&] { poll(); return observed.Epoch() != connected.epoch; },
+	Eventually(
+		[&] {
+			poll();
+			return observed.Epoch() != connected.epoch;
+		},
 		"Failed transport did not retire its active epoch");
 	const auto disconnected = observed.View();
 	Require(!disconnected.connected && !disconnected.sessionAvailable && !disconnected.sessionRunning &&
-		!disconnected.session && !disconnected.generation && !disconnected.latestFrame && !disconnected.manual &&
-		!disconnected.operationPending && !disconnected.pending && !disconnected.error.empty(),
-		"Failed connection retained an active session or discarded its failure detail");
+				!disconnected.session && !disconnected.generation && !disconnected.latestFrame &&
+				!disconnected.manual && !disconnected.operationPending && !disconnected.pending &&
+				!disconnected.error.empty(),
+			"Failed connection retained an active session or discarded its failure detail");
 	Require(!disconnected.selectedReady && !disconnected.selectedCapture && !disconnected.selectedFrame &&
-		!disconnected.selectedIdentity.frame && !disconnected.selectedReader && !disconnected.time.cursor.frame &&
-		!observed.Preview().Selected() && !observed.Setup() && !observed.Input().observation &&
-		observed.Haptics().Recent().events.empty() && observed.TakeScopeChanged(),
-		"Failed connection retained its selected preview, input, cursor or haptic state");
+				!disconnected.selectedIdentity.frame && !disconnected.selectedReader &&
+				!disconnected.time.cursor.frame && !observed.Preview().Selected() && !observed.Setup() &&
+				!observed.Input().observation && observed.Haptics().Recent().events.empty() &&
+				observed.TakeScopeChanged(),
+			"Failed connection retained its selected preview, input, cursor or haptic state");
 	poll();
 	Require(observed.Epoch() == disconnected.epoch && !observed.TakeScopeChanged() &&
-		observed.View().error == disconnected.error,
-		"Failed connection repeatedly reset its scope or lost the saved diagnostic");
+				observed.View().error == disconnected.error,
+			"Failed connection repeatedly reset its scope or lost the saved diagnostic");
 	control::LocalControlServer restarted{service, endpoint};
 	observed.ConnectEndpoint(endpoint);
 	Eventually(
-		[&]
-		{
+		[&] {
 			poll();
 			const auto state = observed.View();
 			return state.connected && state.sessionRunning && observed.Setup().has_value() &&
-				observed.Haptics().Fresh(HapticFeedback::Clock::now());
+				   observed.Haptics().Fresh(HapticFeedback::Clock::now());
 		},
 		"Explicit reconnect did not observe the replacement endpoint");
 	const auto reconnected = observed.View();
 	Require(reconnected.epoch > disconnected.epoch && reconnected.session == connected.session &&
-		reconnected.generation == connected.generation && reconnected.error.empty(),
-		"Explicit reconnect reused the failed scope or preserved its failure");
-	std::cout << "PASS unexpected connection failure retires session/input/haptics and explicit reconnect uses a new epoch\n";
+				reconnected.generation == connected.generation && reconnected.error.empty(),
+			"Explicit reconnect reused the failed scope or preserved its failure");
+	std::cout
+		<< "PASS unexpected connection failure retires session/input/haptics and explicit reconnect uses a new epoch\n";
 	observed.Disconnect();
 	poll();
 	Require(test.window.Rumble({}), "Stop output before gamepad removal");
@@ -1420,21 +1629,20 @@ void CheckLiveHaptics()
 	test.extraDraw = {};
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation error in live haptic UI workflow");
-	std::cout << "PASS live runtime observation, hand motor mapping, independent stop, focus loss and haptic UI; zero validation errors\n";
+	std::cout << "PASS live runtime observation, hand motor mapping, independent stop, focus loss and haptic UI; zero "
+				 "validation errors\n";
 }
 #endif
 
 static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const std::vector<RunningApp>& apps,
-							const std::function<void()>& frame,
-							const std::function<void(const std::function<bool()>&, const char*)>& wait)
+								   const std::function<void()>& frame,
+								   const std::function<void(const std::function<bool()>&, const char*)>& wait)
 {
 	Require(apps.size() >= 3, "Snapshot pressure needs at least three live applications");
-	const auto selectHistorical = [&](const RunningApp& app) -> RuntimePanels&
-	{
+	const auto selectHistorical = [&](const RunningApp& app) -> RuntimePanels& {
 		tabs.OpenApplication(app);
 		wait(
-			[&]
-			{
+			[&] {
 				return tabs.ActiveRuntime().Endpoint() == app.endpoint && tabs.ActiveRuntime().Snapshot().selectedReady;
 			},
 			"Snapshot pressure tab did not render");
@@ -1442,8 +1650,7 @@ static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const 
 		std::optional<std::size_t> selected;
 		std::uint64_t expected = 0;
 		wait(
-			[&]
-			{
+			[&] {
 				const auto view = runtime.Snapshot();
 				if (!view.selectedReady || view.selectedReader)
 					return false;
@@ -1462,8 +1669,7 @@ static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const 
 		try
 		{
 			wait(
-				[&]
-				{
+				[&] {
 					const auto view = runtime.Snapshot();
 					return view.selectedReady && view.selectedReader && view.selectedFrame == expected;
 				},
@@ -1503,12 +1709,7 @@ static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const 
 	io.AddKeyEvent(ImGuiKey_Enter, true);
 	frame();
 	io.AddKeyEvent(ImGuiKey_Enter, false);
-	wait(
-		[&]
-		{
-			return simxr::SnapshotBudget::MiB() == 128;
-		},
-		"Snapshot budget did not shrink to 128 MiB");
+	wait([&] { return simxr::SnapshotBudget::MiB() == 128; }, "Snapshot budget did not shrink to 128 MiB");
 	auto* settings = FindPanel("Workspace settings");
 	Require(settings, "Snapshot budget preferences disappeared");
 	ImGui::ActivateItemByID(settings->GetID("Close"));
@@ -1516,8 +1717,7 @@ static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const 
 	const auto shrinkStart = std::chrono::steady_clock::now();
 	bool reported = false;
 	wait(
-		[&]
-		{
+		[&] {
 			if (!reported && std::chrono::steady_clock::now() - shrinkStart > std::chrono::seconds(2))
 			{
 				reported = true;
@@ -1533,8 +1733,7 @@ static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const 
 		"Shrinking the shared budget did not retain the two selected images");
 	tabs.OpenApplication(apps[2]);
 	wait(
-		[&]
-		{
+		[&] {
 			const auto state = tabs.ActiveRuntime().Snapshot();
 			return tabs.ActiveRuntime().Endpoint() == apps[2].endpoint &&
 				   state.notice.find("Snapshot memory is full") != std::string::npos;
@@ -1571,8 +1770,7 @@ static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const 
 	ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, id));
 	frame();
 	wait(
-		[&]
-		{
+		[&] {
 			return tabs.Count() == beforeClose - 1 && tabs.ActiveRuntime().Endpoint() == apps[2].endpoint &&
 				   tabs.ActiveRuntime().Snapshot().selectedReady;
 		},
@@ -1583,13 +1781,12 @@ static void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const 
 }
 
 static void CheckPortableReplayClose(ApplicationTabs& tabs, Interaction& test, const std::vector<RunningApp>& apps,
-							  const std::function<void()>& frame,
-							  const std::function<void(const std::function<bool()>&, const char*)>& wait)
+									 const std::function<void()>& frame,
+									 const std::function<void(const std::function<bool()>&, const char*)>& wait)
 {
 	tabs.OpenApplication(apps.front());
 	wait(
-		[&]
-		{
+		[&] {
 			const auto view = tabs.ActiveRuntime().Snapshot();
 			return tabs.ActiveRuntime().Endpoint() == apps.front().endpoint && view.sessionRunning &&
 				   view.setup.has_value();
@@ -1598,19 +1795,10 @@ static void CheckPortableReplayClose(ApplicationTabs& tabs, Interaction& test, c
 	auto& runtime = tabs.ActiveRuntime();
 	auto& workspace = tabs.ActiveWorkspace();
 	runtime.StartRecording();
-	wait(
-		[&]
-		{
-			return runtime.Snapshot().recording;
-		},
-		"Replay recording did not start");
+	wait([&] { return runtime.Snapshot().recording; }, "Replay recording did not start");
 	const auto firstFrame = runtime.Snapshot().latestFrame;
-	wait(
-		[&]
-		{
-			return runtime.Snapshot().latestFrame >= firstFrame + 120;
-		},
-		"Replay recording did not span enough application frames");
+	wait([&] { return runtime.Snapshot().latestFrame >= firstFrame + 120; },
+		 "Replay recording did not span enough application frames");
 	const auto setup = runtime.Snapshot().setup;
 	Require(setup.has_value(), "Replay recording lost its device state");
 	auto pose = setup->values.tracking.head;
@@ -1621,8 +1809,7 @@ static void CheckPortableReplayClose(ApplicationTabs& tabs, Interaction& test, c
 	const auto target = runtime.Snapshot();
 	input.SetTarget({target.endpoint, target.session, target.generation});
 	wait(
-		[&]
-		{
+		[&] {
 			const auto state = input.Snapshot();
 			Require(state.error.empty(), state.error.c_str());
 			return state.observation != 0;
@@ -1632,8 +1819,7 @@ static void CheckPortableReplayClose(ApplicationTabs& tabs, Interaction& test, c
 	try
 	{
 		wait(
-			[&]
-			{
+			[&] {
 				const auto view = runtime.Snapshot();
 				const auto state = input.Snapshot();
 				Require(state.error.empty(), state.error.c_str());
@@ -1653,8 +1839,7 @@ static void CheckPortableReplayClose(ApplicationTabs& tabs, Interaction& test, c
 	}
 	Require(input.Submit(ReleaseManualInputs{}), "Replay input release was not accepted");
 	wait(
-		[&]
-		{
+		[&] {
 			const auto state = input.Snapshot();
 			Require(state.error.empty(), state.error.c_str());
 			return !state.editPending;
@@ -1662,34 +1847,24 @@ static void CheckPortableReplayClose(ApplicationTabs& tabs, Interaction& test, c
 		"Replay input release did not complete");
 	runtime.StopRecording();
 	wait(
-		[&]
-		{
+		[&] {
 			return !runtime.Snapshot().recordingBusy && std::holds_alternative<TakeSel>(workspace.State().selection);
 		},
 		"Replay recording was not saved");
 	const auto saved = std::get<TakeSel>(workspace.State().selection).id;
 	ImGui::ClosePopupsExceptModals();
 	runtime.RequestReplay(OpenSavedRecording(saved));
-	wait(
-		[&]
-		{
-			return workspace.State().timeline.playing && runtime.Snapshot().manual;
-		},
-		"Saved recording did not enter replay");
+	wait([&] { return workspace.State().timeline.playing && runtime.Snapshot().manual; },
+		 "Saved recording did not enter replay");
 	auto* timeline = FindPanel("Timeline");
 	Require(timeline, "Replay timeline is missing");
 	ImGui::ActivateItemByID(timeline->GetID("Pause"));
 	frame();
-	wait(
-		[&]
-		{
-			return workspace.State().timeline.playing && workspace.State().timeline.playbackPaused;
-		},
-		"Saved replay did not pause for the close check");
+	wait([&] { return workspace.State().timeline.playing && workspace.State().timeline.playbackPaused; },
+		 "Saved replay did not pause for the close check");
 	tabs.OpenApplication(apps[1]);
 	wait(
-		[&]
-		{
+		[&] {
 			return tabs.ActiveRuntime().Endpoint() == apps[1].endpoint && tabs.ActiveRuntime().Snapshot().selectedReady;
 		},
 		"Foreground application lost its preview");
@@ -1703,25 +1878,15 @@ void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std:
 	Interaction test;
 	{
 		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
-		const auto frame = [&]
-		{
-			Eventually(
-				[&]
-				{
-					return test.PollEvents() && test.renderer.BeginFrame();
-				},
-				"Live tab UI stalled");
+		const auto frame = [&] {
+			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Live tab UI stalled");
 			tabs.Draw();
 			Require(test.renderer.Render(tabs.ReadyWaits(),
-										 [&](VkCommandBuffer command)
-										 {
-											 tabs.RecordTransfers(command);
-										 }),
+										 [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
 					"Live tab frame was not rendered");
 			tabs.Submitted(test.renderer.SubmittedFrames());
 		};
-		const auto wait = [&](auto condition, const char* message)
-		{
+		const auto wait = [&](auto condition, const char* message) {
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 			while (true)
 			{
@@ -1737,8 +1902,7 @@ void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std:
 			apps.push_back({endpoints[index], "Live player " + std::to_string(index + 1)});
 			tabs.OpenApplication(apps.back());
 			wait(
-				[&]
-				{
+				[&] {
 					const auto view = tabs.ActiveRuntime().Snapshot();
 					return tabs.ActiveRuntime().Endpoint() == endpoints[index] && view.sessionRunning;
 				},
@@ -1750,12 +1914,8 @@ void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std:
 				{
 					const auto root = std::filesystem::path(app.endpoint).parent_path();
 					const auto name = "rendering." + std::to_string(index);
-					wait(
-						[&]
-						{
-							return std::filesystem::exists(root / (name + ".ready"));
-						},
-						"Live producer did not reach its frame gate");
+					wait([&] { return std::filesystem::exists(root / (name + ".ready")); },
+						 "Live producer did not reach its frame gate");
 					std::ofstream release(root / (name + ".continue"));
 					Require(bool(release), "Cannot release live producer frame");
 				}
@@ -1764,8 +1924,7 @@ void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std:
 			{
 				tabs.OpenApplication(app);
 				wait(
-					[&]
-					{
+					[&] {
 						return tabs.ActiveRuntime().Endpoint() == app.endpoint &&
 							   tabs.ActiveRuntime().Snapshot().selectedReady &&
 							   tabs.ActiveRuntime().History().Size() >= 2;
@@ -1779,48 +1938,30 @@ void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std:
 		else
 		{
 			tabs.OpenApplication(apps.front());
-			wait(
-				[&]
-				{
-					return tabs.ActiveRuntime().Endpoint() == endpoints.front();
-				},
-				"Select first live tab");
+			wait([&] { return tabs.ActiveRuntime().Endpoint() == endpoints.front(); }, "Select first live tab");
 			tabs.ActiveRuntime().Pause();
-			wait(
-				[&]
-				{
-					return tabs.ActiveRuntime().Snapshot().manual;
-				},
-				"First live application did not pause");
+			wait([&] { return tabs.ActiveRuntime().Snapshot().manual; }, "First live application did not pause");
 			tabs.OpenApplication(apps[1]);
 			wait(
-				[&]
-				{
+				[&] {
 					return tabs.ActiveRuntime().Endpoint() == endpoints[1] &&
 						   tabs.ActiveRuntime().Snapshot().selectedReady;
 				},
 				"Second live tab lost its preview");
 			Require(!tabs.ActiveRuntime().Snapshot().manual, "Pausing one live application paused another");
 			tabs.OpenApplication(apps.front());
-			wait(
-				[&]
-				{
-					return tabs.ActiveRuntime().Endpoint() == endpoints.front();
-				},
-				"Return to paused live tab");
+			wait([&] { return tabs.ActiveRuntime().Endpoint() == endpoints.front(); }, "Return to paused live tab");
 			Require(tabs.ActiveRuntime().Snapshot().manual, "Paused state did not stay with its live application");
 			tabs.ActiveRuntime().ResumeLive();
 			wait(
-				[&]
-				{
+				[&] {
 					return !tabs.ActiveRuntime().Snapshot().manual && tabs.ActiveRuntime().Snapshot().selectedReady;
 				},
 				"First live application did not resume");
 			std::optional<std::size_t> historyIndex;
 			std::uint64_t expectedFrame = 0;
 			wait(
-				[&]
-				{
+				[&] {
 					const auto view = tabs.ActiveRuntime().Snapshot();
 					if (!view.selectedReady || view.selectedReader)
 						return false;
@@ -1838,8 +1979,7 @@ void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std:
 				"Live image was not cached after releasing its reader");
 			tabs.ActiveRuntime().LookAt(*historyIndex);
 			wait(
-				[&]
-				{
+				[&] {
 					const auto view = tabs.ActiveRuntime().Snapshot();
 					return view.selectedReady && view.selectedReader && view.selectedFrame == expectedFrame;
 				},
@@ -1878,19 +2018,13 @@ void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std:
 			const auto beforeClose = tabs.Count();
 			ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, id));
 			frame();
-			wait(
-				[&]
-				{
-					return tabs.Count() == beforeClose - 1;
-				},
-				"Live tab did not close after its export");
+			wait([&] { return tabs.Count() == beforeClose - 1; }, "Live tab did not close after its export");
 			Require(IsCompletePng(exportPath), "Closing the live tab interrupted its export");
 			for (std::size_t index = 1; index < apps.size(); ++index)
 			{
 				tabs.OpenApplication(apps[index]);
 				wait(
-					[&]
-					{
+					[&] {
 						return tabs.ActiveRuntime().Endpoint() == endpoints[index] &&
 							   tabs.ActiveRuntime().Snapshot().sessionRunning &&
 							   tabs.ActiveRuntime().Snapshot().selectedReady;

@@ -4,7 +4,6 @@
 #include <windows.h>
 namespace settings = simxr::legacy::settings;
 
-
 static void Require(bool condition, const char* message)
 {
 	if (!condition)
@@ -39,8 +38,7 @@ int main(int argc, char** argv)
 		settings::LoadSettings(directory);
 		Require(settings::ReadState().renderWidth == 1280, "Missing settings changed startup defaults");
 		const auto path = directory / "settings.json";
-		const auto writeSettings = [&](std::string_view text)
-		{
+		const auto writeSettings = [&](std::string_view text) {
 			std::ofstream file(path, std::ios::binary | std::ios::trunc);
 			Require(static_cast<bool>(file), "Open Unicode settings path");
 			file.write(text.data(), static_cast<std::streamsize>(text.size()));
@@ -48,8 +46,7 @@ int main(int argc, char** argv)
 			file.close();
 			Require(static_cast<bool>(file), "Close compatibility settings fixture");
 		};
-		const auto requireRejectedLoad = [&]
-		{
+		const auto requireRejectedLoad = [&] {
 			bool rejected = false;
 			try
 			{

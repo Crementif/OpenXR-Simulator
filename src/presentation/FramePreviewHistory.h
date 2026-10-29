@@ -17,6 +17,7 @@
 namespace simxr
 {
 class FrameOutput;
+
 struct FramePreview
 {
 	FrameKey key;
@@ -24,6 +25,7 @@ struct FramePreview
 	bool submitted = false, clear = false, pending = false;
 	std::shared_ptr<const TrackingSnapshot> tracking;
 };
+
 struct PreviewClipFrame
 {
 	FrameKey key;
@@ -34,9 +36,10 @@ struct PreviewClipFrame
 	std::shared_ptr<const void> retention;
 	bool clear = false;
 };
+
 class FramePreviewHistory
 {
-  public:
+public:
 	static constexpr std::uint32_t Extent = 640;
 	static constexpr std::uint64_t SlotBytes = 4ull << 20, BudgetBytes = 480ull << 20, RamBudgetBytes = 1024ull << 20;
 	static constexpr std::size_t Capacity = BudgetBytes / SlotBytes;
@@ -46,28 +49,35 @@ class FramePreviewHistory
 	void Configure(std::uint64_t bytes);
 	void CloseAdmission();
 	void ConfigureRam(std::uint64_t bytes);
+
 	std::uint64_t Limit() const
 	{
 		return m_budget.Capacity() * SlotBytes;
 	}
+
 	std::uint64_t Bytes() const
 	{
 		return m_budget.InUse() * SlotBytes;
 	}
+
 	std::uint64_t RamLimit() const
 	{
 		return m_ramLimit.load();
 	}
+
 	std::uint64_t RamBytes() const
 	{
 		return m_ramBytes->load();
 	}
+
 	std::string Error() const;
 	std::shared_ptr<FrameReservation> Reserve(FrameKey key, bool waitForSpace = true);
+
 	const FramePool& Budget() const noexcept
 	{
 		return m_budget;
 	}
+
 	void Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
 				const TrackingSnapshot* tracking = nullptr, RuntimeTime time = {}, Duration period = {});
 	FramePreview Find(FrameKey key);
@@ -75,7 +85,7 @@ class FramePreviewHistory
 	std::shared_ptr<const TrackingSnapshot> Tracking(FrameKey key) const;
 	std::vector<FrameKey> Frames(SessionGeneration generation, std::size_t limit = SIZE_MAX) const;
 
-  private:
+private:
 	struct Entry
 	{
 		FramePreview preview;
@@ -89,12 +99,14 @@ class FramePreviewHistory
 		std::shared_ptr<const ArchivedFrame> archive;
 		std::shared_ptr<std::atomic<std::uint64_t>> counter;
 		std::uint64_t charge = 0;
+
 		~Entry()
 		{
 			if (counter)
 				counter->fetch_sub(charge);
 		}
 	};
+
 	std::shared_ptr<Entry> EvictRaw();
 	void TrimRam();
 	void Run() noexcept;

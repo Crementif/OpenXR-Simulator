@@ -13,12 +13,14 @@
 namespace simxr::app
 {
 class WorkerConnection;
+
 struct ManualInputTarget
 {
 	std::string endpoint;
 	std::uint64_t session = 0, generation = 0;
 	bool operator==(const ManualInputTarget&) const = default;
 };
+
 struct ManualInputSnapshot
 {
 	control::Message state, result;
@@ -27,10 +29,11 @@ struct ManualInputSnapshot
 	std::string error;
 	bool posePending = false, editPending = false;
 };
+
 // One persistent manual source. Pose delivery and acknowledgement never wait for a UI render.
 class ManualInputController
 {
-  public:
+public:
 	ManualInputController();
 	~ManualInputController();
 	ManualInputController(const ManualInputController&) = delete;
@@ -41,7 +44,7 @@ class ManualInputController
 	void Refresh();
 	ManualInputSnapshot Snapshot() const;
 
-  private:
+private:
 	void Run() noexcept;
 	void RunChecked();
 	mutable std::mutex m_mutex;

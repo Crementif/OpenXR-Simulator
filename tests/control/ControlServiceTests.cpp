@@ -41,6 +41,7 @@ thread_local int skipMatchingAllocations = 0;
 thread_local bool allocationFailed = false;
 thread_local bool failNextAllocation = false;
 thread_local std::function<void()> onAllocationFailure;
+
 struct MatchingAllocationFailure
 {
 	MatchingAllocationFailure(std::size_t size, int skip, std::function<void()> action = {})
@@ -50,6 +51,7 @@ struct MatchingAllocationFailure
 		allocationFailed = false;
 		onAllocationFailure = std::move(action);
 	}
+
 	~MatchingAllocationFailure()
 	{
 		failAllocationSize = 0;
@@ -57,6 +59,7 @@ struct MatchingAllocationFailure
 	}
 };
 } // namespace
+
 void* operator new(std::size_t size)
 {
 	lastAllocationSize = size;
@@ -78,22 +81,27 @@ void* operator new(std::size_t size)
 		return result;
 	throw std::bad_alloc{};
 }
+
 void* operator new[](std::size_t size)
 {
 	return ::operator new(size);
 }
+
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete[](void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete[](void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -108,41 +116,48 @@ using namespace std::chrono_literals;
 
 class TestClock final : public Clock
 {
-  public:
+public:
 	~TestClock() override
 	{
 		if (onDestroyed)
 			onDestroyed();
 	}
+
 	HostTime Now() const override
 	{
 		return HostTime{Duration{time.load()}};
 	}
+
 	void WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime) override
 	{
 		changed.wait_for(lock, 1ms);
 	}
+
 	std::atomic<std::int64_t> time{0};
 	std::function<void()> onDestroyed;
 };
+
 wire::ErrorCode Error(const wire::Message& message)
 {
 	const auto* error = message.Find(wire::tag::Error);
 	Require(message.flags == 1 && error && error->AsU32(), "Missing structured response error");
 	return static_cast<wire::ErrorCode>(*error->AsU32());
 }
+
 std::uint64_t U64(const wire::Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
 	Require(field && field->AsU64(), "Missing uint64 response field");
 	return *field->AsU64();
 }
+
 std::string_view Text(const wire::Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
 	Require(field && field->AsText(), "Missing text response field");
 	return *field->AsText();
 }
+
 wire::Message Nested(const wire::Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
@@ -159,12 +174,14 @@ struct Client
 	wire::ControlService& service;
 	wire::ConnectionId connection;
 	std::uint64_t next = 1, session = 0, generation = 0, lease = 0;
+
 	explicit Client(wire::ControlService& service) : service(service)
 	{
 		const auto opened = service.Connect();
 		Require(opened.has_value(), "Open control connection");
 		connection = *opened;
 	}
+
 	wire::Message Request(wire::OpCode opcode, std::vector<wire::Field> fields = {})
 	{
 		wire::Message message;
@@ -173,6 +190,7 @@ struct Client
 		message.fields = std::move(fields);
 		return message;
 	}
+
 	wire::Message Call(wire::OpCode opcode, std::vector<wire::Field> fields = {})
 	{
 		const auto request = Request(opcode, std::move(fields));
@@ -182,22 +200,26 @@ struct Client
 				"Response identity/framing changed");
 		return response;
 	}
+
 	void Hello()
 	{
 		Require(Error(Call(wire::OpCode::Hello, {wire::Field::Text(wire::tag::ClientName, "portable tests")})) ==
 					wire::ErrorCode::Ok,
 				"Negotiate control connection");
 	}
+
 	std::vector<wire::Field> Common() const
 	{
 		return {wire::Field::U64(wire::tag::Session, session), wire::Field::U64(wire::tag::Generation, generation)};
 	}
+
 	std::vector<wire::Field> Leased() const
 	{
 		auto result = Common();
 		result.push_back(wire::Field::U64(wire::tag::Lease, lease));
 		return result;
 	}
+
 	void Discover()
 	{
 		const auto response = Call(wire::OpCode::Sessions);
@@ -208,12 +230,14 @@ struct Client
 		session = U64(entry, wire::tag::Session);
 		generation = U64(entry, wire::tag::Generation);
 	}
+
 	void Acquire()
 	{
 		const auto response = Call(wire::OpCode::Acquire, Common());
 		Require(Error(response) == wire::ErrorCode::Ok, "Acquire session control lease");
 		lease = U64(response, wire::tag::Lease);
 	}
+
 	wire::Message Submit(std::uint64_t id, wire::CommandKind kind, std::vector<wire::Field> extras = {})
 	{
 		auto fields = Leased();
@@ -222,12 +246,14 @@ struct Client
 		fields.insert(fields.end(), extras.begin(), extras.end());
 		return Call(wire::OpCode::Submit, std::move(fields));
 	}
+
 	wire::Message Operation(std::uint64_t id)
 	{
 		auto fields = Common();
 		fields.push_back(wire::Field::U64(wire::tag::OperationId, id));
 		return Call(wire::OpCode::Operation, std::move(fields));
 	}
+
 	wire::Message Capture(std::uint64_t id)
 	{
 		auto fields = Common();
@@ -247,6 +273,7 @@ struct Fixture
 	wire::ControlService service{runtime, 2};
 	FramePool pool{8};
 	FrameSchedulerConfig config;
+
 	explicit Fixture(bool capture = true, bool begin = true, std::span<const char* const> enabled = {})
 	{
 		XrInstanceCreateInfo info{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -269,18 +296,21 @@ struct Fixture
 		controller = runtime.Debugger(session, debugging);
 		Require(controller != nullptr, "Create independently polled real debugger");
 	}
+
 	void Begin()
 	{
 		const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 		Require(session->Ready(config.epoch) == XR_SUCCESS && session->Begin(begin, config) == XR_SUCCESS,
 				"Begin control session");
 	}
+
 	void Restart()
 	{
 		Require(session->RequestExit(config.epoch) == XR_SUCCESS && session->End(config.epoch) == XR_SUCCESS,
 				"End session generation");
 		Begin();
 	}
+
 	FramePrediction Issue()
 	{
 		FramePrediction frame;
@@ -288,11 +318,13 @@ struct Fixture
 				"Issue controlled frame");
 		return frame;
 	}
+
 	void Clear(FramePrediction frame)
 	{
 		Require(session->EndFrame(frame) == XR_SUCCESS, "Submit controlled zero-layer frame");
 		controller->Poll();
 	}
+
 	~Fixture()
 	{
 		service.Close();
@@ -310,38 +342,40 @@ void LiveHaptics()
 	const auto action = reinterpret_cast<XrAction>(1);
 	XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, XR_INFINITE_DURATION, 120, .5f};
 	Require(f.session->Haptics().Apply(devices, action, XR_NULL_PATH, vibration, f.config.epoch, true) == XR_SUCCESS,
-		"Apply live haptic output before any frame submission");
-	const auto read = [&]
-	{
+			"Apply live haptic output before any frame submission");
+	const auto read = [&] {
 		const auto response = client.Call(wire::OpCode::ReadHaptics, client.Common());
 		Require(Error(response) == wire::ErrorCode::Ok, "Read live haptics without debugger lease");
 		return wire::DecodeHaptics(response);
 	};
 	auto observed = read();
 	Require(observed.events.size() == 2 && observed.events[0].device == devices[0] &&
-		observed.events[1].device == devices[1] && observed.events[1].amplitude == .5f &&
-		!observed.events[1].end && observed.events[1].status == HapticStatus::Active && !observed.overflow,
-		"Live haptics preserve targets, parameters and infinite duration");
+				observed.events[1].device == devices[1] && observed.events[1].amplitude == .5f &&
+				!observed.events[1].end && observed.events[1].status == HapticStatus::Active && !observed.overflow,
+			"Live haptics preserve targets, parameters and infinite duration");
 	vibration.duration = 10;
 	Require(f.session->Haptics().Apply(std::span(devices).first(1), action, XR_NULL_PATH, vibration, f.config.epoch,
-		true) == XR_SUCCESS, "Replace left haptic output");
+									   true) == XR_SUCCESS,
+			"Replace left haptic output");
 	Require(f.session->Haptics().Stop(std::span(devices).last(1), action, f.config.epoch, true) == XR_SUCCESS,
-		"Stop right haptic output");
+			"Stop right haptic output");
 	observed = read();
 	Require(observed.events.size() == 3 && observed.events[0].status == HapticStatus::Replaced &&
-		observed.events[1].status == HapticStatus::Stopped && observed.events[2].end == 110,
-		"Live observation retains stop and replacement events");
+				observed.events[1].status == HapticStatus::Stopped && observed.events[2].end == 110,
+			"Live observation retains stop and replacement events");
 	f.session->Haptics().LoseFocus(f.config.epoch);
 	Require(read().events.back().status == HapticStatus::FocusLost, "Focus loss retires live output");
 	for (int i = 0; i < 300; ++i)
-		Require(f.session->Haptics().Apply(std::span(devices).first(1), action, XR_NULL_PATH, vibration,
-			f.config.epoch, true) == XR_SUCCESS, "Fill bounded haptic history");
+		Require(f.session->Haptics().Apply(std::span(devices).first(1), action, XR_NULL_PATH, vibration, f.config.epoch,
+										   true) == XR_SUCCESS,
+				"Fill bounded haptic history");
 	observed = read();
 	Require(observed.events.size() == wire::MaxObservedHaptics && observed.overflow &&
-		observed.events.back().status == HapticStatus::Active, "Bound live history while retaining latest output");
+				observed.events.back().status == HapticStatus::Active,
+			"Bound live history while retaining latest output");
 	f.Restart();
 	Require(Error(client.Call(wire::OpCode::ReadHaptics, client.Common())) == wire::ErrorCode::StaleGeneration,
-		"Reject previous-run haptic reads");
+			"Reject previous-run haptic reads");
 	client.Discover();
 	Require(read().events.empty(), "Session restart clears live haptic history");
 	Client old(f.service);
@@ -349,11 +383,11 @@ void LiveHaptics()
 	hello.minor = 5;
 	const auto response = f.service.Handle(old.connection, hello);
 	Require(!(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveHaptics)),
-		"Older clients must not be offered live haptics");
+			"Older clients must not be offered live haptics");
 	auto request = old.Request(wire::OpCode::ReadHaptics, client.Common());
 	request.minor = 5;
 	Require(Error(f.service.Handle(old.connection, request)) == wire::ErrorCode::UnsupportedCommand,
-		"Older protocol rejects live haptic operation");
+			"Older protocol rejects live haptic operation");
 }
 
 void LiveInputNegotiation()
@@ -364,30 +398,33 @@ void LiveInputNegotiation()
 	current.Discover();
 	const auto attached = current.Call(wire::OpCode::AttachLiveInput, current.Common());
 	Require(Error(attached) == wire::ErrorCode::Ok && U64(attached, wire::tag::AttachmentId),
-		"Current protocol admits native attachment");
+			"Current protocol admits native attachment");
 	f.Restart();
 	current.Discover();
 	const auto restarted = current.Call(wire::OpCode::AttachLiveInput, current.Common());
 	Require(Error(restarted) == wire::ErrorCode::Ok &&
-		U64(restarted, wire::tag::AttachmentId) > U64(attached, wire::tag::AttachmentId),
-		"Restart retires the old attachment and permits a new identity");
+				U64(restarted, wire::tag::AttachmentId) > U64(attached, wire::tag::AttachmentId),
+			"Restart retires the old attachment and permits a new identity");
 	auto hello = previous.Request(wire::OpCode::Hello);
 	hello.minor = 7;
 	const auto response = f.service.Handle(previous.connection, hello);
 	Require(!(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveInput)),
-		"Previous minor cannot advertise live input");
-	Require(Error(previous.Call(wire::OpCode::AttachLiveInput, current.Common())) == wire::ErrorCode::UnsupportedCommand,
-		"Previous minor cannot admit live input");
+			"Previous minor cannot advertise live input");
+	Require(Error(previous.Call(wire::OpCode::AttachLiveInput, current.Common())) ==
+				wire::ErrorCode::UnsupportedCommand,
+			"Previous minor cannot admit live input");
 	f.service.Disconnect(previous.connection);
 	Client inputOnly(f.service);
 	auto inputHello = inputOnly.Request(wire::OpCode::Hello);
 	inputHello.minor = 8;
 	const auto inputResponse = f.service.Handle(inputOnly.connection, inputHello);
 	Require((U64(inputResponse, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveInput)) &&
-		!(U64(inputResponse, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::ExternalDisplayTiming)),
-		"Minor eight retains live input without advertising physical timing");
-	Require(Error(inputOnly.Call(wire::OpCode::PublishDisplayPrediction, current.Common())) == wire::ErrorCode::UnsupportedCommand,
-		"Older negotiation cannot submit physical display predictions");
+				!(U64(inputResponse, wire::tag::Capabilities) &
+				  static_cast<std::uint64_t>(wire::Capability::ExternalDisplayTiming)),
+			"Minor eight retains live input without advertising physical timing");
+	Require(Error(inputOnly.Call(wire::OpCode::PublishDisplayPrediction, current.Common())) ==
+				wire::ErrorCode::UnsupportedCommand,
+			"Older negotiation cannot submit physical display predictions");
 }
 
 void ContinuousFrameHistory()
@@ -400,42 +437,44 @@ void ContinuousFrameHistory()
 	const auto empty = client.Call(wire::OpCode::ReadFrameHistory, client.Common());
 	if (Error(empty) != wire::ErrorCode::Ok)
 		throw std::runtime_error(std::string(Text(empty, wire::tag::Detail)));
-	Require(Nested(empty, wire::tag::Frames).fields.empty(),
-		"Unsettled frame entered continuous history");
+	Require(Nested(empty, wire::tag::Frames).fields.empty(), "Unsettled frame entered continuous history");
 	f.Clear(first);
 	const auto second = f.Issue();
 	f.Clear(second);
 	const auto batch = client.Call(wire::OpCode::ReadFrameHistory, client.Common());
 	Require(Error(batch) == wire::ErrorCode::Ok && Nested(batch, wire::tag::Frames).fields.size() == 2,
-		"Multiple frame summaries collided in the wire page");
+			"Multiple frame summaries collided in the wire page");
 	auto fields = client.Common();
 	fields.push_back(wire::Field::U64(wire::tag::Length, 1));
 	const auto response = client.Call(wire::OpCode::ReadFrameHistory, fields);
 	const auto frames = Nested(response, wire::tag::Frames);
 	Require(Error(response) == wire::ErrorCode::Ok && frames.fields.size() == 1,
-		"Continuous history pagination failed");
+			"Continuous history pagination failed");
 	const auto frame = Nested(frames, frames.fields.front().tag);
 	Require(U64(frame, wire::tag::FrameId) == first.id.value &&
-		Nested(frame, wire::tag::Prediction).Find(wire::tag::Time)->AsI64() == first.displayTime.value.count(),
-		"Continuous history lost runtime frame identity or timestamp");
+				Nested(frame, wire::tag::Prediction).Find(wire::tag::Time)->AsI64() == first.displayTime.value.count(),
+			"Continuous history lost runtime frame identity or timestamp");
 	fields.push_back(wire::Field::U64(wire::tag::Offset, first.id.value));
 	const auto next = Nested(client.Call(wire::OpCode::ReadFrameHistory, fields), wire::tag::Frames);
-	Require(next.fields.size() == 1 && U64(Nested(next, next.fields.front().tag), wire::tag::FrameId) == second.id.value,
-		"Continuous history skipped or repeated a clear frame");
+	Require(next.fields.size() == 1 &&
+				U64(Nested(next, next.fields.front().tag), wire::tag::FrameId) == second.id.value,
+			"Continuous history skipped or repeated a clear frame");
 	fields = client.Common();
 	fields.push_back(wire::Field::U64(wire::tag::Length, 129));
 	Require(Error(client.Call(wire::OpCode::ReadFrameHistory, fields)) == wire::ErrorCode::Invalid,
-		"Continuous history accepted an unbounded request");
+			"Continuous history accepted an unbounded request");
 	f.Restart();
 	Require(Error(client.Call(wire::OpCode::ReadFrameHistory, client.Common())) == wire::ErrorCode::StaleGeneration,
-		"Continuous history crossed a run boundary");
+			"Continuous history crossed a run boundary");
 	client.Discover();
 	const auto restarted = f.Issue();
 	f.Clear(restarted);
 	const auto newPage = Nested(client.Call(wire::OpCode::ReadFrameHistory, client.Common()), wire::tag::Frames);
-	Require(newPage.fields.size() == 1 && U64(Nested(newPage, newPage.fields.front().tag), wire::tag::Generation) == client.generation,
-		"New run history included retained records from the previous generation");
+	Require(newPage.fields.size() == 1 &&
+				U64(Nested(newPage, newPage.fields.front().tag), wire::tag::Generation) == client.generation,
+			"New run history included retained records from the previous generation");
 }
+
 void RecordingPagesShrinkBeforeEncoding()
 {
 	Fixture f;
@@ -443,7 +482,7 @@ void RecordingPagesShrinkBeforeEncoding()
 	client.Hello();
 	client.Discover();
 	Require(Error(client.Call(wire::OpCode::StartRecording, client.Common())) == wire::ErrorCode::Ok,
-		"Start large recording fixture");
+			"Start large recording fixture");
 	BodyControls body;
 	for (auto& joint : body.joints)
 		joint = BodyJointOverride{XrPosef{{0, 0, 0, 1}, {0, 0, 0}}, true};
@@ -456,7 +495,8 @@ void RecordingPagesShrinkBeforeEncoding()
 		Require(f.session->Commands().Recorder().Observe(outcome), "Record large transaction");
 	}
 	Require(wire::SimulationRecording(f.session->Commands().Recorder().Snapshot(0, 1)).Encode().size() <
-		wire::MaxPayload - 4096, "Single transaction must fit the wire budget");
+				wire::MaxPayload - 4096,
+			"Single transaction must fit the wire budget");
 	bool oversized = false;
 	try
 	{
@@ -477,11 +517,12 @@ void RecordingPagesShrinkBeforeEncoding()
 		Require(Error(response) == wire::ErrorCode::Ok, "Oversized recording page did not shrink");
 		const auto count = U64(response, wire::tag::Length);
 		Require(U64(response, wire::tag::Offset) == offset && count && count < 16 && count <= 16 - offset,
-			"Shrunk recording page lost progress or its offset");
+				"Shrunk recording page lost progress or its offset");
 		offset += count;
 		Require(response.Find(wire::tag::End)->AsBool() == (offset == 16), "Incorrect recording end marker");
 	}
 }
+
 void NegotiationPublicationRollback()
 {
 #ifndef SIMXR_TEST_TSAN_ALLOCATOR
@@ -510,31 +551,35 @@ void NegotiationPublicationRollback()
 		const auto retry = f.service.Handle(client.connection, hello);
 		Require(Error(retry) == wire::ErrorCode::Ok, "Failed Hello publication stranded negotiation");
 		Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(retry),
-			"Retried Hello did not publish an exact replay");
+				"Retried Hello did not publish an exact replay");
 		Require(Error(client.Call(wire::OpCode::Sessions)) == wire::ErrorCode::Ok,
-			"Retried Hello did not enable connection requests");
+				"Retried Hello did not enable connection requests");
 	}
 	Require(exhausted && failures > 0, "Hello publication allocation failure was not exercised");
 #endif
 }
+
 void BodyObservationNegotiation()
 {
 	Fixture fixture;
 	Client legacy(fixture.service), current(fixture.service);
 	const auto capability = static_cast<std::uint64_t>(wire::Capability::BodyObservations);
-	auto required = legacy.Request(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
+	auto required =
+		legacy.Request(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
 	required.minor = 10;
 	Require(Error(fixture.service.Handle(legacy.connection, required)) == wire::ErrorCode::UnsupportedCommand,
-		"Old protocol cannot require body observation support");
+			"Old protocol cannot require body observation support");
 	auto hello = legacy.Request(wire::OpCode::Hello);
 	hello.minor = 10;
 	const auto old = fixture.service.Handle(legacy.connection, hello);
 	Require(Error(old) == wire::ErrorCode::Ok && !(U64(old, wire::tag::Capabilities) & capability),
-		"Legacy negotiation must not advertise body observations");
-	const auto fresh = current.Call(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
+			"Legacy negotiation must not advertise body observations");
+	const auto fresh =
+		current.Call(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
 	Require(Error(fresh) == wire::ErrorCode::Ok && (U64(fresh, wire::tag::Capabilities) & capability),
-		"Current protocol negotiates body observations explicitly");
+			"Current protocol negotiates body observations explicitly");
 }
+
 void BodyReplayNegotiation()
 {
 	Fixture fixture;
@@ -546,31 +591,36 @@ void BodyReplayNegotiation()
 		hello.minor = minor;
 		const auto response = fixture.service.Handle(client.connection, hello);
 		Require(Error(response) == wire::ErrorCode::Ok &&
-			bool(U64(response, wire::tag::Capabilities) & capability) == (minor >= 12),
-			"Body replay timing capability leaked to an older protocol");
-		Require(bool(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::RecordingDrain)) == (minor >= 14),
-			"Recording drain capability escaped its protocol version");
-		Require(bool(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveBodyInput)) == (minor >= 13),
-			"Live body capability leaked to an older protocol");
+					bool(U64(response, wire::tag::Capabilities) & capability) == (minor >= 12),
+				"Body replay timing capability leaked to an older protocol");
+		Require(bool(U64(response, wire::tag::Capabilities) &
+					 static_cast<std::uint64_t>(wire::Capability::RecordingDrain)) == (minor >= 14),
+				"Recording drain capability escaped its protocol version");
+		Require(bool(U64(response, wire::tag::Capabilities) &
+					 static_cast<std::uint64_t>(wire::Capability::LiveBodyInput)) == (minor >= 13),
+				"Live body capability leaked to an older protocol");
 		if (minor < 14)
 		{
 			client.Discover();
 			auto fields = client.Common();
 			fields.push_back(wire::Field::Bool(wire::tag::RecordingDrain, true, true));
 			Require(Error(client.Call(wire::OpCode::StartRecording, fields)) == wire::ErrorCode::UnsupportedField &&
-				!fixture.session->Commands().Recorder().Snapshot({}, 0).active,
-				"Old connection silently started a legacy recording instead of drain mode");
-			Require(Error(client.Call(wire::OpCode::AcknowledgeRecording, client.Common())) == wire::ErrorCode::UnsupportedCommand,
-				"Old connection admitted recording acknowledgement");
+						!fixture.session->Commands().Recorder().Snapshot({}, 0).active,
+					"Old connection silently started a legacy recording instead of drain mode");
+			Require(Error(client.Call(wire::OpCode::AcknowledgeRecording, client.Common())) ==
+						wire::ErrorCode::UnsupportedCommand,
+					"Old connection admitted recording acknowledgement");
 		}
 		fixture.service.Disconnect(client.connection);
 	}
 	Client required(fixture.service);
-	auto request = required.Request(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
+	auto request =
+		required.Request(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
 	request.minor = 11;
 	Require(Error(fixture.service.Handle(required.connection, request)) == wire::ErrorCode::UnsupportedCommand,
-		"Old connection accepted required body replay timing");
+			"Old connection accepted required body replay timing");
 }
+
 void NegotiationAndReplay()
 {
 	Fixture f;
@@ -588,7 +638,7 @@ void NegotiationAndReplay()
 				U64(response, wire::tag::Capabilities) ==
 					(static_cast<std::uint64_t>(wire::Capability::DebugCommands) |
 					 static_cast<std::uint64_t>(wire::Capability::SnapshotMetadata) |
-				 static_cast<std::uint64_t>(wire::Capability::SnapshotPins) |
+					 static_cast<std::uint64_t>(wire::Capability::SnapshotPins) |
 					 static_cast<std::uint64_t>(wire::Capability::PipelineInspection) |
 					 static_cast<std::uint64_t>(wire::Capability::HistoricalCpuState) |
 					 static_cast<std::uint64_t>(wire::Capability::ImmutableRevisions) |
@@ -599,14 +649,14 @@ void NegotiationAndReplay()
 					 static_cast<std::uint64_t>(wire::Capability::FrameHistory) |
 					 static_cast<std::uint64_t>(wire::Capability::PoseSequences) |
 					 static_cast<std::uint64_t>(wire::Capability::LiveHaptics) |
-                     static_cast<std::uint64_t>(wire::Capability::LiveInput) |
-                     static_cast<std::uint64_t>(wire::Capability::ExternalDisplayTiming) |
-                     static_cast<std::uint64_t>(wire::Capability::TrackerCollections) |
-                     static_cast<std::uint64_t>(wire::Capability::BodyObservations) |
-                     static_cast<std::uint64_t>(wire::Capability::BodyReplayTiming) |
-                     static_cast<std::uint64_t>(wire::Capability::LiveBodyInput) |
-                     static_cast<std::uint64_t>(wire::Capability::RecordingDrain) |
-                     static_cast<std::uint64_t>(wire::Capability::GameObservations)) &&
+					 static_cast<std::uint64_t>(wire::Capability::LiveInput) |
+					 static_cast<std::uint64_t>(wire::Capability::ExternalDisplayTiming) |
+					 static_cast<std::uint64_t>(wire::Capability::TrackerCollections) |
+					 static_cast<std::uint64_t>(wire::Capability::BodyObservations) |
+					 static_cast<std::uint64_t>(wire::Capability::BodyReplayTiming) |
+					 static_cast<std::uint64_t>(wire::Capability::LiveBodyInput) |
+					 static_cast<std::uint64_t>(wire::Capability::RecordingDrain) |
+					 static_cast<std::uint64_t>(wire::Capability::GameObservations)) &&
 				response.Find(wire::tag::PayloadLimit)->AsU32() == wire::MaxPayload,
 			"Hello negotiation/capability limits changed");
 	Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(response),
@@ -670,10 +720,11 @@ void LegacyMinorNegotiation()
 	auto versionFour = previous.Request(wire::OpCode::Hello);
 	versionFour.minor = 4;
 	const auto negotiated = f.service.Handle(previous.connection, versionFour);
-	Require(Error(negotiated) == wire::ErrorCode::Ok && negotiated.minor == 4 &&
-		!(U64(negotiated, wire::tag::Capabilities) & (static_cast<std::uint64_t>(wire::Capability::PoseSequences) |
-					 static_cast<std::uint64_t>(wire::Capability::LiveHaptics))) &&
-		Error(previous.Call(wire::OpCode::UploadSequence)) == wire::ErrorCode::UnsupportedCommand,
+	Require(
+		Error(negotiated) == wire::ErrorCode::Ok && negotiated.minor == 4 &&
+			!(U64(negotiated, wire::tag::Capabilities) & (static_cast<std::uint64_t>(wire::Capability::PoseSequences) |
+														  static_cast<std::uint64_t>(wire::Capability::LiveHaptics))) &&
+			Error(previous.Call(wire::OpCode::UploadSequence)) == wire::ErrorCode::UnsupportedCommand,
 		"Minor four advertised or admitted sequence control");
 }
 
@@ -1055,10 +1106,11 @@ void GenerationAndTeardown()
 void GameBodyExtensionReport()
 {
 	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
-		XR_BD_BODY_TRACKING_EXTENSION_NAME};
+								XR_BD_BODY_TRACKING_EXTENSION_NAME};
 	for (const bool enabled : {false, true})
 	{
-		Fixture fixture(false, true, enabled ? std::span<const char* const>(extensions) : std::span<const char* const>{});
+		Fixture fixture(false, true,
+						enabled ? std::span<const char* const>(extensions) : std::span<const char* const>{});
 		Client client(fixture.service);
 		client.Hello();
 		client.Discover();
@@ -1084,6 +1136,7 @@ void GameBodyExtensionReport()
 		Require(found, "Game body extension report missing");
 	}
 }
+
 void DrainingRecordingTransport()
 {
 	Fixture fixture;
@@ -1095,19 +1148,18 @@ void DrainingRecordingTransport()
 	auto start = owner.Common();
 	start.push_back(wire::Field::Bool(wire::tag::RecordingDrain, true, true));
 	Require(Error(owner.Call(wire::OpCode::StartRecording, start)) == wire::ErrorCode::Ok,
-		"Start negotiated drain recording");
+			"Start negotiated drain recording");
 	auto& recorder = fixture.session->Commands().Recorder();
 	const auto identity = recorder.Snapshot({}, 0).identity;
 	Require(identity && recorder.Snapshot({}, 0).drain, "Drain start did not create an identified window");
-	const auto fields = [&](Client& client, std::uint64_t id, std::size_t through)
-	{
+	const auto fields = [&](Client& client, std::uint64_t id, std::size_t through) {
 		auto values = client.Common();
 		values.push_back(wire::Field::U64(wire::tag::RecordingId, id, true));
 		values.push_back(wire::Field::U64(wire::tag::Offset, through, true));
 		return values;
 	};
 	Require(Error(owner.Call(wire::OpCode::ReadRecording, owner.Common())) == wire::ErrorCode::Invalid,
-		"Drain read guessed the current recording identity");
+			"Drain read guessed the current recording identity");
 	for (std::size_t round = 0; round < 80; ++round)
 	{
 		for (std::size_t index = 0; index < 16; ++index)
@@ -1120,36 +1172,46 @@ void DrainingRecordingTransport()
 		const auto offset = round * 16;
 		const auto page = owner.Call(wire::OpCode::ReadRecording, fields(owner, identity, offset));
 		Require(Error(page) == wire::ErrorCode::Ok && U64(page, wire::tag::Offset) == offset &&
-			U64(page, wire::tag::Length) == 16, "Drain page lost its absolute offset beyond 1024");
-		Require(Error(other.Call(wire::OpCode::AcknowledgeRecording, fields(other, identity, offset + 16))) == wire::ErrorCode::Busy &&
-			recorder.Snapshot({}, 0).floor == offset, "Foreign reader retired the owner's recording");
-		Require(Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 17))) == wire::ErrorCode::Invalid,
-			"Future acknowledgement retired unpublished outcomes");
+					U64(page, wire::tag::Length) == 16,
+				"Drain page lost its absolute offset beyond 1024");
+		Require(Error(other.Call(wire::OpCode::AcknowledgeRecording, fields(other, identity, offset + 16))) ==
+						wire::ErrorCode::Busy &&
+					recorder.Snapshot({}, 0).floor == offset,
+				"Foreign reader retired the owner's recording");
+		Require(Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 17))) ==
+					wire::ErrorCode::Invalid,
+				"Future acknowledgement retired unpublished outcomes");
 		auto ack = owner.Request(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 16));
 		Require(Error(fixture.service.Handle(owner.connection, ack)) == wire::ErrorCode::Ok &&
-			Error(fixture.service.Handle(owner.connection, ack)) == wire::ErrorCode::Ok &&
-			Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 16))) == wire::ErrorCode::Ok,
-			"Acknowledgement was not retry-safe");
+					Error(fixture.service.Handle(owner.connection, ack)) == wire::ErrorCode::Ok &&
+					Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 16))) ==
+						wire::ErrorCode::Ok,
+				"Acknowledgement was not retry-safe");
 	}
 	Require(recorder.Snapshot({}, 0).floor == 1280 && recorder.Snapshot().transactions.empty(),
-		"Acknowledged transport pages remained retained");
+			"Acknowledged transport pages remained retained");
 	Require(Error(owner.Call(wire::OpCode::ReadRecording, fields(owner, identity, 0))) == wire::ErrorCode::NotFound,
-		"Evicted page silently read unrelated ring entries");
+			"Evicted page silently read unrelated ring entries");
 	auto stop = owner.Common();
 	stop.push_back(wire::Field::U64(wire::tag::RecordingId, identity, true));
 	Require(Error(owner.Call(wire::OpCode::StopRecording, stop)) == wire::ErrorCode::Ok &&
-		Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, 1280))) == wire::ErrorCode::Ok,
-		"Stopped recording lost final-drain ownership");
+				Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, 1280))) ==
+					wire::ErrorCode::Ok,
+			"Stopped recording lost final-drain ownership");
 	Require(Error(owner.Call(wire::OpCode::StartRecording, start)) == wire::ErrorCode::Ok &&
-		recorder.Snapshot({}, 0).identity != identity, "New take reused its recording identity");
-	Require(Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, 0))) == wire::ErrorCode::Conflict &&
-		Error(owner.Call(wire::OpCode::StopRecording, stop)) == wire::ErrorCode::Conflict && recorder.Snapshot({}, 0).active,
-		"Delayed old-take acknowledgement or stop mutated a new take");
+				recorder.Snapshot({}, 0).identity != identity,
+			"New take reused its recording identity");
+	Require(Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, 0))) ==
+					wire::ErrorCode::Conflict &&
+				Error(owner.Call(wire::OpCode::StopRecording, stop)) == wire::ErrorCode::Conflict &&
+				recorder.Snapshot({}, 0).active,
+			"Delayed old-take acknowledgement or stop mutated a new take");
 	fixture.service.Disconnect(owner.connection);
 	Require(!recorder.Snapshot({}, 0).active &&
-		Error(other.Call(wire::OpCode::StartRecording, other.Common())) == wire::ErrorCode::Ok,
-		"Disconnect did not stop and release drain ownership");
+				Error(other.Call(wire::OpCode::StartRecording, other.Common())) == wire::ErrorCode::Ok,
+			"Disconnect did not stop and release drain ownership");
 }
+
 void RecordingOwnershipAcrossGenerations()
 {
 	Fixture fixture;
@@ -1234,23 +1296,20 @@ void DiscoveryFailureRetainsReadersUntilSettlement()
 	bool clockDestroyed = false;
 	bool reentered = false;
 	std::weak_ptr<TestClock> observedClock = fixture.clock;
-	fixture.clock->onDestroyed = [&]
-	{
+	fixture.clock->onDestroyed = [&] {
 		clockDestroyed = true;
 		const auto response = client.Call(wire::OpCode::Sessions);
 		reentered = Error(response) == wire::ErrorCode::Ok && Nested(response, wire::tag::Sessions).fields.empty();
 	};
 	wire::Message response;
 	{
-		MatchingAllocationFailure failure(sizeof(wire::ControlSession) * wire::ControlSessions::Capacity, 1,
-										  [&]
-										  {
-											  removed = fixture.runtime.DestroySession(fixture.session) == XR_SUCCESS;
-											  fixture.controller.reset();
-											  fixture.session = {};
-											  fixture.clock.reset();
-											  readerHeld = !session.expired() && !clockDestroyed;
-										  });
+		MatchingAllocationFailure failure(sizeof(wire::ControlSession) * wire::ControlSessions::Capacity, 1, [&] {
+			removed = fixture.runtime.DestroySession(fixture.session) == XR_SUCCESS;
+			fixture.controller.reset();
+			fixture.session = {};
+			fixture.clock.reset();
+			readerHeld = !session.expired() && !clockDestroyed;
+		});
 		response = fixture.service.Handle(client.connection, request);
 	}
 	if (auto remainingClock = observedClock.lock())
@@ -1325,22 +1384,17 @@ void ConcurrentDiscoveryPublishesInCollectionOrder()
 	bool overtook = false;
 	bool failed = false;
 	{
-		MatchingAllocationFailure failure(
-			sizeof(wire::ControlSession) * wire::ControlSessions::Capacity, 1,
-			[&]
-			{
-				Require(fixture.runtime.DestroySession(fixture.session) == XR_SUCCESS &&
-							fixture.runtime.CreateSession(fixture.instance, added, fixture.clock) == XR_SUCCESS,
-						"Replace a session during directory discovery");
-				discovering = std::async(std::launch::async,
-										 [&]
-										 {
-											 started.set_value();
-											 directory.Discover(concurrent);
-										 });
-				entered.get();
-				overtook = discovering.wait_for(100ms) == std::future_status::ready;
+		MatchingAllocationFailure failure(sizeof(wire::ControlSession) * wire::ControlSessions::Capacity, 1, [&] {
+			Require(fixture.runtime.DestroySession(fixture.session) == XR_SUCCESS &&
+						fixture.runtime.CreateSession(fixture.instance, added, fixture.clock) == XR_SUCCESS,
+					"Replace a session during directory discovery");
+			discovering = std::async(std::launch::async, [&] {
+				started.set_value();
+				directory.Discover(concurrent);
 			});
+			entered.get();
+			overtook = discovering.wait_for(100ms) == std::future_status::ready;
+		});
 		try
 		{
 			directory.Discover(partial);
@@ -1368,16 +1422,18 @@ void ConcurrentDiscoveryPublishesInCollectionOrder()
 
 class Output final : public FrameOutput
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	~Output() override
 	{
 		if (destroy)
 			destroy();
 	}
+
 	std::shared_ptr<FrameReservation> reservation;
 	std::function<void()> destroy;
 };
@@ -1393,21 +1449,23 @@ struct ImageOwnerObservations
 
 class ObservedImageReader final : public wire::ImageReader
 {
-  public:
+public:
 	ObservedImageReader(ImageOwnerObservations& observations, std::shared_ptr<const FrameOutput> output)
 		: m_observations(observations), m_output(std::move(output))
-	{
-	}
+	{}
+
 	~ObservedImageReader() override
 	{
 		++m_observations.destroyed;
 		if (m_observations.onDestroyed)
 			m_observations.onDestroyed();
 	}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	wire::ImageDescription Description() const override
 	{
 		if (std::exchange(m_observations.rejectDescription, false))
@@ -1418,33 +1476,38 @@ class ObservedImageReader final : public wire::ImageReader
 		description.arrayLayers = 1;
 		return description;
 	}
+
 	wire::ImageCapabilities Capabilities() const noexcept override
 	{
 		return {};
 	}
+
 	std::shared_ptr<wire::ImageDelivery> Share(const wire::ImageDeviceIdentity&,
 											   const std::shared_ptr<wire::TransferHandle>&) const override
 	{
 		throw std::logic_error("CPU owner test does not provide GPU delivery");
 	}
+
 	std::shared_ptr<wire::ImageExport> Export(std::optional<std::uint32_t>) const override
 	{
 		throw std::logic_error("CPU owner test does not provide image export");
 	}
 
-  private:
+private:
 	ImageOwnerObservations& m_observations;
 	std::shared_ptr<const FrameOutput> m_output;
 };
 
 class ObservedImageProvider final : public wire::ImageInspectionProvider
 {
-  public:
+public:
 	explicit ObservedImageProvider(ImageOwnerObservations& observations) : m_observations(observations) {}
+
 	wire::ImageCapabilities Capabilities(XrSession) const noexcept override
 	{
 		return {};
 	}
+
 	std::shared_ptr<wire::ImageReader> Retain(std::shared_ptr<const FrameOutput> output) const override
 	{
 		++m_observations.retains;
@@ -1454,7 +1517,7 @@ class ObservedImageProvider final : public wire::ImageInspectionProvider
 		return reader;
 	}
 
-  private:
+private:
 	ImageOwnerObservations& m_observations;
 };
 
@@ -1465,9 +1528,11 @@ void ImageWindowPublicationAndRelease()
 	for (std::size_t skip = 0; skip < 24 && !exercisedPublicationRollback; ++skip)
 	{
 		Fixture fixture(false, false);
-		Require(fixture.session->ConfigureCapturePool(FramePool{8}, false,
-			[](const auto&, const auto&, const auto&) { return SnapshotAdmission::Accepted; }) == XR_SUCCESS &&
-			fixture.session->EnableImageHistory() == XR_SUCCESS, "Configure window history");
+		Require(fixture.session->ConfigureCapturePool(
+					FramePool{8}, false,
+					[](const auto&, const auto&, const auto&) { return SnapshotAdmission::Accepted; }) == XR_SUCCESS &&
+					fixture.session->EnableImageHistory() == XR_SUCCESS,
+				"Configure window history");
 		fixture.Begin();
 		ImageOwnerObservations observations;
 		wire::ControlService service(fixture.runtime, 2, std::make_shared<ObservedImageProvider>(observations));
@@ -1497,7 +1562,7 @@ void ImageWindowPublicationAndRelease()
 		if (!rejected && Error(response) == wire::ErrorCode::Ok)
 		{
 			client.Call(wire::OpCode::ReleaseImageWindow,
-				{wire::Field::U64(wire::tag::ImageWindowId, U64(response, wire::tag::ImageWindowId))});
+						{wire::Field::U64(wire::tag::ImageWindowId, U64(response, wire::tag::ImageWindowId))});
 			continue;
 		}
 		Require(rejected || Error(response) == wire::ErrorCode::Capacity, "Window allocation failure was not reported");
@@ -1507,14 +1572,14 @@ void ImageWindowPublicationAndRelease()
 		exercisedPublicationRollback = id > 1;
 		fixture.session->ImageHistory().Clear();
 		bool reentered = false;
-		output->destroy = [&]
-		{
+		output->destroy = [&] {
 			reentered = Error(client.Call(wire::OpCode::Status, client.Common())) == wire::ErrorCode::Ok;
 		};
 		output.reset();
 		Require(Error(client.Call(wire::OpCode::ReleaseImageWindow,
-			{wire::Field::U64(wire::tag::ImageWindowId, id)})) == wire::ErrorCode::Ok && reentered,
-			"Window release leaked its native owner or destroyed it inside the request gate");
+								  {wire::Field::U64(wire::tag::ImageWindowId, id)})) == wire::ErrorCode::Ok &&
+					reentered,
+				"Window release leaked its native owner or destroyed it inside the request gate");
 	}
 	Require(exercisedPublicationRollback, "No allocation failure exercised stored-window publication rollback");
 #endif
@@ -1544,8 +1609,7 @@ void ImageOwnerPublicationAndDeferredRelease()
 	Require(rejected && observations.retains == 1 && observations.destroyed == 1,
 			"Unannounced image publication retained a native-bearing reader");
 
-	auto query = [&](wire::OpCode operation, std::uint64_t id, wire::ConnectionImages::RetiredResource& retired)
-	{
+	auto query = [&](wire::OpCode operation, std::uint64_t id, wire::ConnectionImages::RetiredResource& retired) {
 		wire::ControlPacket request, outgoing;
 		request.message.opcode = static_cast<std::uint16_t>(operation);
 		request.message.requestId = {1};
@@ -1554,8 +1618,7 @@ void ImageOwnerPublicationAndDeferredRelease()
 		wire::ConnectionImages::Publication publication(images, unpublished);
 		return images.Dispatch(request, outgoing, wire::ProtocolMinor, false, publication, retired);
 	};
-	auto absent = [&](std::uint64_t id)
-	{
+	auto absent = [&](std::uint64_t id) {
 		wire::ConnectionImages::RetiredResource retired;
 		try
 		{
@@ -1595,15 +1658,13 @@ void ImageOwnerPublicationAndDeferredRelease()
 		Require(false, "Duplicate metadata failure was not exercised");
 	}
 	catch (const std::bad_alloc&)
-	{
-	}
+	{}
 	Require(observations.retains == 2 && observations.destroyed == 1 && !absent(reader),
 			"Failed duplicate publication retired an existing reader or repeated provider retention");
 
 	bool executing = true;
 	bool reentered = false;
-	observations.onDestroyed = [&]
-	{
+	observations.onDestroyed = [&] {
 		reentered = !executing && absent(reader);
 	};
 	{
@@ -1631,8 +1692,7 @@ void ImageOwnerPublicationAndDeferredRelease()
 	releaseRequest.message.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, failingReader));
 	executing = true;
 	reentered = false;
-	observations.onDestroyed = [&]
-	{
+	observations.onDestroyed = [&] {
 		reentered = !executing && absent(failingReader);
 	};
 	{
@@ -1663,31 +1723,35 @@ void ImageOwnerPublicationAndDeferredRelease()
 
 class ReplayExposure final : public wire::PacketExposure
 {
-  public:
+public:
 	~ReplayExposure() override
 	{
 		if (destroyed)
 			destroyed();
 	}
+
 	void MarkTransferred() noexcept override
 	{
 		++transfers;
 	}
+
 	unsigned transfers = 0;
 	std::function<void()> destroyed;
 };
 
 class ReplayHandle final : public wire::TransferHandle
 {
-  public:
+public:
 	wire::TransferHandleKind Kind() const noexcept override
 	{
 		return wire::TransferHandleKind::OpaqueFd;
 	}
+
 	std::intptr_t Value() const noexcept override
 	{
 		return 17; // CPU-only owner identity; never passed to an OS transport.
 	}
+
 	std::shared_ptr<wire::TransferHandle> Duplicate() const override
 	{
 		return std::make_shared<ReplayHandle>();
@@ -1711,11 +1775,7 @@ void RequestReplayOwnership()
 {
 	using Admission = wire::ConnectionRequests::Exchange::Admission;
 	unsigned closed = 0;
-	wire::ConnectionRequests requests(
-		[&]
-		{
-			++closed;
-		});
+	wire::ConnectionRequests requests([&] { ++closed; });
 	const auto first = ExchangePacket(0xfedcba9876543210ULL);
 	auto response = ExchangePacket(first.message.requestId.value, true);
 	auto exposure = std::make_shared<ReplayExposure>();
@@ -1755,8 +1815,7 @@ void RequestReplayOwnership()
 		Require(rejected.Error() == wire::ErrorCode::Conflict, "Changed envelope reused an accepted identity");
 	}
 	bool retiredAfterGate = false;
-	exposure->destroyed = [&]
-	{
+	exposure->destroyed = [&] {
 		auto admitted = requests.Begin(ExchangePacket(first.message.requestId.value + 2));
 		retiredAfterGate = admitted.Result() == Admission::Execute;
 	};
@@ -1783,13 +1842,11 @@ void RequestCloseSettlementAndRollback()
 	std::atomic<unsigned> closed{0};
 	wire::ConnectionRequests* observed = nullptr;
 	bool closedReentry = false;
-	wire::ConnectionRequests requests(
-		[&]
-		{
-			++closed;
-			auto rejected = observed->Begin(ExchangePacket(99));
-			closedReentry = rejected.Result() == Admission::Reject && rejected.Error() == wire::ErrorCode::Closed;
-		});
+	wire::ConnectionRequests requests([&] {
+		++closed;
+		auto rejected = observed->Begin(ExchangePacket(99));
+		closedReentry = rejected.Result() == Admission::Reject && rejected.Error() == wire::ErrorCode::Closed;
+	});
 	observed = &requests;
 	const auto first = ExchangePacket(1);
 	{
@@ -1827,12 +1884,10 @@ void RequestCloseSettlementAndRollback()
 		wire::ConnectionRequests::RetiredReplay retired;
 		auto exchange = requests.Begin(ExchangePacket(2));
 		Require(exchange.Result() == Admission::Execute, "Failed publication stranded active request admission");
-		std::thread disconnect(
-			[&]
-			{
-				requests.Close();
-				requests.Close();
-			});
+		std::thread disconnect([&] {
+			requests.Close();
+			requests.Close();
+		});
 		disconnect.join();
 		Require(closed == 0, "Disconnect retired connection state while its request was still executing");
 		auto rejected = requests.Begin(ExchangePacket(3));
@@ -1845,15 +1900,11 @@ void RequestCloseSettlementAndRollback()
 	bool observerRetiredSafely = false;
 	auto output = std::make_shared<Output>();
 	wire::ConnectionRequests* destroying = nullptr;
-	output->destroy = [&]
-	{
+	output->destroy = [&] {
 		auto rejected = destroying->Begin(ExchangePacket(1));
 		observerRetiredSafely = rejected.Error() == wire::ErrorCode::Closed;
 	};
-	auto owner = std::make_unique<wire::ConnectionRequests>(
-		[output]
-		{
-		});
+	auto owner = std::make_unique<wire::ConnectionRequests>([output] {});
 	destroying = owner.get();
 	output.reset();
 	owner.reset();
@@ -1881,8 +1932,7 @@ void ImagePublicationRollbackReentry()
 	Require(fixture.session->Display().Advance(prediction.displayTime).has_value(),
 			"Select actual submitted CPU test output");
 	bool reentered = false;
-	observations.onDestroyed = [&]
-	{
+	observations.onDestroyed = [&] {
 		reentered = Error(client.Call(wire::OpCode::Sessions)) == wire::ErrorCode::Ok;
 	};
 	observations.rejectDescription = true;
@@ -1892,8 +1942,7 @@ void ImagePublicationRollbackReentry()
 #ifndef SIMXR_TEST_TSAN_ALLOCATOR
 	reentered = false;
 	allocationFailed = false;
-	observations.onRetained = []
-	{
+	observations.onRetained = [] {
 		failNextAllocation = true;
 	};
 	const auto entryRejected = client.Call(wire::OpCode::RetainPreview, client.Common());
@@ -1946,15 +1995,16 @@ void AcknowledgeLastReaderReentry()
 	f.controller->Poll();
 	client.Submit(9, wire::CommandKind::Release, {wire::Field::U64(wire::tag::CaptureId, firstDisplayCapture)});
 	f.controller->Poll();
+
 	struct ReentryState
 	{
 		std::atomic<bool> destroyed{false}, reentered{false};
 	};
+
 	const auto state = std::make_shared<ReentryState>();
 	const auto common = client.Common();
 	const auto connection = client.connection;
-	output->destroy = [&f, state, common, connection]
-	{
+	output->destroy = [&f, state, common, connection] {
 		wire::Message status;
 		status.opcode = static_cast<std::uint16_t>(wire::OpCode::Status);
 		status.requestId = wire::RequestId{1000000};

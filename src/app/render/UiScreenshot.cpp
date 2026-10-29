@@ -48,6 +48,7 @@ void UiRenderer::PrepareReadback()
 	CheckResult(vkAllocateMemory(gpu.device, &allocate, nullptr, &gpu.readbackMemory));
 	CheckResult(vkBindBufferMemory(gpu.device, gpu.readback, gpu.readbackMemory, 0));
 }
+
 void UiRenderer::RecordReadback(VkCommandBuffer command, VkImage source)
 {
 	auto& gpu = *m_resources;
@@ -79,6 +80,7 @@ void UiRenderer::RecordReadback(VkCommandBuffer command, VkImage source)
 						 VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 1, &buffer,
 						 1, &image);
 }
+
 void UiRenderer::WriteScreenshot()
 {
 	auto& gpu = *m_resources;
@@ -94,8 +96,7 @@ void UiRenderer::WriteScreenshot()
 	std::array<unsigned char, 54> header{};
 	header[0] = 'B';
 	header[1] = 'M';
-	auto write = [&](std::size_t offset, std::uint32_t value)
-	{
+	auto write = [&](std::size_t offset, std::uint32_t value) {
 		for (unsigned index = 0; index < 4; ++index)
 			header[offset + index] = static_cast<unsigned char>(value >> (8 * index));
 	};

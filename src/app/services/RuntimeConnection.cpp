@@ -6,10 +6,10 @@
 #include "control/LocalControlClient.h"
 #endif
 
-
 namespace simxr::app
 {
 using Clock = std::chrono::steady_clock;
+
 RuntimeConnection::RuntimeConnection(const RuntimeConnectionConfig& configuration) : m_configuration(configuration)
 {
 	if (!configuration.maxPending || configuration.maxPending > 64 || !configuration.maxReplies ||
@@ -20,19 +20,18 @@ RuntimeConnection::RuntimeConnection(const RuntimeConnectionConfig& configuratio
 		throw std::invalid_argument("Invalid asynchronous runtime connection bounds");
 	m_requests.reserve(configuration.maxPending);
 	m_replies.reserve(configuration.maxReplies);
-	m_worker = std::thread(
-		[this]
-		{
-			Run();
-		});
+	m_worker = std::thread([this] { Run(); });
 }
+
 bool RuntimeConnection::Current(std::uint64_t epoch)
 {
 	std::lock_guard lock(m_mutex);
 	return !m_stopping && m_requested && m_snapshot.epoch == epoch;
 }
+
 void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
-										std::optional<control::ControlPacket> hello, std::string appName, std::uint64_t peerProcess)
+										std::optional<control::ControlPacket> hello, std::string appName,
+										std::uint64_t peerProcess)
 {
 	control::ControlPacket previous;
 	std::lock_guard lock(m_mutex);
@@ -45,6 +44,7 @@ void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionSt
 	if (hello)
 		previous = std::exchange(m_snapshot.hello, std::move(*hello));
 }
+
 void RuntimeConnection::Reply(RuntimeReply reply)
 {
 	std::lock_guard lock(m_mutex);
@@ -107,6 +107,7 @@ void RuntimeConnection::Run() noexcept
 	std::lock_guard lock(m_mutex);
 	m_workerExited = true;
 }
+
 void RuntimeConnection::RunChecked()
 {
 	std::uint64_t activeEpoch = 0;
@@ -121,14 +122,12 @@ void RuntimeConnection::RunChecked()
 		bool connect = false, newEpoch = false, failed = false;
 		{
 			std::unique_lock lock(m_mutex);
-			m_changed.wait(lock,
-						   [&]
-						   {
-							   return m_stopping || m_snapshot.epoch != activeEpoch ||
-									  ((m_snapshot.state == RuntimeConnectionState::Connected ||
-										m_snapshot.state == RuntimeConnectionState::Failed) &&
-									   !m_requests.empty() && m_replies.size() < m_configuration.maxReplies);
-						   });
+			m_changed.wait(lock, [&] {
+				return m_stopping || m_snapshot.epoch != activeEpoch ||
+					   ((m_snapshot.state == RuntimeConnectionState::Connected ||
+						 m_snapshot.state == RuntimeConnectionState::Failed) &&
+						!m_requests.empty() && m_replies.size() < m_configuration.maxReplies);
+			});
 			if (m_stopping)
 				return;
 			if (m_snapshot.epoch != activeEpoch)
@@ -196,10 +195,10 @@ void RuntimeConnection::RunChecked()
 						// Process details are optional for an otherwise usable endpoint.
 					}
 				}
-				ConnectionState(
-					activeEpoch, accepted ? RuntimeConnectionState::Connected : RuntimeConnectionState::Failed,
-					accepted ? "" : "Runtime rejected control protocol Hello", std::move(response), std::move(appName),
-					accepted ? client->PeerProcess() : 0);
+				ConnectionState(activeEpoch,
+								accepted ? RuntimeConnectionState::Connected : RuntimeConnectionState::Failed,
+								accepted ? "" : "Runtime rejected control protocol Hello", std::move(response),
+								std::move(appName), accepted ? client->PeerProcess() : 0);
 				if (!accepted)
 					client.reset();
 			}
@@ -255,10 +254,12 @@ void RuntimeConnection::RunChecked()
 		Reply(std::move(reply));
 	}
 }
+
 RuntimeConnection::~RuntimeConnection()
 {
 	Close();
 }
+
 std::uint64_t RuntimeConnection::Connect(std::string path, std::optional<std::uint64_t> expectedProcess)
 {
 	std::vector<Queued> requests;
@@ -284,6 +285,7 @@ std::uint64_t RuntimeConnection::Connect(std::string path, std::optional<std::ui
 	m_changed.notify_all();
 	return m_snapshot.epoch;
 }
+
 void RuntimeConnection::Disconnect(std::optional<std::uint64_t> expectedEpoch)
 {
 	std::vector<Queued> requests;
@@ -305,6 +307,7 @@ void RuntimeConnection::Disconnect(std::optional<std::uint64_t> expectedEpoch)
 		++m_snapshot.epoch;
 	m_changed.notify_all();
 }
+
 std::uint64_t RuntimeConnection::Submit(control::ControlPacket request)
 {
 	std::lock_guard lock(m_mutex);
@@ -317,6 +320,7 @@ std::uint64_t RuntimeConnection::Submit(control::ControlPacket request)
 	m_changed.notify_all();
 	return ticket;
 }
+
 std::vector<RuntimeReply> RuntimeConnection::Poll()
 {
 	std::vector<RuntimeReply> result;
@@ -331,6 +335,7 @@ std::vector<RuntimeReply> RuntimeConnection::Poll()
 	m_changed.notify_all();
 	return result;
 }
+
 RuntimeConnectionSnapshot RuntimeConnection::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
@@ -339,6 +344,7 @@ RuntimeConnectionSnapshot RuntimeConnection::Snapshot() const
 	result.ready = m_replies.size();
 	return result;
 }
+
 void RuntimeConnection::Close() noexcept
 {
 	std::vector<Queued> requests;

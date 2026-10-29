@@ -5,7 +5,8 @@ namespace simxr::control
 {
 static constexpr std::size_t s_fieldHeaderSize = 8;
 
-template <typename T> static T Read(std::span<const std::byte> bytes, std::size_t offset = 0) noexcept
+template<typename T>
+static T Read(std::span<const std::byte> bytes, std::size_t offset = 0) noexcept
 {
 	std::uint64_t result = 0;
 	for (std::size_t index = 0; index < sizeof(T); ++index)
@@ -13,7 +14,8 @@ template <typename T> static T Read(std::span<const std::byte> bytes, std::size_
 	return static_cast<T>(result);
 }
 
-template <typename T> static void Write(std::span<std::byte> bytes, std::size_t offset, T value) noexcept
+template<typename T>
+static void Write(std::span<std::byte> bytes, std::size_t offset, T value) noexcept
 {
 	for (std::size_t index = 0; index < sizeof(T); ++index)
 		bytes[offset + index] = std::byte{static_cast<unsigned char>(value >> (index * 8))};
@@ -97,7 +99,8 @@ static DecodeError CheckFields(std::span<const std::byte> payload, std::size_t& 
 	return DecodeError::None;
 }
 
-template <typename T> static Field Integer(std::uint16_t tag, T value, bool required)
+template<typename T>
+static Field Integer(std::uint16_t tag, T value, bool required)
 {
 	Field result{tag, required, std::vector<std::byte>(sizeof(T))};
 	Write<T>(result.value, 0, value);
@@ -108,23 +111,28 @@ Field Field::U64(std::uint16_t tag, std::uint64_t value, bool required)
 {
 	return Integer(tag, value, required);
 }
+
 Field Field::U32(std::uint16_t tag, std::uint32_t value, bool required)
 {
 	return Integer(tag, value, required);
 }
+
 Field Field::I64(std::uint16_t tag, std::int64_t value, bool required)
 {
 	return Integer(tag, std::bit_cast<std::uint64_t>(value), required);
 }
+
 Field Field::F32(std::uint16_t tag, float value, bool required)
 {
 	static_assert(sizeof(float) == sizeof(std::uint32_t) && std::numeric_limits<float>::is_iec559);
 	return Integer(tag, std::bit_cast<std::uint32_t>(value), required);
 }
+
 Field Field::Bool(std::uint16_t tag, bool value, bool required)
 {
 	return Field{tag, required, {std::byte{static_cast<unsigned char>(value)}}};
 }
+
 Field Field::Text(std::uint16_t tag, std::string_view value, bool required)
 {
 	const auto bytes = std::as_bytes(std::span{value.data(), value.size()});
@@ -132,36 +140,43 @@ Field Field::Text(std::uint16_t tag, std::string_view value, bool required)
 		throw std::invalid_argument("Control text must be NUL-free UTF-8");
 	return Bytes(tag, bytes, required);
 }
+
 Field Field::Bytes(std::uint16_t tag, std::span<const std::byte> value, bool required)
 {
 	if (value.size() > MaxPayload - s_fieldHeaderSize)
 		throw std::length_error("Control field exceeds payload bound");
 	return Field{tag, required, {value.begin(), value.end()}};
 }
+
 std::optional<std::uint64_t> FieldView::AsU64() const noexcept
 {
 	return value.size() == sizeof(std::uint64_t) ? std::optional{Read<std::uint64_t>(value)} : std::nullopt;
 }
+
 std::optional<std::uint32_t> FieldView::AsU32() const noexcept
 {
 	return value.size() == sizeof(std::uint32_t) ? std::optional{Read<std::uint32_t>(value)} : std::nullopt;
 }
+
 std::optional<std::int64_t> FieldView::AsI64() const noexcept
 {
 	const auto integer = AsU64();
 	return integer ? std::optional{std::bit_cast<std::int64_t>(*integer)} : std::nullopt;
 }
+
 std::optional<float> FieldView::AsF32() const noexcept
 {
 	const auto integer = AsU32();
 	return integer ? std::optional{std::bit_cast<float>(*integer)} : std::nullopt;
 }
+
 std::optional<bool> FieldView::AsBool() const noexcept
 {
 	return value.size() == 1 && std::to_integer<unsigned char>(value.front()) <= 1
 			   ? std::optional{value.front() == std::byte{1}}
 			   : std::nullopt;
 }
+
 std::optional<std::string_view> FieldView::AsText() const noexcept
 {
 	if (!ValidText(value))
@@ -169,30 +184,37 @@ std::optional<std::string_view> FieldView::AsText() const noexcept
 	return value.empty() ? std::string_view{}
 						 : std::string_view{reinterpret_cast<const char*>(value.data()), value.size()};
 }
+
 std::optional<std::uint64_t> Field::AsU64() const noexcept
 {
 	return FieldView{tag, required, value}.AsU64();
 }
+
 std::optional<std::uint32_t> Field::AsU32() const noexcept
 {
 	return FieldView{tag, required, value}.AsU32();
 }
+
 std::optional<std::int64_t> Field::AsI64() const noexcept
 {
 	return FieldView{tag, required, value}.AsI64();
 }
+
 std::optional<float> Field::AsF32() const noexcept
 {
 	return FieldView{tag, required, value}.AsF32();
 }
+
 std::optional<bool> Field::AsBool() const noexcept
 {
 	return FieldView{tag, required, value}.AsBool();
 }
+
 std::optional<std::string_view> Field::AsText() const noexcept
 {
 	return FieldView{tag, required, value}.AsText();
 }
+
 const FieldView* FieldViewsResult::Find(std::uint16_t tag) const noexcept
 {
 	for (const auto& field : fields)
@@ -200,19 +222,18 @@ const FieldView* FieldViewsResult::Find(std::uint16_t tag) const noexcept
 			return &field;
 	return nullptr;
 }
+
 Field* Message::Find(std::uint16_t tag) noexcept
 {
 	return const_cast<Field*>(std::as_const(*this).Find(tag));
 }
+
 const Field* Message::Find(std::uint16_t tag) const noexcept
 {
-	const auto field = std::find_if(fields.begin(), fields.end(),
-									[&](const auto& value)
-									{
-										return value.tag == tag;
-									});
+	const auto field = std::find_if(fields.begin(), fields.end(), [&](const auto& value) { return value.tag == tag; });
 	return field == fields.end() ? nullptr : &*field;
 }
+
 std::optional<std::uint16_t> Message::ValidateFields(std::span<const std::uint16_t> knownTags) const noexcept
 {
 	for (const auto& field : fields)
@@ -270,7 +291,8 @@ std::vector<std::byte> Encode(const Message& message)
 	return result;
 }
 
-template <class Result> static Result DecodeFieldStorage(std::span<const std::byte> payload) noexcept
+template<class Result>
+static Result DecodeFieldStorage(std::span<const std::byte> payload) noexcept
 {
 	std::size_t count = 0;
 	const auto error = CheckFields(payload, count);
@@ -310,6 +332,7 @@ FieldsResult DecodeFields(std::span<const std::byte> payload) noexcept
 {
 	return DecodeFieldStorage<FieldsResult>(payload);
 }
+
 FieldViewsResult DecodeFieldViews(std::span<const std::byte> payload) noexcept
 {
 	return DecodeFieldStorage<FieldViewsResult>(payload);

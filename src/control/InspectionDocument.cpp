@@ -7,52 +7,58 @@ static InspectionValue Scalar(InspectionType type, Field field)
 {
 	return {type, std::move(field.value)};
 }
+
 InspectionValue InspectionValue::Null()
 {
 	return {};
 }
+
 InspectionValue InspectionValue::Boolean(bool value)
 {
 	return Scalar(InspectionType::Boolean, Field::Bool(1, value));
 }
+
 InspectionValue InspectionValue::Unsigned(std::uint64_t value)
 {
 	return Scalar(InspectionType::Unsigned, Field::U64(1, value));
 }
+
 InspectionValue InspectionValue::Signed(std::int64_t value)
 {
 	return Scalar(InspectionType::Signed, Field::I64(1, value));
 }
+
 InspectionValue InspectionValue::Float(float value)
 {
 	return Scalar(InspectionType::Float, Field::F32(1, value));
 }
+
 InspectionValue InspectionValue::Text(std::string_view value)
 {
 	return Scalar(InspectionType::Text, Field::Text(1, value));
 }
+
 InspectionValue InspectionValue::Revision(std::uint64_t value)
 {
 	if (!value)
 		throw std::invalid_argument("Revision IDs must be nonzero");
 	return Scalar(InspectionType::Revision, Field::U64(1, value));
 }
+
 std::vector<std::byte> InspectionValue::Encode(std::string_view name) const
 {
 	return EncodeFields(std::array{Field::Text(1, name, true), Field::U32(2, static_cast<std::uint32_t>(type), true),
 								   Field::Bytes(3, data, true)});
 }
+
 InspectionValue InspectionValue::Object(std::vector<std::pair<std::string, InspectionValue>> fields)
 {
 	std::vector<Field> result;
 	result.reserve(fields.size());
 	for (const auto& [name, value] : fields)
 	{
-		if (name.empty() || std::count_if(fields.begin(), fields.end(),
-										  [&](const auto& field)
-										  {
-											  return field.first == name;
-										  }) != 1)
+		if (name.empty() ||
+			std::count_if(fields.begin(), fields.end(), [&](const auto& field) { return field.first == name; }) != 1)
 			throw std::invalid_argument("Inspection object names must be distinct and nonempty");
 		if (result.size() == MaxFields)
 			throw std::length_error("Inspection object field capacity exceeded");
@@ -60,6 +66,7 @@ InspectionValue InspectionValue::Object(std::vector<std::pair<std::string, Inspe
 	}
 	return {InspectionType::Object, EncodeFields(result)};
 }
+
 InspectionValue InspectionValue::Array(std::vector<InspectionValue> values)
 {
 	if (values.size() > MaxFields * MaxFields)
@@ -76,6 +83,7 @@ InspectionValue InspectionValue::Array(std::vector<InspectionValue> values)
 	}
 	return {InspectionType::Array, EncodeFields(pages)};
 }
+
 InspectionStore::InspectionStore(std::size_t frames, std::size_t revisions, std::size_t bytes)
 	: m_frameCapacity(frames), m_revisionCapacity(revisions), m_byteCapacity(bytes)
 {
@@ -85,6 +93,7 @@ InspectionStore::InspectionStore(std::size_t frames, std::size_t revisions, std:
 	m_readers.reserve(frames);
 	m_revisions.reserve(revisions);
 }
+
 std::shared_ptr<const InspectionRecord> InspectionStore::Find(ControlSessionId session, FrameKey frame) const
 {
 	for (const auto& record : m_records)
@@ -92,6 +101,7 @@ std::shared_ptr<const InspectionRecord> InspectionStore::Find(ControlSessionId s
 			return record;
 	return {};
 }
+
 std::shared_ptr<const InspectionRecord> InspectionStore::Read(std::uint64_t id) const
 {
 	for (const auto& record : m_records)
@@ -99,6 +109,7 @@ std::shared_ptr<const InspectionRecord> InspectionStore::Read(std::uint64_t id) 
 			return record;
 	return {};
 }
+
 std::shared_ptr<const FeatureRevision> InspectionStore::ReadRevision(std::uint64_t id) const
 {
 	for (const auto& record : m_records)
@@ -107,6 +118,7 @@ std::shared_ptr<const FeatureRevision> InspectionStore::ReadRevision(std::uint64
 				return revision;
 	return {};
 }
+
 std::shared_ptr<const InspectionRecord>
 InspectionStore::Retain(ControlSessionId session, FrameKey frame, std::vector<FeatureDocument> features,
 						const std::function<std::vector<std::byte>(std::span<const std::uint64_t>)>& serialize)
@@ -117,16 +129,8 @@ InspectionStore::Retain(ControlSessionId session, FrameKey frame, std::vector<Fe
 		throw std::length_error("Inspection feature-reference capacity exceeded");
 	if (auto existing = Find(session, frame))
 		return existing;
-	std::erase_if(m_readers,
-				  [](const auto& reader)
-				  {
-					  return reader.expired();
-				  });
-	std::erase_if(m_revisions,
-				  [](const auto& revision)
-				  {
-					  return revision.expired();
-				  });
+	std::erase_if(m_readers, [](const auto& reader) { return reader.expired(); });
+	std::erase_if(m_revisions, [](const auto& revision) { return revision.expired(); });
 	if (m_nextFrame == std::numeric_limits<std::uint64_t>::max())
 		throw std::length_error("Inspection identity exhausted");
 	std::vector<std::shared_ptr<const InspectionRecord>> liveReaders;
@@ -150,16 +154,8 @@ InspectionStore::Retain(ControlSessionId session, FrameKey frame, std::vector<Fe
 	// External shared readers may disappear between the first prune and weak
 	// lock. Drop those failed locks now; strong snapshots above keep every
 	// surviving entry stable through the no-allocation publication below.
-	std::erase_if(m_readers,
-				  [](const auto& reader)
-				  {
-					  return reader.expired();
-				  });
-	std::erase_if(m_revisions,
-				  [](const auto& revision)
-				  {
-					  return revision.expired();
-				  });
+	std::erase_if(m_readers, [](const auto& reader) { return reader.expired(); });
+	std::erase_if(m_revisions, [](const auto& revision) { return revision.expired(); });
 	if (m_readers.size() >= m_frameCapacity)
 		throw std::length_error("Inspection frame capacity exceeded");
 	selectedRevisions.reserve(features.size());
@@ -170,8 +166,7 @@ InspectionStore::Retain(ControlSessionId session, FrameKey frame, std::vector<Fe
 		if (feature.kind.empty() || feature.kind.size() > 64 || feature.bytes.size() > MaxPayload - 4096)
 			throw std::invalid_argument("Invalid feature revision");
 		std::shared_ptr<const FeatureRevision> selectedRevision;
-		const auto match = [&](const auto& revision)
-		{
+		const auto match = [&](const auto& revision) {
 			return revision->document.kind == feature.kind && revision->document.bytes == feature.bytes;
 		};
 		for (const auto& revision : knownRevisions)
@@ -219,14 +214,11 @@ InspectionStore::Retain(ControlSessionId session, FrameKey frame, std::vector<Fe
 	m_nextRevision = nextRevision;
 	return record;
 }
+
 bool InspectionStore::Release(std::uint64_t id) noexcept
 {
 	const auto previous = m_records.size();
-	std::erase_if(m_records,
-				  [&](const auto& record)
-				  {
-					  return record->id == id;
-				  });
+	std::erase_if(m_records, [&](const auto& record) { return record->id == id; });
 	return previous != m_records.size();
 }
 } // namespace simxr::control

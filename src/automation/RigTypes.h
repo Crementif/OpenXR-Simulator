@@ -26,11 +26,13 @@ enum class RigPhase
 	Cancelled,
 	Failed
 };
+
 struct RigCheckpoint
 {
 	std::string name, detail;
 	bool passed = false;
 };
+
 struct RigSnapshot
 {
 	RigPhase phase = RigPhase::Idle;
@@ -41,6 +43,7 @@ struct RigSnapshot
 	std::vector<std::string> output;
 	std::optional<std::vector<std::string>> compatibilityDeviations;
 };
+
 struct RigOptions
 {
 	control::ControlSessionId session;
@@ -52,6 +55,7 @@ struct RigOptions
 	// Only application-owned, built-in observation policy runs without a total deadline.
 	bool background = false;
 };
+
 // The transport belongs to this runner and is called only on its worker. It
 // must bound each exchange and preserve retry identity after a timeout.
 using RigExchange = std::function<control::Message(control::OpCode, std::vector<control::Field>)>;

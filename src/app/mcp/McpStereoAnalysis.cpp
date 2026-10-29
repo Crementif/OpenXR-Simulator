@@ -5,8 +5,8 @@ namespace simxr::app::mcp
 {
 using Json = nlohmann::json;
 
-Json AnalyzeStereo(std::span<const std::uint8_t> left, std::span<const std::uint8_t> right,
-	std::uint32_t width, std::uint32_t height, std::uint32_t sourceWidth, const std::function<void()>& check)
+Json AnalyzeStereo(std::span<const std::uint8_t> left, std::span<const std::uint8_t> right, std::uint32_t width,
+				   std::uint32_t height, std::uint32_t sourceWidth, const std::function<void()>& check)
 {
 	if (width < 8 || height < 8 || width > 640 || height > 640 || sourceWidth < width ||
 		left.size() != std::size_t{width} * height || right.size() != left.size())
@@ -26,9 +26,13 @@ Json AnalyzeStereo(std::span<const std::uint8_t> left, std::span<const std::uint
 		}
 	}
 	const auto contrast = std::sqrt(std::max(0.0, square / count - (sum / count) * (sum / count)));
-	Json result = {{"contrast", contrast}, {"analysis_width", width}, {"analysis_height", height},
+	Json result = {
+		{"contrast", contrast},
+		{"analysis_width", width},
+		{"analysis_height", height},
 		{"method", "central_window_horizontal_disparity"},
-		{"limitation", "Scene depth, occlusion and texture affect this heuristic; it does not verify IPD or stereo consistency."}};
+		{"limitation",
+		 "Scene depth, occlusion and texture affect this heuristic; it does not verify IPD or stereo consistency."}};
 	if (contrast < 2.0)
 	{
 		result["verdict"] = "INCONCLUSIVE_NO_FEATURES";
@@ -55,7 +59,7 @@ Json AnalyzeStereo(std::span<const std::uint8_t> left, std::span<const std::uint
 				for (std::uint32_t x = x0; x < x0 + windowWidth; ++x)
 				{
 					const auto delta = int(left[std::size_t{y} * width + x]) -
-						int(right[std::size_t{y} * width + std::size_t(int(x) + shift)]);
+									   int(right[std::size_t{y} * width + std::size_t(int(x) + shift)]);
 					difference += delta * delta;
 				}
 			const auto score = difference / count;
@@ -89,8 +93,9 @@ Json AnalyzeStereo(std::span<const std::uint8_t> left, std::span<const std::uint
 		}
 	}
 	const auto magnitude = std::abs(disparity);
-	result["verdict"] = magnitude < int(minimum) ? "FAIL_NO_PARALLAX" :
-		magnitude > int(maximum) ? "FAIL_EXCESSIVE_PARALLAX" : "PASS";
+	result["verdict"] = magnitude < int(minimum)   ? "FAIL_NO_PARALLAX"
+						: magnitude > int(maximum) ? "FAIL_EXCESSIVE_PARALLAX"
+												   : "PASS";
 	result["diagnosis"] = "The measured disparity is compared with a scene-dependent heuristic range.";
 	return result;
 }

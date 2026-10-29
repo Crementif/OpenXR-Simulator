@@ -8,6 +8,7 @@
 #include <utility>
 
 static thread_local bool s_failPreviewAllocation = false;
+
 void* operator new(std::size_t size)
 {
 	if (std::exchange(s_failPreviewAllocation, false))
@@ -16,10 +17,12 @@ void* operator new(std::size_t size)
 		return memory;
 	throw std::bad_alloc{};
 }
+
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -29,51 +32,60 @@ namespace simxr::test
 {
 class PreviewOutput final : public FrameOutput
 {
-  public:
+public:
 	explicit PreviewOutput(std::shared_ptr<FrameReservation> reservation) : m_reservation(std::move(reservation)) {}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
 
-  private:
+private:
 	std::shared_ptr<FrameReservation> m_reservation;
 };
 class CompressedOutput;
+
 class CompressedPicture final : public ArchivedFrame
 {
-  public:
+public:
 	explicit CompressedPicture(std::uint64_t value) : value(value) {}
+
 	std::uint64_t Bytes() const noexcept override
 	{
 		return 4ull << 20;
 	}
+
 	std::shared_ptr<const FrameOutput> Decode(const FramePool& budget) const override;
 	std::uint64_t value;
 };
+
 class CompressedOutput final : public FrameOutput
 {
-  public:
+public:
 	CompressedOutput(std::shared_ptr<FrameReservation> reservation, std::uint64_t value)
 		: reservation(std::move(reservation)), value(value)
-	{
-	}
+	{}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return pending.load() ? CompletionStatus::Pending : CompletionStatus::Complete;
 	}
+
 	bool CanArchive() const noexcept override
 	{
 		return true;
 	}
+
 	std::shared_ptr<const ArchivedFrame> Archive() const override
 	{
 		return std::make_shared<CompressedPicture>(value);
 	}
+
 	std::shared_ptr<FrameReservation> reservation;
 	std::atomic<bool> pending{false};
 	std::uint64_t value;
 };
+
 std::shared_ptr<const FrameOutput> CompressedPicture::Decode(const FramePool& budget) const
 {
 	auto reservation = budget.Reserve();
@@ -82,7 +94,9 @@ std::shared_ptr<const FrameOutput> CompressedPicture::Decode(const FramePool& bu
 	Require(budget.Consume(reservation), "Decoded reservation failed");
 	return std::make_shared<CompressedOutput>(std::move(reservation), value);
 }
-template <typename Predicate> void Await(Predicate predicate)
+
+template<typename Predicate>
+void Await(Predicate predicate)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (!predicate())
@@ -91,6 +105,7 @@ template <typename Predicate> void Await(Predicate predicate)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
+
 void TrackerAdmission()
 {
 	FramePreviewHistory history;
@@ -157,12 +172,8 @@ void MissingPreviewDoesNotBlockArchival()
 			history.Append(key, std::make_shared<CompressedOutput>(std::move(reservation), frame), false);
 		}
 	}
-	Eventually(
-		[&]
-		{
-			return history.RamBytes() > 0 && history.Bytes() <= 8 * FramePreviewHistory::SlotBytes;
-		},
-		"Missing preview blocked archival of later frames");
+	Eventually([&] { return history.RamBytes() > 0 && history.Bytes() <= 8 * FramePreviewHistory::SlotBytes; },
+			   "Missing preview blocked archival of later frames");
 	bool rejected = false;
 	try
 	{
@@ -184,12 +195,10 @@ void CompressedHistory()
 	for (std::uint64_t frame = 1; frame <= 32; ++frame)
 	{
 		std::shared_ptr<FrameReservation> reservation;
-		Await(
-			[&]
-			{
-				reservation = history.Reserve({{1}, {frame}});
-				return bool(reservation);
-			});
+		Await([&] {
+			reservation = history.Reserve({{1}, {frame}});
+			return bool(reservation);
+		});
 		Require(history.Budget().Consume(reservation), "Compressed admission failed");
 		auto output = std::make_shared<CompressedOutput>(reservation, frame);
 		TrackingSnapshot tracking{};
@@ -198,38 +207,29 @@ void CompressedHistory()
 		if (frame == 1)
 			retained = output;
 	}
-	Await(
-		[&]
-		{
-			return history.RamBytes() >= (96ull << 20);
-		});
+	Await([&] { return history.RamBytes() >= (96ull << 20); });
 	Require(history.Frames({1}).size() == 32, "Encoding skipped a retained frame");
 	for (const auto frame : {1ull, 17ull, 2ull, 24ull, 32ull})
 	{
 		FramePreview preview;
-		Await(
-			[&]
-			{
-				preview = history.Find({{1}, {frame}});
-				return bool(preview.output);
-			});
+		Await([&] {
+			preview = history.Find({{1}, {frame}});
+			return bool(preview.output);
+		});
 		Require(std::static_pointer_cast<const CompressedOutput>(preview.output)->value == frame,
 				"Decode substituted a frame");
 		Require(preview.tracking && preview.tracking->head.pose.position.x == static_cast<float>(frame),
 				"Archived pose did not survive with its image");
 	}
 	history.ConfigureRam(64ull << 20);
-	Await(
-		[&]
-		{
-			return history.RamBytes() <= history.RamLimit();
-		});
+	Await([&] { return history.RamBytes() <= history.RamLimit(); });
 	const auto frames = history.Frames({1});
 	Require(frames.size() == 23 && !history.Find({{1}, {9}}).submitted && history.Find({{1}, {10}}).submitted,
 			"RAM shrink did not evict the oldest compressed frames");
 	Require(std::static_pointer_cast<const CompressedOutput>(retained)->value == 1, "Eviction invalidated reader");
 	Require(history.Error().empty(), "History worker failed");
 }
+
 void LiveAdmissionDoesNotWaitForEncoding()
 {
 	FramePreviewHistory history;
@@ -255,12 +255,7 @@ void LiveAdmissionDoesNotWaitForEncoding()
 			"Live admission exceeded its budget or fabricated a frame");
 	pending->pending.store(false);
 	pending.reset();
-	Eventually(
-		[&]
-		{
-			return history.Bytes() < history.Limit();
-		},
-		"Encoding did not release history capacity");
+	Eventually([&] { return history.Bytes() < history.Limit(); }, "Encoding did not release history capacity");
 	auto recovered = history.Reserve({{1}, {18}}, false);
 	Require(recovered && history.Budget().Consume(recovered), "Live history did not recover after encoding");
 	history.Append({{1}, {18}}, std::make_shared<CompressedOutput>(std::move(recovered), 18), false);
@@ -285,12 +280,10 @@ void ShrinkWaitsForEncoding()
 	}
 	history.Configure(64ull << 20);
 	Require(history.Bytes() > history.Limit(), "Shrink fixture did not retain pending GPU work");
-	std::jthread complete(
-		[pending]
-		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(20));
-			pending->pending.store(false);
-		});
+	std::jthread complete([pending] {
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		pending->pending.store(false);
+	});
 	auto reservation = history.Reserve({{1}, {33}});
 	Require(reservation && history.Budget().Consume(reservation), "Budget shrink rejected the next frame");
 	history.Append({{1}, {33}}, std::make_shared<CompressedOutput>(reservation, 33), false);
@@ -311,12 +304,10 @@ void CloseWakesAdmission()
 		history.Append({{1}, {frame}}, std::move(output), false);
 	}
 	std::promise<void> started;
-	auto waiting = std::async(std::launch::async,
-							  [&]
-							  {
-								  started.set_value();
-								  return history.Reserve({{1}, {17}});
-							  });
+	auto waiting = std::async(std::launch::async, [&] {
+		started.set_value();
+		return history.Reserve({{1}, {17}});
+	});
 	started.get_future().wait();
 	Require(waiting.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout,
 			"Full history did not apply backpressure");
@@ -344,18 +335,12 @@ void PendingEncodeDoesNotBlockSelection()
 		}
 		history.Append({{1}, {frame}}, std::move(output), false);
 	}
-	Await(
-		[&]
-		{
-			return history.RamBytes() > 0;
-		});
+	Await([&] { return history.RamBytes() > 0; });
 	FramePreview selected;
-	Await(
-		[&]
-		{
-			selected = history.Find({{1}, {1}});
-			return bool(selected.output);
-		});
+	Await([&] {
+		selected = history.Find({{1}, {1}});
+		return bool(selected.output);
+	});
 	Require(std::static_pointer_cast<const CompressedOutput>(selected.output)->value == 1,
 			"Pending encode substituted the requested archive");
 	pending->pending.store(false);
@@ -363,6 +348,7 @@ void PendingEncodeDoesNotBlockSelection()
 	abandoned.reset();
 	Require(bool(history.Reserve({{1}, {11}})), "Abandoned admission blocked a retry");
 }
+
 void ContinuousHistory()
 {
 	FramePreviewHistory history;
@@ -409,10 +395,10 @@ void ContinuousHistory()
 		throw std::runtime_error("Unaligned budget accepted");
 	}
 	catch (const std::invalid_argument&)
-	{
-	}
+	{}
 }
 } // namespace simxr::test
+
 int main()
 {
 	try

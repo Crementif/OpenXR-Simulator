@@ -14,7 +14,7 @@ struct VulkanInspectionValidation;
 // returned VulkanDevice retains its native owner through every image/work reader.
 class VulkanInspectionDevice
 {
-  public:
+public:
 	VulkanInspectionDevice(const VulkanExternalIdentity& identity,
 						   std::shared_ptr<VulkanInspectionValidation> validation = {}, bool requireTimeline = false);
 	const std::shared_ptr<VulkanDevice>& Device() const noexcept;
@@ -22,7 +22,7 @@ class VulkanInspectionDevice
 	bool ConsumerFencesEnabled() const noexcept;
 	bool ConsumerTimelineEnabled() const noexcept;
 
-  private:
+private:
 	std::vector<const char*> m_extensions;
 	struct Native;
 	std::shared_ptr<VulkanDevice> m_device;

@@ -148,6 +148,7 @@ static void BodyMapping()
 				"Unlocated body observations remain explicit after calibration");
 	}
 }
+
 static void RestartAlignment()
 {
 	using namespace headset;
@@ -184,6 +185,7 @@ static void RestartAlignment()
 	}
 	Require(rejected, "Restart fabricated alignment from an unavailable head");
 }
+
 static void Alignment()
 {
 	using namespace headset;
@@ -234,6 +236,7 @@ static void Alignment()
 	}
 	Require(rejected, "Unavailable head pose cannot establish alignment");
 }
+
 static void Mapping()
 {
 	using namespace headset;
@@ -257,8 +260,7 @@ static void Mapping()
 	input.hands[0].select.currentState = true;
 	auto calibration = IdentityPose();
 	calibration.position.x = 10;
-	const auto map = [&]
-	{
+	const auto map = [&] {
 		return MapHeadsetTracking(input, clock, NativeClockDomain::MonotonicNanoseconds, 1000010, 1000020, calibration,
 								  3, 4);
 	};
@@ -369,6 +371,7 @@ static void Mapping()
 	}
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

@@ -60,6 +60,7 @@ bool HeadsetHaptics::Observe(const control::HapticObservation& observation, Cloc
 	}
 	return true;
 }
+
 std::array<std::optional<HeadsetVibration>, 2> HeadsetHaptics::Consume(Clock::time_point now, bool enabled)
 {
 	std::array<std::optional<HeadsetVibration>, 2> result;

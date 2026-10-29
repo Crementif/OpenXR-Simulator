@@ -10,24 +10,27 @@ namespace simxr::windows
 {
 class NativeHandle
 {
-  public:
-	explicit NativeHandle(HANDLE handle) noexcept : m_handle(handle)
-	{
-	}
+public:
+	explicit NativeHandle(HANDLE handle) noexcept : m_handle(handle) {}
+
 	~NativeHandle()
 	{
 		Reset();
 	}
+
 	NativeHandle(const NativeHandle&) = delete;
 	NativeHandle& operator=(const NativeHandle&) = delete;
+
 	HANDLE Get() const noexcept
 	{
 		return m_handle;
 	}
+
 	bool Valid() const noexcept
 	{
 		return m_handle && m_handle != INVALID_HANDLE_VALUE;
 	}
+
 	void Reset() noexcept
 	{
 		if (Valid())
@@ -35,13 +38,13 @@ class NativeHandle
 		m_handle = nullptr;
 	}
 
-  private:
+private:
 	HANDLE m_handle = nullptr;
 };
 
 class RestartSession
 {
-  public:
+public:
 	RestartSession()
 	{
 		std::array<wchar_t, CCH_RM_SESSION_KEY + 1> key{};
@@ -50,11 +53,13 @@ class RestartSession
 			throw std::system_error(static_cast<int>(error), std::system_category(), "Start Restart Manager session");
 		m_open = true;
 	}
+
 	~RestartSession()
 	{
 		if (m_open)
 			RmEndSession(m_session);
 	}
+
 	RestartSession(const RestartSession&) = delete;
 	RestartSession& operator=(const RestartSession&) = delete;
 
@@ -68,7 +73,8 @@ class RestartSession
 			paths.push_back(file.c_str());
 		if (paths.size() > std::numeric_limits<UINT>::max())
 			throw std::length_error("Too many installation files");
-		auto error = RmRegisterResources(m_session, static_cast<UINT>(paths.size()), paths.data(), 0, nullptr, 0, nullptr);
+		auto error =
+			RmRegisterResources(m_session, static_cast<UINT>(paths.size()), paths.data(), 0, nullptr, 0, nullptr);
 		if (error != ERROR_SUCCESS)
 			throw std::system_error(static_cast<int>(error), std::system_category(), "Register installed files");
 		UINT needed = 0, count = 0;
@@ -81,7 +87,7 @@ class RestartSession
 		return false;
 	}
 
-  private:
+private:
 	DWORD m_session = 0;
 	bool m_open = false;
 };
@@ -122,15 +128,15 @@ static void WriteStatus(const std::filesystem::path& path, std::string_view valu
 	output.close();
 }
 
-static int Guard(const std::filesystem::path& installation, DWORD parentId,
-				 const std::filesystem::path& status, const std::filesystem::path& stop)
+static int Guard(const std::filesystem::path& installation, DWORD parentId, const std::filesystem::path& status,
+				 const std::filesystem::path& stop)
 {
 	NativeHandle parent(OpenProcess(SYNCHRONIZE, FALSE, parentId));
 	if (!parent.Valid())
 		throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Open installer process");
 	NativeHandle file(CreateFileW((installation / L".simxr-use-lock").c_str(), GENERIC_READ | GENERIC_WRITE,
-									FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
-									FILE_ATTRIBUTE_NORMAL, nullptr));
+								  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
+								  FILE_ATTRIBUTE_NORMAL, nullptr));
 	if (!file.Valid())
 		throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Open installation lock");
 	OVERLAPPED overlap{};

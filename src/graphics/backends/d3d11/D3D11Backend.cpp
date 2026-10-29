@@ -87,8 +87,7 @@ static bool SameDevice(ID3D11DeviceChild* resource, ID3D11Device* expected)
 D3D11Frame::D3D11Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
 					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
 	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
-{
-}
+{}
 
 D3D11Frame::~D3D11Frame()
 {
@@ -117,10 +116,12 @@ HANDLE D3D11Frame::TextureHandle() const noexcept
 {
 	return m_textureHandle;
 }
+
 HANDLE D3D11Frame::FenceHandle() const noexcept
 {
 	return m_fenceHandle;
 }
+
 ID3D11Texture2D* D3D11Frame::Texture() const noexcept
 {
 	return m_texture.Get();
@@ -135,11 +136,7 @@ HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::u
 							   std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output,
 							   std::uint32_t mipLevels, bool retained)
 {
-	std::erase_if(m_pending,
-				  [](const auto& frame)
-				  {
-					  return frame->PollCompletion() == CompletionStatus::Complete;
-				  });
+	std::erase_if(m_pending, [](const auto& frame) { return frame->PollCompletion() == CompletionStatus::Complete; });
 	const auto& pool = retained ? m_retainedFrames : m_frames;
 	auto reservation = pool.Reserve();
 	if (!reservation)
@@ -371,6 +368,7 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan, std::span<const D3D11C
 		!(description.BindFlags & D3D11_BIND_RENDER_TARGET) ||
 		(description.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS && description.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))
 		return E_INVALIDARG;
+
 	struct SourceCopy
 	{
 		ComPtr<ID3D11Texture2D> texture;
@@ -379,6 +377,7 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan, std::span<const D3D11C
 		DXGI_FORMAT format;
 		bool depth;
 	};
+
 	std::vector<SourceCopy> copies(sources.size());
 	for (std::size_t index = 0; index < sources.size(); ++index)
 	{
@@ -445,11 +444,9 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan, std::span<const D3D11C
 		if (FAILED(result))
 			return result;
 	}
-	if (!m_depthMultisample && std::any_of(copies.begin(), copies.end(),
-										   [](const SourceCopy& source)
-										   {
-											   return source.depth && source.original.SampleDesc.Count > 1;
-										   }))
+	if (!m_depthMultisample && std::any_of(copies.begin(), copies.end(), [](const SourceCopy& source) {
+			return source.depth && source.original.SampleDesc.Count > 1;
+		}))
 	{
 		const windows::WindowsLibrary compiler(D3DCOMPILER_DLL_W);
 		const auto compile = std::bit_cast<decltype(&D3DCompile)>(compiler.Procedure("D3DCompile"));

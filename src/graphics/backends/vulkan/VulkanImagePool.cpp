@@ -9,24 +9,28 @@ bool VulkanImagePool::Allocation::Idle() const noexcept
 {
 	return !producerUsed && !consumerUses;
 }
+
 VulkanImagePool::Lease::Lease(std::shared_ptr<VulkanImagePool> pool, std::shared_ptr<Allocation> allocation,
 							  std::shared_ptr<VulkanExternalImage> image, bool producer)
 	: m_pool(std::move(pool)), m_allocation(std::move(allocation)), m_image(std::move(image)), m_producer(producer)
-{
-}
+{}
+
 VulkanImagePool::Lease::~Lease()
 {
 	m_image.reset();
 	m_pool->Return(m_allocation, m_producer);
 }
+
 std::shared_ptr<VulkanExternalImage> VulkanImagePool::Lease::External()
 {
 	return m_pool->External(shared_from_this());
 }
+
 std::shared_ptr<VulkanImage> VulkanImagePool::Lease::Import(const VulkanExternalDevice& consumer)
 {
 	return m_pool->Import(*this, consumer);
 }
+
 VulkanImagePool::VulkanImagePool(std::shared_ptr<VulkanExternalDevice> producer) : m_producer(std::move(producer)) {}
 
 std::shared_ptr<VulkanImagePool::Lease> VulkanImagePool::Acquire(const VulkanExternalImageSpec& spec)
@@ -63,10 +67,7 @@ std::shared_ptr<VulkanImagePool::Lease> VulkanImagePool::Acquire(const VulkanExt
 		auto available = std::find(m_allocations.begin(), m_allocations.end(), nullptr);
 		if (available == m_allocations.end())
 			available = std::find_if(m_allocations.begin(), m_allocations.end(),
-									 [](const auto& entry)
-									 {
-										 return entry->Idle();
-									 });
+									 [](const auto& entry) { return entry->Idle(); });
 		if (available != m_allocations.end())
 		{
 			retired = std::move(*available);

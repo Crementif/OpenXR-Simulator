@@ -27,9 +27,10 @@ enum class ClipHit
 	Stop
 };
 class PreviewHistory;
+
 class TimelineCanvas
 {
-  public:
+public:
 	void Begin(float headerWidth, float liveWidth, bool laneNames = true);
 	TimelineGesture Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following,
 						 std::optional<double> cursor = {}, std::optional<std::pair<double, double>> selection = {});
@@ -38,49 +39,60 @@ class TimelineCanvas
 	ClipHit DrawClip(const char* id, double first, double last, const char* label, bool replay, bool playable = false,
 					 bool stoppable = false);
 	void DrawPause(double first, double last);
+
 	void SetInputDetail(std::string detail)
 	{
 		m_inputDetail = std::move(detail);
 	}
+
 	void SetBudget(float milliseconds) noexcept
 	{
 		m_budget = milliseconds;
 	}
+
 	void SetTint(bool tint) noexcept
 	{
 		m_tint = tint;
 	}
+
 	// Inclusive source and replay endpoints. Frame-id offsets preserve gaps while
 	// the recorded input is drawn over frames still owned by the replay.
 	void DrawGhost(const HistoryStore& history, std::size_t sourceFirst, std::size_t sourceLast,
 				   std::size_t targetFirst, std::size_t targetLast);
+
 	void Fit() noexcept
 	{
 		m_fit = true;
 	}
+
 	void Zoom(double first, double last) noexcept;
+
 	std::pair<double, double> VisibleRange() const noexcept
 	{
 		return {m_start, m_start + m_span};
 	}
+
 	ShellRect Bounds() const noexcept
 	{
 		return m_bounds;
 	}
+
 	ShellRect TransportRect() const noexcept
 	{
 		return m_transport;
 	}
+
 	ShellRect LiveRect() const noexcept
 	{
 		return {m_bounds.x + m_bounds.width, m_transport.y, m_live, m_transport.height};
 	}
+
 	bool Compact() const noexcept
 	{
 		return m_compact;
 	}
 
-  private:
+private:
 	enum Lane
 	{
 		Frames,
@@ -88,14 +100,17 @@ class TimelineCanvas
 		Input,
 		LaneCount
 	};
+
 	float LaneY(Lane lane) const noexcept
 	{
 		return m_laneY[lane];
 	}
+
 	float X(double seconds) const noexcept
 	{
 		return m_bounds.x + float((seconds - m_start) / m_span) * m_bounds.width;
 	}
+
 	ShellRect m_bounds, m_transport;
 	std::array<float, LaneCount> m_laneY{};
 	float m_header = 0, m_live = 0, m_lane = 0, m_top = 0, m_height = 0;
@@ -112,6 +127,7 @@ class TimelineCanvas
 		Snapshot,
 		Marker
 	};
+
 	struct FramePress
 	{
 		FrameIdentity frame;
@@ -121,15 +137,18 @@ class TimelineCanvas
 		FrameTarget target = FrameTarget::Frame;
 		bool range = false;
 	};
+
 	std::optional<FramePress> m_framePress;
 	int m_drawnFrame = -1;
 	bool m_hovered = false;
+
 	struct ClipPress
 	{
 		ImGuiID id;
 		ClipHit action;
 		int drawnFrame;
 	};
+
 	std::optional<ClipPress> m_clipPress;
 };
 } // namespace simxr::app

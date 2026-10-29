@@ -17,37 +17,40 @@ namespace
 {
 class TestClock final : public Clock
 {
-  public:
+public:
 	HostTime Now() const override
 	{
 		if (fail.load())
 			throw std::runtime_error("Clock failed");
 		return HostTime{Duration{time.load()}};
 	}
+
 	void WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime) override
 	{
 		changed.wait_for(lock, 1ms);
 	}
+
 	std::atomic<std::int64_t> time{0};
 	std::atomic<bool> fail{false};
 };
 
 class Output final : public FrameOutput
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		if (display)
 			display->Snapshot();
 		return state.load();
 	}
+
 	std::atomic<CompletionStatus> state{CompletionStatus::Pending};
 	VirtualDisplay* display = nullptr;
 };
 
 class DelayedPhysicalOutput final : public FrameOutput
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		entered = true;
@@ -55,6 +58,7 @@ class DelayedPhysicalOutput final : public FrameOutput
 			std::this_thread::sleep_for(1ms);
 		return CompletionStatus::Complete;
 	}
+
 	mutable std::atomic<bool> entered{false};
 	std::atomic<bool> release{false};
 };
@@ -72,52 +76,34 @@ void DelayedPhysicalPublication()
 		FrameHistory history(4, 32);
 		VirtualDisplay display(clock, 4, &history);
 		display.Start({7}, {config.epoch, config.period}, config.mode, HostTime{});
-		Eventually(
-			[&]
-			{
-				return display.Snapshot().latest.has_value();
-			},
-			"Initial display opportunity");
+		Eventually([&] { return display.Snapshot().latest.has_value(); }, "Initial display opportunity");
 		auto output = std::make_shared<DelayedPhysicalOutput>();
 		std::future<bool> publishing;
-		const auto cleanup = std::shared_ptr<void>(nullptr,
-												   [&](void*)
-												   {
-													   output->release = true;
-													   scheduler.Stop();
-												   });
+		const auto cleanup = std::shared_ptr<void>(nullptr, [&](void*) {
+			output->release = true;
+			scheduler.Stop();
+		});
 		const auto revision = scheduler.ClockMapping()->revision;
-		const auto publish = [&](std::uint64_t sequence, Duration offset)
-		{
+		const auto publish = [&](std::uint64_t sequence, Duration offset) {
 			const RuntimeTime target{config.epoch.value + offset};
-			return scheduler.PublishExternalPrediction({7}, revision, 12, sequence, target, 10ms,
-													   [&]
-													   {
-														   return display.PublishExternalPrediction({7}, 12, sequence,
-																									target, 10ms);
-													   });
+			return scheduler.PublishExternalPrediction({7}, revision, 12, sequence, target, 10ms, [&] {
+				return display.PublishExternalPrediction({7}, 12, sequence, target, 10ms);
+			});
 		};
 		Require(display.Submit({{{7}, {1}}, {config.epoch.value + 10ms}, output}) == PresentationAdmission::Accepted &&
 					publish(1, 10ms),
 				"Queue physical opportunity with delayed output observation");
-		Eventually(
-			[&]
-			{
-				return output->entered.load();
-			},
-			"Physical worker enters delayed GPU observation");
+		Eventually([&] { return output->entered.load(); }, "Physical worker enters delayed GPU observation");
 		FramePrediction issued, ended;
 		Require(scheduler.WaitFrame(issued) == XR_SUCCESS && scheduler.BeginFrame() == XR_SUCCESS &&
 					scheduler.EndFrame(ended) == XR_SUCCESS,
 				"GPU observation cannot block application admission");
-		publishing = std::async(std::launch::async,
-								[&]
-								{
-									for (std::uint64_t sequence = 2; sequence <= 1000; ++sequence)
-										if (!publish(sequence, 10ms + std::chrono::microseconds(sequence)))
-											return false;
-									return true;
-								});
+		publishing = std::async(std::launch::async, [&] {
+			for (std::uint64_t sequence = 2; sequence <= 1000; ++sequence)
+				if (!publish(sequence, 10ms + std::chrono::microseconds(sequence)))
+					return false;
+			return true;
+		});
 		Require(publishing.wait_for(1s) == std::future_status::ready && publishing.get(),
 				"Prediction publication remains bounded and responsive while GPU observation is delayed");
 		Require(scheduler.WaitFrame(issued) == XR_SUCCESS && issued.displayTime.value == config.epoch.value + 11ms,
@@ -129,16 +115,11 @@ void DelayedPhysicalPublication()
 		}
 		clock->time = 50'000'000;
 		output->release = true;
-		Eventually(
-			[&]
-			{
-				return display.Snapshot().latest->time == RuntimeTime{config.epoch.value + 50ms};
-			},
-			"Delayed physical work retires and virtual display recovers");
+		Eventually([&] { return display.Snapshot().latest->time == RuntimeTime{config.epoch.value + 50ms}; },
+				   "Delayed physical work retires and virtual display recovers");
 		const auto events = history.Diagnostics().events;
 		Require(std::none_of(events.begin(), events.end(),
-							 [&](const auto& event)
-							 {
+							 [&](const auto& event) {
 								 return event.time > config.epoch &&
 										event.time < RuntimeTime{config.epoch.value + 50ms};
 							 }),
@@ -155,12 +136,7 @@ void PhysicalOpportunities()
 	VirtualDisplay display(clock);
 	const RuntimeTime epoch{1s};
 	display.Start({5}, {epoch, 10ms}, ExecutionMode::RealTime, HostTime{});
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest.has_value();
-		},
-		"Start virtual display before attaching");
+	Eventually([&] { return display.Snapshot().latest.has_value(); }, "Start virtual display before attaching");
 	auto first = std::make_shared<Output>();
 	first->state = CompletionStatus::Complete;
 	first->display = &display;
@@ -171,12 +147,8 @@ void PhysicalOpportunities()
 				display.Submit({{{5}, {2}}, {epoch.value + 4ms}, second}) == PresentationAdmission::Accepted,
 			"Queue outputs at distinct physical opportunities within a virtual interval");
 	Require(display.PublishExternalPrediction({5}, 8, 1, {epoch.value + 3ms}, 5ms), "Attach physical display source");
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->time == RuntimeTime{epoch.value + 3ms};
-		},
-		"Physical opportunity must preserve its exact target time");
+	Eventually([&] { return display.Snapshot().latest->time == RuntimeTime{epoch.value + 3ms}; },
+			   "Physical opportunity must preserve its exact target time");
 	const auto firstTick = *display.Snapshot().latest;
 	Require(firstTick.source == FrameKey{{5}, {1}} && firstTick.output == first,
 			"Physical selection must not round down or select a future image");
@@ -187,12 +159,8 @@ void PhysicalOpportunities()
 	display.ReleaseExternalPrediction(9);
 	Require(display.PublishExternalPrediction({5}, 8, 2, {epoch.value + 4ms}, 5ms),
 			"Publish next physical opportunity");
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->time == RuntimeTime{epoch.value + 4ms};
-		},
-		"Second physical opportunity inside the same virtual interval is not lost");
+	Eventually([&] { return display.Snapshot().latest->time == RuntimeTime{epoch.value + 4ms}; },
+			   "Second physical opportunity inside the same virtual interval is not lost");
 	const auto secondTick = *display.Snapshot().latest;
 	Require(secondTick.source == FrameKey{{5}, {2}} && secondTick.imageTick > firstTick.imageTick &&
 				display.NextTick() == DisplayTick{1},
@@ -202,21 +170,12 @@ void PhysicalOpportunities()
 	Require(display.Snapshot().latest->time == secondTick.time,
 			"Virtual clock cannot compete with attached physical source");
 	clock->time = 20'000'000;
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->time == RuntimeTime{epoch.value + 20ms};
-		},
-		"Expired physical source returns to virtual pacing");
+	Eventually([&] { return display.Snapshot().latest->time == RuntimeTime{epoch.value + 20ms}; },
+			   "Expired physical source returns to virtual pacing");
 	Require(display.Snapshot().latest->tick > secondTick.tick && display.Snapshot().latest->output == second,
 			"Fallback preserves unique image identities and completed output");
 	Require(display.PublishExternalPrediction({5}, 8, 3, {epoch.value + 23ms}, 5ms), "Reattach physical output");
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->time == RuntimeTime{epoch.value + 23ms};
-		},
-		"Reattached pulse");
+	Eventually([&] { return display.Snapshot().latest->time == RuntimeTime{epoch.value + 23ms}; }, "Reattached pulse");
 	Require(display.Pause() && !display.PublishExternalPrediction({5}, 8, 4, {epoch.value + 24ms}, 5ms),
 			"Pause ends automatic physical advancement");
 	const auto stepped = display.Step();
@@ -232,62 +191,33 @@ void Worker()
 	auto clock = std::make_shared<TestClock>();
 	VirtualDisplay display(clock);
 	display.Start({1}, {{Duration{100}}, 10ns}, ExecutionMode::RealTime, HostTime{});
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest.has_value();
-		},
-		"Worker did not run without XR calls");
+	Eventually([&] { return display.Snapshot().latest.has_value(); }, "Worker did not run without XR calls");
 	auto image = std::make_shared<Output>();
 	image->display = &display;
 	Require(display.Submit({{{1}, {1}}, {Duration{110}}, image}) == PresentationAdmission::Accepted,
 			"Worker submission failed");
 	clock->time.store(10);
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{1};
-		},
-		"Worker did not advance clock");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{1}; }, "Worker did not advance clock");
 	Require(display.Snapshot().latest->kind == PresentationKind::Empty, "Pending GPU output was displayed");
 	image->state.store(CompletionStatus::Complete);
 	clock->time.store(20);
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{2};
-		},
-		"Worker did not observe completion");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{2}; }, "Worker did not observe completion");
 	Require(display.Snapshot().latest->source == FrameKey{{1}, {1}}, "GPU completion was not independently selected");
 	const auto retained = *display.Snapshot().latest;
 	Require(display.Submit({{{1}, {2}}, {Duration{140}}, {}}) == PresentationAdmission::Accepted,
 			"Worker clear failed");
 	clock->time.store(30);
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{3};
-		},
-		"Worker did not repeat");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{3}; }, "Worker did not repeat");
 	Require(display.Snapshot().latest->kind == PresentationKind::Repeat && display.Snapshot().latest->output == image,
 			"Worker did not retain completed output before future clear");
 	clock->time.store(110);
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{11};
-		},
-		"Stalled worker changed phase");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{11}; }, "Stalled worker changed phase");
 	Require(display.Snapshot().latest->kind == PresentationKind::Clear &&
 				display.Snapshot().latest->skippedTicks == 7 &&
 				display.Snapshot().latest->time == RuntimeTime{Duration{210}},
 			"Worker caught up missed ticks or cleared early");
 	Require(retained.output == image && retained.source == FrameKey{{1}, {1}}, "Worker mutated retained reader");
-	auto stopped = std::async(std::launch::async,
-							  [&]
-							  {
-								  display.Stop();
-							  });
+	auto stopped = std::async(std::launch::async, [&] { display.Stop(); });
 	Require(stopped.wait_for(1s) == std::future_status::ready, "Worker stop did not cancel its wait");
 	stopped.get();
 	Require(!display.Snapshot().running && !display.Faulted(), "Clean worker stop failed");
@@ -334,12 +264,7 @@ void ManualTicksAndResume()
 	Require(!display.Pause() && !display.Paused() && !display.Step() && !display.Resume(HostTime{}, {}),
 			"Stopped display accepted manual control");
 	display.Start({11}, {{Duration{100}}, 10ns}, ExecutionMode::RealTime, HostTime{});
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest.has_value();
-		},
-		"Manual display worker did not start");
+	Eventually([&] { return display.Snapshot().latest.has_value(); }, "Manual display worker did not start");
 	Require(display.Pause() && display.Paused() && display.Pause(), "Pause did not retain active manual state");
 	const auto boundary = display.Snapshot();
 	Require(boundary.running && boundary.latest->tick == DisplayTick{0} && display.NextTick() == DisplayTick{1},
@@ -369,24 +294,15 @@ void ManualTicksAndResume()
 			"Manual repeat lost clear identity or changed retained reader");
 	Require(!display.Resume(clock->Now(), {4}) && display.Paused(), "Resume accepted a regressing boundary");
 	Require(display.Resume(clock->Now(), {5}) && !display.Paused(), "Manual display did not resume");
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{5};
-		},
-		"Resume did not rebase virtual boundary");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{5}; },
+			   "Resume did not rebase virtual boundary");
 	Require(display.Resume(HostTime{}, {}) && !display.Step(),
 			"Repeated resume reset pacing or admitted a manual tick");
 	clock->time.store(1000009);
 	std::this_thread::sleep_for(5ms);
 	Require(display.Snapshot().latest->tick == DisplayTick{5}, "Resume caused a catch-up burst");
 	clock->time.store(1000010);
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{6};
-		},
-		"Resumed wall-clock period changed");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{6}; }, "Resumed wall-clock period changed");
 	Require(display.Pause() && display.Step()->tick == DisplayTick{7}, "Repeated pause lost display cursor");
 	display.Stop();
 	Require(!display.Paused() && !display.Step(), "Stopped manual display advanced");
@@ -403,19 +319,10 @@ void ManualTicksAndResume()
 
 	clock->time.store(0);
 	display.Start({13}, {{Duration{100}}, 10ns}, ExecutionMode::RealTime, HostTime{});
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest.has_value();
-		},
-		"Tick-anchor worker did not start");
+	Eventually([&] { return display.Snapshot().latest.has_value(); }, "Tick-anchor worker did not start");
 	Require(display.Pause() && display.Resume(HostTime{}, {100}), "Resume required a negative synthetic host epoch");
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{100};
-		},
-		"Separate host/tick anchors were not honored");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{100}; },
+			   "Separate host/tick anchors were not honored");
 	Require(display.Snapshot().latest->skippedTicks == 99 && !display.Faulted(),
 			"Rebased boundary skipped wrong ticks");
 	display.Stop();
@@ -437,25 +344,15 @@ void SharedManualTiming()
 			"Shared timing initial application frame failed");
 	clock->time.store(1200);
 	Eventually(
-		[&]
-		{
+		[&] {
 			auto state = display.Snapshot();
 			return state.latest && state.latest->tick == DisplayTick{120};
 		},
 		"Shared timing display did not progress independently of application admission");
 	// The application is late here, so an unpaused wait would admit immediately.
 	scheduler.Pause();
-	auto waiting = std::async(std::launch::async,
-							  [&]
-							  {
-								  return scheduler.WaitFrame(second);
-							  });
-	Eventually(
-		[&]
-		{
-			return scheduler.Snapshot().waitPending;
-		},
-		"Shared timing paused wait did not enter");
+	auto waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(second); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Shared timing paused wait did not enter");
 	Require(display.Pause(), "Shared timing display pause failed");
 	const auto boundary = std::max(scheduler.Snapshot().nextAdmission, display.NextTick());
 	Require(boundary == DisplayTick{121} && scheduler.RebasePaused(boundary) == XR_SUCCESS,
@@ -479,26 +376,13 @@ void SharedManualTiming()
 	Require(resumedBoundary == DisplayTick{123} && display.Resume(hostAnchor, resumedBoundary) &&
 				scheduler.Resume(hostAnchor, resumedBoundary) == XR_SUCCESS,
 			"Shared resume anchors failed");
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == resumedBoundary;
-		},
-		"Shared display resume boundary changed");
+	Eventually([&] { return display.Snapshot().latest->tick == resumedBoundary; },
+			   "Shared display resume boundary changed");
 	Require(scheduler.WaitFrame(first) == XR_SUCCESS && first.displayTick == DisplayTick{124} &&
 				scheduler.BeginFrame() == XR_SUCCESS,
 			"Shared resumed application prediction changed phase");
-	waiting = std::async(std::launch::async,
-						 [&]
-						 {
-							 return scheduler.WaitFrame(second);
-						 });
-	Eventually(
-		[&]
-		{
-			return scheduler.Snapshot().waitPending;
-		},
-		"Shared resumed pacing did not enter");
+	waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(second); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Shared resumed pacing did not enter");
 	clock->time.store(1000009);
 	Require(waiting.wait_for(5ms) == std::future_status::timeout && display.Snapshot().latest->tick == DisplayTick{123},
 			"Shared resume caused a prediction or display catch-up burst");
@@ -506,12 +390,7 @@ void SharedManualTiming()
 	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS &&
 				second.displayTick == DisplayTick{125},
 			"Shared resumed pacing did not preserve one refresh period");
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest->tick == DisplayTick{124};
-		},
-		"Resumed display phase diverged");
+	Eventually([&] { return display.Snapshot().latest->tick == DisplayTick{124}; }, "Resumed display phase diverged");
 	scheduler.Stop();
 	display.Stop();
 }
@@ -522,43 +401,25 @@ void HostElapsedOverflow()
 	clock->time = std::numeric_limits<std::int64_t>::max();
 	VirtualDisplay display(clock);
 	display.Start({1}, {{Duration{100}}, 10ns}, ExecutionMode::RealTime, HostTime::min());
-	Eventually(
-		[&]
-		{
-			return display.Faulted() && !display.Snapshot().running;
-		},
-		"Display host elapsed overflow was not reported");
+	Eventually([&] { return display.Faulted() && !display.Snapshot().running; },
+			   "Display host elapsed overflow was not reported");
 	Require(!display.Snapshot().latest, "Display host elapsed overflow fabricated a tick");
 	display.Stop();
 }
+
 void Fault()
 {
 	auto clock = std::make_shared<TestClock>();
 	VirtualDisplay display(clock);
 	display.Start({1}, {{Duration{100}}, 10ns}, ExecutionMode::RealTime);
-	Eventually(
-		[&]
-		{
-			return display.Snapshot().latest.has_value();
-		},
-		"Fault test worker not started");
+	Eventually([&] { return display.Snapshot().latest.has_value(); }, "Fault test worker not started");
 	clock->fail.store(true);
-	Eventually(
-		[&]
-		{
-			return display.Faulted() && !display.Snapshot().running;
-		},
-		"Worker failure not reported");
+	Eventually([&] { return display.Faulted() && !display.Snapshot().running; }, "Worker failure not reported");
 	display.Stop();
 	clock->fail.store(false);
 	display.Start({2}, {{Duration{std::numeric_limits<std::int64_t>::max() - 5}}, 10ns}, ExecutionMode::RealTime,
 				  HostTime{});
-	Eventually(
-		[&]
-		{
-			return display.Faulted() && !display.Snapshot().running;
-		},
-		"Time overflow fabricated progress");
+	Eventually([&] { return display.Faulted() && !display.Snapshot().running; }, "Time overflow fabricated progress");
 	display.Stop();
 }
 
@@ -582,8 +443,7 @@ void SessionClear()
 	Require(record && record->stage == FrameStage::Submitted, "Submitted identity did not retain CPU history");
 	clock->time.store(10);
 	Eventually(
-		[&]
-		{
+		[&] {
 			auto state = session.Display().Snapshot();
 			return state.latest && state.latest->source == record->key;
 		},
@@ -637,11 +497,11 @@ void DeterministicSessionCapacity()
 
 class TeardownOutput final : public FrameOutput
 {
-  public:
+public:
 	TeardownOutput(Runtime& owner, Session& value, XrSession identity)
 		: runtime(owner), session(value), handle(identity)
-	{
-	}
+	{}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		entered.store(true);
@@ -650,6 +510,7 @@ class TeardownOutput final : public FrameOutput
 		observedClosed.store(!runtime.FindSession(handle) && session.Snapshot().closed);
 		return CompletionStatus::Pending;
 	}
+
 	Runtime& runtime;
 	Session& session;
 	XrSession handle;
@@ -683,35 +544,19 @@ void GraphTeardown()
 					PresentationAdmission::Accepted,
 				"Worker graph output failed");
 		clock->time.store(10);
-		Eventually(
-			[&]
-			{
-				return output->entered.load();
-			},
-			"Worker did not observe output");
-		auto closing =
-			std::async(std::launch::async,
-					   [&]
-					   {
-						   if (operation == 0)
-							   Require(runtime.DestroySession(session) == XR_SUCCESS, "Worker session destruction");
-						   if (operation == 1)
-							   Require(runtime.DestroyInstance(instance) == XR_SUCCESS, "Worker instance destruction");
-						   if (operation == 2)
-							   runtime.Close();
-					   });
-		Eventually(
-			[&]
-			{
-				return !runtime.FindSession(session) && session->Snapshot().closed;
-			},
-			"Graph did not invalidate handles before join");
-		Eventually(
-			[&]
-			{
-				return !session->Display().Snapshot().running;
-			},
-			"Display admission remained open during join");
+		Eventually([&] { return output->entered.load(); }, "Worker did not observe output");
+		auto closing = std::async(std::launch::async, [&] {
+			if (operation == 0)
+				Require(runtime.DestroySession(session) == XR_SUCCESS, "Worker session destruction");
+			if (operation == 1)
+				Require(runtime.DestroyInstance(instance) == XR_SUCCESS, "Worker instance destruction");
+			if (operation == 2)
+				runtime.Close();
+		});
+		Eventually([&] { return !runtime.FindSession(session) && session->Snapshot().closed; },
+				   "Graph did not invalidate handles before join");
+		Eventually([&] { return !session->Display().Snapshot().running; },
+				   "Display admission remained open during join");
 		Require(session->Display().Submit({{session->Snapshot().generation, {2}}, {Duration{120}}, {}}) ==
 						PresentationAdmission::Closed &&
 					closing.wait_for(5ms) == std::future_status::timeout,

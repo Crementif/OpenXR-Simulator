@@ -76,8 +76,7 @@ WorkspacePanels::WorkspacePanels(ProcessSupervisor& processes, std::shared_ptr<S
 	  m_layoutPath(m_shared->layoutPath), m_settings(m_shared->settings), m_launcher(processes),
 	  m_appliedScale(m_shared->appliedScale), m_originalStyle(m_shared->originalStyle),
 	  m_styleCaptured(m_shared->styleCaptured)
-{
-}
+{}
 
 WorkspacePanels::~WorkspacePanels() = default;
 
@@ -119,9 +118,7 @@ void WorkspacePanels::BeginFrame(RuntimePanels&)
 		m_shared->update.result = m_shared->updateChecker->State();
 		const auto& result = m_shared->update.result;
 		if (result.status == UpdateStatus::Available)
-			m_notices.Push({"Update available", "Version " + result.version, "View",
-							[url = result.releaseUrl]
-							{
+			m_notices.Push({"Update available", "Version " + result.version, "View", [url = result.releaseUrl] {
 								if (!SDL_OpenURL(url.c_str()))
 									throw std::runtime_error(SDL_GetError());
 							}});
@@ -209,30 +206,36 @@ void WorkspacePanels::SetTabBar(std::function<void()> draw)
 {
 	m_tabBar = std::move(draw);
 }
+
 void WorkspacePanels::SetOpenHandlers(std::function<bool(const RunningApp&)> connect,
-									 std::function<bool(const LaunchProfile&)> launch)
+									  std::function<bool(const LaunchProfile&)> launch)
 {
 	m_openRunning = std::move(connect);
 	m_openLaunch = std::move(launch);
 }
+
 void WorkspacePanels::SetEndpointAdmission(std::function<bool(const std::string&)> available)
 {
 	m_endpointAvailable = std::move(available);
 }
+
 void WorkspacePanels::OpenAppPicker()
 {
 	m_shell.openAppPicker = true;
 }
+
 void WorkspacePanels::LaunchApp(const LaunchProfile& profile)
 {
 	Launch(profile);
 }
+
 bool WorkspacePanels::RequestApplicationClose(const RuntimePanels& runtime)
 {
 	if (m_restart || (!runtime.Endpoint().empty() && runtime.Endpoint() != m_launchedEndpoint))
 		return false;
 	return m_launcher.RequestClose();
 }
+
 bool WorkspacePanels::RequestApplicationRestart(RuntimePanels& runtime, std::uint64_t expectedProcess)
 {
 	if (!m_launchedProfile)
@@ -242,21 +245,25 @@ bool WorkspacePanels::RequestApplicationRestart(RuntimePanels& runtime, std::uin
 	}
 	return Restart(runtime, {*m_launchedProfile, expectedProcess});
 }
+
 bool WorkspacePanels::ConnectionMatchesLaunch(const RuntimePanels& runtime) const
 {
 	return m_launchedEndpoint.empty() || runtime.Endpoint() != m_launchedEndpoint || !m_attachedProcess ||
 		   m_launcher.Snapshot().process == m_attachedProcess;
 }
+
 const std::string& WorkspacePanels::LaunchError() const noexcept
 {
 	return m_launchError;
 }
+
 LaunchSnapshot WorkspacePanels::Process() const
 {
 	auto process = m_launcher.Snapshot();
 	process.restartPending |= m_restart.has_value();
 	return process;
 }
+
 std::string WorkspacePanels::LaunchControlEndpoint() const
 {
 	const auto process = Process();
@@ -264,6 +271,7 @@ std::string WorkspacePanels::LaunchControlEndpoint() const
 		return {};
 	return LaunchRuntimeEndpoint(*m_launchedProfile, process.process);
 }
+
 std::string WorkspacePanels::LaunchDataDirectory() const
 {
 	if (!m_launchedProfile)
@@ -271,14 +279,17 @@ std::string WorkspacePanels::LaunchDataDirectory() const
 	const auto path = LaunchRuntimeDataDirectory(*m_launchedProfile);
 	return path ? PathText(*path) : std::string{};
 }
+
 bool WorkspacePanels::McpEnabled() const
 {
 	return m_settings.mcpEnabled;
 }
+
 McpUiState& WorkspacePanels::McpState()
 {
 	return m_shared->mcp;
 }
+
 std::string WorkspacePanels::ApplicationName(const RuntimePanels& runtime) const
 {
 	const auto view = runtime.Snapshot();
@@ -293,6 +304,7 @@ std::string WorkspacePanels::ApplicationName(const RuntimePanels& runtime) const
 		return process.profile;
 	return "Apps";
 }
+
 bool WorkspacePanels::HasActiveAutomation() const
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -301,6 +313,7 @@ bool WorkspacePanels::HasActiveAutomation() const
 	return false;
 #endif
 }
+
 bool WorkspacePanels::HasPendingFiles() const
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -309,15 +322,18 @@ bool WorkspacePanels::HasPendingFiles() const
 	return false;
 #endif
 }
+
 bool WorkspacePanels::ClosingWorkDone() const
 {
 	return m_picker.DiscoveryStopped() && !HasActiveAutomation() && !HasPendingFiles();
 }
+
 void WorkspacePanels::BeginClose()
 {
 	m_picker.StopDiscovery();
 	StopAutomation();
 }
+
 void WorkspacePanels::StopAutomation()
 {
 	CancelRestart();
@@ -524,8 +540,7 @@ void WorkspacePanels::Poll(RuntimePanels& runtime)
 	{
 		const bool take = m_rigs.ReplayingTake();
 		m_notices.Push({take ? "Replay failed" : "Script failed", m_rigs.Error().empty() ? rig.error : m_rigs.Error(),
-						"Details", [this, take, scriptPath = m_rigs.Script()]
-						{
+						"Details", [this, take, scriptPath = m_rigs.Script()] {
 							m_shell.selection =
 								take ? Selection{TakeSel{scriptPath}} : Selection{ScriptSel{scriptPath}};
 							ShowInspector();
@@ -576,11 +591,13 @@ void WorkspacePanels::Draw(RuntimePanels& runtime)
 	}
 	const bool previousMcpPreference = m_settings.mcpEnabled;
 	const bool previousUpdatePreference = m_settings.autoUpdateCheck;
-	const bool settingsClosed = m_preferences.Draw(m_settings, m_showSettings, m_dirty, runtime.PreviewBytes(), runtime.PreviewBudget(),
+	const bool settingsClosed =
+		m_preferences.Draw(m_settings, m_showSettings, m_dirty, runtime.PreviewBytes(), runtime.PreviewBudget(),
 						   runtime.PreviewRamBytes(), runtime.PreviewRamBudget(), runtime.PreviewError(),
 						   runtime.SnapshotChargeBytes(), PreviewTexture::TotalSnapshotChargeBytes(), &m_shared->mcp,
 						   m_shared->updateChecker ? &m_shared->update : nullptr);
-	if (settingsClosed || previousMcpPreference != m_settings.mcpEnabled || previousUpdatePreference != m_settings.autoUpdateCheck)
+	if (settingsClosed || previousMcpPreference != m_settings.mcpEnabled ||
+		previousUpdatePreference != m_settings.autoUpdateCheck)
 	{
 		if (settingsClosed)
 			m_settings.endpoint = runtime.Endpoint();
@@ -648,25 +665,30 @@ std::string WorkspacePanels::InitialEndpoint() const
 {
 	return m_settings.endpoint;
 }
+
 const ShellState& WorkspacePanels::State() const
 {
 	return m_shell;
 }
+
 void WorkspacePanels::Select(Selection selection)
 {
 	m_shell.selection = std::move(selection);
 	ShowInspector();
 	m_wasOverlay = true;
 }
+
 void WorkspacePanels::ShowLibrary(bool open)
 {
 	if (m_shell.library != open)
 		ToggleLibrary();
 }
+
 void WorkspacePanels::SetPreviewExpanded(bool expanded)
 {
 	m_previewExpanded = expanded;
 }
+
 void WorkspacePanels::SetScale(float scale)
 {
 	if (!(scale >= 0.75f && scale <= 2.5f))
@@ -674,6 +696,7 @@ void WorkspacePanels::SetScale(float scale)
 	m_settings.scale = scale;
 	m_dirty = true;
 }
+
 void WorkspacePanels::Finish()
 {
 	if (!m_enabled)

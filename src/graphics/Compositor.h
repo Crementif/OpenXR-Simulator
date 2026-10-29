@@ -22,6 +22,7 @@ struct alignas(16) LayerConstants
 	std::array<float, 4> quadParameters;
 	std::array<std::uint32_t, 4> control;
 };
+
 static_assert(sizeof(LayerConstants) == 112 && alignof(LayerConstants) == 16);
 static_assert(offsetof(LayerConstants, control) == 96 && offsetof(LayerConstants, imageRectangle) == 64);
 
@@ -30,6 +31,7 @@ struct CompositionEye
 	PoseSample worldPose;
 	XrFovf fov;
 };
+
 // Width/height describe each eye output; the backend owns stereo packing.
 struct CompositionTarget
 {
@@ -37,12 +39,14 @@ struct CompositionTarget
 	std::uint32_t height;
 	std::array<CompositionEye, 2> eyes;
 };
+
 struct CompositionDraw
 {
 	LayerImageDescription source;
 	std::uint32_t eye;
 	LayerConstants constants;
 };
+
 struct CompositionPlan
 {
 	std::uint32_t width = 0;
@@ -50,6 +54,7 @@ struct CompositionPlan
 	std::vector<CompositionDraw> draws;
 	std::vector<FrameView> views;
 };
+
 using CompositionExtentResolver = std::function<std::optional<XrExtent2Di>(XrSwapchain)>;
 XrResult PrepareComposition(const FrameLayers& frame, const CompositionTarget& target,
 							const CompositionExtentResolver& resolve, CompositionPlan& output);

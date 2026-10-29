@@ -9,12 +9,14 @@ namespace simxr::control
 {
 class VulkanControlHandle final : public TransferHandle
 {
-  public:
+public:
 	explicit VulkanControlHandle(VulkanExternalHandle handle) : m_handle(std::move(handle)) {}
+
 	TransferHandleKind Kind() const noexcept override
 	{
 		return VulkanTransferKind;
 	}
+
 	std::intptr_t Value() const noexcept override
 	{
 #ifdef _WIN32
@@ -23,18 +25,21 @@ class VulkanControlHandle final : public TransferHandle
 		return m_handle.Get();
 #endif
 	}
+
 	std::shared_ptr<TransferHandle> Duplicate() const override
 	{
 		return OwnVulkanControlHandle(m_handle.Duplicate());
 	}
 
-  private:
+private:
 	VulkanExternalHandle m_handle;
 };
+
 std::shared_ptr<TransferHandle> OwnVulkanControlHandle(VulkanExternalHandle handle)
 {
 	return std::make_shared<VulkanControlHandle>(std::move(handle));
 }
+
 VulkanExternalHandle DuplicateVulkanControlHandle(const std::shared_ptr<TransferHandle>& handle)
 {
 	if (!handle || handle->Kind() != VulkanTransferKind)
@@ -54,7 +59,8 @@ VulkanExternalHandle DuplicateVulkanControlHandle(const std::shared_ptr<Transfer
 	do
 	{
 		copy = fcntl(static_cast<int>(handle->Value()), F_DUPFD_CLOEXEC, 0);
-	} while (copy < 0 && errno == EINTR);
+	}
+	while (copy < 0 && errno == EINTR);
 	if (copy < 0)
 		throw std::system_error(errno, std::generic_category(), "Duplicate Vulkan transfer descriptor");
 #endif

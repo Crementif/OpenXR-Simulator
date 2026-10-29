@@ -23,9 +23,11 @@ struct ManualTransaction
 	// Names the edit in History, such as a preset; empty describes it from the poses it changes.
 	std::string label;
 };
+
 struct ReleaseManualInputs
 {
 };
+
 using SimulationEdit = std::variant<ManualTransaction, ReleaseManualInputs>;
 
 struct ObservedSetup
@@ -44,6 +46,7 @@ struct ObservedSetup
 	std::optional<std::array<bool, 3>> appBodyExtensions;
 	std::array<bool, MaxTrackerDevices> boundTrackers{};
 };
+
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state);
 ObservedSetup ReadObservedSetup(const control::Message& state);
 ManualTransaction PrepareHeadsetRelease(const ObservedSetup& observed, std::optional<CommandSource> manualSource,

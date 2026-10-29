@@ -45,8 +45,8 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			{
 				const float labelWidth =
 					std::max(ImGui::CalcTextSize("History GPU (MiB)").x, ImGui::CalcTextSize("Kept previews").x);
-				ImGui::PushItemWidth(
-					std::max(1.f, ImGui::GetContentRegionAvail().x - labelWidth - ImGui::GetStyle().ItemInnerSpacing.x));
+				ImGui::PushItemWidth(std::max(1.f, ImGui::GetContentRegionAvail().x - labelWidth -
+													   ImGui::GetStyle().ItemInnerSpacing.x));
 				if (ImGui::SliderFloat("UI scale", &settings.scale, 0.75f, 2.5f, "%.2f"))
 					dirty = true;
 				int budget = static_cast<int>(settings.snapshotBudgetMiB);
@@ -60,13 +60,15 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 								   static_cast<unsigned long long>(tabSnapshots >> 20),
 								   static_cast<unsigned long long>(allSnapshots >> 20), settings.snapshotBudgetMiB);
 				ImGui::PopStyleColor();
-				ImGui::SetItemTooltip("Estimated memory reserved for snapshot copies, including copies still retiring.");
+				ImGui::SetItemTooltip(
+					"Estimated memory reserved for snapshot copies, including copies still retiring.");
 				int history = static_cast<int>(settings.previewBudgetMiB);
 				if (ImGui::InputInt("History GPU (MiB)", &history, 64, 256))
 				{
-					settings.previewBudgetMiB = static_cast<std::uint32_t>(std::clamp(history, int(FramePreviewHistory::MinMiB),
-																					  int(FramePreviewHistory::MaxMiB))) /
-												4 * 4;
+					settings.previewBudgetMiB =
+						static_cast<std::uint32_t>(
+							std::clamp(history, int(FramePreviewHistory::MinMiB), int(FramePreviewHistory::MaxMiB))) /
+						4 * 4;
 					dirty = true;
 				}
 				ImGui::SetItemTooltip("Memory for recent frames: 64 to 16384 MiB. Changes are saved automatically.\n"
@@ -81,17 +83,18 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 									  "the oldest frames are removed. Changes are saved automatically.");
 				if (keptBudget)
 				{
-					const auto usage = std::to_string(keptBytes >> 20) + " / " + std::to_string(keptBudget >> 20) + " MiB";
+					const auto usage =
+						std::to_string(keptBytes >> 20) + " / " + std::to_string(keptBudget >> 20) + " MiB";
 					ImGui::ProgressBar(static_cast<float>(keptBytes) / static_cast<float>(keptBudget),
 									   {ImGui::CalcItemWidth(), 0}, usage.c_str());
 					ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
 					ImGui::TextUnformatted("GPU used");
-					ImGui::SetItemTooltip(
-						"Keep every frame until memory fills, then remove the oldest.");
+					ImGui::SetItemTooltip("Keep every frame until memory fills, then remove the oldest.");
 				}
 				if (ramBudget)
 				{
-					const auto usage = std::to_string(ramBytes >> 20) + " / " + std::to_string(ramBudget >> 20) + " MiB";
+					const auto usage =
+						std::to_string(ramBytes >> 20) + " / " + std::to_string(ramBudget >> 20) + " MiB";
 					ImGui::ProgressBar(static_cast<float>(ramBytes) / static_cast<float>(ramBudget),
 									   {ImGui::CalcItemWidth(), 0}, usage.c_str());
 					ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
@@ -105,8 +108,9 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 					ResetLayout(settings);
 					dirty = true;
 				}
-				ImGui::SetItemTooltip("Restore panel sizes and visibility.\n"
-									  "Hide the timeline with Ctrl+T, the inspector with Ctrl+I. F11 shows only the image.");
+				ImGui::SetItemTooltip(
+					"Restore panel sizes and visibility.\n"
+					"Hide the timeline with Ctrl+T, the inspector with Ctrl+I. F11 shows only the image.");
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem("Keys & mouse"))
@@ -159,8 +163,10 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 							mcp->retryRequested = true;
 						}
 					}
-					ImGui::SetNextItemWidth(std::max(1.f, std::min(240 * settings.scale, ImGui::GetContentRegionAvail().x -
-						ImGui::CalcTextSize("Client").x - ImGui::GetStyle().ItemInnerSpacing.x)));
+					ImGui::SetNextItemWidth(
+						std::max(1.f, std::min(240 * settings.scale, ImGui::GetContentRegionAvail().x -
+																		 ImGui::CalcTextSize("Client").x -
+																		 ImGui::GetStyle().ItemInnerSpacing.x)));
 					ImGui::Combo("Client", &m_mcpClient, "Generic JSON\0Codex\0");
 					const auto& configuration = m_mcpClient == 1 ? mcp->codexConfiguration : mcp->configuration;
 					ImGui::BeginDisabled(configuration.empty());
@@ -176,7 +182,8 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 					{
 						ImGui::TextWrapped("Direct HTTP is local to this computer.");
 						if (ImGui::Button("Copy HTTP connection"))
-							m_clipboardError = SDL_SetClipboardText(mcp->httpConfiguration.c_str()) ? "" : SDL_GetError();
+							m_clipboardError =
+								SDL_SetClipboardText(mcp->httpConfiguration.c_str()) ? "" : SDL_GetError();
 						ImGui::SetItemTooltip("Includes a private credential. Share it only with trusted clients.");
 						ImGui::TreePop();
 					}
@@ -220,9 +227,14 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 					ImGui::EndDisabled();
 					switch (update->result.status)
 					{
-					case UpdateStatus::Idle: break;
-					case UpdateStatus::Checking: ImGui::TextUnformatted("Checking for updates…"); break;
-					case UpdateStatus::Current: ImGui::TextUnformatted("No newer release found."); break;
+					case UpdateStatus::Idle:
+						break;
+					case UpdateStatus::Checking:
+						ImGui::TextUnformatted("Checking for updates…");
+						break;
+					case UpdateStatus::Current:
+						ImGui::TextUnformatted("No newer release found.");
+						break;
 					case UpdateStatus::Available:
 						ImGui::Text("Version %s is available.", update->result.version.c_str());
 						if (ImGui::Button("Open release"))
@@ -262,11 +274,13 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 	ImGui::EndPopup();
 	return closed;
 }
+
 void PreferencesDialog::CancelCapture()
 {
 	m_capture = -1;
 	m_modifier = ImGuiKey_None;
 }
+
 bool PreferencesDialog::DrawKeyboard(CompanionSettings& settings, bool& dirty)
 {
 	if (ImGui::Checkbox("Remote desktop mouse drag", &settings.remoteMouseDrag))
@@ -313,6 +327,7 @@ bool PreferencesDialog::DrawKeyboard(CompanionSettings& settings, bool& dirty)
 	}
 	return overBinding;
 }
+
 void PreferencesDialog::CaptureKey(CompanionSettings& settings, bool& dirty, bool overBinding)
 {
 	if (m_capture < 0 || ImGui::GetFrameCount() <= m_captureFrame)
@@ -357,14 +372,14 @@ void PreferencesDialog::CaptureKey(CompanionSettings& settings, bool& dirty, boo
 	previous = std::move(binding);
 	CancelCapture();
 }
+
 void PreferencesDialog::DrawGamepad(CompanionSettings& settings, bool& dirty)
 {
 	auto& bindings = settings.gamepadBindings;
 	ImGui::PushItemWidth(std::max(1.f, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Hold for gyro").x -
 										   ImGui::GetStyle().ItemInnerSpacing.x));
 	dirty |= ImGui::SliderFloat("Deadzone", &bindings.deadzone, 0, .5f, "%.2f");
-	const auto mapping = [&](const char* label, std::string& name, bool axis)
-	{
+	const auto mapping = [&](const char* label, std::string& name, bool axis) {
 		if (!ImGui::BeginCombo(label, name.c_str()))
 			return;
 		for (int index = 0; index < (axis ? int(SDL_GAMEPAD_AXIS_COUNT) : int(SDL_GAMEPAD_BUTTON_COUNT)); ++index)

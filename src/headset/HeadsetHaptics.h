@@ -13,17 +13,18 @@ struct HeadsetVibration
 	float amplitude = 0, frequency = 0;
 	XrDuration remaining = 0;
 };
+
 // One instance per attachment. The first observation establishes the history
 // watermark; only subsequent events may reach the physical output.
 class HeadsetHaptics
 {
-  public:
+public:
 	using Clock = std::chrono::steady_clock;
 	bool Observe(const control::HapticObservation& observation, Clock::time_point requested, Clock::time_point received,
 				 bool enabled = true);
 	std::array<std::optional<HeadsetVibration>, 2> Consume(Clock::time_point now, bool enabled);
 
-  private:
+private:
 	struct Hand
 	{
 		std::uint64_t sequence = 0;
@@ -31,6 +32,7 @@ class HeadsetHaptics
 		Clock::time_point deadline;
 		bool pending = false, playing = false;
 	};
+
 	std::array<Hand, 2> m_hands;
 	std::uint64_t m_floor = 0;
 	std::int64_t m_time = 0;

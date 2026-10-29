@@ -67,8 +67,7 @@ static simxr::Runtime& RuntimeState();
 
 static std::mutex s_logMutex;
 static std::weak_ptr<simxr::windows::WindowsRuntimeFiles> s_logChannel;
-static const bool s_logVerbose = []()
-{
+static const bool s_logVerbose = []() {
 	char value[16]{};
 	const DWORD length = GetEnvironmentVariableA("SIMXR_VERBOSE", value, static_cast<DWORD>(sizeof(value)));
 	return length > 0 && length < sizeof(value) && value[0] != '0';
@@ -88,14 +87,14 @@ static void Log(const char* message)
 			files->Log(message);
 		}
 		catch (...)
-		{
-		}
+		{}
 	}
 	else
 	{
 		OutputDebugStringA(message); // Loader/startup diagnostics before an instance exists.
 	}
 }
+
 static void Logf(const char* format, ...)
 {
 	char message[2048]{};
@@ -105,6 +104,7 @@ static void Logf(const char* format, ...)
 	va_end(arguments);
 	Log(written < 0 ? "[SimXR] Diagnostic formatting failed" : message);
 }
+
 namespace rt
 {
 struct Instance
@@ -121,6 +121,7 @@ struct Instance
 	std::shared_ptr<flicker::Diagnostics> diagnostics;
 	bool closing = false;
 };
+
 using InstanceRef = simxr::HandleRef<XrInstance, Instance>;
 
 struct Swapchain
@@ -200,6 +201,7 @@ static InstanceRef RetainInstance(XrInstance handle)
 {
 	return State().instances.Find(RuntimeState().FindInstance(handle));
 }
+
 static InstanceRef RetainInstance()
 {
 	XrInstance handle;
@@ -209,10 +211,12 @@ static InstanceRef RetainInstance()
 	}
 	return RetainInstance(handle);
 }
+
 static SessionRef RetainNativeSession(XrSession handle)
 {
 	return State().sessions.Find(RuntimeState().FindSession(handle));
 }
+
 static SessionRef RetainNativeSession()
 {
 	XrSession handle;
@@ -222,11 +226,13 @@ static SessionRef RetainNativeSession()
 	}
 	return RetainNativeSession(handle);
 }
+
 static std::shared_ptr<simxr::Session> RetainSession(XrSession handle)
 {
 	const auto native = RetainNativeSession(handle);
 	return native ? native->core : nullptr;
 }
+
 static std::shared_ptr<simxr::Session> RetainSession()
 {
 	const auto native = RetainNativeSession();
@@ -277,8 +283,7 @@ static const simxr::ExtensionRegistry& Extensions()
 		"xrGetVulkanGraphicsRequirements2KHR"};
 	static constexpr std::array<std::string_view, 2> s_timeCommands{"xrConvertWin32PerformanceCounterToTimeKHR",
 																	"xrConvertTimeToWin32PerformanceCounterKHR"};
-	static const std::vector<simxr::ExtensionDefinition> s_definitions = []
-	{
+	static const std::vector<simxr::ExtensionDefinition> s_definitions = [] {
 		std::vector<simxr::ExtensionDefinition> result{
 			{XR_KHR_D3D11_ENABLE_EXTENSION_NAME, XR_KHR_D3D11_enable_SPEC_VERSION, s_d3d11Commands},
 			{XR_KHR_D3D12_ENABLE_EXTENSION_NAME, XR_KHR_D3D12_enable_SPEC_VERSION, s_d3d12Commands},
@@ -310,10 +315,12 @@ struct NativeControlEndpoint
 	std::unique_ptr<simxr::control::ControlService> service;
 	std::unique_ptr<simxr::control::LocalControlServer> server;
 	bool permanentlyClosed = false;
+
 	~NativeControlEndpoint()
 	{
 		Close();
 	}
+
 	bool Start()
 	{
 		std::lock_guard lock(mutex);
@@ -329,18 +336,15 @@ struct NativeControlEndpoint
 								  ? std::string(selected)
 								  : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
 			auto nextService = std::make_unique<simxr::control::ControlService>(
-				RuntimeState(), 16,
-				simxr::control::CreateVulkanImageInspectionProvider(
-					[](XrSession handle)
-					{
-						const auto native = rt::RetainNativeSession(handle);
-						if (!native)
-							return simxr::control::ImageCapabilities{};
-						std::lock_guard lock(native->graphicsMutex);
-						if (native->nativeGraphics)
-							return native->nativeGraphics->Capabilities();
-						return native->vulkan ? native->vulkan->Capabilities() : simxr::control::ImageCapabilities{};
-					}));
+				RuntimeState(), 16, simxr::control::CreateVulkanImageInspectionProvider([](XrSession handle) {
+					const auto native = rt::RetainNativeSession(handle);
+					if (!native)
+						return simxr::control::ImageCapabilities{};
+					std::lock_guard lock(native->graphicsMutex);
+					if (native->nativeGraphics)
+						return native->nativeGraphics->Capabilities();
+					return native->vulkan ? native->vulkan->Capabilities() : simxr::control::ImageCapabilities{};
+				}));
 			auto nextServer = std::make_unique<simxr::control::LocalControlServer>(*nextService, path, 16);
 			module.emplace(std::move(nextModule));
 			service = std::move(nextService);
@@ -355,6 +359,7 @@ struct NativeControlEndpoint
 			return false;
 		}
 	}
+
 	void Close(bool permanent = false) noexcept
 	{
 		std::optional<simxr::windows::ModuleReference> previousModule;
@@ -375,6 +380,7 @@ struct NativeControlEndpoint
 			previousService->Close();
 	}
 };
+
 static NativeControlEndpoint& ControlEndpoint()
 {
 	// Endpoint workers retire before bindings, which retire before the core runtime.
@@ -382,6 +388,7 @@ static NativeControlEndpoint& ControlEndpoint()
 	static NativeControlEndpoint s_endpoint;
 	return s_endpoint;
 }
+
 extern "C" __declspec(dllexport) int simxrGetGameBridgeApi(std::uint32_t version, SimxrGameBridgeApi* api) noexcept
 {
 	if (!api || version != SIMXR_GAME_BRIDGE_VERSION || api->size < sizeof(*api))
@@ -392,8 +399,7 @@ extern "C" __declspec(dllexport) int simxrGetGameBridgeApi(std::uint32_t version
 			return 0;
 		if (!RuntimeState().Game().FillApi(version, *api))
 			return 0;
-		api->shutdown = [](void*) -> int
-		{
+		api->shutdown = [](void*) -> int {
 			try
 			{
 				if (!RuntimeState().Instances().empty())
@@ -654,6 +660,7 @@ static XrResult XRAPI_PTR xrEnumerateApiLayerProperties_runtime(std::uint32_t pr
 	*propertyCountOutput = 0;
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR xrEnumerateInstanceExtensionProperties_runtime(const char* layerName, std::uint32_t capacity,
 																		 std::uint32_t* count,
 																		 XrExtensionProperties* properties)
@@ -673,10 +680,12 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
 			return XR_ERROR_LIMIT_REACHED;
 		rt::State().creatingInstance = true;
 	}
+
 	struct InstanceCreation
 	{
 		simxr::Runtime::InstanceRef core;
 		bool committed = false;
+
 		~InstanceCreation()
 		{
 			if (!committed && core)
@@ -690,6 +699,7 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
 			rt::State().creatingInstance = false;
 		}
 	} creation;
+
 	auto result = RuntimeState().CreateInstance(createInfo, creation.core);
 	if (XR_FAILED(result))
 		return result;
@@ -987,11 +997,13 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 		return XR_ERROR_INSTANCE_LOST;
 	if (rt::RetainNativeSession())
 		return XR_ERROR_LIMIT_REACHED;
+
 	struct SessionCreation
 	{
 		simxr::Runtime::SessionRef core;
 		std::unique_ptr<rt::Session> native;
 		bool committed = false;
+
 		~SessionCreation()
 		{
 			if (committed)
@@ -1001,6 +1013,7 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 			native.reset();
 		}
 	} creation;
+
 	auto created = RuntimeState().CreateSession(instance, creation.core, std::make_shared<simxr::WindowsClock>());
 	if (XR_FAILED(created))
 		return created;
@@ -1014,8 +1027,7 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 	native.runtimeStatus = owner->runtimeStatus;
 	native.diagnostics = owner->diagnostics;
 	std::optional<simxr::VulkanBinding> vulkanBinding;
-	auto publish = [&]() -> XrResult
-	{
+	auto publish = [&]() -> XrResult {
 		XrResult result;
 		if (vulkanBinding)
 		{
@@ -1427,6 +1439,7 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
 	}
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR xrWaitSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageWaitInfo* info)
 {
 	const auto native = rt::RetainNativeSession();
@@ -1462,6 +1475,7 @@ static XrResult XRAPI_PTR xrWaitSwapchainImage_runtime(XrSwapchain sc, const XrS
 	lock.unlock();
 	return access->Wait(info->timeout);
 }
+
 static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageReleaseInfo* info)
 {
 	const auto native = rt::RetainNativeSession();
@@ -1574,6 +1588,7 @@ static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession handle, const XrSessi
 	auto result = core->Begin(*info, config, policy);
 	return result;
 }
+
 static XrResult XRAPI_PTR xrEndSession_runtime(XrSession handle)
 {
 	auto core = rt::RetainSession(handle);
@@ -1585,6 +1600,7 @@ static XrResult XRAPI_PTR xrEndSession_runtime(XrSession handle)
 		return result;
 	return core->End({simxr::Duration{time}});
 }
+
 static XrResult XRAPI_PTR xrRequestExitSession_runtime(XrSession handle)
 {
 	auto core = rt::RetainSession(handle);
@@ -1596,6 +1612,7 @@ static XrResult XRAPI_PTR xrRequestExitSession_runtime(XrSession handle)
 		return result;
 	return core->RequestExit({simxr::Duration{time}});
 }
+
 static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWaitInfo* info, XrFrameState* s)
 {
 	const auto native = rt::RetainNativeSession(session);
@@ -1606,8 +1623,7 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 	simxr::FramePrediction prediction;
 	const auto core = native->core;
 	const auto runtimeFiles = native->runtimeFiles;
-	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult
-	{
+	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult {
 		std::lock_guard lifecycle(native->owner->lifecycleMutex);
 		if (native->owner->closing || rt::RetainNativeSession(session).Shared() != native.Shared())
 			return XR_ERROR_SESSION_LOST;
@@ -1622,6 +1638,7 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 	};
 	return core->WaitFrame(prediction, publishNative);
 }
+
 static XrResult XRAPI_PTR xrBeginFrame_runtime(XrSession session, const XrFrameBeginInfo* info)
 {
 	if (session == XR_NULL_HANDLE)
@@ -1655,6 +1672,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 		{
 			if (native->nativeClosing)
 				return XR_ERROR_SESSION_LOST;
+
 			// Retain the exact image selected before submission; callbacks never look it up again.
 			struct SourceImage
 			{
@@ -1662,11 +1680,11 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 				std::shared_ptr<simxr::SwapchainAccess> access;
 				std::uint32_t index;
 			};
+
 			std::vector<SourceImage> sources;
 			return native->nativeGraphics->EndFrame(
 				*info,
-				[&native](XrSwapchain handle) -> std::optional<simxr::SwapchainDescription>
-				{
+				[&native](XrSwapchain handle) -> std::optional<simxr::SwapchainDescription> {
 					const auto found = native->swapchains.find(handle);
 					if (found == native->swapchains.end())
 						return {};
@@ -1674,8 +1692,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 					return simxr::SwapchainDescription{chain.width, chain.height, chain.arraySize,
 													   chain.access->ReleasedImage().has_value()};
 				},
-				[&native, &sources](XrSwapchain handle) -> simxr::WindowsSessionGraphics::Source
-				{
+				[&native, &sources](XrSwapchain handle) -> simxr::WindowsSessionGraphics::Source {
 					const auto found = native->swapchains.find(handle);
 					if (found == native->swapchains.end())
 						return {};
@@ -1684,10 +1701,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 					if (!image)
 						return {};
 					if (std::none_of(sources.begin(), sources.end(),
-									 [handle](const SourceImage& source)
-									 {
-										 return source.handle == handle;
-									 }))
+									 [handle](const SourceImage& source) { return source.handle == handle; }))
 						sources.push_back({handle, chain.access, *image});
 					if (chain.backend == rt::Swapchain::Backend::OpenGL)
 					{
@@ -1707,13 +1721,10 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 															 chain.d3dImages->ReleaseState12()};
 					return simxr::D3D11CompositionSource{chain.d3dImages->Image11(*image), chain.d3dImages->Format()};
 				},
-				[&sources](XrSwapchain handle, const std::shared_ptr<const simxr::GpuCompletion>& completion)
-				{
-					const auto source = std::find_if(sources.begin(), sources.end(),
-													 [handle](const SourceImage& image)
-													 {
-														 return image.handle == handle;
-													 });
+				[&sources](XrSwapchain handle, const std::shared_ptr<const simxr::GpuCompletion>& completion) {
+					const auto source =
+						std::find_if(sources.begin(), sources.end(),
+									 [handle](const SourceImage& image) { return image.handle == handle; });
 					if (source != sources.end())
 						source->access->MarkUsed(source->index, completion);
 				});
@@ -1735,8 +1746,8 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 				const auto height = views.views.empty() ? 0u : views.views.front().description.height;
 				const auto head = native->input->Head();
 				runtimeStatus->PublishStatus({snapshot.lastSubmitted.value, width, height, "RGBA8",
-													 SessionStateName(snapshot.state), head.yaw, head.pitch, head.roll,
-													 head.x, head.y, head.z});
+											  SessionStateName(snapshot.state), head.yaw, head.pitch, head.roll, head.x,
+											  head.y, head.z});
 			}
 			return result;
 		}
@@ -2095,6 +2106,7 @@ static XrResult XRAPI_PTR xrApplyHapticFeedback_runtime(XrSession handle, const 
 		return XR_ERROR_HANDLE_INVALID;
 	return core->ApplyHaptic(info, feedback);
 }
+
 static XrResult XRAPI_PTR xrStopHapticFeedback_runtime(XrSession handle, const XrHapticActionInfo* info)
 {
 	auto core = rt::RetainSession(handle);

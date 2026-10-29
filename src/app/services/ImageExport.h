@@ -13,7 +13,7 @@ namespace simxr::app
 {
 class ImageEncodingPermit
 {
-  public:
+public:
 	ImageEncodingPermit();
 	~ImageEncodingPermit();
 	ImageEncodingPermit(const ImageEncodingPermit&) = delete;
@@ -29,6 +29,7 @@ struct ImageEncodingLimits
 	std::uint64_t inputBytes = MaxImageInput;
 	std::size_t outputBytes = MaxEncodedImage;
 };
+
 inline constexpr ImageEncodingLimits FileImageLimits{16384, 512ULL * 1024 * 1024, 512ULL * 1024 * 1024};
 
 struct EncodedImage
@@ -37,10 +38,11 @@ struct EncodedImage
 	std::string mediaType;
 	bool lossy = false;
 };
+
 EncodedImage EncodeImage(std::span<const std::byte> pixels, std::uint32_t format, std::uint32_t width,
 						 std::uint32_t height, bool png, int quality, ImageEncodingLimits limits = {});
-void SaveExportFile(const std::filesystem::path& destination, std::span<const std::byte> bytes,
-	bool overwrite, const std::function<void()>& beforeCommit = {});
+void SaveExportFile(const std::filesystem::path& destination, std::span<const std::byte> bytes, bool overwrite,
+					const std::function<void()>& beforeCommit = {});
 void SaveExportFile(const std::filesystem::path& destination, const std::function<void(std::ostream&)>& write,
-	bool overwrite, const std::function<void()>& beforeCommit = {});
+					bool overwrite, const std::function<void()>& beforeCommit = {});
 } // namespace simxr::app

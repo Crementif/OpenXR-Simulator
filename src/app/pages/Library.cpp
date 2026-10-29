@@ -17,12 +17,12 @@ static bool Contains(const std::string& text, const char* search)
 	const std::string_view needle = search;
 	return std::ranges::search(
 			   text, needle,
-			   [](char a, char b)
-			   {
+			   [](char a, char b) {
 				   return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
 			   }).begin() != text.end() ||
 		   needle.empty();
 }
+
 static std::string Age(std::filesystem::file_time_type modified)
 {
 	const auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -40,6 +40,7 @@ static std::string Age(std::filesystem::file_time_type modified)
 		std::snprintf(text, sizeof(text), "%lld d", static_cast<long long>(seconds / 86400));
 	return text;
 }
+
 static const char* PhaseName(automation::RigPhase phase)
 {
 	switch (phase)
@@ -59,6 +60,7 @@ static const char* PhaseName(automation::RigPhase phase)
 	}
 	return "Unknown";
 }
+
 Library::Library()
 {
 	try
@@ -73,12 +75,14 @@ Library::Library()
 		m_error = error.what();
 	}
 }
+
 void Library::Refresh()
 {
 	if (m_catalog)
 		m_catalog->Refresh();
 	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 }
+
 void Library::Advance(Selection& selection, RigController& rigs)
 {
 	if (auto report = rigs.TakeReportResult())
@@ -138,21 +142,25 @@ void Library::Advance(Selection& selection, RigController& rigs)
 				}
 		}
 }
+
 bool Library::Busy() const
 {
 	return m_catalog && m_catalog->Busy();
 }
+
 void Library::Poll(Selection& selection, RigController& rigs)
 {
 	Advance(selection, rigs);
 	if (std::chrono::steady_clock::now() >= m_nextScan)
 		Refresh();
 }
+
 const LibraryEntry* Library::Find(const std::string& path) const
 {
 	const auto found = std::ranges::find(m_entries, path, &LibraryEntry::path);
 	return found == m_entries.end() ? nullptr : &*found;
 }
+
 void Library::Play(const LibraryEntry& entry, RuntimePanels& runtime)
 {
 	m_error.clear();
@@ -161,6 +169,7 @@ void Library::Play(const LibraryEntry& entry, RuntimePanels& runtime)
 	else
 		m_run = ScriptRun{entry.path, m_options};
 }
+
 std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runtime, RigController& rigs)
 {
 	Poll(selection, rigs);
@@ -170,6 +179,7 @@ std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runt
 		DrawScript(selection, std::string(script->id), runtime, rigs);
 	return std::exchange(m_run, {});
 }
+
 std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanels& runtime, RigController& rigs)
 {
 	Poll(selection, rigs);
@@ -253,6 +263,7 @@ std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanel
 			ImGui::TextColored(theme::Vec(theme::Record), "%s", error->c_str());
 	return std::exchange(m_run, {});
 }
+
 bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kind, bool changing)
 {
 	const auto name = PathText(Utf8Path(path).stem());
@@ -316,6 +327,7 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kin
 			ImGui::TextColored(theme::Vec(theme::Record), "%s", error->c_str());
 	return true;
 }
+
 void Library::DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs)
 {
 	if (!DrawHeader(selection, path, Icon::Record,
@@ -357,8 +369,7 @@ void Library::DrawTake(Selection& selection, const std::string& path, RuntimePan
 	if (ImGui::BeginTable("Take details", 2))
 	{
 		ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 70 * ImGui::GetFontSize() / 17);
-		const auto row = [](const char* key, const std::string& value)
-		{
+		const auto row = [](const char* key, const std::string& value) {
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
 			ImGui::TextDisabled("%s", key);
@@ -405,6 +416,7 @@ void Library::DrawTake(Selection& selection, const std::string& path, RuntimePan
 	if (mine && !rigs.Error().empty())
 		ImGui::TextColored(theme::Vec(theme::Record), "%s", rigs.Error().c_str());
 }
+
 static const char* EvidenceKind(GameObservationKind kind)
 {
 	switch (kind)
@@ -420,6 +432,7 @@ static const char* EvidenceKind(GameObservationKind kind)
 	}
 	return "Observation";
 }
+
 void Library::DrawEvidence(const LibraryEntry& entry, bool changing)
 {
 	if (m_evidenceModified != entry.modified)
@@ -509,6 +522,7 @@ void Library::DrawEvidence(const LibraryEntry& entry, bool changing)
 	ImGui::SetItemTooltip("Selects recorded input boundaries around the timestamp uncertainty. This does not identify "
 						  "the game frame that produced the event.");
 }
+
 void Library::DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs)
 {
 	if (!DrawHeader(selection, path, Icon::Script))

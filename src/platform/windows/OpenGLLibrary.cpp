@@ -21,6 +21,5 @@ OpenGLLibrary::OpenGLLibrary()
 	  CreateContext(std::bit_cast<decltype(&::wglCreateContext)>(m_library.Procedure("wglCreateContext"))),
 	  DeleteContext(std::bit_cast<decltype(&::wglDeleteContext)>(m_library.Procedure("wglDeleteContext"))),
 	  GetProcAddress(std::bit_cast<decltype(&::wglGetProcAddress)>(m_library.Procedure("wglGetProcAddress")))
-{
-}
+{}
 } // namespace simxr::windows

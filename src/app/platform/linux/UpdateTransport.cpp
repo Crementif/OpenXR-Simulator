@@ -10,7 +10,7 @@ namespace simxr::app
 {
 class CurlLibrary
 {
-  public:
+public:
 	CurlLibrary()
 	{
 		m_library = dlopen("libcurl.so.4", RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
@@ -38,28 +38,33 @@ class CurlLibrary
 			throw;
 		}
 	}
+
 	~CurlLibrary()
 	{
 		if (m_library)
 			dlclose(m_library);
 	}
+
 	decltype(&curl_easy_init) init = nullptr;
 	decltype(&curl_easy_setopt) setopt = nullptr;
 	decltype(&curl_easy_perform) perform = nullptr;
 	decltype(&curl_easy_getinfo) getinfo = nullptr;
 	decltype(&curl_easy_cleanup) cleanup = nullptr;
 
-  private:
-	template <class T> void Load(T& target, const char* name)
+private:
+	template<class T>
+	void Load(T& target, const char* name)
 	{
 		target = reinterpret_cast<T>(dlsym(m_library, name));
 		if (!target)
 			throw std::runtime_error("System libcurl is missing a required function");
 	}
+
 	void* m_library = nullptr;
 	decltype(&curl_global_init) globalInit = nullptr;
 	decltype(&curl_version_info) versionInfo = nullptr;
 };
+
 static std::size_t AppendRelease(char* data, std::size_t size, std::size_t count, void* context) noexcept
 {
 	try
@@ -78,6 +83,7 @@ static std::size_t AppendRelease(char* data, std::size_t size, std::size_t count
 		return 0;
 	}
 }
+
 std::string FetchLatestRelease(std::string_view repository)
 {
 	if (!ValidReleaseRepository(repository))
@@ -95,8 +101,7 @@ std::string FetchLatestRelease(std::string_view repository)
 		throw std::runtime_error("Cannot start an update request");
 	const auto url = "https://api.github.com/repos/" + std::string(repository) + "/releases/latest";
 	std::string response;
-	const auto option = [&](CURLoption name, auto value)
-	{
+	const auto option = [&](CURLoption name, auto value) {
 		if (library.setopt(handle.get(), name, value) != CURLE_OK)
 			throw std::runtime_error("System libcurl does not support update requests");
 	};

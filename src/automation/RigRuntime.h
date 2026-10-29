@@ -25,6 +25,7 @@ struct ScriptStep
 	std::string progress;
 	std::optional<FrameId> frame;
 };
+
 struct ScriptGameOperation
 {
 	std::uint64_t operation = 0;
@@ -37,6 +38,7 @@ struct ScriptCaptureTarget
 	std::uint32_t layer = 0;
 	std::uint32_t view = 0;
 };
+
 struct ScriptCapture
 {
 	std::uint64_t identity = 0;
@@ -44,6 +46,7 @@ struct ScriptCapture
 	std::optional<std::uint64_t> frame;
 	bool imageAvailable = false;
 };
+
 struct ScriptImageRecording
 {
 	std::string phase;
@@ -54,6 +57,7 @@ struct ScriptImageRecording
 	std::vector<std::uint64_t> captures;
 	bool available = false;
 };
+
 struct ScriptInspection
 {
 	std::vector<std::byte> document;
@@ -64,7 +68,7 @@ class RigProgress;
 
 class RigRuntime
 {
-  public:
+public:
 	RigRuntime(RigExchange exchange, RigProgress& progress);
 	RigRuntime(const RigRuntime&) = delete;
 	RigRuntime& operator=(const RigRuntime&) = delete;
@@ -96,10 +100,10 @@ class RigRuntime
 	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
 						   std::optional<std::uint32_t> arraySlice);
 	control::IncidentSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
-		std::optional<std::array<XrRect2Di, 2>> rectangles);
+											  std::optional<std::array<XrRect2Di, 2>> rectangles);
 	void ReleaseImageWindow(std::uint64_t window);
 	std::optional<control::IncidentSample> SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
-		std::optional<std::array<XrRect2Di, 2>> rectangles);
+															  std::optional<std::array<XrRect2Di, 2>> rectangles);
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
@@ -112,7 +116,7 @@ class RigRuntime
 	std::vector<std::byte> AwaitGame(std::uint64_t game, std::uint64_t operation);
 	std::vector<std::byte> GameState();
 
-  private:
+private:
 	using Fields = std::vector<control::Field>;
 	RigExchange m_exchange;
 	RigProgress& m_progress;

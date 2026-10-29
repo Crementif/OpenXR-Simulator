@@ -13,15 +13,16 @@ namespace simxr::automation
 {
 namespace wire = control;
 using namespace script;
+
 ScriptEngine::ScriptEngine(RigRuntime& runtime, RigProgress& progress, const RigOptions& options)
 	: m_runtime(runtime), m_progress(progress), m_options(options)
-{
-}
+{}
 
 ScriptEngine& ScriptEngine::Self(lua_State* state)
 {
 	return *static_cast<ScriptEngine*>(lua_callbacks(state)->userdata);
 }
+
 void* ScriptEngine::Allocate(void* context, void* pointer, std::size_t oldSize, std::size_t newSize)
 {
 	auto& engine = *static_cast<ScriptEngine*>(context);
@@ -40,6 +41,7 @@ void* ScriptEngine::Allocate(void* context, void* pointer, std::size_t oldSize, 
 		engine.m_allocated = engine.m_allocated - oldSize + newSize;
 	return allocation;
 }
+
 void ScriptEngine::Interrupt(lua_State* state, int gc)
 {
 	if (gc >= 0)
@@ -56,7 +58,9 @@ void ScriptEngine::Interrupt(lua_State* state, int gc)
 	}
 	luaL_error(state, "%s", engine.m_bindingError.c_str());
 }
-template <int (ScriptEngine::*Handler)(lua_State*)> int ScriptEngine::Binding(lua_State* state)
+
+template<int (ScriptEngine::*Handler)(lua_State*)>
+int ScriptEngine::Binding(lua_State* state)
 {
 	auto& engine = Self(state);
 	try
@@ -74,6 +78,7 @@ template <int (ScriptEngine::*Handler)(lua_State*)> int ScriptEngine::Binding(lu
 	}
 	luaL_error(state, "%s", engine.m_bindingError.c_str());
 }
+
 int ScriptEngine::Wait(lua_State* state)
 {
 	const auto milliseconds = Integer(state, 1);
@@ -82,6 +87,7 @@ int ScriptEngine::Wait(lua_State* state)
 	m_runtime.Wait(std::chrono::milliseconds{milliseconds});
 	return 0;
 }
+
 int ScriptEngine::FrameAdd(lua_State* state)
 {
 	const auto frame = Integer(state, 1);
@@ -91,11 +97,13 @@ int ScriptEngine::FrameAdd(lua_State* state)
 	PushInteger(state, frame + offset);
 	return 1;
 }
+
 int ScriptEngine::FrameBefore(lua_State* state)
 {
 	lua_pushboolean(state, Integer(state, 1) < Integer(state, 2));
 	return 1;
 }
+
 int ScriptEngine::Schedule(lua_State* state)
 {
 	if (!lua_istable(state, 1))
@@ -138,21 +146,25 @@ int ScriptEngine::Schedule(lua_State* state)
 	PushInteger(state, m_runtime.Schedule(target, policy, std::move(commands)));
 	return 1;
 }
+
 int ScriptEngine::AwaitTransaction(lua_State* state)
 {
 	PushInspection(state, m_runtime.AwaitTransaction(Integer(state, 1)));
 	return 1;
 }
+
 int ScriptEngine::Pause(lua_State*)
 {
 	m_runtime.PauseApplication();
 	return 0;
 }
+
 int ScriptEngine::Resume(lua_State*)
 {
 	m_runtime.ResumeApplication();
 	return 0;
 }
+
 int ScriptEngine::Step(lua_State* state)
 {
 	ScriptCaptureTarget target;
@@ -176,16 +188,19 @@ int ScriptEngine::Step(lua_State* state)
 	lua_pushlstring(state, step.progress.data(), step.progress.size());
 	return 2;
 }
+
 int ScriptEngine::StartInputRecording(lua_State* state)
 {
 	PushInspection(state, m_runtime.StartInputRecording());
 	return 1;
 }
+
 int ScriptEngine::StopInputRecording(lua_State* state)
 {
 	PushInspection(state, m_runtime.StopInputRecording());
 	return 1;
 }
+
 int ScriptEngine::ReadInputRecording(lua_State* state)
 {
 	const auto offset = lua_isnoneornil(state, 1) ? 0 : Integer(state, 1);
@@ -193,6 +208,7 @@ int ScriptEngine::ReadInputRecording(lua_State* state)
 	PushInspection(state, m_runtime.ReadInputRecording(offset, count));
 	return 1;
 }
+
 int ScriptEngine::StartImageRecording(lua_State* state)
 {
 	ScriptCaptureTarget target;
@@ -207,11 +223,13 @@ int ScriptEngine::StartImageRecording(lua_State* state)
 	m_runtime.StartImageRecording(target, capacity, frames);
 	return 0;
 }
+
 int ScriptEngine::StopImageRecording(lua_State*)
 {
 	m_runtime.StopImageRecording();
 	return 0;
 }
+
 int ScriptEngine::ImageRecording(lua_State* state)
 {
 	const auto recording = m_runtime.ImageRecording();
@@ -235,6 +253,7 @@ int ScriptEngine::ImageRecording(lua_State* state)
 	lua_setfield(state, -2, "captures");
 	return 1;
 }
+
 int ScriptEngine::Capture(lua_State* state)
 {
 	const auto capture = m_runtime.Capture(Integer(state, 1));
@@ -248,6 +267,7 @@ int ScriptEngine::Capture(lua_State* state)
 		PushIntegerField(state, "frame_id", *capture.frame);
 	return 1;
 }
+
 int ScriptEngine::ImageHistory(lua_State* state)
 {
 	const auto count = lua_isnoneornil(state, 1) ? 10 : Integer(state, 1);
@@ -256,11 +276,13 @@ int ScriptEngine::ImageHistory(lua_State* state)
 	PushInspection(state, m_runtime.ImageHistory(static_cast<std::uint32_t>(count), HistoryTarget(state, 2)));
 	return 1;
 }
+
 int ScriptEngine::ExportHistory(lua_State* state)
 {
 	m_runtime.ExportHistory(Integer(state, 1), String(state, 2), HistorySlice(state, 3), HistoryTarget(state, 4));
 	return 0;
 }
+
 int ScriptEngine::BeginImageWindow(lua_State* state)
 {
 	const auto window = m_runtime.BeginImageWindow(HistoryTarget(state, 1));
@@ -268,21 +290,25 @@ int ScriptEngine::BeginImageWindow(lua_State* state)
 	PushInteger(state, window.identity);
 	return 2;
 }
+
 int ScriptEngine::ImageWindow(lua_State* state)
 {
 	PushInspection(state, m_runtime.ImageWindow(Integer(state, 1)));
 	return 1;
 }
+
 int ScriptEngine::ExportWindowImage(lua_State* state)
 {
 	m_runtime.ExportWindowImage(Integer(state, 1), Integer(state, 2), String(state, 3), HistorySlice(state, 4));
 	return 0;
 }
+
 int ScriptEngine::ReleaseImageWindow(lua_State* state)
 {
 	m_runtime.ReleaseImageWindow(Integer(state, 1));
 	return 0;
 }
+
 int ScriptEngine::ProjectionHistory(lua_State* state)
 {
 	const auto count = lua_isnoneornil(state, 1) ? 64 : Integer(state, 1);
@@ -291,6 +317,7 @@ int ScriptEngine::ProjectionHistory(lua_State* state)
 	PushInspection(state, m_runtime.ProjectionHistory(static_cast<std::uint32_t>(count)));
 	return 1;
 }
+
 int ScriptEngine::Inspect(lua_State* state)
 {
 	const auto inspection = m_runtime.Inspect(Integer(state, 1));
@@ -298,21 +325,25 @@ int ScriptEngine::Inspect(lua_State* state)
 	PushInteger(state, inspection.identity);
 	return 2;
 }
+
 int ScriptEngine::Revision(lua_State* state)
 {
 	PushInspection(state, m_runtime.Revision(Integer(state, 1)));
 	return 1;
 }
+
 int ScriptEngine::ReleaseInspection(lua_State* state)
 {
 	m_runtime.ReleaseInspection(Integer(state, 1));
 	return 0;
 }
+
 int ScriptEngine::AdvanceToFrame(lua_State* state)
 {
 	m_runtime.AdvanceToFrame(FrameId{Integer(state, 1)});
 	return 0;
 }
+
 int ScriptEngine::StepDisplay(lua_State* state)
 {
 	const auto step = m_runtime.StepDisplay();
@@ -327,16 +358,19 @@ int ScriptEngine::StepDisplay(lua_State* state)
 		lua_pushnil(state);
 	return 3;
 }
+
 int ScriptEngine::State(lua_State* state)
 {
 	PushInspection(state, m_runtime.State());
 	return 1;
 }
+
 int ScriptEngine::ReleaseInputs(lua_State*)
 {
 	m_runtime.ReleaseInputs();
 	return 0;
 }
+
 int ScriptEngine::Export(lua_State* state)
 {
 	std::optional<ScriptCaptureTarget> target;
@@ -359,11 +393,13 @@ int ScriptEngine::Export(lua_State* state)
 	m_runtime.Export(Integer(state, 1), String(state, 2), target, arraySlice);
 	return 0;
 }
+
 int ScriptEngine::ReleaseCapture(lua_State* state)
 {
 	m_runtime.ReleaseCapture(Integer(state, 1));
 	return 0;
 }
+
 int ScriptEngine::Checkpoint(lua_State* state)
 {
 	RigCheckpoint checkpoint;
@@ -373,6 +409,7 @@ int ScriptEngine::Checkpoint(lua_State* state)
 	m_progress.Checkpoint(std::move(checkpoint));
 	return 0;
 }
+
 int ScriptEngine::Print(lua_State* state)
 {
 	std::string line;
@@ -394,6 +431,7 @@ int ScriptEngine::Print(lua_State* state)
 	m_progress.Print(std::move(line));
 	return 0;
 }
+
 int ScriptEngine::GameCommand(lua_State* state)
 {
 	const auto kind = Integer(state, 1);
@@ -405,11 +443,13 @@ int ScriptEngine::GameCommand(lua_State* state)
 	PushInteger(state, command.game);
 	return 2;
 }
+
 int ScriptEngine::AwaitGame(lua_State* state)
 {
 	PushInspection(state, m_runtime.AwaitGame(Integer(state, 1), Integer(state, 2)));
 	return 1;
 }
+
 int ScriptEngine::GameState(lua_State* state)
 {
 	PushInspection(state, m_runtime.GameState());
@@ -421,6 +461,7 @@ int ScriptEngine::MonitorCadence(lua_State* state)
 	m_progress.MissedCadences(Integer(state, 1));
 	return 0;
 }
+
 int ScriptEngine::MonotonicTime(lua_State* state)
 {
 	lua_pushnumber(state, std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -439,8 +480,7 @@ void ScriptEngine::Execute()
 	lua_pushcfunction(state, Binding<&ScriptEngine::Print>, "print");
 	lua_setglobal(state, "print");
 	lua_newtable(state);
-	const auto bind = [&](const char* name, lua_CFunction function)
-	{
+	const auto bind = [&](const char* name, lua_CFunction function) {
 		lua_pushcfunction(state, function, name);
 		lua_setfield(state, -2, name);
 	};

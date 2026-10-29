@@ -26,15 +26,15 @@ static void CheckLaunchResolution()
 	const auto* height = std::getenv("SIMXR_HEIGHT");
 	const std::string oldWidth = width ? width : "", oldHeight = height ? height : "";
 	Check(_putenv_s("SIMXR_WIDTH", "2048") == 0 && _putenv_s("SIMXR_HEIGHT", "2300") == 0,
-		"set per-instance launch resolution");
+		  "set per-instance launch resolution");
 	simxr::windows::WindowsRuntimeInput launched;
 	Check(_putenv_s("SIMXR_WIDTH", "4096") == 0 && _putenv_s("SIMXR_HEIGHT", "4096") == 0,
-		"change environment after instance creation");
+		  "change environment after instance creation");
 	const auto snapshot = launched.Snapshot();
 	Check(snapshot.views.outerWidth == 2048 && snapshot.views.outerHeight == 2300,
-		"Windows launch resolution was ignored or changed after creation");
+		  "Windows launch resolution was ignored or changed after creation");
 	Check(_putenv_s("SIMXR_WIDTH", oldWidth.c_str()) == 0 && _putenv_s("SIMXR_HEIGHT", oldHeight.c_str()) == 0,
-		"restore launch environment");
+		  "restore launch environment");
 }
 
 int main()

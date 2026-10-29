@@ -14,7 +14,7 @@ namespace simxr::app
 // Window owns the gamepad. Detach waits for any motor call before that handle closes.
 class GamepadFeedback
 {
-  public:
+public:
 	GamepadFeedback();
 	~GamepadFeedback();
 	GamepadFeedback(const GamepadFeedback&) = delete;
@@ -23,7 +23,7 @@ class GamepadFeedback
 	bool Rumble(std::array<std::uint16_t, 2> motors,
 				std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
 
-  private:
+private:
 	void Run() noexcept;
 	std::mutex m_mutex;
 	std::condition_variable m_changed;

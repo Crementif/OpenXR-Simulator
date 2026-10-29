@@ -3,7 +3,6 @@
 
 #include "runtime/validation/StructureChain.h"
 
-
 namespace simxr
 {
 struct Runtime::DebugService
@@ -93,11 +92,8 @@ XrResult Runtime::CreateInstance(const XrInstanceCreateInfo* info, InstanceRef& 
 			return XR_ERROR_RUNTIME_FAILURE;
 		if (m_instances.Children(0).size() >= m_configuration.maxInstances)
 			return XR_ERROR_LIMIT_REACHED;
-		created = m_instances.Create(0,
-									 [&](XrInstance handle)
-									 {
-										 return std::make_unique<Instance>(handle, requested, version);
-									 });
+		created = m_instances.Create(
+			0, [&](XrInstance handle) { return std::make_unique<Instance>(handle, requested, version); });
 	}
 	output = std::move(created);
 	return XR_SUCCESS;
@@ -115,11 +111,9 @@ XrResult Runtime::CreateSession(XrInstance owner, SessionRef& output, std::share
 			return XR_ERROR_HANDLE_INVALID;
 		if (m_sessions.Children(owner).size() >= m_configuration.maxSessionsPerInstance)
 			return XR_ERROR_LIMIT_REACHED;
-		created = m_sessions.Create(owner,
-									[&](XrSession handle)
-									{
-										return instance->CreateSession(handle, instance.Shared(), std::move(clock));
-									});
+		created = m_sessions.Create(owner, [&](XrSession handle) {
+			return instance->CreateSession(handle, instance.Shared(), std::move(clock));
+		});
 	}
 	output = std::move(created);
 	return XR_SUCCESS;
@@ -264,11 +258,7 @@ void Runtime::Close()
 		m_closed = true;
 	}
 	m_game.Close();
-	sessions.ForEach(
-		[](const SessionRef& session)
-		{
-			session->Close();
-		});
+	sessions.ForEach([](const SessionRef& session) { session->Close(); });
 	for (auto& [handle, debugger] : *debuggers)
 		debugger->Close();
 }

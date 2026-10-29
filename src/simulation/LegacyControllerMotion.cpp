@@ -5,7 +5,8 @@
 
 namespace simxr::legacy
 {
-template <typename T> static void Merge(std::optional<T>& current, const ControllerOverrideEdit<T>& edit)
+template<typename T>
+static void Merge(std::optional<T>& current, const ControllerOverrideEdit<T>& edit)
 {
 	switch (edit.change)
 	{
@@ -19,6 +20,7 @@ template <typename T> static void Merge(std::optional<T>& current, const Control
 		break;
 	}
 }
+
 static float Coordinate(double value)
 {
 	if (std::abs(value) > std::numeric_limits<float>::max())
@@ -31,6 +33,7 @@ LegacyControllerMotion::LegacyControllerMotion()
 	m_controllers[0].local = {{-0.2f, -0.3f, -0.4f}, 0, std::numbers::pi_v<float> / 2, 0};
 	m_controllers[1].local = {{0.2f, -0.3f, -0.4f}, 0, std::numbers::pi_v<float> / 2, 0};
 }
+
 std::size_t LegacyControllerMotion::HandIndex(ControllerHand hand)
 {
 	switch (hand)
@@ -42,6 +45,7 @@ std::size_t LegacyControllerMotion::HandIndex(ControllerHand hand)
 	}
 	throw std::invalid_argument("Unknown legacy controller hand");
 }
+
 XrPosef LegacyControllerMotion::WorldPose(ControllerLocalPose local, ControllerHeadPose head)
 {
 	const auto cosine = std::cos(static_cast<double>(head.yaw)), sine = std::sin(static_cast<double>(head.yaw));
@@ -54,24 +58,29 @@ XrPosef LegacyControllerMotion::WorldPose(ControllerLocalPose local, ControllerH
 			 Coordinate(static_cast<double>(head.position.y) + local.position.y),
 			 Coordinate(head.position.z - local.position.x * sine + local.position.z * cosine)}};
 }
+
 void LegacyControllerMotion::Trigger(Controller& controller, float value)
 {
 	controller.controls.trigger = value;
 	controller.controls.triggerTouch = value >= 0.5f;
 }
+
 void LegacyControllerMotion::Grip(Controller& controller, float value)
 {
 	controller.controls.grip = controller.controls.gripForce = value;
 }
+
 void LegacyControllerMotion::ThumbClick(Controller& controller, bool value)
 {
 	controller.controls.thumbClick = controller.controls.trackpadClick = value;
 	controller.controls.thumbTouch = controller.controls.trackpadTouch = value;
 }
+
 void LegacyControllerMotion::Stick(Controller& controller, XrVector2f value)
 {
 	controller.controls.stick = controller.controls.trackpad = value;
 }
+
 void LegacyControllerMotion::AdvanceGlides(double seconds)
 {
 	for (std::size_t hand = 0; hand < m_glides.size(); ++hand)
@@ -93,6 +102,7 @@ void LegacyControllerMotion::AdvanceGlides(double seconds)
 		pose.pitch = std::lerp(glide.from.pitch, glide.to.pitch, progress);
 	}
 }
+
 std::optional<bool> LegacyControllerMotion::ApplyKeyboard(const ControllerKeyboardSample& keyboard)
 {
 	if (!keyboard.active)
@@ -146,6 +156,7 @@ std::optional<bool> LegacyControllerMotion::ApplyKeyboard(const ControllerKeyboa
 	}
 	return toggled;
 }
+
 void LegacyControllerMotion::ApplyPose(const ControllerPoseEdit& edit)
 {
 	const auto hand = HandIndex(edit.hand);
@@ -170,6 +181,7 @@ void LegacyControllerMotion::ApplyPose(const ControllerPoseEdit& edit)
 	if (edit.primary)
 		controller.controls.primary = controller.controls.primaryTouch = *edit.primary;
 }
+
 void LegacyControllerMotion::ApplyHoldEdit(const ControllerHoldEdit& edit)
 {
 	for (std::size_t hand = 0; hand < m_holds.size(); ++hand)
@@ -195,6 +207,7 @@ void LegacyControllerMotion::ApplyHoldEdit(const ControllerHoldEdit& edit)
 		Merge(hold.roll, edit.roll);
 	}
 }
+
 void LegacyControllerMotion::ApplyHolds()
 {
 	for (std::size_t hand = 0; hand < m_holds.size(); ++hand)
@@ -225,6 +238,7 @@ void LegacyControllerMotion::ApplyHolds()
 			controller.local.roll = *hold.roll;
 	}
 }
+
 ControllerMotionResult LegacyControllerMotion::Update(const ControllerMotionFrame& frame)
 {
 	// Validate hand identities before mutating any channel. Frame input contains
@@ -244,6 +258,7 @@ ControllerMotionResult LegacyControllerMotion::Update(const ControllerMotionFram
 	m_head = frame.head;
 	return {SnapshotLocked(m_head), toggled};
 }
+
 ControllerMotionSnapshot LegacyControllerMotion::SnapshotLocked(ControllerHeadPose head) const
 {
 	ControllerMotionSnapshot snapshot;
@@ -255,11 +270,13 @@ ControllerMotionSnapshot LegacyControllerMotion::SnapshotLocked(ControllerHeadPo
 	}
 	return snapshot;
 }
+
 ControllerMotionSnapshot LegacyControllerMotion::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	return SnapshotLocked(m_head);
 }
+
 ControllerMotionSnapshot LegacyControllerMotion::Snapshot(ControllerHeadPose head) const
 {
 	std::lock_guard lock(m_mutex);

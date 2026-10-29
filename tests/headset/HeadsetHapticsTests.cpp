@@ -49,6 +49,7 @@ static void Forwarding()
 	observation.overflow = false;
 	Require(!state.Observe(observation, now + 124ms, now + 124ms), "Failed attachment cannot silently resume");
 }
+
 static void StaleAndDelayed()
 {
 	using namespace std::chrono_literals;
@@ -94,6 +95,7 @@ static void SuspendedEvents()
 }
 
 } // namespace simxr::tests
+
 int main()
 {
 	try

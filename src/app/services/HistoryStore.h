@@ -27,6 +27,7 @@ enum HistoryFlags : std::uint32_t
 	// At least one app action was pressed or moved.
 	HistoryAction = 1 << 11
 };
+
 struct HistoryFrame
 {
 	FrameIdentity identity;
@@ -47,6 +48,7 @@ struct HistoryFrame
 	// Negative means unavailable, never a zero-duration sample.
 	float cpuMilliseconds = -1, compositorGpuMilliseconds = -1;
 };
+
 struct HistoryBucket
 {
 	std::size_t count = 0;
@@ -57,27 +59,33 @@ struct HistoryBucket
 	std::size_t missed = 0;
 	std::size_t driven = 0;
 };
+
 // Fixed-size frame ring with a hierarchy of min/max/flags buckets. Appending
 // and querying visit O(log capacity) buckets, without per-frame allocation.
 class HistoryStore
 {
-  public:
+public:
 	explicit HistoryStore(std::size_t capacity = 162000);
+
 	std::size_t Size() const noexcept
 	{
 		return m_size;
 	}
+
 	std::size_t Capacity() const noexcept
 	{
 		return m_frames.size();
 	}
+
 	// Reserved frame, bucket and run-index storage.
 	std::size_t RetainedBytes() const noexcept;
+
 	// Changes when clear or a new segment can replace an identity lookup.
 	std::uint64_t IdentityRevision() const noexcept
 	{
 		return m_identityRevision;
 	}
+
 	void Clear() noexcept;
 	void Append(const HistoryFrame& frame);
 	const HistoryFrame& At(std::size_t index) const;
@@ -95,7 +103,7 @@ class HistoryStore
 	std::optional<std::size_t> Nearest(double seconds) const noexcept;
 	HistoryBucket Query(std::size_t first, std::size_t end) const;
 
-  private:
+private:
 	// Consecutive frames of one run, as absolute append positions [begin, end).
 	// Frame ids rise within a segment, so lookups binary-search one segment.
 	struct Segment
@@ -103,6 +111,7 @@ class HistoryStore
 		std::uint64_t epoch = 0, session = 0, run = 0;
 		std::uint64_t begin = 0, end = 0;
 	};
+
 	std::vector<Segment> m_segments;
 	std::uint64_t m_appended = 0, m_identityRevision = 0;
 	std::vector<HistoryFrame> m_frames;

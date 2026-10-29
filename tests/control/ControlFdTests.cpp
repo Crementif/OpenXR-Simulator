@@ -21,6 +21,7 @@ namespace
 {
 thread_local bool failAllocation = false;
 }
+
 void* operator new(std::size_t size)
 {
 	if (failAllocation)
@@ -32,22 +33,27 @@ void* operator new(std::size_t size)
 		return value;
 	throw std::bad_alloc{};
 }
+
 void* operator new[](std::size_t size)
 {
 	return ::operator new(size);
 }
+
 [[gnu::noinline]] void operator delete(void* value) noexcept
 {
 	std::free(value);
 }
+
 [[gnu::noinline]] void operator delete[](void* value) noexcept
 {
 	std::free(value);
 }
+
 [[gnu::noinline]] void operator delete(void* value, std::size_t) noexcept
 {
 	std::free(value);
 }
+
 [[gnu::noinline]] void operator delete[](void* value, std::size_t) noexcept
 {
 	std::free(value);

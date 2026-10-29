@@ -60,7 +60,7 @@ struct FramePipelineState
 
 class FrameScheduler
 {
-  public:
+public:
 	explicit FrameScheduler(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
 	~FrameScheduler();
 	void Start(const FrameSchedulerConfig& config, SessionGeneration generation = {});
@@ -104,7 +104,7 @@ class FrameScheduler
 	bool WithClockRevision(SessionGeneration generation, std::uint64_t revision, const std::function<void()>& admit);
 	std::optional<RuntimeTime> MapHostTime(HostTime time, SessionGeneration generation, std::uint64_t revision) const;
 
-  private:
+private:
 	std::shared_ptr<Clock> m_clock;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
@@ -122,6 +122,7 @@ class FrameScheduler
 	std::uint64_t m_policyRevision = 0;
 	std::uint64_t m_nextFrame = 1;
 	DisplayTick m_nextAdmission;
+
 	struct ExternalPrediction
 	{
 		std::uint64_t attachment = 0, sequence = 0, consumed = 0;
@@ -129,6 +130,7 @@ class FrameScheduler
 		Duration period;
 		HostTime expires;
 	};
+
 	std::optional<ExternalPrediction> m_external;
 	RuntimeTime m_lastPrediction;
 };

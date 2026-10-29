@@ -12,8 +12,8 @@ std::string LocalFileUri(const std::filesystem::path& path)
 	for (const auto value : text)
 	{
 		const auto byte = static_cast<unsigned char>(value);
-		if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-			(byte >= '0' && byte <= '9') || byte == '/' || byte == '-' || byte == '.' || byte == '_' || byte == '~')
+		if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') || (byte >= '0' && byte <= '9') ||
+			byte == '/' || byte == '-' || byte == '.' || byte == '_' || byte == '~')
 			uri.push_back(static_cast<char>(byte));
 		else
 		{
@@ -24,6 +24,7 @@ std::string LocalFileUri(const std::filesystem::path& path)
 	}
 	return uri;
 }
+
 std::string OpenLocalPath(const std::filesystem::path& path)
 {
 	const auto uri = LocalFileUri(path);

@@ -18,10 +18,12 @@ VulkanVideoSession::VulkanVideoSession(std::shared_ptr<VulkanDevice> device, VkE
 		throw;
 	}
 }
+
 VulkanVideoSession::~VulkanVideoSession()
 {
 	Destroy();
 }
+
 void VulkanVideoSession::Destroy() noexcept
 {
 	if (m_uncertain)
@@ -63,6 +65,7 @@ void VulkanVideoSession::Destroy() noexcept
 	if (m_bitstreamMemory)
 		vkFreeMemory(device, m_bitstreamMemory, nullptr);
 }
+
 void VulkanVideoSession::Initialize()
 {
 	if (m_device->encodeFamily == VK_QUEUE_FAMILY_IGNORED || m_device->decodeFamily == VK_QUEUE_FAMILY_IGNORED)
@@ -207,6 +210,7 @@ void VulkanVideoSession::Initialize()
 					"Allocate video command");
 	}
 }
+
 void VulkanVideoSession::CreateSession(bool encode)
 {
 	const auto device = m_device->binding.device;
@@ -265,6 +269,7 @@ void VulkanVideoSession::CreateSession(bool encode)
 	CheckVulkan(m_createParameters(device, &parameters, nullptr, encode ? &m_encodeParameters : &m_decodeParameters),
 				"Create H.264 parameters");
 }
+
 VkImage VulkanVideoSession::CreateImage(VkImageUsageFlags usage, bool encode, VkImageView& view)
 {
 	VkVideoProfileListInfoKHR profiles{VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR};
@@ -279,12 +284,9 @@ VkImage VulkanVideoSession::CreateImage(VkImageUsageFlags usage, bool encode, Vk
 	std::vector<VkVideoFormatPropertiesKHR> available(count, {VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR});
 	CheckVulkan(formats(m_device->binding.physicalDevice, &formatInfo, &count, available.data()),
 				"Read NV12 video formats");
-	const auto selected = std::find_if(available.begin(), available.end(),
-									   [](const auto& format)
-									   {
-										   return format.format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM &&
-												  format.imageTiling == VK_IMAGE_TILING_OPTIMAL;
-									   });
+	const auto selected = std::find_if(available.begin(), available.end(), [](const auto& format) {
+		return format.format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM && format.imageTiling == VK_IMAGE_TILING_OPTIMAL;
+	});
 	if (selected == available.end())
 		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "NV12 video usage unsupported");
 	const auto device = m_device->binding.device;
@@ -334,6 +336,7 @@ VkImage VulkanVideoSession::CreateImage(VkImageUsageFlags usage, bool encode, Vk
 	}
 	return result;
 }
+
 void VulkanVideoSession::Begin(bool encode)
 {
 	if (m_uncertain)
@@ -386,6 +389,7 @@ void VulkanVideoSession::Begin(bool encode)
 		}
 	}
 }
+
 void VulkanVideoSession::Finish(bool encode, VkSemaphore wait, VkSemaphore signal)
 {
 	const auto command = encode ? m_encodeCommand : m_decodeCommand;
@@ -426,6 +430,7 @@ void VulkanVideoSession::Finish(bool encode, VkSemaphore wait, VkSemaphore signa
 	m_uncertain = false;
 	(encode ? m_encodeInitialized : m_decodeInitialized) = true;
 }
+
 VulkanH264Picture VulkanVideoSession::Encode(VkSemaphore inputReady)
 {
 	Begin(true);
@@ -477,6 +482,7 @@ VulkanH264Picture VulkanVideoSession::Encode(VkSemaphore inputReady)
 	picture.bytes.insert(picture.bytes.end(), start, start + feedback[1]);
 	return picture;
 }
+
 void VulkanVideoSession::Decode(const VulkanH264Picture& picture, VkSemaphore outputReady)
 {
 	if (m_uncertain)

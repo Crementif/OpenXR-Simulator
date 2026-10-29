@@ -4,10 +4,12 @@
 namespace simxr
 {
 VulkanFrameSync::VulkanFrameSync(std::shared_ptr<VulkanExternalSemaphore> producer) : m_producer(std::move(producer)) {}
+
 VkSemaphore VulkanFrameSync::Signal() const noexcept
 {
 	return m_producer->Get();
 }
+
 std::shared_ptr<VulkanExternalSemaphore> VulkanFrameSync::Import(const VulkanExternalDevice& consumer)
 {
 	if (m_producer->Device()->lost.load() || consumer.Device()->lost.load() ||
@@ -21,6 +23,7 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanFrameSync::Import(const VulkanExt
 	m_consumer = consumer.ImportSemaphore(m_producer->Identity(), handle);
 	return m_consumer;
 }
+
 void VulkanFrameSync::MarkConsumed() noexcept
 {
 	m_consumed.store(true);
@@ -28,8 +31,8 @@ void VulkanFrameSync::MarkConsumed() noexcept
 
 VulkanFrameSyncPool::VulkanFrameSyncPool(std::shared_ptr<VulkanExternalDevice> producer)
 	: m_producer(std::move(producer))
-{
-}
+{}
+
 std::shared_ptr<VulkanFrameSync> VulkanFrameSyncPool::Acquire()
 {
 	const auto pool = shared_from_this();
@@ -50,12 +53,10 @@ std::shared_ptr<VulkanFrameSync> VulkanFrameSyncPool::Acquire()
 	if (!sync)
 		sync.reset(new VulkanFrameSync(m_producer->CreateExportableSemaphore()));
 	sync->m_consumed.store(false);
-	return std::shared_ptr<VulkanFrameSync>(sync.release(),
-											[pool](VulkanFrameSync* retired)
-											{
-												pool->Recycle(std::unique_ptr<VulkanFrameSync>(retired));
-											});
+	return std::shared_ptr<VulkanFrameSync>(
+		sync.release(), [pool](VulkanFrameSync* retired) { pool->Recycle(std::unique_ptr<VulkanFrameSync>(retired)); });
 }
+
 void VulkanFrameSyncPool::Recycle(std::unique_ptr<VulkanFrameSync> sync)
 {
 	if (!sync->m_consumed.load() || m_producer->Device()->lost.load() || !sync->m_consumer ||
@@ -71,6 +72,7 @@ void VulkanFrameSyncPool::Recycle(std::unique_ptr<VulkanFrameSync> sync)
 			return;
 		}
 }
+
 void VulkanFrameSyncPool::Close()
 {
 	decltype(m_available) retired;

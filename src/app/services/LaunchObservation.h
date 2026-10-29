@@ -10,16 +10,17 @@
 namespace simxr::app
 {
 class ProcessSupervisor;
+
 class LaunchObservation
 {
-  public:
+public:
 	explicit LaunchObservation(std::string profile);
 	LaunchSnapshot Read() const;
 	bool RequestClose();
 	bool RequestRestart(std::uint64_t process, LaunchProfile profile);
 	bool CancelRestart();
 
-  private:
+private:
 	friend class ProcessSupervisor;
 	void Running(std::uint64_t process);
 	std::optional<LaunchProfile> Exited(int code);

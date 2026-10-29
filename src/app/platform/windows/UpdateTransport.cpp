@@ -9,42 +9,49 @@ namespace simxr::app
 {
 class WinHttpHandle
 {
-  public:
+public:
 	explicit WinHttpHandle(HINTERNET handle) : m_handle(handle)
 	{
 		if (!m_handle)
 			throw windows::Error("Cannot start update request");
 	}
+
 	~WinHttpHandle()
 	{
 		WinHttpCloseHandle(m_handle);
 	}
+
 	WinHttpHandle(const WinHttpHandle&) = delete;
 	WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+
 	HINTERNET Get() const noexcept
 	{
 		return m_handle;
 	}
 
-  private:
+private:
 	HINTERNET m_handle;
 };
-std::string windows::FetchUpdateResponse(std::wstring_view host, std::uint16_t port, std::wstring_view path, bool secure)
+
+std::string windows::FetchUpdateResponse(std::wstring_view host, std::uint16_t port, std::wstring_view path,
+										 bool secure)
 {
 	const auto started = std::chrono::steady_clock::now();
-	WinHttpHandle session(WinHttpOpen(L"OpenXR-Simulator update check", secure ? WINHTTP_ACCESS_TYPE_DEFAULT_PROXY : WINHTTP_ACCESS_TYPE_NO_PROXY,
-									 WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+	WinHttpHandle session(WinHttpOpen(L"OpenXR-Simulator update check",
+									  secure ? WINHTTP_ACCESS_TYPE_DEFAULT_PROXY : WINHTTP_ACCESS_TYPE_NO_PROXY,
+									  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
 	if (!WinHttpSetTimeouts(session.Get(), 2000, 2000, 2000, 2000))
 		throw windows::Error("Cannot set update request timeout");
 	const std::wstring hostText(host), pathText(path);
 	WinHttpHandle connection(WinHttpConnect(session.Get(), hostText.c_str(), port, 0));
-	WinHttpHandle request(WinHttpOpenRequest(connection.Get(), L"GET", pathText.c_str(), nullptr,
-											 WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0));
+	WinHttpHandle request(WinHttpOpenRequest(connection.Get(), L"GET", pathText.c_str(), nullptr, WINHTTP_NO_REFERER,
+											 WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0));
 	DWORD disabled = WINHTTP_DISABLE_REDIRECTS;
 	if (!WinHttpSetOption(request.Get(), WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled)))
 		throw windows::Error("Cannot configure update request");
 	DWORD headerTimeout = 4000, connectionRetries = 2;
-	if (!WinHttpSetOption(request.Get(), WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT, &headerTimeout, sizeof(headerTimeout)) ||
+	if (!WinHttpSetOption(request.Get(), WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT, &headerTimeout,
+						  sizeof(headerTimeout)) ||
 		!WinHttpSetOption(request.Get(), WINHTTP_OPTION_CONNECT_RETRIES, &connectionRetries, sizeof(connectionRetries)))
 		throw windows::Error("Cannot bound update request");
 	if (!WinHttpSendRequest(request.Get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
@@ -75,6 +82,7 @@ std::string windows::FetchUpdateResponse(std::wstring_view host, std::uint16_t p
 	}
 	return response;
 }
+
 std::string windows::FetchLatestReleaseDirect(std::string_view repository)
 {
 	if (!ValidReleaseRepository(repository))
@@ -82,6 +90,7 @@ std::string windows::FetchLatestReleaseDirect(std::string_view repository)
 	const auto path = windows::Wide("/repos/" + std::string(repository) + "/releases/latest");
 	return windows::FetchUpdateResponse(L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, path, true);
 }
+
 std::string FetchLatestRelease(std::string_view repository)
 {
 	if (!ValidReleaseRepository(repository))

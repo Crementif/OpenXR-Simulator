@@ -16,6 +16,7 @@
 
 #if defined(_WIN32)
 static bool s_closeRequested = false;
+
 static LRESULT CALLBACK GameWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
 	if (message == WM_CLOSE)
@@ -46,7 +47,8 @@ int main(int argc, char** argv)
 		library = LoadLibraryW(argv[1]);
 		if (!library)
 			throw std::runtime_error("Cannot load runtime library: " + std::to_string(GetLastError()));
-		const auto getApi = reinterpret_cast<PFN_simxrGetGameBridgeApi>(GetProcAddress(library, "simxrGetGameBridgeApi"));
+		const auto getApi =
+			reinterpret_cast<PFN_simxrGetGameBridgeApi>(GetProcAddress(library, "simxrGetGameBridgeApi"));
 #else
 		if (setenv("SIMXR_CONTROL_SOCKET", argv[2], 1) != 0)
 			throw std::runtime_error("Set endpoint environment failed");
@@ -76,8 +78,9 @@ int main(int argc, char** argv)
 		windowClass.lpszClassName = L"SimxrGameProbeWindow";
 		if (!RegisterClassW(&windowClass))
 			throw std::runtime_error("Cannot register game probe window");
-		const auto window = CreateWindowExW(0, windowClass.lpszClassName, L"SimXR Game Probe", WS_OVERLAPPED,
-			CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, nullptr, nullptr, windowClass.hInstance, nullptr);
+		const auto window =
+			CreateWindowExW(0, windowClass.lpszClassName, L"SimXR Game Probe", WS_OVERLAPPED, CW_USEDEFAULT,
+							CW_USEDEFAULT, 100, 100, nullptr, nullptr, windowClass.hInstance, nullptr);
 		if (!window)
 			throw std::runtime_error("Cannot create game probe window");
 #endif

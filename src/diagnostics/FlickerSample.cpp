@@ -20,7 +20,7 @@ static uint8_t CopyPixel(uint8_t* destination, const uint8_t* source, PixelOrder
 
 class EyeBrightness
 {
-  public:
+public:
 	void Observe(uint8_t luma)
 	{
 		m_sum += luma / 255.0;
@@ -28,16 +28,18 @@ class EyeBrightness
 		if (luma >= 245)
 			++m_brightCount;
 	}
+
 	float Mean() const
 	{
 		return m_count ? static_cast<float>(m_sum / m_count) : 0.0f;
 	}
+
 	float BrightFraction() const
 	{
 		return m_count ? static_cast<float>(m_brightCount) / m_count : 0.0f;
 	}
 
-  private:
+private:
 	double m_sum = 0.0;
 	uint64_t m_count = 0;
 	uint64_t m_brightCount = 0;
@@ -51,7 +53,8 @@ bool ValidPixels(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t 
 	return stride >= width * 4 && height <= std::numeric_limits<size_t>::max() / stride;
 }
 
-Sample Downsample(const uint8_t* sourcePixels, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t frame, PixelOrder order)
+Sample Downsample(const uint8_t* sourcePixels, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t frame,
+				  PixelOrder order)
 {
 	Sample sample;
 	sample.frame = frame;
@@ -87,8 +90,8 @@ Sample Downsample(const uint8_t* sourcePixels, uint32_t width, uint32_t height, 
 	return sample;
 }
 
-Sample CropUi(const uint8_t* sourcePixels, uint32_t width, uint32_t height, uint32_t pitchBytes, const int32_t rects[2][4],
-			  uint64_t frame, PixelOrder order)
+Sample CropUi(const uint8_t* sourcePixels, uint32_t width, uint32_t height, uint32_t pitchBytes,
+			  const int32_t rects[2][4], uint64_t frame, PixelOrder order)
 {
 	Sample sample;
 	sample.frame = frame;

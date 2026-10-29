@@ -270,12 +270,9 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 	{
 		for (;;)
 		{
-			m_changed.wait(lock,
-						   [&]
-						   {
-							   return m_revision != revision ||
-									  (!m_state.waited && (!m_state.paused || m_state.permits));
-						   });
+			m_changed.wait(lock, [&] {
+				return m_revision != revision || (!m_state.waited && (!m_state.paused || m_state.permits));
+			});
 			if (m_revision != revision)
 				return XR_ERROR_SESSION_NOT_RUNNING;
 			auto admission = m_nextAdmission;
@@ -425,6 +422,7 @@ std::optional<std::uint64_t> FrameScheduler::LiveInputClockRevision() const
 		return {};
 	return m_config.mode == ExecutionMode::RealTime ? m_clockRevision : 0;
 }
+
 bool FrameScheduler::WithClockRevision(SessionGeneration generation, std::uint64_t revision,
 									   const std::function<void()>& admit)
 {

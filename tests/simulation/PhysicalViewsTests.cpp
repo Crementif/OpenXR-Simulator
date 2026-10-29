@@ -53,6 +53,7 @@ static void EyeCommands()
 				 .value,
 			"Clear survives the command wire format");
 }
+
 static void PhysicalViews()
 {
 	TrackingSystem tracking;
@@ -128,6 +129,7 @@ static void PhysicalViews()
 			"Later physical updates do not mutate retained snapshots");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

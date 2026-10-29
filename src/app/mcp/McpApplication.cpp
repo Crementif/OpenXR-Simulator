@@ -24,25 +24,40 @@ static const char* State(LaunchState state)
 {
 	switch (state)
 	{
-	case LaunchState::Idle: return "idle";
-	case LaunchState::Starting: return "starting";
-	case LaunchState::Running: return "running";
-	case LaunchState::Exited: return "exited";
-	case LaunchState::Failed: return "failed";
+	case LaunchState::Idle:
+		return "idle";
+	case LaunchState::Starting:
+		return "starting";
+	case LaunchState::Running:
+		return "running";
+	case LaunchState::Exited:
+		return "exited";
+	case LaunchState::Failed:
+		return "failed";
 	}
 	return "unknown";
 }
 
 static Json Application(const ApplicationSnapshot& app, const std::string& instanceId)
 {
-	return {{"application_id", instanceId + ":" + std::to_string(app.id)}, {"name", app.name},
-			{"launch_state", State(app.launch.state)}, {"launch_detail", app.launch.detail},
-			{"restart_pending", app.launch.restartPending}, {"launch_error", app.error},
-			{"process_id", std::to_string(app.launch.process)}, {"runtime_process_id", std::to_string(app.runtimeProcess)},
-			{"runtime_epoch", std::to_string(app.runtimeEpoch)}, {"exit_code", app.launch.exitCode},
-			{"endpoint", app.endpoint}, {"launch_endpoint", app.launchEndpoint}, {"connected", app.connected}, {"session_running", app.running},
-			{"inferred_runtime_data_directory", app.launchDataDirectory.empty() ? Json(nullptr) : Json(app.launchDataDirectory)},
-			{"session_id", std::to_string(app.session)}, {"generation", std::to_string(app.generation)}};
+	return {{"application_id", instanceId + ":" + std::to_string(app.id)},
+			{"name", app.name},
+			{"launch_state", State(app.launch.state)},
+			{"launch_detail", app.launch.detail},
+			{"restart_pending", app.launch.restartPending},
+			{"launch_error", app.error},
+			{"process_id", std::to_string(app.launch.process)},
+			{"runtime_process_id", std::to_string(app.runtimeProcess)},
+			{"runtime_epoch", std::to_string(app.runtimeEpoch)},
+			{"exit_code", app.launch.exitCode},
+			{"endpoint", app.endpoint},
+			{"launch_endpoint", app.launchEndpoint},
+			{"connected", app.connected},
+			{"session_running", app.running},
+			{"inferred_runtime_data_directory",
+			 app.launchDataDirectory.empty() ? Json(nullptr) : Json(app.launchDataDirectory)},
+			{"session_id", std::to_string(app.session)},
+			{"generation", std::to_string(app.generation)}};
 }
 
 static void CheckKeys(const Json& object, const std::set<std::string>& allowed)
@@ -95,19 +110,19 @@ static std::uint64_t ProcessIdentifier(const std::string& value)
 	return result;
 }
 
-static Json Execute(ApplicationCatalog& tabs, const std::string& instanceId, const std::string& name, const Json& arguments,
-					const std::shared_ptr<AutomationOwner>& owner)
+static Json Execute(ApplicationCatalog& tabs, const std::string& instanceId, const std::string& name,
+					const Json& arguments, const std::shared_ptr<AutomationOwner>& owner)
 {
 	if (HandlesMonitor(name))
-		return ToolResult(CallMonitor(tabs, Identifier(Text(arguments, "application_id", true), instanceId), name, arguments));
+		return ToolResult(
+			CallMonitor(tabs, Identifier(Text(arguments, "application_id", true), instanceId), name, arguments));
 #ifdef SIMXR_COMPANION_AUTOMATION
 	if (name == "simulator_luau_run" || name == "simulator_luau_status" || name == "simulator_luau_pause" ||
 		name == "simulator_luau_resume" || name == "simulator_luau_step" || name == "simulator_luau_cancel")
 	{
 		if (!owner || !owner->active.load())
 			throw std::runtime_error("The MCP automation session is closed");
-		const auto number = [&](const char* key, bool allowZero, std::uint64_t fallback)
-		{
+		const auto number = [&](const char* key, bool allowZero, std::uint64_t fallback) {
 			const auto found = arguments.find(key);
 			if (found == arguments.end())
 				return fallback;
@@ -149,7 +164,8 @@ static Json Execute(ApplicationCatalog& tabs, const std::string& instanceId, con
 			request.memoryMiB = static_cast<int>(memory);
 			const auto run = tabs.StartLuau(application, std::move(request), owner);
 			return ToolResult({{"application_id", instanceId + ":" + std::to_string(application)},
-				{"run_id", std::to_string(run)}, {"accepted", true}});
+							   {"run_id", std::to_string(run)},
+							   {"accepted", true}});
 		}
 		CheckKeys(arguments, {"application_id", "run_id"});
 		const auto run = number("run_id", false, 0);
@@ -162,26 +178,45 @@ static Json Execute(ApplicationCatalog& tabs, const std::string& instanceId, con
 			const char* phase = "idle";
 			switch (snapshot.phase)
 			{
-			case automation::RigPhase::Idle: phase = "idle"; break;
-			case automation::RigPhase::Running: phase = "running"; break;
-			case automation::RigPhase::Paused: phase = "paused"; break;
-			case automation::RigPhase::Complete: phase = "complete"; break;
-			case automation::RigPhase::Cancelled: phase = "cancelled"; break;
-			case automation::RigPhase::Failed: phase = "failed"; break;
+			case automation::RigPhase::Idle:
+				phase = "idle";
+				break;
+			case automation::RigPhase::Running:
+				phase = "running";
+				break;
+			case automation::RigPhase::Paused:
+				phase = "paused";
+				break;
+			case automation::RigPhase::Complete:
+				phase = "complete";
+				break;
+			case automation::RigPhase::Cancelled:
+				phase = "cancelled";
+				break;
+			case automation::RigPhase::Failed:
+				phase = "failed";
+				break;
 			}
 			Json checkpoints = Json::array();
 			for (const auto& checkpoint : snapshot.checkpoints)
-				checkpoints.push_back({{"name", checkpoint.name}, {"detail", checkpoint.detail}, {"passed", checkpoint.passed}});
-			Json result = {{"run_id", std::to_string(status.run)}, {"phase", phase}, {"seed", std::to_string(snapshot.seed)},
-				{"transactions", std::to_string(snapshot.transactions)}, {"captures", std::to_string(snapshot.captures)},
-				{"error", snapshot.error}, {"checkpoints", std::move(checkpoints)}, {"output", snapshot.output}};
+				checkpoints.push_back(
+					{{"name", checkpoint.name}, {"detail", checkpoint.detail}, {"passed", checkpoint.passed}});
+			Json result = {{"run_id", std::to_string(status.run)},
+						   {"phase", phase},
+						   {"seed", std::to_string(snapshot.seed)},
+						   {"transactions", std::to_string(snapshot.transactions)},
+						   {"captures", std::to_string(snapshot.captures)},
+						   {"error", snapshot.error},
+						   {"checkpoints", std::move(checkpoints)},
+						   {"output", snapshot.output}};
 			if (snapshot.compatibilityDeviations)
 				result["compatibility_deviations"] = *snapshot.compatibilityDeviations;
 			return ToolResult(result);
 		}
-		const auto action = name == "simulator_luau_pause" ? LuauControl::Pause :
-			name == "simulator_luau_resume" ? LuauControl::Resume :
-			name == "simulator_luau_step" ? LuauControl::Step : LuauControl::Cancel;
+		const auto action = name == "simulator_luau_pause"	  ? LuauControl::Pause
+							: name == "simulator_luau_resume" ? LuauControl::Resume
+							: name == "simulator_luau_step"	  ? LuauControl::Step
+															  : LuauControl::Cancel;
 		tabs.ControlLuau(application, run, action, owner);
 		return ToolResult({{"run_id", std::to_string(run)}, {"accepted", true}});
 	}
@@ -217,11 +252,13 @@ static Json Execute(ApplicationCatalog& tabs, const std::string& instanceId, con
 		const auto process = ProcessIdentifier(Text(arguments, "process_id", true));
 		tabs.RequestApplicationRestart(id, process);
 		return ToolResult({{"application_id", instanceId + ":" + std::to_string(id)},
-						   {"process_id", std::to_string(process)}, {"accepted", true}});
+						   {"process_id", std::to_string(process)},
+						   {"accepted", true}});
 	}
 	if (name == "simulator_launch_application")
 	{
-		CheckKeys(arguments, {"executable", "name", "arguments", "working_directory", "runtime_manifest", "environment"});
+		CheckKeys(arguments,
+				  {"executable", "name", "arguments", "working_directory", "runtime_manifest", "environment"});
 		LaunchProfile profile;
 		profile.executable = Text(arguments, "executable", true);
 		const auto executable = Utf8Path(profile.executable);
@@ -240,9 +277,8 @@ static Json Execute(ApplicationCatalog& tabs, const std::string& instanceId, con
 			throw std::invalid_argument("Working directory must be an existing absolute folder");
 		profile.runtimeManifest = Text(arguments, "runtime_manifest");
 		profile.useBundledRuntime = profile.runtimeManifest.empty();
-		if (!profile.useBundledRuntime &&
-			(!Utf8Path(profile.runtimeManifest).is_absolute() ||
-			 !PathProblem(profile.runtimeManifest, PathKind::File).empty()))
+		if (!profile.useBundledRuntime && (!Utf8Path(profile.runtimeManifest).is_absolute() ||
+										   !PathProblem(profile.runtimeManifest, PathKind::File).empty()))
 			throw std::invalid_argument("Runtime manifest must be an existing absolute file");
 		if (const auto found = arguments.find("arguments"); found != arguments.end())
 		{
@@ -323,8 +359,8 @@ bool McpApplication::Windowless() const noexcept
 }
 
 std::optional<Json> McpApplication::Call(std::string name, Json arguments,
-										const std::shared_ptr<McpCancellation>& cancellation,
-										std::shared_ptr<AutomationOwner> owner)
+										 const std::shared_ptr<McpCancellation>& cancellation,
+										 std::shared_ptr<AutomationOwner> owner)
 {
 	try
 	{
@@ -350,7 +386,7 @@ std::optional<Json> McpApplication::Call(std::string name, Json arguments,
 }
 
 std::optional<ApplicationSnapshot> McpApplication::Lookup(const std::string& application,
-	const std::shared_ptr<McpCancellation>& cancellation)
+														  const std::shared_ptr<McpCancellation>& cancellation)
 {
 	auto request = std::make_shared<Request>();
 	request->application = Identifier(application, m_instanceId);
@@ -377,9 +413,10 @@ bool McpApplication::Wait(const std::shared_ptr<Request>& request)
 	}
 	const auto& cancellation = request->cancellation;
 	std::unique_lock lock(cancellation->m_mutex);
-	if (cancellation->m_changed.wait_for(lock, std::chrono::seconds(5), [&]
-		{ return cancellation->m_state == McpCancellation::State::Complete ||
-				 cancellation->m_state == McpCancellation::State::Cancelled; }))
+	if (cancellation->m_changed.wait_for(lock, std::chrono::seconds(5), [&] {
+			return cancellation->m_state == McpCancellation::State::Complete ||
+				   cancellation->m_state == McpCancellation::State::Cancelled;
+		}))
 	{
 		if (cancellation->m_state == McpCancellation::State::Cancelled)
 			return false;
@@ -392,7 +429,8 @@ bool McpApplication::Wait(const std::shared_ptr<Request>& request)
 		cancellation->m_state = McpCancellation::State::Cancelled;
 		throw std::runtime_error("The application did not admit the request before its deadline");
 	}
-	throw std::runtime_error("The request timed out after admission; its outcome is unknown. Inspect applications before retrying.");
+	throw std::runtime_error(
+		"The request timed out after admission; its outcome is unknown. Inspect applications before retrying.");
 }
 
 void McpApplication::Poll(ApplicationCatalog& tabs)
@@ -419,7 +457,7 @@ void McpApplication::Poll(ApplicationCatalog& tabs)
 			{
 				auto applications = tabs.Applications();
 				const auto found = std::find_if(applications.begin(), applications.end(),
-					[&](const auto& app) { return app.id == request->application; });
+												[&](const auto& app) { return app.id == request->application; });
 				if (found == applications.end())
 					throw std::runtime_error("Application is no longer available");
 				request->snapshot = std::move(*found);
@@ -452,8 +490,14 @@ void McpApplication::Close() noexcept
 		std::lock_guard lock(request->cancellation->m_mutex);
 		if (request->cancellation->m_state == McpCancellation::State::Cancelled)
 			continue;
-		try { throw std::runtime_error("OpenXR Simulator is shutting down"); }
-		catch (...) { request->error = std::current_exception(); }
+		try
+		{
+			throw std::runtime_error("OpenXR Simulator is shutting down");
+		}
+		catch (...)
+		{
+			request->error = std::current_exception();
+		}
 		request->cancellation->m_state = McpCancellation::State::Complete;
 		request->cancellation->m_changed.notify_one();
 	}

@@ -84,8 +84,7 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 	const float scale = m_settings.scale;
 	const auto& io = ImGui::GetIO();
 	ImGui::PushID(id);
-	const auto region = [&](const char* part, ShellRect rect)
-	{
+	const auto region = [&](const char* part, ShellRect rect) {
 		ImGui::SetCursorPos({rect.x, rect.y});
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
 		ImGui::BeginChild((std::string(id) + " " + part).c_str(), {rect.width, rect.height}, 0,
@@ -235,8 +234,7 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	runtime.ConfigureSnapshots(m_settings.snapshotBudgetMiB);
 	runtime.ConfigurePreviews(m_settings.previewBudgetMiB, m_settings.previewRamMiB);
 	const auto window = ImGui::GetWindowPos();
-	const auto contains = [&](const ShellRect& rect, ImVec2 point)
-	{
+	const auto contains = [&](const ShellRect& rect, ImVec2 point) {
 		return point.x >= window.x + rect.x && point.x < window.x + rect.x + rect.width &&
 			   point.y >= window.y + rect.y && point.y < window.y + rect.y + rect.height;
 	};

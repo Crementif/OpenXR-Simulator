@@ -29,15 +29,15 @@ struct ColorSourceCase
 	DXGI_FORMAT resource;
 	DXGI_FORMAT view;
 };
-constexpr ColorSourceCase ColorSources[]{
-	{1, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM},
-	{4, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM},
-	{1, DXGI_FORMAT_R32G32B32A32_TYPELESS, DXGI_FORMAT_R32G32B32A32_FLOAT},
-	{1, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT},
-	{1, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT},
-	{4, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT},
-	{1, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM},
-	{4, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM}};
+
+constexpr ColorSourceCase ColorSources[]{{1, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM},
+										 {4, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM},
+										 {1, DXGI_FORMAT_R32G32B32A32_TYPELESS, DXGI_FORMAT_R32G32B32A32_FLOAT},
+										 {1, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT},
+										 {1, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT},
+										 {4, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT},
+										 {1, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM},
+										 {4, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM}};
 
 void Check(HRESULT result)
 {
@@ -72,7 +72,7 @@ static ComPtr<IDXGIAdapter1> TestAdapter()
 }
 
 #ifdef SIMXR_TEST_D3D11_VULKAN
-template <typename Frame>
+template<typename Frame>
 void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, VkExtent2D expected = {8, 8},
 				  std::uint32_t layers = 2, int grayscale = -1)
 {
@@ -84,8 +84,7 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 	CheckVulkan(vkEnumeratePhysicalDevices(instance.handle, &count, physical.data()), "Enumerate import devices");
 	if (physical.empty())
 		throw std::runtime_error("No Vulkan device for D3D11 import");
-	const auto adapterLuid = [&]()
-	{
+	const auto adapterLuid = [&]() {
 		if constexpr (std::is_same_v<Frame, D3D11Frame>)
 		{
 			ComPtr<ID3D11Device> device;
@@ -105,15 +104,12 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 			return device->GetAdapterLuid();
 		}
 	}();
-	const auto matching = std::find_if(
-		physical.begin(), physical.end(),
-		[&](VkPhysicalDevice candidate)
-		{
-			VkPhysicalDeviceIDProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
-			VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &identity};
-			vkGetPhysicalDeviceProperties2(candidate, &properties);
-			return identity.deviceLUIDValid && !std::memcmp(identity.deviceLUID, &adapterLuid, VK_LUID_SIZE);
-		});
+	const auto matching = std::find_if(physical.begin(), physical.end(), [&](VkPhysicalDevice candidate) {
+		VkPhysicalDeviceIDProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+		VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &identity};
+		vkGetPhysicalDeviceProperties2(candidate, &properties);
+		return identity.deviceLUIDValid && !std::memcmp(identity.deviceLUID, &adapterLuid, VK_LUID_SIZE);
+	});
 	if (matching == physical.end())
 		throw std::runtime_error("No Vulkan device matches the Direct3D source adapter");
 	const auto importDevice = *matching;
@@ -142,9 +138,11 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 	create.pQueueCreateInfos = &queue;
 	create.enabledExtensionCount = extensions.size();
 	create.ppEnabledExtensionNames = extensions.data();
+
 	struct Native
 	{
 		VkDevice device = VK_NULL_HANDLE;
+
 		~Native()
 		{
 			if (device)
@@ -154,18 +152,18 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 			}
 		}
 	} native;
+
 	CheckVulkan(vkCreateDevice(importDevice, &create, nullptr, &native.device), "Create import device");
 	VulkanBackend backend({instance.handle, importDevice, native.device, family, 0}, 8, extensions, VK_API_VERSION_1_1);
-	auto imported = [&]()
-	{
+	auto imported = [&]() {
 		if constexpr (std::is_same_v<Frame, D3D11Frame>)
 			return ImportD3D11Frame(backend.Device(), source);
 		else
 			return ImportD3D12Frame(backend.Device(), source);
 	}();
 	std::shared_ptr<VulkanFrame> copied;
-	if (XR_FAILED(backend.PrepareNativeCopy(imported->Image(), imported->Ready(), D3D11Frame::ReadyValue,
-		imported, source->Views(), copied)))
+	if (XR_FAILED(backend.PrepareNativeCopy(imported->Image(), imported->Ready(), D3D11Frame::ReadyValue, imported,
+											source->Views(), copied)))
 		throw std::runtime_error("Prepare D3D11 compositor copy failed");
 	VulkanInspection inspection(copied->ExternalImage()->Descriptor().identity);
 	auto transfer = inspection.Prepare(copied);
@@ -183,8 +181,7 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 	{
 		if (copied->Image().mipLevels != 4 || copied->Image().layers != 1)
 			throw std::runtime_error("Retained D3D11 copy lost mip chain or array selection");
-		const auto format = [&]()
-		{
+		const auto format = [&]() {
 			if constexpr (std::is_same_v<Frame, D3D11Frame>)
 				return source->Format();
 			else
@@ -213,7 +210,8 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 		downsampled = VulkanInspectionFrame::Compose(plan, sources);
 		if (!downsampled)
 			throw std::runtime_error("Retained D3D11 mip composition unavailable");
-		while (downsampled->PollCompletion() == CompletionStatus::Pending && std::chrono::steady_clock::now() < deadline)
+		while (downsampled->PollCompletion() == CompletionStatus::Pending &&
+			   std::chrono::steady_clock::now() < deadline)
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		if (downsampled->PollCompletion() != CompletionStatus::Complete)
 			throw std::runtime_error("Retained D3D11 mip composition did not complete");
@@ -228,8 +226,8 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 		throw std::runtime_error("D3D11 Vulkan export shape mismatch");
 	for (std::size_t eye = 0; eye < layers; ++eye)
 	{
-		const auto offset = (eye * expected.width * expected.height +
-			expected.height / 2 * expected.width + expected.width / 2) * 4;
+		const auto offset =
+			(eye * expected.width * expected.height + expected.height / 2 * expected.width + expected.width / 2) * 4;
 		if (grayscale >= 0)
 		{
 			for (std::size_t channel = 0; channel < 3; ++channel)
@@ -237,11 +235,11 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 					throw std::runtime_error("Native depth normalization pixels mismatch");
 			continue;
 		}
-		const auto color = DecodeColorPixel(pixels->format,
+		const auto color = DecodeColorPixel(
+			pixels->format,
 			std::as_bytes(std::span(pixels->rgba)).subspan(offset / 4 * ColorPixelBytes(pixels->format)));
 		if (color[0] != (!mipChain && layers == 2 && eye == 0 ? 1.0f : 0.0f) ||
-			color[1] != (!mipChain && (layers == 1 || eye == 1) ? 1.0f : 0.0f) ||
-			color[2] != (mipChain ? 1.0f : 0.0f))
+			color[1] != (!mipChain && (layers == 1 || eye == 1) ? 1.0f : 0.0f) || color[2] != (mipChain ? 1.0f : 0.0f))
 			throw std::runtime_error("D3D11 Vulkan exported pixels mismatch");
 	}
 	CheckVulkan(backend.Drain(5000000000ULL), "Drain D3D11 import queue");
@@ -260,8 +258,7 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, V
 
 void VerifySessionClose(ID3D11Device* device, ID3D11Texture2D* texture)
 {
-	const auto require = [](bool success, const char* message)
-	{
+	const auto require = [](bool success, const char* message) {
 		if (!success)
 			throw std::runtime_error(message);
 	};
@@ -299,28 +296,22 @@ void VerifySessionClose(ID3D11Device* device, ID3D11Texture2D* texture)
 	auto reached = entered.get_future();
 	auto resumed = resume.get_future().share();
 	bool gated = false;
-	auto submission = std::async(std::launch::async,
-								 [&]
-								 {
-									 return graphics.EndFrame(
-										 end,
-										 [&](XrSwapchain handle) -> std::optional<SwapchainDescription>
-										 {
-											 return handle == swapchain
-														? std::optional{SwapchainDescription{8, 8, 2, true}}
-														: std::nullopt;
-										 },
-										 [&](XrSwapchain)
-										 {
-											 if (!gated)
-											 {
-												 gated = true;
-												 entered.set_value();
-												 resumed.wait();
-											 }
-											 return D3D11CompositionSource{texture, DXGI_FORMAT_R8G8B8A8_UNORM};
-										 });
-								 });
+	auto submission = std::async(std::launch::async, [&] {
+		return graphics.EndFrame(
+			end,
+			[&](XrSwapchain handle) -> std::optional<SwapchainDescription> {
+				return handle == swapchain ? std::optional{SwapchainDescription{8, 8, 2, true}} : std::nullopt;
+			},
+			[&](XrSwapchain) {
+				if (!gated)
+				{
+					gated = true;
+					entered.set_value();
+					resumed.wait();
+				}
+				return D3D11CompositionSource{texture, DXGI_FORMAT_R8G8B8A8_UNORM};
+			});
+	});
 	const bool preparing = reached.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
 	if (!preparing)
 	{
@@ -331,12 +322,10 @@ void VerifySessionClose(ID3D11Device* device, ID3D11Texture2D* texture)
 	session->Close();
 	std::promise<void> closing;
 	auto started = closing.get_future();
-	auto close = std::async(std::launch::async,
-							[&]
-							{
-								closing.set_value();
-								return graphics.Close();
-							});
+	auto close = std::async(std::launch::async, [&] {
+		closing.set_value();
+		return graphics.Close();
+	});
 	started.wait();
 	const bool held = close.wait_for(std::chrono::milliseconds(50)) == std::future_status::timeout;
 	resume.set_value();
@@ -350,8 +339,7 @@ void VerifySessionClose(ID3D11Device* device, ID3D11Texture2D* texture)
 
 void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_FORMAT depthFormat)
 {
-	const auto require = [](bool success, const char* message)
-	{
+	const auto require = [](bool success, const char* message) {
 		if (!success)
 			throw std::runtime_error(message);
 	};
@@ -363,12 +351,15 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 	timing.mode = ExecutionMode::Deterministic;
 	XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};
 	begin.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-	require(session->Ready(timing.epoch) == XR_SUCCESS && session->Begin(begin, timing, depthFormat == DXGI_FORMAT_UNKNOWN ?
-		PresentationPolicy::Rotational : PresentationPolicy::Repeat) == XR_SUCCESS,
-		"Start filtered capture session");
+	require(session->Ready(timing.epoch) == XR_SUCCESS &&
+				session->Begin(begin, timing,
+							   depthFormat == DXGI_FORMAT_UNKNOWN ? PresentationPolicy::Rotational
+																  : PresentationPolicy::Repeat) == XR_SUCCESS,
+			"Start filtered capture session");
 	XrSpace space;
-	require(session->Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {}}, space) == XR_SUCCESS,
-		"Create capture space");
+	require(session->Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {}}, space) ==
+				XR_SUCCESS,
+			"Create capture space");
 	session->Scheduler().Pause();
 	session->Display().Pause();
 	const auto swapchain = reinterpret_cast<XrSwapchain>(3);
@@ -388,8 +379,8 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 	{
 		D3D11_DEPTH_STENCIL_VIEW_DESC view{};
 		view.Format = depthFormat;
-		view.ViewDimension = depthDescription.SampleDesc.Count > 1
-			? D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY : D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+		view.ViewDimension = depthDescription.SampleDesc.Count > 1 ? D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY
+																   : D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
 		if (depthDescription.SampleDesc.Count > 1)
 		{
 			view.Texture2DMSArray.FirstArraySlice = eye;
@@ -406,16 +397,18 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 	}
 	std::vector<std::shared_ptr<const VulkanInspectionFrame>> retained;
 	FrameKey lastFrame;
-	const auto targets = depthOnly
-		? std::vector<CaptureTarget>{{CaptureKind::LayerDepth, 0, 1}, {CaptureKind::LayerDepthLinear, 0, 1}}
-		: std::vector<CaptureTarget>{{CaptureKind::ProjectionLayers}, {CaptureKind::QuadLayers}, {CaptureKind::LayerView, 1, 0}};
+	const auto targets =
+		depthOnly ? std::vector<CaptureTarget>{{CaptureKind::LayerDepth, 0, 1}, {CaptureKind::LayerDepthLinear, 0, 1}}
+				  : std::vector<CaptureTarget>{
+						{CaptureKind::ProjectionLayers}, {CaptureKind::QuadLayers}, {CaptureKind::LayerView, 1, 0}};
 	for (const auto target : targets)
 	{
 		const auto capture = session->ReserveCapture(target);
 		require(capture.result == SnapshotAdmission::Accepted && session->Scheduler().GrantPermits() == XR_SUCCESS,
-			"Reserve exact filtered capture");
+				"Reserve exact filtered capture");
 		FramePrediction prediction;
-		require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS, "Begin filtered frame");
+		require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS,
+				"Begin filtered frame");
 		ViewSettings settings;
 		settings.outerWidth = settings.outerHeight = 8;
 		session->PublishTracking(prediction.displayTime, {}, settings, prediction.id);
@@ -448,26 +441,27 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 		quad.pose = {{0, 0, 0, 1}, {0, 1.7f, -1}};
 		quad.size = {1, 1};
 		const std::array layers{reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection),
-			reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad)};
-		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, prediction.displayTime.value.count(),
-			XR_ENVIRONMENT_BLEND_MODE_OPAQUE, static_cast<std::uint32_t>(layers.size()), layers.data()};
+								reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad)};
+		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,
+								 nullptr,
+								 prediction.displayTime.value.count(),
+								 XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+								 static_cast<std::uint32_t>(layers.size()),
+								 layers.data()};
 		std::array<std::pair<XrSwapchain, std::shared_ptr<const GpuCompletion>>, 64> sourceUses;
 		std::size_t sourceUseCount = 0;
 		const auto submitted = graphics.EndFrame(
 			end,
-			[&](XrSwapchain handle) -> std::optional<SwapchainDescription>
-			{
+			[&](XrSwapchain handle) -> std::optional<SwapchainDescription> {
 				return handle == swapchain || handle == depthSwapchain
 						   ? std::optional{SwapchainDescription{8, 8, 2, true}}
 						   : std::nullopt;
 			},
-			[&](XrSwapchain handle)
-			{
+			[&](XrSwapchain handle) {
 				return handle == depthSwapchain ? D3D11CompositionSource{depthTexture.Get(), depthFormat}
 												: D3D11CompositionSource{texture, DXGI_FORMAT_R8G8B8A8_UNORM};
 			},
-			[&](XrSwapchain source, const std::shared_ptr<const GpuCompletion>& completion)
-			{
+			[&](XrSwapchain source, const std::shared_ptr<const GpuCompletion>& completion) {
 				if (sourceUseCount < sourceUses.size())
 					sourceUses[sourceUseCount] = {source, completion};
 				++sourceUseCount;
@@ -494,11 +488,13 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 			if (record && record->phase == SnapshotPhase::Ready)
 				break;
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		} while (std::chrono::steady_clock::now() < deadline);
+		}
+		while (std::chrono::steady_clock::now() < deadline);
 		require(record && record->phase == SnapshotPhase::Ready && record->target == target,
-			"Filtered D3D11 capture did not complete with its requested identity");
+				"Filtered D3D11 capture did not complete with its requested identity");
 		retained.push_back(std::dynamic_pointer_cast<const VulkanInspectionFrame>(record->output));
-		require(retained.back() != nullptr && session->Captures().Release(capture.id), "Retain and release filtered capture");
+		require(retained.back() != nullptr && session->Captures().Release(capture.id),
+				"Retain and release filtered capture");
 	}
 	if (!depthOnly)
 	{
@@ -512,9 +508,9 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 		retained.push_back(std::move(quad));
 		const auto submissions = session->Display().Retain();
 		const auto found = std::find_if(submissions.begin(), submissions.end(),
-			[&](const auto& submission) { return submission.key == lastFrame; });
+										[&](const auto& submission) { return submission.key == lastFrame; });
 		require(found != submissions.end() && found->reprojection.source && found->reprojection.status == XR_SUCCESS,
-			"D3D11 session did not retain rotational layer inputs");
+				"D3D11 session did not retain rotational layer inputs");
 		const auto source = found->reprojection.source;
 		while (source->PollCompletion() == CompletionStatus::Pending && std::chrono::steady_clock::now() < deadline)
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -533,18 +529,19 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 			if (image.reprojected)
 				break;
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		} while (std::chrono::steady_clock::now() < deadline);
+		}
+		while (std::chrono::steady_clock::now() < deadline);
 		require(image.reprojected && image.result == XR_SUCCESS && image.output != baseline.output,
-			"D3D11 display did not reproject while application rendering was stopped");
+				"D3D11 display did not reproject while application rendering was stopped");
 		auto original = std::dynamic_pointer_cast<const VulkanInspectionFrame>(baseline.output)->Export();
 		auto rotated = std::dynamic_pointer_cast<const VulkanInspectionFrame>(image.output)->Export();
 		std::shared_ptr<const VulkanImagePixels> originalPixels, rotatedPixels;
 		while ((!(originalPixels = original->Pixels()) || !(rotatedPixels = rotated->Pixels())) &&
-			std::chrono::steady_clock::now() < deadline)
+			   std::chrono::steady_clock::now() < deadline)
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		require(originalPixels && rotatedPixels && originalPixels->rgba != rotatedPixels->rgba &&
-			rotatedPixels->width == 8 && rotatedPixels->height == 8 && rotatedPixels->layers == 2,
-			"Rotational display did not change retained D3D11 pixels");
+					rotatedPixels->width == 8 && rotatedPixels->height == 8 && rotatedPixels->layers == 2,
+				"Rotational display did not change retained D3D11 pixels");
 		std::puts("PASS: D3D11 retained projection/quad layers reproject without another application frame");
 	}
 	session->Close();
@@ -559,26 +556,30 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 		if (depthOnly)
 		{
 			require(pixels && pixels->width == 3 && pixels->height == 4 && pixels->layers == 1,
-				"Depth capture lost crop dimensions or selected slice");
+					"Depth capture lost crop dimensions or selected slice");
 			const double value = capture == 0 ? 0.75 : 0.1 * 0.75 / (10 * 0.25 + 0.1 * 0.75);
-			const auto expected = static_cast<int>(std::lround(255 * (value <= 0.0031308 ? 12.92 * value
-				: 1.055 * std::pow(value, 1 / 2.4) - 0.055)));
+			const auto expected = static_cast<int>(
+				std::lround(255 * (value <= 0.0031308 ? 12.92 * value : 1.055 * std::pow(value, 1 / 2.4) - 0.055)));
 			for (std::size_t offset = 0; offset < pixels->rgba.size(); offset += 4)
 				require(std::abs(pixels->rgba[offset] - expected) <= 2 &&
-					std::abs(pixels->rgba[offset + 1] - expected) <= 2 && std::abs(pixels->rgba[offset + 2] - expected) <= 2 &&
-					pixels->rgba[offset + 3] == 255, "Depth capture differs from shared normalized/linear conversion");
+							std::abs(pixels->rgba[offset + 1] - expected) <= 2 &&
+							std::abs(pixels->rgba[offset + 2] - expected) <= 2 && pixels->rgba[offset + 3] == 255,
+						"Depth capture differs from shared normalized/linear conversion");
 			continue;
 		}
 		if (capture == 2)
 		{
 			require(pixels && pixels->width == 4 && pixels->height == 3 && pixels->layers == 1 &&
-				pixels->format == VK_FORMAT_R8G8B8A8_UNORM, "Raw capture lost crop dimensions, slice or format");
+						pixels->format == VK_FORMAT_R8G8B8A8_UNORM,
+					"Raw capture lost crop dimensions, slice or format");
 			for (std::size_t offset = 0; offset < pixels->rgba.size(); offset += 4)
-				require(pixels->rgba[offset] == 0 && pixels->rgba[offset + 1] == 255 &&
-					pixels->rgba[offset + 2] == 0 && pixels->rgba[offset + 3] == 64, "Raw capture lost selected slice pixels or alpha");
+				require(pixels->rgba[offset] == 0 && pixels->rgba[offset + 1] == 255 && pixels->rgba[offset + 2] == 0 &&
+							pixels->rgba[offset + 3] == 64,
+						"Raw capture lost selected slice pixels or alpha");
 			continue;
 		}
-		require(pixels && pixels->width == 8 && pixels->height == 8 && pixels->layers == 2, "Retained filtered dimensions");
+		require(pixels && pixels->width == 8 && pixels->height == 8 && pixels->layers == 2,
+				"Retained filtered dimensions");
 		for (std::size_t eye = 0; eye < 2; ++eye)
 			for (const std::size_t position : {0U, 36U})
 			{
@@ -586,11 +587,12 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 				const bool green = projection ? eye == 1 : position == 36;
 				const auto offset = (eye * 64 + position) * 4;
 				require(pixels->rgba[offset] == (projection && eye == 0 ? 255 : 0) &&
-					pixels->rgba[offset + 1] == (green ? 255 : 0) && pixels->rgba[offset + 2] == 0,
-					"Filtered D3D11 pixels contain another layer or lost retained content");
+							pixels->rgba[offset + 1] == (green ? 255 : 0) && pixels->rgba[offset + 2] == 0,
+						"Filtered D3D11 pixels contain another layer or lost retained content");
 			}
 	}
-	std::puts("PASS: D3D11 exact projection/quad/raw/depth captures retain isolated pixels and crop metadata after session shutdown");
+	std::puts("PASS: D3D11 exact projection/quad/raw/depth captures retain isolated pixels and crop metadata after "
+			  "session shutdown");
 }
 
 #endif
@@ -620,11 +622,12 @@ void VerifyD3D12()
 		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 		ComPtr<ID3D12Resource> source;
 		Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-			D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&source)));
+											  D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&source)));
 		ComPtr<ID3D12CommandAllocator> allocator;
 		ComPtr<ID3D12GraphicsCommandList> commands;
 		Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
-		Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&commands)));
+		Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+										IID_PPV_ARGS(&commands)));
 		D3D12_DESCRIPTOR_HEAP_DESC descriptors{};
 		descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 		descriptors.NumDescriptors = 2;
@@ -635,7 +638,8 @@ void VerifyD3D12()
 		{
 			D3D12_RENDER_TARGET_VIEW_DESC view{};
 			view.Format = viewFormat;
-			view.ViewDimension = samples == 1 ? D3D12_RTV_DIMENSION_TEXTURE2DARRAY : D3D12_RTV_DIMENSION_TEXTURE2DMSARRAY;
+			view.ViewDimension =
+				samples == 1 ? D3D12_RTV_DIMENSION_TEXTURE2DARRAY : D3D12_RTV_DIMENSION_TEXTURE2DMSARRAY;
 			if (samples == 1)
 				view.Texture2DArray = {0, eye, 1, 0};
 			else
@@ -656,7 +660,8 @@ void VerifyD3D12()
 		Check(commands->Close());
 		ID3D12CommandList* lists[]{commands.Get()};
 		queue->ExecuteCommandLists(1, lists);
-		const std::array sources{D3D12CompositionSource{source.Get(), viewFormat}, D3D12CompositionSource{source.Get(), viewFormat}};
+		const std::array sources{D3D12CompositionSource{source.Get(), viewFormat},
+								 D3D12CompositionSource{source.Get(), viewFormat}};
 		std::shared_ptr<D3D12Frame> frame;
 		Check(backend->Prepare(plan, sources, frame));
 		Check(backend->Submit(frame));
@@ -674,8 +679,8 @@ void VerifyD3D12()
 		VerifyVulkan(capture, false, {4, 3}, 1);
 		retained = std::move(capture);
 	}
-	for (const auto format : {DXGI_FORMAT_D16_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT,
-		DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_D32_FLOAT_S8X24_UINT})
+	for (const auto format : {DXGI_FORMAT_D16_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_D32_FLOAT,
+							  DXGI_FORMAT_D32_FLOAT_S8X24_UINT})
 	{
 		for (UINT samples : {1u, 4u})
 		{
@@ -691,11 +696,12 @@ void VerifyD3D12()
 			heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 			ComPtr<ID3D12Resource> source;
 			Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-				D3D12_RESOURCE_STATE_DEPTH_WRITE, nullptr, IID_PPV_ARGS(&source)));
+												  D3D12_RESOURCE_STATE_DEPTH_WRITE, nullptr, IID_PPV_ARGS(&source)));
 			ComPtr<ID3D12CommandAllocator> allocator;
 			ComPtr<ID3D12GraphicsCommandList> commands;
 			Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
-			Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&commands)));
+			Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+											IID_PPV_ARGS(&commands)));
 			D3D12_DESCRIPTOR_HEAP_DESC descriptors{};
 			descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 			descriptors.NumDescriptors = 1;
@@ -703,7 +709,8 @@ void VerifyD3D12()
 			Check(device->CreateDescriptorHeap(&descriptors, IID_PPV_ARGS(&targets)));
 			D3D12_DEPTH_STENCIL_VIEW_DESC view{};
 			view.Format = format;
-			view.ViewDimension = samples == 1 ? D3D12_DSV_DIMENSION_TEXTURE2DARRAY : D3D12_DSV_DIMENSION_TEXTURE2DMSARRAY;
+			view.ViewDimension =
+				samples == 1 ? D3D12_DSV_DIMENSION_TEXTURE2DARRAY : D3D12_DSV_DIMENSION_TEXTURE2DMSARRAY;
 			if (samples == 1)
 				view.Texture2DArray = {0, 1, 1};
 			else
@@ -735,8 +742,8 @@ void VerifyD3D12()
 		}
 	}
 	std::vector<std::shared_ptr<D3D12Frame>> retainedMips;
-	for (const auto format : {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM,
-		DXGI_FORMAT_R32G32B32A32_FLOAT})
+	for (const auto format :
+		 {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R32G32B32A32_FLOAT})
 	{
 		D3D12_RESOURCE_DESC description{};
 		description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -750,11 +757,12 @@ void VerifyD3D12()
 		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 		ComPtr<ID3D12Resource> texture;
 		Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-			D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&texture)));
+											  D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&texture)));
 		ComPtr<ID3D12CommandAllocator> allocator;
 		ComPtr<ID3D12GraphicsCommandList> commands;
 		Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
-		Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&commands)));
+		Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+										IID_PPV_ARGS(&commands)));
 		D3D12_DESCRIPTOR_HEAP_DESC descriptors{};
 		descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 		descriptors.NumDescriptors = 4;
@@ -808,8 +816,8 @@ int main(int argc, char**)
 #endif
 		ComPtr<ID3D11Device> device;
 		ComPtr<ID3D11DeviceContext> context;
-		Check(D3D11CreateDevice(TestAdapter().Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0,
-			D3D11_SDK_VERSION, &device, nullptr, &context));
+		Check(D3D11CreateDevice(TestAdapter().Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION,
+								&device, nullptr, &context));
 		D3D11Backend backend(device.Get());
 		for (const auto [samples, resourceFormat, viewFormat] : ColorSources)
 		{
@@ -826,7 +834,8 @@ int main(int argc, char**)
 			{
 				D3D11_RENDER_TARGET_VIEW_DESC view{};
 				view.Format = viewFormat;
-				view.ViewDimension = samples > 1 ? D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY : D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+				view.ViewDimension =
+					samples > 1 ? D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY : D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
 				if (samples > 1)
 				{
 					view.Texture2DMSArray.FirstArraySlice = eye;
@@ -856,7 +865,7 @@ int main(int argc, char**)
 			draw.source.arraySlice = 1;
 			plan.draws.push_back(draw);
 			const std::array sources{D3D11CompositionSource{source.Get(), viewFormat},
-				D3D11CompositionSource{source.Get(), viewFormat}};
+									 D3D11CompositionSource{source.Get(), viewFormat}};
 			context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
 			std::shared_ptr<D3D11Frame> frame;
 			Check(backend.Prepare(plan, sources, frame));
@@ -872,7 +881,7 @@ int main(int argc, char**)
 			ComPtr<ID3D11Device> consumer;
 			ComPtr<ID3D11DeviceContext> consumerContext;
 			Check(D3D11CreateDevice(TestAdapter().Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0,
-				D3D11_SDK_VERSION, &consumer, nullptr, &consumerContext));
+									D3D11_SDK_VERSION, &consumer, nullptr, &consumerContext));
 			ComPtr<ID3D11Device5> consumerDevice;
 			ComPtr<ID3D11DeviceContext4> consumerQueue;
 			Check(consumer.As(&consumerDevice));
@@ -889,9 +898,11 @@ int main(int argc, char**)
 				D3D11_MAPPED_SUBRESOURCE mapped{};
 				Check(consumerContext->Map(staging.Get(), eye, D3D11_MAP_READ, 0, &mapped));
 				const auto* pixel = static_cast<const std::uint8_t*>(mapped.pData) + 4 * mapped.RowPitch + 4 * 4;
-				const bool valid = pixel[0] == (eye == 0 ? 255 : 0) && pixel[1] == (eye == 1 ? 255 : 0) && pixel[2] == 0 && pixel[3] == 255;
+				const bool valid = pixel[0] == (eye == 0 ? 255 : 0) && pixel[1] == (eye == 1 ? 255 : 0) &&
+								   pixel[2] == 0 && pixel[3] == 255;
 				if (!valid)
-					std::fprintf(stderr, "samples=%u eye=%u pixel=%u,%u,%u,%u\n", samples, eye, pixel[0], pixel[1], pixel[2], pixel[3]);
+					std::fprintf(stderr, "samples=%u eye=%u pixel=%u,%u,%u,%u\n", samples, eye, pixel[0], pixel[1],
+								 pixel[2], pixel[3]);
 				consumerContext->Unmap(staging.Get(), eye);
 				if (!valid)
 					throw std::runtime_error("Shared compositor stereo pixels differ");
@@ -909,14 +920,14 @@ int main(int argc, char**)
 				continue;
 			VerifySessionClose(device.Get(), source.Get());
 			VerifySessionCaptures(device.Get(), source.Get(), DXGI_FORMAT_UNKNOWN);
-			for (const auto depthFormat : {DXGI_FORMAT_D16_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT,
-				DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_D32_FLOAT_S8X24_UINT})
+			for (const auto depthFormat : {DXGI_FORMAT_D16_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_D32_FLOAT,
+										   DXGI_FORMAT_D32_FLOAT_S8X24_UINT})
 				VerifySessionCaptures(device.Get(), source.Get(), depthFormat);
 #endif
 		}
 #ifdef SIMXR_TEST_D3D11_VULKAN
 		for (const auto format : {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
-			DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R32G32B32A32_FLOAT})
+								  DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R32G32B32A32_FLOAT})
 		{
 			D3D11_TEXTURE2D_DESC description{};
 			description.Width = description.Height = 8;
@@ -948,7 +959,8 @@ int main(int argc, char**)
 		}
 		std::puts("PASS: retained D3D11 RGBA8/float16/float32/RGB10 mip chains reach independent Vulkan composition");
 #endif
-		std::puts("PASS: canonical D3D11 shader, array slices, MSAA, shared texture/fence and application state preservation");
+		std::puts("PASS: canonical D3D11 shader, array slices, MSAA, shared texture/fence and application state "
+				  "preservation");
 		return 0;
 	}
 	catch (const std::exception& error)

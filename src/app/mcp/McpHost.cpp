@@ -20,11 +20,12 @@ struct McpHost::Running
 };
 
 McpHost::McpHost(bool preference, std::optional<std::uint16_t> initialPort, std::string initialToken,
-				 std::intptr_t bootstrapDescriptor, std::unique_ptr<McpInstanceRegistration> startupRegistration, bool windowless)
+				 std::intptr_t bootstrapDescriptor, std::unique_ptr<McpInstanceRegistration> startupRegistration,
+				 bool windowless)
 	: m_startupRegistration(std::move(startupRegistration)), m_initialPort(initialPort),
-	  m_initialToken(std::move(initialToken)), m_bootstrapDescriptor(bootstrapDescriptor),
-	  m_preference(preference), m_desired(preference || initialPort.has_value()),
-	  m_sessionOverride(initialPort.has_value() && !preference), m_initialPending(initialPort.has_value()), m_windowless(windowless)
+	  m_initialToken(std::move(initialToken)), m_bootstrapDescriptor(bootstrapDescriptor), m_preference(preference),
+	  m_desired(preference || initialPort.has_value()), m_sessionOverride(initialPort.has_value() && !preference),
+	  m_initialPending(initialPort.has_value()), m_windowless(windowless)
 {
 	if (!m_desired)
 		m_startupRegistration.reset();
@@ -95,7 +96,8 @@ void McpHost::Start()
 	if (running->registration)
 		running->registration->Publish({running->server->Port(), running->token});
 	running->httpConfiguration = Json({{"url", "http://127.0.0.1:" + std::to_string(running->server->Port()) + "/mcp"},
-										  {"headers", {{"Authorization", "Bearer " + running->token}}}}).dump(2);
+									   {"headers", {{"Authorization", "Bearer " + running->token}}}})
+									 .dump(2);
 	std::printf("MCP listening on 127.0.0.1:%u\n", running->server->Port());
 	std::fflush(stdout);
 	m_running = std::move(running);
@@ -104,8 +106,7 @@ void McpHost::Start()
 void McpHost::Retire()
 {
 	m_stopped.store(false);
-	m_stopper = std::thread([this, running = std::move(m_running)]() mutable
-	{
+	m_stopper = std::thread([this, running = std::move(m_running)]() mutable {
 		running.reset();
 		m_stopped.store(true);
 	});
@@ -119,8 +120,14 @@ void McpHost::Update()
 		Retire();
 	if (m_desired && !m_running && !m_stopper.joinable() && m_error.empty())
 	{
-		try { Start(); }
-		catch (const std::exception& error) { m_error = error.what(); }
+		try
+		{
+			Start();
+		}
+		catch (const std::exception& error)
+		{
+			m_error = error.what();
+		}
 	}
 }
 

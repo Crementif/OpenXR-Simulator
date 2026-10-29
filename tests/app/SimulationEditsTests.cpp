@@ -25,11 +25,14 @@ wire::Message Observation(const CommandScheduler& scheduler, std::optional<std::
 		wire::tag::Pipeline, wire::EncodeFields(std::array{wire::Field::U64(wire::tag::NextAdmission, 900)})));
 	return result;
 }
+
 std::shared_ptr<const AppliedCommandSnapshot> Apply(CommandScheduler& scheduler, std::uint64_t frame)
 {
 	return scheduler.Apply(FrameId{frame}, SimulationTime{Duration{100}}, RuntimeTime{Duration{200}}, {});
 }
-template <typename Action> void Rejected(Action action)
+
+template<typename Action>
+void Rejected(Action action)
 {
 	bool rejected = false;
 	try
@@ -42,6 +45,7 @@ template <typename Action> void Rejected(Action action)
 	}
 	Require(rejected, "Invalid or unavailable simulation state scheduled a guessed frame");
 }
+
 void ObservedFrameScheduling()
 {
 	CommandScheduler scheduler;
@@ -70,6 +74,7 @@ void ObservedFrameScheduling()
 	Require(transaction.target.frame == FrameId{12} && transaction.latePolicy == CommandLatePolicy::Reject,
 			"Explicit edit target and late policy were overwritten by observation");
 }
+
 void DirectPiloting()
 {
 	CommandScheduler scheduler;
@@ -93,11 +98,7 @@ void DirectPiloting()
 	Require(observed.pose.position.x == 2 && observed.pose.position.z == -4, "Piloting jumped to a default pose");
 	Require(app::ObservedDevicePose(state, ControlChannel::LeftPose).pose.position.x == 2,
 			"Hand piloting read the wrong pose");
-	Rejected(
-		[&]
-		{
-			app::ObservedDevicePose(state, ControlChannel::RightPose);
-		});
+	Rejected([&] { app::ObservedDevicePose(state, ControlChannel::RightPose); });
 	const auto moved = app::PilotPose(observed, {0, 0, -1}, 0, 0, 0.02f);
 	Require(std::abs(moved.pose.position.x - 2.02f) < 0.0001f && std::abs(moved.pose.position.z + 4) < 0.0001f,
 			"Forward piloting ignored the device orientation");
@@ -109,6 +110,7 @@ void DirectPiloting()
 	Require(NormalizedPose(rotated.pose).has_value() && Rotate(rotated.pose.orientation, {0, 0, -1}).y < 1,
 			"Pointer motion flipped or invalidated the device pose");
 }
+
 void PreserveObservedConfiguration()
 {
 	CommandConfiguration initial;
@@ -206,11 +208,7 @@ void PreserveObservedConfiguration()
 					enabled,
 				"Scenario state did not follow activation/recovery");
 		if (enabled)
-			Rejected(
-				[&]
-				{
-					app::ObservedDevicePose(after, ControlChannel::Head);
-				});
+			Rejected([&] { app::ObservedDevicePose(after, ControlChannel::Head); });
 		else
 			Require(app::ObservedDevicePose(after, ControlChannel::Head).flags == TrackedPoseFlags,
 					"Recovery did not restore tracking");
@@ -225,6 +223,7 @@ void PreserveObservedConfiguration()
 	Require(!cleared.values.tracking.eyeViews && !cleared.values.tracking.controllers[0].aim,
 			"Removing physical view and aim observations cannot retain stale companion state");
 }
+
 void SourceKindRange()
 {
 	for (const auto kind : {std::uint64_t{4}, std::uint64_t{1} << 32, std::numeric_limits<std::uint64_t>::max()})
@@ -236,11 +235,7 @@ void SourceKindRange()
 				{{"source", wire::InspectionValue::Object({{"kind", wire::InspectionValue::Unsigned(kind)},
 														   {"id", wire::InspectionValue::Unsigned(1)}})}})
 				.Encode()));
-		Rejected(
-			[&]
-			{
-				app::SimulationEditSource(receipt);
-			});
+		Rejected([&] { app::SimulationEditSource(receipt); });
 	}
 }
 
@@ -253,76 +248,54 @@ void FirstPublicationAndStateFailures()
 	auto packet = app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler));
 	Require(wire::DecodeSimulationTransaction(packet.message, 1).target.frame == FrameId{1},
 			"A fresh scheduler must accept the first command publication");
-	Rejected(
-		[&]
-		{
-			app::EncodeSimulationEdit(edit, 1, 1, 1, {});
-		});
+	Rejected([&] { app::EncodeSimulationEdit(edit, 1, 1, 1, {}); });
 	constexpr auto largeFrame = (std::uint64_t{1} << 53) + 7;
 	Apply(scheduler, largeFrame);
 	packet = app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler));
 	Require(wire::DecodeSimulationTransaction(packet.message, 1).target.frame == FrameId{largeFrame + 1},
 			"Automatic target lost integer precision beyond the floating-point exact range");
 	Apply(scheduler, std::numeric_limits<std::uint64_t>::max());
-	Rejected(
-		[&]
-		{
-			app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler));
-		});
+	Rejected([&] { app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler)); });
 	scheduler.Close();
-	Rejected(
-		[&]
-		{
-			app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler));
-		});
+	Rejected([&] { app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler)); });
 	wire::Message malformed;
 	malformed.fields.push_back(wire::Field::Bytes(wire::tag::Document, std::array{std::byte{0xff}}));
-	Rejected(
-		[&]
-		{
-			app::EncodeSimulationEdit(edit, 1, 1, 1, malformed);
-		});
+	Rejected([&] { app::EncodeSimulationEdit(edit, 1, 1, 1, malformed); });
 	wire::Message wrongType;
 	wrongType.fields.push_back(wire::Field::Bytes(
 		wire::tag::Document, wire::InspectionValue::Object({{"closed", wire::InspectionValue::Boolean(false)},
 															{"frame_id", wire::InspectionValue::Signed(5)}})
 								 .Encode()));
-	Rejected(
-		[&]
-		{
-			app::EncodeSimulationEdit(edit, 1, 1, 1, wrongType);
-		});
+	Rejected([&] { app::EncodeSimulationEdit(edit, 1, 1, 1, wrongType); });
 
 	packet = app::EncodeSimulationEdit(app::ReleaseManualInputs{}, 21, 4, 0, {});
 	Require(packet.message.opcode == static_cast<std::uint16_t>(wire::OpCode::ReleaseControl) &&
 				!packet.message.Find(wire::tag::ApplyFrame) && !packet.message.Find(wire::tag::TransactionId),
 			"Immediate source retirement incorrectly depends on observed frames");
-	Rejected(
-		[&]
-		{
-			app::EncodeSimulationEdit(app::ReleaseManualInputs{}, 0, 4, 0, {});
-		});
+	Rejected([&] { app::EncodeSimulationEdit(app::ReleaseManualInputs{}, 0, 4, 0, {}); });
 }
+
 void GameExtensionObservation()
 {
 	CommandScheduler scheduler;
 	scheduler.Start();
 	Apply(scheduler, 1);
 	const auto legacy = app::ReadObservedSetup(Observation(scheduler));
-	Require(!legacy.appTrackersKnown && !legacy.appBodyExtensions,
-			"Absent extension reports must remain unknown");
+	Require(!legacy.appTrackersKnown && !legacy.appBodyExtensions, "Absent extension reports must remain unknown");
 	for (unsigned mask = 0; mask < 8; ++mask)
 	{
 		const std::array enabled{(mask & 1) != 0, (mask & 2) != 0, (mask & 4) != 0};
 		wire::Message message;
-		message.fields.push_back(wire::Field::Bytes(wire::tag::Document,
+		message.fields.push_back(wire::Field::Bytes(
+			wire::tag::Document,
 			wire::SimulationState(scheduler.Snapshot(), false, mask != 0, {}, {}, enabled).Encode()));
 		const auto observed = app::ReadObservedSetup(message);
 		Require(observed.appTrackersKnown && observed.appTrackers == (mask != 0) &&
-				observed.appBodyExtensions == enabled,
+					observed.appBodyExtensions == enabled,
 				"Game extension flags changed across inspection encoding and decoding");
 	}
 }
+
 void ExpandedObservedTrackers()
 {
 	for (const auto count : {0u, 64u})
@@ -342,6 +315,7 @@ void ExpandedObservedTrackers()
 	}
 }
 } // namespace
+
 int main()
 {
 	try

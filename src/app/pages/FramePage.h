@@ -11,29 +11,34 @@ namespace simxr::app
 {
 class DocumentTree;
 class RuntimeSession;
+
 class FramePage
 {
-  public:
+public:
 	FramePage(RuntimeSession& session, DocumentTree& documents);
 	void Prepare(const Selection& selection, const RuntimeView& view);
+
 	bool Active() const
 	{
 		return m_active;
 	}
+
 	bool Expanded() const
 	{
 		return m_rigView.expanded;
 	}
+
 	void SetExpanded(bool expanded)
 	{
 		m_rigView.expanded = expanded;
 	}
+
 	void DrawExpanded(ImVec2 size);
 	ShellRect RigViewRect() const;
 	std::array<ShellRect, MaxTrackerDevices + 3> RigDevicePoints() const;
 	void Draw(ShellState& shell, const RuntimeView& view);
 
-  private:
+private:
 	void DrawRig(ImVec2 size);
 	RuntimeSession& m_session;
 	DocumentTree& m_documents;

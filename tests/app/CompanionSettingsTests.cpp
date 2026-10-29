@@ -26,9 +26,11 @@ namespace
 {
 using namespace simxr::app;
 using namespace std::chrono_literals;
+
 struct Directory
 {
 	std::filesystem::path path;
+
 	Directory()
 	{
 #ifdef __linux__
@@ -41,13 +43,16 @@ struct Directory
 		std::filesystem::create_directories(path);
 #endif
 	}
+
 	~Directory()
 	{
 		std::error_code ignored;
 		std::filesystem::remove_all(path, ignored);
 	}
 };
-template <class Work> void Reject(Work&& work)
+
+template<class Work>
+void Reject(Work&& work)
 {
 	bool rejected = false;
 	try
@@ -60,6 +65,7 @@ template <class Work> void Reject(Work&& work)
 	}
 	Require(rejected, "Malformed settings must reject");
 }
+
 void Profiles()
 {
 	Require(simxr::HeadsetProfiles().size() == 10 && !simxr::FindHeadsetProfile("unknown"),
@@ -77,6 +83,7 @@ void Profiles()
 				std::abs(simxr::ProfileViews(*generic).outerFov[0].angleLeft + 0.7853982f) < 0.00001f,
 			"Generic preserves legacy zero-angle sentinel and native symmetric fallback");
 }
+
 void BundledRuntimeSelection()
 {
 	Directory directory;
@@ -127,10 +134,10 @@ void BundledRuntimeSelection()
 	settings.profiles = {profile};
 	settings.recent.clear();
 	SaveSettings(directory.path / "settings", settings);
-	Require(LoadSettings(directory.path / "settings") == settings &&
-				ResolveLaunchProfile(profile, {}) == profile,
+	Require(LoadSettings(directory.path / "settings") == settings && ResolveLaunchProfile(profile, {}) == profile,
 			"Legacy manifest text is never reinterpreted as a bundled runtime");
 }
+
 void SteamRuntimeOption()
 {
 	Directory directory;
@@ -139,11 +146,9 @@ void SteamRuntimeOption()
 	const auto marker = option.find("%command%");
 	Require(marker != std::string::npos, "Steam option retains the game command placeholder");
 #ifdef __linux__
-	option.replace(marker, std::string_view("%command%").size(),
-				   "/bin/sh -c 'printf \"%s\" \"$XR_RUNTIME_JSON\"'");
+	option.replace(marker, std::string_view("%command%").size(), "/bin/sh -c 'printf \"%s\" \"$XR_RUNTIME_JSON\"'");
 	const auto output = directory.path / "actual";
-	Require(std::system((option + " > " + output.string()).c_str()) == 0,
-			"Steam option shell fixture failed");
+	Require(std::system((option + " > " + output.string()).c_str()) == 0, "Steam option shell fixture failed");
 	std::ifstream input(output, std::ios::binary);
 	const std::string actual((std::istreambuf_iterator<char>(input)), {});
 	Require(actual == PathText(manifest), "Steam option did not preserve the literal Unicode manifest path");
@@ -151,6 +156,7 @@ void SteamRuntimeOption()
 	Reject([&] { LinuxSteamRuntimeOption("relative.json"); });
 	Reject([&] { LinuxSteamRuntimeOption(directory.path / "%command%.json"); });
 }
+
 void ProfileCommand()
 {
 	Directory directory;
@@ -186,6 +192,7 @@ void ProfileCommand()
 	Reject([&] { ProfileLaunchCommand(executable, "", LaunchCommandShell::Posix); });
 	Reject([&] { ProfileLaunchCommand(executable, std::string("a\0b", 3), LaunchCommandShell::Posix); });
 }
+
 void McpPreference()
 {
 	Directory directory;
@@ -202,6 +209,7 @@ void McpPreference()
 	SaveSettings(file, settings);
 	Require(LoadSettings(file) == settings, "Disabled MCP preference is retained");
 }
+
 void UpdatePreference()
 {
 	Directory directory;
@@ -215,6 +223,7 @@ void UpdatePreference()
 	settings.autoUpdateCheck = false;
 	Require(LoadSettings(file) == settings, "Earlier settings default automatic updates to off");
 }
+
 void ConcurrentSettings()
 {
 	Directory directory;
@@ -225,8 +234,7 @@ void ConcurrentSettings()
 	first.profiles.push_back({"First"});
 	second.profiles.push_back({"Second"});
 	std::atomic<unsigned> saved = 0, rejected = 0;
-	const auto write = [&](const CompanionSettings& candidate)
-	{
+	const auto write = [&](const CompanionSettings& candidate) {
 		try
 		{
 			SaveSettingsIfUnchanged(file, baseline, candidate);
@@ -246,6 +254,7 @@ void ConcurrentSettings()
 	Reject([&] { SaveSettingsIfUnchanged(file, baseline, baseline); });
 	Require(LoadSettings(file) == actual, "Rejected stale settings must preserve the newer profile");
 }
+
 void Persistence()
 {
 	Directory directory;
@@ -256,23 +265,14 @@ void Persistence()
 	Require(LoadWindowLayout(layoutFile).empty(), "Missing window layout is empty");
 	SaveWindowLayout(layoutFile, layout);
 	Require(LoadWindowLayout(layoutFile) == layout, "Window layout preserves Unicode paths and exact text");
-	Reject([&]
-	{
-		SaveWindowLayout(layoutFile, std::string(8 * 1024 * 1024 + 1, 'x'));
-	});
-	Reject([&]
-	{
-		SaveWindowLayout(layoutFile, std::string("before\0after", 12));
-	});
+	Reject([&] { SaveWindowLayout(layoutFile, std::string(8 * 1024 * 1024 + 1, 'x')); });
+	Reject([&] { SaveWindowLayout(layoutFile, std::string("before\0after", 12)); });
 	Require(LoadWindowLayout(layoutFile) == layout, "Rejected window layout save preserves the original");
 	SaveWindowLayout(layoutFile, {});
 	Require(LoadWindowLayout(layoutFile).empty(), "Empty window layout replaces previous text");
 	SaveWindowLayout(layoutFile, layout);
 	std::filesystem::resize_file(layoutFile, 8 * 1024 * 1024 + 1);
-	Reject([&]
-	{
-		LoadWindowLayout(layoutFile);
-	});
+	Reject([&] { LoadWindowLayout(layoutFile); });
 	CompanionSettings settings;
 	settings.scale = 1.375f;
 	settings.snapshotBudgetMiB = 2048;
@@ -313,7 +313,7 @@ void Persistence()
 	SaveSettings(file, settings);
 	for (int index = 0; index < 80; ++index)
 		settings.recent.front().launch.environment.emplace_back("CUSTOM_" + std::to_string(index),
-			index % 2 ? "" : "literal value ; $()");
+																index % 2 ? "" : "literal value ; $()");
 	SaveSettings(file, settings);
 	Require(LoadSettings(file) == settings, "Every profile/layout/recent field round trips exactly");
 	{
@@ -323,13 +323,11 @@ void Persistence()
 		input.close();
 		Require(!input.fail(), "Close serialized settings fixture");
 		std::string extension;
-		const auto number = [&](std::uint32_t value)
-		{
+		const auto number = [&](std::uint32_t value) {
 			for (unsigned shift = 0; shift < 32; shift += 8)
 				extension.push_back(static_cast<char>(value >> shift));
 		};
-		const auto prefix = [&](const std::string& value)
-		{
+		const auto prefix = [&](const std::string& value) {
 			number(static_cast<std::uint32_t>(value.size()));
 			extension += value;
 		};
@@ -349,8 +347,7 @@ void Persistence()
 		number(settings.previewRamMiB);
 		Require(complete.ends_with(extension), "Private prefix and pointer settings use versioned trailing tables");
 		const auto extensionStart = complete.size() - extension.size();
-		const auto replace = [&](std::string_view bytes)
-		{
+		const auto replace = [&](std::string_view bytes) {
 			std::ofstream output(file, std::ios::binary | std::ios::trunc);
 			output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 			output.close();
@@ -378,24 +375,12 @@ void Persistence()
 			auto corrupt = complete;
 			corrupt[extensionStart + offset] = 0;
 			replace(corrupt);
-			Reject(
-				[&]
-				{
-					LoadSettings(file);
-				});
+			Reject([&] { LoadSettings(file); });
 		}
 		replace(std::string_view(complete).substr(0, extensionStart + 6));
-		Reject(
-			[&]
-			{
-				LoadSettings(file);
-			});
+		Reject([&] { LoadSettings(file); });
 		replace(std::string_view(complete).substr(0, complete.size() - 1));
-		Reject(
-			[&]
-			{
-				LoadSettings(file);
-			});
+		Reject([&] { LoadSettings(file); });
 		replace(complete);
 	}
 	{
@@ -405,8 +390,8 @@ void Persistence()
 		SaveSettings(file, precise);
 		const auto restored = LoadSettings(file);
 		Require(restored.gamepadBindings.deadzone < 1 && restored.crops.back().x0 < restored.crops.back().x1 &&
-				restored.crops.back().y0 < restored.crops.back().y1,
-			"Fixed-point settings preserve valid deadzones and nonempty crops");
+					restored.crops.back().y0 < restored.crops.back().y1,
+				"Fixed-point settings preserve valid deadzones and nonempty crops");
 		SaveSettings(file, settings);
 	}
 #ifdef __linux__
@@ -414,7 +399,8 @@ void Persistence()
 				PathProblem("/nonexistent/simxr-app", PathKind::Executable) == "File not found" &&
 				PathProblem("/", PathKind::Executable) == "This is a folder" &&
 				PathProblem(file.string(), PathKind::Executable) == "Not executable" &&
-				PathProblem(file.string(), PathKind::Folder) == "Not a folder" && PathProblem("", PathKind::File) == "Required",
+				PathProblem(file.string(), PathKind::Folder) == "Not a folder" &&
+				PathProblem("", PathKind::File) == "Required",
 			"Launch paths are validated with a short reason");
 #endif
 #ifdef __linux__
@@ -423,42 +409,22 @@ void Persistence()
 #endif
 	auto invalid = settings;
 	invalid.profiles.front().runtimeManifest.clear();
-	Reject(
-		[&]
-		{
-			SaveSettings(file, invalid);
-		});
+	Reject([&] { SaveSettings(file, invalid); });
 	invalid = settings;
 	invalid.recent.front().launch.runtimeManifest.clear();
-	Reject(
-		[&]
-		{
-			SaveSettings(file, invalid);
-		});
+	Reject([&] { SaveSettings(file, invalid); });
 	Require(LoadSettings(file) == settings,
 			"Private prefixes without a runtime manifest cannot replace saved settings");
 	invalid = settings;
 	invalid.profiles.push_back(settings.profiles.front());
-	Reject(
-		[&]
-		{
-			SaveSettings(file, invalid);
-		});
+	Reject([&] { SaveSettings(file, invalid); });
 	Require(LoadSettings(file) == settings, "Rejected save preserves original file");
 	invalid = settings;
 	invalid.scale = 0;
-	Reject(
-		[&]
-		{
-			SaveSettings(file, invalid);
-		});
+	Reject([&] { SaveSettings(file, invalid); });
 	invalid = settings;
 	invalid.layouts.front().ini = std::string(1024 * 1024 + 1, 'x');
-	Reject(
-		[&]
-		{
-			SaveSettings(file, invalid);
-		});
+	Reject([&] { SaveSettings(file, invalid); });
 	settings.scale = 2;
 	SaveSettings(file, settings);
 	Require(LoadSettings(file) == settings, "Atomic replacement updates previous settings");
@@ -466,21 +432,11 @@ void Persistence()
 		Directory failed;
 		const auto destination = failed.path / u8"保存.settings";
 		std::filesystem::create_directory(destination);
-		Reject(
-			[&]
-			{
-				SaveSettings(destination, settings);
-			});
-		Reject([&]
-		{
-			SaveWindowLayout(destination, layout);
-		});
-		Reject([&]
-		{
-			LoadWindowLayout(destination);
-		});
+		Reject([&] { SaveSettings(destination, settings); });
+		Reject([&] { SaveWindowLayout(destination, layout); });
+		Reject([&] { LoadWindowLayout(destination); });
 		Require(std::filesystem::is_directory(destination) && std::filesystem::is_empty(destination),
-			"Failed replacement preserves the destination");
+				"Failed replacement preserves the destination");
 		auto lockPath = destination;
 		lockPath += ".lock";
 		std::size_t entries = 0;
@@ -493,24 +449,12 @@ void Persistence()
 		Require(entries == 2, "Failed replacement preserves the destination and settings lock");
 	}
 	std::ofstream(file, std::ios::binary | std::ios::app).put('x');
-	Reject(
-		[&]
-		{
-			LoadSettings(file);
-		});
+	Reject([&] { LoadSettings(file); });
 	std::ofstream(file, std::ios::binary | std::ios::trunc) << "SIMXR-COMPANION\x02";
-	Reject(
-		[&]
-		{
-			LoadSettings(file);
-		});
+	Reject([&] { LoadSettings(file); });
 	SaveSettings(file, settings);
 	std::filesystem::resize_file(file, 20);
-	Reject(
-		[&]
-		{
-			LoadSettings(file);
-		});
+	Reject([&] { LoadSettings(file); });
 }
 #ifdef __linux__
 void Launch(const std::filesystem::path& executable)
@@ -537,7 +481,8 @@ void Launch(const std::filesystem::path& executable)
 		if (state.state == LaunchState::Exited || state.state == LaunchState::Failed)
 			break;
 		std::this_thread::sleep_for(5ms);
-	} while (std::chrono::steady_clock::now() < deadline);
+	}
+	while (std::chrono::steady_clock::now() < deadline);
 	Require(state.state == LaunchState::Exited && state.exitCode == 0 && state.process != 0,
 			"Observe actual child exit");
 	std::ifstream result(directory.path / "result.txt");
@@ -549,8 +494,7 @@ void Launch(const std::filesystem::path& executable)
 	profile.privateProtonPrefix = (directory.path / "pfx").string();
 	Require(launcher.Launch(profile), "Admit unsupported private-prefix launch for validation");
 	Eventually(
-		[&]
-		{
+		[&] {
 			state = launcher.Snapshot();
 			return state.state == LaunchState::Failed || state.state == LaunchState::Exited;
 		},
@@ -562,8 +506,7 @@ void Launch(const std::filesystem::path& executable)
 	profile.runtimeManifest = (directory.path / "missing-runtime.json").string();
 	Require(launcher.Launch(profile), "Admit missing runtime launch");
 	Eventually(
-		[&]
-		{
+		[&] {
 			state = launcher.Snapshot();
 			return state.state == LaunchState::Failed || state.state == LaunchState::Exited;
 		},
@@ -579,7 +522,8 @@ void Launch(const std::filesystem::path& executable)
 		if (state.state == LaunchState::Failed)
 			break;
 		std::this_thread::sleep_for(5ms);
-	} while (std::chrono::steady_clock::now() < deadline);
+	}
+	while (std::chrono::steady_clock::now() < deadline);
 	Require(state.state == LaunchState::Failed && state.detail.find("Launch failed") != std::string::npos,
 			"Missing executable has actionable error");
 	profile.executable = executable.string();
@@ -591,9 +535,11 @@ void Launch(const std::filesystem::path& executable)
 		if (state.state == LaunchState::Failed)
 			break;
 		std::this_thread::sleep_for(5ms);
-	} while (std::chrono::steady_clock::now() < deadline);
+	}
+	while (std::chrono::steady_clock::now() < deadline);
 	Require(state.state == LaunchState::Failed, "Invalid cwd fails explicitly");
 }
+
 void ProcessDescriptions(const std::filesystem::path& executable)
 {
 	for (const bool oversized : {false, true})
@@ -616,24 +562,27 @@ void ProcessDescriptions(const std::filesystem::path& executable)
 		variables.push_back(nullptr);
 		pid_t process = 0;
 		Require(::posix_spawn(&process, executable.c_str(), nullptr, nullptr, arguments.data(), variables.data()) == 0,
-			"Start process description fixture");
+				"Start process description fixture");
+
 		struct StopChild
 		{
 			pid_t process;
+
 			~StopChild()
 			{
 				::kill(process, SIGKILL);
 				while (::waitpid(process, nullptr, 0) < 0 && errno == EINTR)
-				{
-				}
+				{}
 			}
 		} child{process};
+
 		int status = 0;
 		pid_t waited;
 		do
 		{
 			waited = ::waitpid(process, &status, WUNTRACED);
-		} while (waited < 0 && errno == EINTR);
+		}
+		while (waited < 0 && errno == EINTR);
 		Require(waited == process && WIFSTOPPED(status), "Wait for process description fixture startup");
 		Require(::kill(process, SIGCONT) == 0, "Resume process description fixture");
 		const auto described = DescribeProcess(static_cast<std::uint64_t>(process));
@@ -644,17 +593,20 @@ void ProcessDescriptions(const std::filesystem::path& executable)
 			Require(described.has_value(), "Process description is unavailable");
 			Require(described->executable == executable.string(), "Process description changed its executable");
 			Require(described->arguments == std::vector<std::string>(values.begin() + 1, values.end()),
-				"Process description changed empty/Unicode/literal arguments");
+					"Process description changed empty/Unicode/literal arguments");
 			Require(described->workingDirectory == std::filesystem::current_path().string(),
-				"Process description changed its working directory");
-			Require(described->runtimeManifest.empty() && std::find(described->environment.begin(),
-				described->environment.end(), std::pair<std::string, std::string>{"XR_RUNTIME_JSON", ""}) !=
-				described->environment.end(), "Process description dropped an empty runtime override");
+					"Process description changed its working directory");
+			Require(described->runtimeManifest.empty() &&
+						std::find(described->environment.begin(), described->environment.end(),
+								  std::pair<std::string, std::string>{"XR_RUNTIME_JSON", ""}) !=
+							described->environment.end(),
+					"Process description dropped an empty runtime override");
 		}
 	}
 }
 #endif
 } // namespace
+
 int main(int argc, char** argv)
 {
 	if (argc == 6 && std::string_view(argv[1]) == "--settings-race-fixture")
@@ -694,7 +646,8 @@ int main(int argc, char** argv)
 			profile.headsetProfile = "generic";
 			settings.profiles.push_back(profile);
 			SaveSettings(argv[2], settings);
-			std::cout << ProfileLaunchCommand(std::filesystem::absolute(argv[4]), profile.name, LaunchCommandShell::Posix);
+			std::cout << ProfileLaunchCommand(std::filesystem::absolute(argv[4]), profile.name,
+											  LaunchCommandShell::Posix);
 			return 0;
 		}
 		catch (const std::exception& error)

@@ -36,19 +36,12 @@ wire::ImageDescription Description(const app::VulkanDeviceAccess& access)
 	VulkanExternalDevice external(device, extensions, VK_API_VERSION_1_1);
 	wire::ImageDescription description;
 	std::transform(external.Identity().deviceUuid.begin(), external.Identity().deviceUuid.end(),
-				   description.identity.device.begin(),
-				   [](auto byte)
-				   {
-					   return static_cast<std::byte>(byte);
-				   });
+				   description.identity.device.begin(), [](auto byte) { return static_cast<std::byte>(byte); });
 	std::transform(external.Identity().driverUuid.begin(), external.Identity().driverUuid.end(),
-				   description.identity.driver.begin(),
-				   [](auto byte)
-				   {
-					   return static_cast<std::byte>(byte);
-				   });
+				   description.identity.driver.begin(), [](auto byte) { return static_cast<std::byte>(byte); });
 	return description;
 }
+
 std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, VkExtent2D extent, VkFormat format,
 												   std::optional<XrFovf> fov = {})
 {
@@ -64,16 +57,19 @@ std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, Vk
 	spec.format = format;
 	auto image = external.CreateExportable(spec);
 	auto ready = external.CreateExportableSemaphore();
+
 	struct Commands
 	{
 		VkDevice device;
 		VkCommandPool pool = VK_NULL_HANDLE;
+
 		~Commands()
 		{
 			if (pool)
 				vkDestroyCommandPool(device, pool, nullptr);
 		}
 	} commands{access.device};
+
 	VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
 	pool.queueFamilyIndex = access.queueFamily;
 	CheckVulkan(vkCreateCommandPool(access.device, &pool, nullptr, &commands.pool), "create history source pool");
@@ -126,14 +122,10 @@ std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, Vk
 							 wire::OwnVulkanControlHandle(ready->ExportOnce())};
 	auto texture = std::make_unique<app::PreviewTexture>(access, description);
 	texture->Import(description, handles);
-	Eventually(
-		[&]
-		{
-			return texture->Poll() == CompletionStatus::Complete;
-		},
-		"Import actual history pixels");
+	Eventually([&] { return texture->Poll() == CompletionStatus::Complete; }, "Import actual history pixels");
 	return texture;
 }
+
 void HistoryLifetime(app::UiRenderer& renderer)
 {
 	auto source = HistorySource(renderer, {64, 64}, VK_FORMAT_R8G8B8A8_UNORM,
@@ -146,14 +138,8 @@ void HistoryLifetime(app::UiRenderer& renderer)
 												VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
 								->allocationSize;
 	app::PreviewHistory history(renderer, allocation * 2);
-	auto begin = [&]
-	{
-		Eventually(
-			[&]
-			{
-				return renderer.BeginFrame();
-			},
-			"Admit history UI frame");
+	auto begin = [&] {
+		Eventually([&] { return renderer.BeginFrame(); }, "Admit history UI frame");
 		history.BeginFrame();
 		source->BeginFrame();
 		changed->BeginFrame();
@@ -161,8 +147,7 @@ void HistoryLifetime(app::UiRenderer& renderer)
 		ImGui::SetNextWindowSize({400, 400});
 		ImGui::Begin("History lifetime");
 	};
-	auto finish = [&](bool transfers = true)
-	{
+	auto finish = [&](bool transfers = true) {
 		ImGui::End();
 		std::vector<VkSemaphore> waits;
 		for (auto* texture : {source.get(), changed.get()})
@@ -173,8 +158,7 @@ void HistoryLifetime(app::UiRenderer& renderer)
 		try
 		{
 			Require(renderer.Render(waits,
-									[&](VkCommandBuffer command)
-									{
+									[&](VkCommandBuffer command) {
 										history.Record(command);
 										if (!transfers)
 											throw std::runtime_error("Abandon recorded history copy");
@@ -261,24 +245,21 @@ void ScreenshotFiles(app::UiRenderer& renderer, app::Window& window)
 	struct Directory
 	{
 		char path[48] = "/tmp/simxr-ui-screenshot-XXXXXX";
+
 		Directory()
 		{
 			Require(::mkdtemp(path) != nullptr, "Create private screenshot directory");
 		}
+
 		~Directory()
 		{
 			std::error_code error;
 			std::filesystem::remove_all(path, error);
 		}
 	} directory;
-	auto draw = [&]
-	{
-		Eventually(
-			[&]
-			{
-				return renderer.BeginFrame();
-			},
-			"Admit screenshot frame");
+
+	auto draw = [&] {
+		Eventually([&] { return renderer.BeginFrame(); }, "Admit screenshot frame");
 		ImGui::GetBackgroundDrawList()->AddRectFilled({20, 20}, {80, 80}, IM_COL32(23, 67, 131, 255));
 		Require(renderer.Render(), "Render explicit screenshot");
 	};
@@ -310,8 +291,7 @@ void ScreenshotFiles(app::UiRenderer& renderer, app::Window& window)
 	}
 	window.Resize(640, 480);
 	Eventually(
-		[&]
-		{
+		[&] {
 			window.PollEvents();
 			return window.PixelSize() == std::pair{640, 480};
 		},
@@ -323,8 +303,7 @@ void ScreenshotFiles(app::UiRenderer& renderer, app::Window& window)
 	file.exceptions(std::ios::badbit | std::ios::failbit);
 	std::array<unsigned char, 54> header{};
 	file.read(reinterpret_cast<char*>(header.data()), header.size());
-	auto u32 = [&](std::size_t offset)
-	{
+	auto u32 = [&](std::size_t offset) {
 		std::uint32_t value = 0;
 		for (unsigned byte = 0; byte < 4; ++byte)
 			value |= std::uint32_t(header[offset + byte]) << (8 * byte);
@@ -349,32 +328,30 @@ void DisplayImageIdentity(app::UiRenderer& renderer)
 	struct Directory
 	{
 		char path[40] = "/tmp/simxr-image-key-XXXXXX";
+
 		Directory()
 		{
 			Require(::mkdtemp(path) != nullptr, "Create private image-identity endpoint directory");
 		}
+
 		~Directory()
 		{
 			std::error_code error;
 			std::filesystem::remove_all(path, error);
 		}
 	} directory;
+
 	wire::test::Fixture fixture;
 	wire::LocalControlServer server(fixture.service, std::string(directory.path) + "/control.sock");
 	app::RuntimePanelRequests requests;
 	requests.Connect(server.Path());
-	Eventually(
-		[&]
-		{
-			return requests.Snapshot().state == app::RuntimeConnectionState::Connected;
-		},
-		"Connect isolated image-identity endpoint");
+	Eventually([&] { return requests.Snapshot().state == app::RuntimeConnectionState::Connected; },
+			   "Connect isolated image-identity endpoint");
 	requests.RefreshEpoch();
 	app::PreviewImages images(renderer, requests);
 	images.SetScope({requests.Epoch(), 1, 1});
 	const auto description = Description(renderer.DeviceAccess());
-	auto retained = [&](std::uint64_t reader, std::optional<std::uint64_t> imageTick)
-	{
+	auto retained = [&](std::uint64_t reader, std::optional<std::uint64_t> imageTick) {
 		wire::Message message;
 		message.fields = {wire::Field::Bool(wire::tag::ImageAvailable, true),
 						  wire::Field::U64(wire::tag::Session, 1),
@@ -412,8 +389,7 @@ void DisplayImageIdentity(app::UiRenderer& renderer)
 	images.Retained(unavailable, true);
 	unsigned rejected = 0;
 	Eventually(
-		[&]
-		{
+		[&] {
 			for (auto& reply : requests.Poll())
 				if (reply.task.kind == app::PanelWork::Share)
 				{
@@ -430,6 +406,7 @@ void DisplayImageIdentity(app::UiRenderer& renderer)
 	SnapshotBudget::Configure(previousBudget);
 	requests.Close();
 }
+
 void PreviewProportions()
 {
 	wire::ImageDescription image;
@@ -498,12 +475,12 @@ void BoundAndRollback(const app::VulkanDeviceAccess& access)
 	for (auto& texture : textures)
 		texture = std::make_unique<app::PreviewTexture>(access, description);
 }
+
 void MixedSnapshotBudget(const app::VulkanDeviceAccess& access)
 {
 	const auto previous = SnapshotBudget::MiB();
 	SnapshotBudget::Configure(192);
-	Require(SnapshotBudget::CapacityFor(1024, 16ull << 20) == 16 &&
-				SnapshotBudget::CapacityFor(1024, 32ull << 20) == 8,
+	Require(SnapshotBudget::CapacityFor(1024, 16ull << 20) == 16 && SnapshotBudget::CapacityFor(1024, 32ull << 20) == 8,
 			"An application's image size changed another application's capacity");
 	Require(!app::PreviewTexture::CanReserveSnapshot(std::numeric_limits<std::uint64_t>::max()),
 			"Oversized image charge overflowed the shared byte budget");
@@ -538,6 +515,7 @@ void MixedSnapshotBudget(const app::VulkanDeviceAccess& access)
 	Require(app::PreviewTexture::TotalSnapshotChargeBytes() == 0, "Snapshot byte charges leaked after retirement");
 	SnapshotBudget::Configure(previous);
 }
+
 void PreserveUnknownCompletion(app::UiRenderer& renderer)
 {
 	const auto previousCharge = app::PreviewTexture::TotalSnapshotChargeBytes();
@@ -553,6 +531,7 @@ void PreserveUnknownCompletion(app::UiRenderer& renderer)
 			"Unknown GPU completion released its image or byte reservation");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	using namespace simxr::tests;

@@ -7,9 +7,9 @@ namespace simxr::control
 {
 Field EncodeImageRegion(const ImageRegion& region, bool required)
 {
-	const std::array fields{Field::U32(1, region.x, true), Field::U32(2, region.y, true),
-		Field::U32(3, region.width, true), Field::U32(4, region.height, true),
-		Field::U32(5, region.outputWidth, true), Field::U32(6, region.outputHeight, true)};
+	const std::array fields{Field::U32(1, region.x, true),			 Field::U32(2, region.y, true),
+							Field::U32(3, region.width, true),		 Field::U32(4, region.height, true),
+							Field::U32(5, region.outputWidth, true), Field::U32(6, region.outputHeight, true)};
 	return Field::Bytes(tag::ImageRegion, EncodeFields(fields), required);
 }
 
@@ -77,8 +77,7 @@ ImageDescription DecodeImageDescription(const Field& field)
 	if (!device || !driver || device->value.size() != 16 || driver->value.size() != 16 || !allocation ||
 		!allocation->AsU64() || !dedicated || !dedicated->AsBool())
 		throw std::invalid_argument("Invalid image identity or allocation metadata");
-	const auto u32 = [&](std::uint16_t name)
-	{
+	const auto u32 = [&](std::uint16_t name) {
 		const auto* scalar = message.Find(name);
 		const auto value = scalar ? scalar->AsU32() : std::nullopt;
 		if (!value)
@@ -140,10 +139,7 @@ ImageDescription DecodeImageDescription(const Field& field)
 			const auto pose = NormalizedPose(view.pose);
 			if (!pose || values[7] >= values[8] || values[10] >= values[9] ||
 				std::any_of(values.begin() + 7, values.end(),
-							[](float angle)
-							{
-								return std::abs(angle) >= std::numbers::pi_v<float> / 2;
-							}))
+							[](float angle) { return std::abs(angle) >= std::numbers::pi_v<float> / 2; }))
 				throw std::invalid_argument("Invalid image view pose or FOV");
 			view.pose = *pose;
 			result.views.push_back(view);

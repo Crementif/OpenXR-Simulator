@@ -16,6 +16,7 @@ namespace simxr
 {
 struct FrameRecord;
 class FrameHistory;
+
 struct PresentationSubmission
 {
 	FrameKey key;
@@ -96,7 +97,7 @@ struct PresentationSnapshot
 
 class PresentationController
 {
-  public:
+public:
 	// The optional history must outlive this controller; tracing never takes its frame-record lock.
 	// Completion observers run after publication, outside presentation locks.
 	using CompletionObserver = std::function<void(FrameKey, const FramePrediction&, RuntimeTime)>;
@@ -126,22 +127,25 @@ class PresentationController
 	PresentationSnapshot Snapshot() const;
 	std::vector<PresentationSubmission> Retain() const;
 
-  private:
+private:
 	std::optional<PresentationTick> AdvanceAt(RuntimeTime now, std::optional<SessionGeneration> generation,
 											  const ImageTransform& transform, bool exact,
 											  const std::function<bool()>& current = {});
+
 	struct Entry
 	{
 		PresentationSubmission submission;
 		bool retiring = false;
 		bool completionReported = false;
 	};
+
 	struct Observation
 	{
 		PresentationSubmission submission;
 		CompletionStatus status = CompletionStatus::Pending;
 		bool reportCompletion = false;
 	};
+
 	const std::size_t m_capacity;
 	FrameHistory* const m_history;
 	const CompletionObserver m_completed;

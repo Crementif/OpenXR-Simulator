@@ -7,6 +7,7 @@
 namespace simxr::headset
 {
 namespace wire = control;
+
 std::optional<std::chrono::nanoseconds> HeadsetImageAge(const HeadsetImagePacket& packet,
 														std::chrono::steady_clock::time_point now)
 {
@@ -30,6 +31,7 @@ bool FreshHeadsetImage(const HeadsetImagePacket& packet, std::chrono::nanosecond
 	const auto limit = std::clamp(period, nanoseconds(milliseconds(1)), nanoseconds(milliseconds(50))) * 4;
 	return *age < limit;
 }
+
 static std::uint64_t ImageId(const wire::Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
@@ -37,20 +39,19 @@ static std::uint64_t ImageId(const wire::Message& message, std::uint16_t tag)
 		throw std::runtime_error("Live headset image omitted an identity");
 	return *field->AsU64();
 }
+
 HeadsetImageBridge::HeadsetImageBridge(HeadsetImageSource source) : m_source(std::move(source))
 {
 	if (m_source.endpoint.empty() || !m_source.session || !m_source.generation || m_source.capture)
 		throw std::invalid_argument("Live image bridge requires a session target without a capture");
-	m_worker = std::jthread(
-		[this](std::stop_token stop)
-		{
-			Run(stop);
-		});
+	m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
 }
+
 HeadsetImageBridge::~HeadsetImageBridge()
 {
 	Stop();
 }
+
 bool HeadsetImageBridge::Request(wire::ImageDeviceIdentity identity, std::shared_ptr<wire::TransferHandle> completion,
 								 std::uint64_t afterImageTick, ImageCompletionKind completionKind)
 {
@@ -64,6 +65,7 @@ bool HeadsetImageBridge::Request(wire::ImageDeviceIdentity identity, std::shared
 	m_changed.notify_all();
 	return true;
 }
+
 std::optional<HeadsetImagePacket> HeadsetImageBridge::Take()
 {
 	std::lock_guard lock(m_mutex);
@@ -75,6 +77,7 @@ std::optional<HeadsetImagePacket> HeadsetImageBridge::Take()
 		m_phase = Phase::Idle;
 	return packet;
 }
+
 bool HeadsetImageBridge::Acknowledge(std::uint64_t delivery)
 {
 	std::lock_guard lock(m_mutex);
@@ -84,11 +87,13 @@ bool HeadsetImageBridge::Acknowledge(std::uint64_t delivery)
 	m_changed.notify_all();
 	return true;
 }
+
 std::string HeadsetImageBridge::Error() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_phase == Phase::Failed && m_error.empty() ? "Live image connection failed" : m_error;
 }
+
 void HeadsetImageBridge::Stop()
 {
 	m_worker.request_stop();
@@ -106,6 +111,7 @@ void HeadsetImageBridge::Stop()
 	if (m_phase != Phase::Failed)
 		m_phase = Phase::Stopped;
 }
+
 void HeadsetImageBridge::Run(std::stop_token stop) noexcept
 {
 	try
@@ -116,8 +122,8 @@ void HeadsetImageBridge::Run(std::stop_token stop) noexcept
 			m_client = client;
 		}
 		const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields = {},
-							  std::vector<std::shared_ptr<wire::TransferHandle>> handles = {}, bool unavailable = false)
-		{
+							  std::vector<std::shared_ptr<wire::TransferHandle>> handles = {},
+							  bool unavailable = false) {
 			if (stop.stop_requested())
 				throw std::runtime_error("Image connection stopped");
 			wire::ControlPacket request;
@@ -150,12 +156,9 @@ void HeadsetImageBridge::Run(std::stop_token stop) noexcept
 			bool release = false;
 			{
 				std::unique_lock lock(m_mutex);
-				m_changed.wait(lock,
-							   [&]
-							   {
-								   return stop.stop_requested() || m_phase == Phase::Requested ||
-										  m_phase == Phase::ReleaseRequested;
-							   });
+				m_changed.wait(lock, [&] {
+					return stop.stop_requested() || m_phase == Phase::Requested || m_phase == Phase::ReleaseRequested;
+				});
 				if (stop.stop_requested())
 					break;
 				release = m_phase == Phase::ReleaseRequested;
@@ -266,8 +269,7 @@ void HeadsetImageBridge::Run(std::stop_token stop) noexcept
 					m_error = error.what();
 				}
 				catch (...)
-				{
-				}
+				{}
 			}
 		}
 		if (client)

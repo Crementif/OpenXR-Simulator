@@ -26,12 +26,14 @@ struct ApplicationSnapshot
 	std::string launchEndpoint;
 	std::string launchDataDirectory;
 };
+
 struct LuauRunRequest
 {
 	std::string source, name;
 	std::uint64_t seed = 0;
 	int deadlineSeconds = 30, memoryMiB = 64;
 };
+
 struct LuauRunStatus
 {
 	std::uint64_t run = 0;
@@ -48,7 +50,7 @@ enum class LuauControl
 // Application-thread access to the same launcher and supervision services in either host.
 class ApplicationCatalog
 {
-  public:
+public:
 	ApplicationCatalog();
 	virtual ~ApplicationCatalog();
 	void StartMonitor(std::uint64_t id, MonitorOptions options);
@@ -60,19 +62,23 @@ class ApplicationCatalog
 	virtual void RequestApplicationRestart(std::uint64_t id, std::uint64_t expectedProcess) = 0;
 	virtual std::vector<ApplicationSnapshot> Applications() const = 0;
 	virtual bool RequestShutdown() = 0;
+
 	virtual std::uint64_t StartLuau(std::uint64_t, LuauRunRequest, const std::shared_ptr<AutomationOwner>&)
 	{
 		throw std::runtime_error("Luau automation is unavailable in this build");
 	}
+
 	virtual LuauRunStatus LuauStatus(std::uint64_t, std::uint64_t, const std::shared_ptr<AutomationOwner>&) const
 	{
 		throw std::runtime_error("Luau automation is unavailable in this build");
 	}
+
 	virtual void ControlLuau(std::uint64_t, std::uint64_t, LuauControl, const std::shared_ptr<AutomationOwner>&)
 	{
 		throw std::runtime_error("Luau automation is unavailable in this build");
 	}
-  private:
+
+private:
 #ifdef SIMXR_COMPANION_AUTOMATION
 	std::map<std::uint64_t, std::unique_ptr<MonitorController>> m_monitors;
 #endif

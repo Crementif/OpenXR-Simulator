@@ -25,8 +25,9 @@ std::optional<std::filesystem::path> LaunchRuntimeDataDirectory(const LaunchProf
 	{
 		const auto explicitPath = Environment(profile, "SIMXR_DATA_DIR");
 		const auto local = Environment(profile, "LOCALAPPDATA");
-		auto path = explicitPath.empty() ? (local.empty() ? std::filesystem::path(L".") : Utf8Path(local)) / L"OpenXR-Simulator"
-			: Utf8Path(explicitPath);
+		auto path = explicitPath.empty()
+						? (local.empty() ? std::filesystem::path(L".") : Utf8Path(local)) / L"OpenXR-Simulator"
+						: Utf8Path(explicitPath);
 		if (path.is_relative())
 			path = Utf8Path(profile.workingDirectory) / path;
 		if (!path.is_absolute())
@@ -61,12 +62,14 @@ void LaunchAttachment::Initialize(const LaunchProfile& profile)
 			throw std::runtime_error("Launch attachment requires a new local control endpoint");
 	}
 }
+
 std::string LaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
 {
 	if (!m_customEndpoint.empty())
 		return m_customEndpoint;
 	return std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process);
 }
+
 bool LaunchAttachment::EndpointExists(const std::string& endpoint) const
 {
 	return RuntimeEndpointExists(endpoint);

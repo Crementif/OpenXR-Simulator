@@ -28,36 +28,43 @@ enum class BodyPose
 	Sit
 };
 inline constexpr std::array<const char*, 4> BodyPoseNames{"Stand", "T-pose", "A-pose", "Sit"};
+
 struct AnchoredPose
 {
 	Anchor anchor = Anchor::Body;
 	XrPosef offset{{0, 0, 0, 1}, {0, 0, 0}};
 };
+
 struct TrackerAttachment
 {
 	std::optional<BodyJoint> joint;
 	XrPosef offset{{0, 0, 0, 1}, {0, 0, 0}};
 };
+
 const char* TrackerRoleName(TrackerRole role);
 char TrackerRoleLetter(TrackerRole role);
 const char* BodyJointName(BodyJoint joint);
 std::span<const BodyJoint> AttachableJoints();
+
 struct PosedBody
 {
 	BodyControls body;
 	std::array<XrPosef, 2> hands;
 };
+
 PosedBody PoseBody(BodyPose pose, const BodyControls& current, const BodyProportions& proportions, float headHeight);
 
 class PlayerRig
 {
-  public:
+public:
 	void Reset(const ObservedSetup& observed);
 	void Observe(const ObservedSetup& observed);
+
 	bool Ready() const
 	{
 		return m_ready;
 	}
+
 	XrPosef AnchorPose(Anchor anchor) const;
 	XrPosef Root() const;
 	XrPosef Head() const;
@@ -71,28 +78,35 @@ class PlayerRig
 	void AttachTracker(std::size_t slot, std::optional<BodyJoint> joint);
 	void SnapTracker(std::size_t slot);
 	void SetTrackerOffset(std::size_t slot, XrPosef offset);
+
 	Anchor HandAnchor(std::size_t hand) const
 	{
 		return m_hands.at(hand).anchor;
 	}
+
 	const TrackerAttachment& TrackerAt(std::size_t slot) const
 	{
 		return m_trackers.at(slot);
 	}
+
 	const TrackerDevice& TrackerDeviceAt(std::size_t slot) const
 	{
 		return m_trackerDevices.at(slot);
 	}
+
 	void Preset(std::size_t hand, HandPreset preset);
 	void ApplyBodyPose(BodyPose pose);
+
 	const BodyControls& Body() const
 	{
 		return m_body;
 	}
+
 	std::optional<BodyPose> CurrentBodyPose() const
 	{
 		return m_bodyPose;
 	}
+
 	void ResetHead();
 	void ResetHand(std::size_t hand);
 	void ResetBody();
@@ -104,7 +118,7 @@ class PlayerRig
 	XrVector3f position{};
 	float facing = 0, walkSpeed = 1, height = 1.7f;
 
-  private:
+private:
 	void ObserveTrackers(const ObservedSetup& observed);
 	bool m_ready = false;
 	XrVector3f m_lean{};

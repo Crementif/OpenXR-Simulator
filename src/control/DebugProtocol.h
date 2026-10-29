@@ -11,6 +11,7 @@ namespace simxr
 {
 struct SessionSnapshot;
 }
+
 namespace simxr::control
 {
 void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count,

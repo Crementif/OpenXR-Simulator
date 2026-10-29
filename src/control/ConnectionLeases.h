@@ -12,13 +12,14 @@ namespace simxr::control
 // The connection's admission gate serializes use. Retired readers outlive it.
 class ConnectionLeases
 {
-  public:
+public:
 	class Retired
 	{
 		friend class ConnectionLeases;
 		std::vector<std::shared_ptr<DebugController>> m_controllers;
 		std::vector<DebugOperation> m_operations;
 	};
+
 	ConnectionLeases();
 	~ConnectionLeases();
 	ConnectionLeases(const ConnectionLeases&) = delete;
@@ -34,13 +35,14 @@ class ConnectionLeases
 	void Prune(std::span<const ControlSessionId> sessions, Retired& retired);
 	void Close() noexcept;
 
-  private:
+private:
 	struct Lease
 	{
 		ControlSessionId session;
 		DebugLeaseId id;
 		std::shared_ptr<DebugController> controller;
 	};
+
 	const Lease& Own(ControlSessionId session, DebugLeaseId lease) const;
 	std::vector<Lease> m_leases;
 	bool m_closed = false;

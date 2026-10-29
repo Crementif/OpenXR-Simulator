@@ -15,11 +15,13 @@ void UiRenderer::CheckResult(VkResult result)
 	if (result != VK_SUCCESS)
 		throw std::runtime_error("Companion Vulkan operation failed: " + std::to_string(result));
 }
+
 void UiRenderer::ProcessEvent(const SDL_Event& event)
 {
 	ImGui::SetCurrentContext(m_resources->context);
 	ImGui_ImplSDL3_ProcessEvent(&event);
 }
+
 bool UiRenderer::BeginFrame()
 {
 	auto& gpu = *m_resources;
@@ -27,11 +29,8 @@ bool UiRenderer::BeginFrame()
 		throw std::logic_error("The admitted UI frame must be rendered before beginning another");
 	ImGui::SetCurrentContext(gpu.context);
 	const auto [width, height] = m_window->PixelSize();
-	const bool acquired = std::any_of(gpu.frames.begin(), gpu.frames.end(),
-									  [](const auto& frame)
-									  {
-										  return frame.hasImage;
-									  });
+	const bool acquired =
+		std::any_of(gpu.frames.begin(), gpu.frames.end(), [](const auto& frame) { return frame.hasImage; });
 	if (!acquired)
 	{
 		if (width <= 0 || height <= 0 || (SDL_GetWindowFlags(m_window->Native()) & SDL_WINDOW_MINIMIZED))
@@ -81,6 +80,7 @@ bool UiRenderer::BeginFrame()
 	m_frameStarted = true;
 	return true;
 }
+
 bool UiRenderer::Render(std::span<const VkSemaphore> readyWaits, const std::function<void(VkCommandBuffer)>& transfers)
 {
 	auto& gpu = *m_resources;
@@ -158,19 +158,23 @@ bool UiRenderer::Render(std::span<const VkSemaphore> readyWaits, const std::func
 	m_frameSlot = (m_frameSlot + 1) % gpu.frames.size();
 	return true;
 }
+
 UiRenderer::UiRenderer(Window& window, bool validation, std::shared_ptr<ValidationLog> log, bool screenshots,
 					   bool proofConsumer)
 	: m_resources(std::make_shared<Resources>())
 {
 	Initialize(window, validation, std::move(log), screenshots, proofConsumer);
 }
+
 UiRenderer::~UiRenderer() = default;
+
 VulkanDeviceAccess UiRenderer::DeviceAccess() const
 {
 	auto& gpu = *m_resources;
 	return {gpu.instance,		gpu.physical,	   gpu.device,	gpu.family,			 gpu.ioQueue,
 			gpu.externalImages, gpu.externalFence, m_resources, gpu.externalTimeline};
 }
+
 std::uint64_t UiRenderer::CompletedFrames()
 {
 	auto& gpu = *m_resources;
@@ -185,6 +189,7 @@ std::uint64_t UiRenderer::CompletedFrames()
 		}
 	return m_completed;
 }
+
 void UiRenderer::WaitIdle()
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -196,6 +201,7 @@ void UiRenderer::WaitIdle()
 	}
 	CheckResult(vkQueueWaitIdle(m_resources->queue));
 }
+
 void UiRenderer::RequestScreenshot(std::filesystem::path path)
 {
 	if (!m_screenshots || path.empty())
@@ -204,14 +210,17 @@ void UiRenderer::RequestScreenshot(std::filesystem::path path)
 		throw std::invalid_argument("Screenshot path contains an embedded NUL");
 	m_screenshotPath = std::move(path);
 }
+
 std::string UiRenderer::DeviceName() const
 {
 	return m_adapter;
 }
+
 std::uint64_t UiRenderer::SubmittedFrames() const
 {
 	return m_submitted;
 }
+
 std::uint32_t UiRenderer::RebuildCount() const
 {
 	return m_creations;

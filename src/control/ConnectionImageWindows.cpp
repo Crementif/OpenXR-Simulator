@@ -12,12 +12,14 @@ std::uint64_t ConnectionImageWindows::Store(ControlSessionId session, std::share
 	m_id = m_next++;
 	return m_id;
 }
+
 ImageWindowReader ConnectionImageWindows::Read(std::uint64_t id) const
 {
 	if (!id || id != m_id)
 		throw ControlRequestError{ErrorCode::NotFound, "Image window is absent or released"};
 	return m_reader;
 }
+
 ImageWindowReader ConnectionImageWindows::Release(std::uint64_t id) noexcept
 {
 	if (!id || id != m_id)

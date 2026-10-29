@@ -18,14 +18,20 @@ namespace simxr::app
 // Cancellation can prevent queued mutations; once admitted, their result is authoritative.
 class McpCancellation
 {
-  public:
+public:
 	void Cancel() noexcept;
 	bool Requested() noexcept;
 	bool TryAdmit() noexcept;
 
-  private:
+private:
 	friend class McpApplication;
-	enum class State { Queued, Running, Cancelled, Complete };
+	enum class State
+	{
+		Queued,
+		Running,
+		Cancelled,
+		Complete
+	};
 	State m_state = State::Queued;
 	bool m_requested = false;
 	std::mutex m_mutex;
@@ -35,22 +41,22 @@ class McpCancellation
 // HTTP workers submit bounded work; the application thread owns its tabs and services.
 class McpApplication
 {
-  public:
+public:
 	explicit McpApplication(bool windowless = false);
 	~McpApplication();
 	McpApplication(const McpApplication&) = delete;
 	McpApplication& operator=(const McpApplication&) = delete;
 	std::optional<nlohmann::json> Call(std::string name, nlohmann::json arguments,
-									 const std::shared_ptr<McpCancellation>& cancellation,
-									 std::shared_ptr<AutomationOwner> owner = {});
+									   const std::shared_ptr<McpCancellation>& cancellation,
+									   std::shared_ptr<AutomationOwner> owner = {});
 	std::optional<ApplicationSnapshot> Lookup(const std::string& application,
-		const std::shared_ptr<McpCancellation>& cancellation);
+											  const std::shared_ptr<McpCancellation>& cancellation);
 	nlohmann::json ApplicationDocument(const ApplicationSnapshot& application) const;
 	void Poll(ApplicationCatalog& applications);
 	void Close() noexcept;
 	bool Windowless() const noexcept;
 
-  private:
+private:
 	struct Request;
 	bool Wait(const std::shared_ptr<Request>& request);
 	std::mutex m_mutex;

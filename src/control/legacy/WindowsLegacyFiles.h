@@ -13,7 +13,7 @@ std::uint64_t WindowsLegacyProcessId();
 
 class WindowsLegacyOutput
 {
-  public:
+public:
 	explicit WindowsLegacyOutput(std::filesystem::path destination);
 	~WindowsLegacyOutput();
 	WindowsLegacyOutput(const WindowsLegacyOutput&) = delete;
@@ -21,7 +21,7 @@ class WindowsLegacyOutput
 	void Write(std::span<const std::byte> bytes);
 	void Commit();
 
-  private:
+private:
 	void Abort() noexcept;
 	std::filesystem::path m_destination;
 	std::filesystem::path m_temporary;

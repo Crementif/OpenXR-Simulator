@@ -22,13 +22,16 @@ struct RecentApp
 	std::int64_t lastUsed = 0;
 	bool operator==(const RecentApp&) const = default;
 };
+
 inline constexpr std::size_t MaxRecentApps = 8;
+
 struct SavedLayout
 {
 	std::string name;
 	std::string ini;
 	bool operator==(const SavedLayout&) const = default;
 };
+
 // A preview region pinned for one launch profile, in normalized image coordinates.
 struct PreviewCrop
 {
@@ -36,6 +39,7 @@ struct PreviewCrop
 	float x0 = 0, y0 = 0, x1 = 1, y1 = 1;
 	bool operator==(const PreviewCrop&) const = default;
 };
+
 struct CompanionSettings
 {
 	float scale = 1;
@@ -60,6 +64,7 @@ struct CompanionSettings
 	std::vector<RecentApp> recent;
 	bool operator==(const CompanionSettings&) const = default;
 };
+
 // Explicit override must be absolute. With no HOME/config base, report unavailable.
 std::filesystem::path CompanionSettingsPath();
 void ValidateSettings(const CompanionSettings& settings);
@@ -71,7 +76,7 @@ void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::i
 CompanionSettings LoadSettings(const std::filesystem::path& path);
 void SaveSettings(const std::filesystem::path& path, const CompanionSettings& settings);
 CompanionSettings SaveSettingsIfUnchanged(const std::filesystem::path& path, const CompanionSettings& expected,
-										   const CompanionSettings& settings);
+										  const CompanionSettings& settings);
 // Window layout text is bounded to 8 MiB and cannot contain NUL. A missing
 // file loads as empty; other I/O failures throw. Saves require an absolute path.
 std::string LoadWindowLayout(const std::filesystem::path& path);

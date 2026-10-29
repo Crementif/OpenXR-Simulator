@@ -11,13 +11,13 @@ class FramePool;
 
 class FrameReservation final
 {
-  public:
+public:
 	~FrameReservation();
 	FrameReservation(const FrameReservation&) = delete;
 	FrameReservation& operator=(const FrameReservation&) = delete;
 	bool Consumed() const;
 
-  private:
+private:
 	friend class FramePool;
 	explicit FrameReservation(std::shared_ptr<FramePoolState> state);
 	const std::shared_ptr<FramePoolState> m_state;
@@ -29,7 +29,7 @@ class FrameReservation final
 // their one slot only when their last reader disappears; no GPU work is involved.
 class FramePool
 {
-  public:
+public:
 	// Reclamation may observe completed producers and release their owners, but
 	// must not submit/wait for GPU work or recursively reserve from this pool.
 	explicit FramePool(std::size_t capacity, std::function<void()> reclaim = {});
@@ -46,7 +46,7 @@ class FramePool
 	// Existing reservations remain charged after shrinking.
 	void SetCapacity(std::size_t capacity) const;
 
-  private:
+private:
 	std::shared_ptr<FramePoolState> m_state;
 };
 } // namespace simxr

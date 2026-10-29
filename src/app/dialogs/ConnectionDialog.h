@@ -11,12 +11,12 @@ class RuntimeSession;
 
 class ConnectionDialog
 {
-  public:
+public:
 	explicit ConnectionDialog(std::string_view endpoint);
 	void Draw(RuntimeSession& session, bool* open, const std::function<void(std::string)>& connect,
 			  const std::function<void()>& disconnect);
 
-  private:
+private:
 	std::vector<char> m_endpoint;
 };
 } // namespace simxr::app

@@ -14,10 +14,12 @@ namespace
 {
 using namespace simxr;
 using namespace simxr::app;
+
 void Near(float actual, float expected)
 {
 	Require(std::abs(actual - expected) < .0001f, "Spatial coordinate differs");
 }
+
 void MatricesAndProjection()
 {
 	for (float yaw : {0.0f, .4f, 2.8f, -3.0f})
@@ -56,6 +58,7 @@ void MatricesAndProjection()
 	const auto snapped = Rotate(SnapRotation(EulerAngles(.30f, 0, 0), std::numbers::pi_v<float> / 12), {0, 0, -1});
 	Near(snapped.x, -std::sin(std::numbers::pi_v<float> / 12));
 }
+
 void MetadataAndHistory()
 {
 	control::ImageDescription image;
@@ -140,6 +143,7 @@ void MetadataAndHistory()
 	Near(historical->body.joints[static_cast<std::size_t>(BodyJoint::Root)].pose.position.x, 4);
 }
 } // namespace
+
 int main()
 {
 	try

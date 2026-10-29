@@ -15,7 +15,7 @@ namespace simxr::control
 // replay. No mutex spans dispatch, close notification or native-reader release.
 class ConnectionRequests
 {
-  public:
+public:
 	class RetiredReplay
 	{
 		friend class ConnectionRequests;
@@ -27,7 +27,7 @@ class ConnectionRequests
 	{
 		friend class ConnectionRequests;
 
-	  public:
+	public:
 		enum class Admission
 		{
 			Execute,
@@ -46,7 +46,7 @@ class ConnectionRequests
 		// caller has left this Exchange and reopened admission.
 		void Publish(const ControlPacket& response, RetiredReplay& retired);
 
-	  private:
+	private:
 		Exchange(ConnectionRequests& owner, const ControlPacket& request);
 		void Reject(ErrorCode error, const char* detail) noexcept;
 		ConnectionRequests& m_owner;
@@ -73,7 +73,7 @@ class ConnectionRequests
 	bool Negotiate(std::uint16_t minor);
 	void Close() noexcept;
 
-  private:
+private:
 	enum class Phase
 	{
 		Idle,

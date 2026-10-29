@@ -142,7 +142,8 @@ enum class BodyJointSet
 	FullBodyBD
 };
 
-inline constexpr std::array<std::string_view, 4> BodyJointSetNames{"fb-upper", "meta-full", "bd-without-arms", "bd-full"};
+inline constexpr std::array<std::string_view, 4> BodyJointSetNames{"fb-upper", "meta-full", "bd-without-arms",
+																   "bd-full"};
 
 enum class BodyControl
 {
@@ -203,7 +204,9 @@ struct ObservedBodyJoint
 	XrPosef pose{{0, 0, 0, 1}, {0, 0, 0}};
 	XrSpaceLocationFlags flags = 0;
 };
+
 using ObservedBodySkeleton = std::array<std::optional<SkeletonJoint>, BodyJointCount>;
+
 // Runtime-estimated body data in simulator world coordinates. Missing schema joints
 // remain absent; this value does not contain generated rig fallback poses.
 struct BodyObservation

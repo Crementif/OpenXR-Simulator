@@ -30,18 +30,19 @@ void TestStartupSequenceRestart()
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 	const auto program = std::make_shared<const PoseSequence>(PoseSequence::Parse(
 		R"({"frame":0,"head":{"x":2},"capture":true}
-{"frame":2,"head":{"x":4},"capture":true})", false));
+{"frame":2,"head":{"x":4},"capture":true})",
+		false));
 	Require(session.Begin(begin, timing, PresentationPolicy::Repeat, program) == XR_ERROR_SESSION_NOT_READY,
-		"Startup bypassed session readiness");
+			"Startup bypassed session readiness");
 	SessionGeneration previous;
 	for (unsigned run = 0; run < 2; ++run)
 	{
 		Require(session.Ready(timing.epoch) == XR_SUCCESS &&
-			session.Begin(begin, timing, PresentationPolicy::Repeat, program) == XR_SUCCESS,
-			"Begin immutable startup program");
+					session.Begin(begin, timing, PresentationPolicy::Repeat, program) == XR_SUCCESS,
+				"Begin immutable startup program");
 		const auto generation = session.Snapshot().generation;
 		Require(generation != previous && session.Captures().Snapshot().captures.empty(),
-			"Restart reused startup generation or retained old capture tickets");
+				"Restart reused startup generation or retained old capture tickets");
 		previous = generation;
 		for (unsigned index = 1; index <= 3; ++index)
 		{
@@ -49,21 +50,22 @@ void TestStartupSequenceRestart()
 			Require(session.WaitFrame(frame) == XR_SUCCESS && frame.id.value == index, "Startup frame origin changed");
 			const auto record = session.History().Find({generation, frame.id});
 			Require(bool(record->sequenceCapture) == (index != 2) &&
-				session.Commands().At(frame.id)->configuration.tracking.head.pose.position.x == (index == 3 ? 4 : 2),
-				"Startup pose or capture missed its exact frame");
+						session.Commands().At(frame.id)->configuration.tracking.head.pose.position.x ==
+							(index == 3 ? 4 : 2),
+					"Startup pose or capture missed its exact frame");
 			if (record->sequenceCapture)
 				Require(record->sequenceCapture->request.owner == ApplicationAutomationSource &&
-					record->sequenceCapture->reservation.result == SnapshotAdmission::Accepted,
-					"Startup capture did not use native application ownership");
+							record->sequenceCapture->reservation.result == SnapshotAdmission::Accepted,
+						"Startup capture did not use native application ownership");
 			Require(session.BeginFrame() == XR_SUCCESS && session.EndFrame(frame) == XR_SUCCESS,
-				"Submit startup frame");
+					"Submit startup frame");
 		}
 		const auto status = session.Commands().PoseSequenceStatusFor(ApplicationAutomationSource);
 		Require(status && status->origin == FrameId{1} && !status->active, "Startup did not finish from frame one");
 		Require(session.RequestExit(timing.epoch) == XR_SUCCESS && session.End(timing.epoch) == XR_SUCCESS &&
-			!session.Commands().PoseSequenceStatusFor(ApplicationAutomationSource)->active &&
-			session.Captures().Snapshot().captures.empty(),
-			"End did not cancel startup or retire its capture tickets");
+					!session.Commands().PoseSequenceStatusFor(ApplicationAutomationSource)->active &&
+					session.Captures().Snapshot().captures.empty(),
+				"End did not cancel startup or retire its capture tickets");
 	}
 	session.Close();
 }
@@ -107,8 +109,7 @@ void TestConcurrentNativeControlSynchronization()
 			"Begin native-control synchronization session");
 
 	auto& registry = instance.Actions();
-	const auto path = [&](const char* name)
-	{
+	const auto path = [&](const char* name) {
 		XrPath result = XR_NULL_PATH;
 		Require(registry.StringToPath(name, result) == XR_SUCCESS, "Create native-control action path");
 		return result;
@@ -152,8 +153,7 @@ void TestConcurrentNativeControlSynchronization()
 	Require(session.Commands().Submit(overrideControls).result == CommandResult::Queued,
 			"Queue controller override before native input");
 	const auto staleInput = session.Input().Snapshot();
-	const auto publishFrame = [&]
-	{
+	const auto publishFrame = [&] {
 		FramePrediction prediction;
 		Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS &&
 					session.EndFrame(prediction) == XR_SUCCESS,
@@ -168,16 +168,14 @@ void TestConcurrentNativeControlSynchronization()
 	Require(session.SyncActions(sync, nativeControls) == XR_SUCCESS,
 			"Atomic native controls must use current session time after a frame advances");
 	std::latch nativeSyncStarted{1};
-	auto frames = std::async(std::launch::async,
-							 [&]
-							 {
-								 nativeSyncStarted.wait();
-								 for (unsigned frame = 0; frame < 256; ++frame)
-								 {
-									 publishFrame();
-									 std::this_thread::yield();
-								 }
-							 });
+	auto frames = std::async(std::launch::async, [&] {
+		nativeSyncStarted.wait();
+		for (unsigned frame = 0; frame < 256; ++frame)
+		{
+			publishFrame();
+			std::this_thread::yield();
+		}
+	});
 	auto previousInputTime = session.Input().Snapshot().time;
 	auto previousActions = session.Actions().Snapshot();
 	unsigned syncCount = 0;
@@ -208,7 +206,8 @@ void TestConcurrentNativeControlSynchronization()
 		previousActions = actions;
 		++syncCount;
 		std::this_thread::yield();
-	} while (syncCount < 256 || frames.wait_for(0ms) != std::future_status::ready);
+	}
+	while (syncCount < 256 || frames.wait_for(0ms) != std::future_status::ready);
 	frames.get();
 	Require(session.Snapshot().lastSubmitted == FrameId{257}, "Concurrent publisher did not finish every frame");
 
@@ -230,12 +229,10 @@ void TestReentrantCaptureCollection()
 	auto owner = std::make_unique<Session>(reinterpret_cast<XrSession>(79), instance);
 	auto& session = *owner;
 	unsigned collections = 0;
-	FramePool pool(2,
-				   [&]
-				   {
-					   Require(session.Snapshot().running, "Collection callback observed a stopped session");
-					   ++collections;
-				   });
+	FramePool pool(2, [&] {
+		Require(session.Snapshot().running, "Collection callback observed a stopped session");
+		++collections;
+	});
 	Require(session.ConfigureCapturePool(pool) == XR_SUCCESS, "Configure reentrant collection pool");
 	FrameSchedulerConfig config;
 	config.mode = ExecutionMode::Deterministic;
@@ -303,17 +300,20 @@ void TestCaptureProducerRetry()
 
 class CaptureOutput final : public simxr::FrameOutput
 {
-  public:
+public:
 	explicit CaptureOutput(std::shared_ptr<simxr::FrameReservation> reservation) : slot(std::move(reservation)) {}
+
 	~CaptureOutput() override
 	{
 		if (destroy)
 			destroy();
 	}
+
 	simxr::CompletionStatus PollCompletion() const noexcept override
 	{
 		return status.load();
 	}
+
 	std::shared_ptr<simxr::FrameReservation> slot;
 	std::function<void()> destroy;
 	std::atomic<simxr::CompletionStatus> status{simxr::CompletionStatus::Pending};
@@ -329,14 +329,15 @@ void TestSequenceCaptureAdmission()
 	config.period = Duration{1000000};
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 	Require(session.ConfigureCapturePool(pool) == XR_SUCCESS && session.Ready(config.epoch) == XR_SUCCESS &&
-		session.Begin(begin, config) == XR_SUCCESS, "Begin real-time sequence capture session");
+				session.Begin(begin, config) == XR_SUCCESS,
+			"Begin real-time sequence capture session");
 	const CommandSource owner{CommandSourceKind::Mcp, 47};
 	PoseSequenceStep step;
 	step.capture = true;
 	step.head = HeadPosePatch{};
 	step.head->position[0] = 4;
-	const auto sequence = session.Commands().StartPoseSequence(owner,
-		std::make_shared<const PoseSequence>(std::vector{step}, true));
+	const auto sequence =
+		session.Commands().StartPoseSequence(owner, std::make_shared<const PoseSequence>(std::vector{step}, true));
 	FramePrediction frame;
 	Require(session.WaitFrame(frame) == XR_SUCCESS, "Sequence capture required a manual frame permit");
 	const auto generation = session.Snapshot().generation;
@@ -344,53 +345,52 @@ void TestSequenceCaptureAdmission()
 	const auto issued = session.History().Find(first);
 	const auto receipt = issued->sequenceCapture;
 	Require(receipt && receipt->request.sequence == sequence->id && receipt->request.owner == owner &&
-		receipt->reservation.result == SnapshotAdmission::Accepted && receipt->request.frame == frame.id &&
-		!session.Scheduler().Snapshot().paused && !session.Scheduler().Snapshot().permits &&
-		session.Commands().At(frame.id)->configuration.tracking.head.pose.position.x == 4,
-		"Sequence capture changed pacing or lost its exact pose/frame identity");
+				receipt->reservation.result == SnapshotAdmission::Accepted && receipt->request.frame == frame.id &&
+				!session.Scheduler().Snapshot().paused && !session.Scheduler().Snapshot().permits &&
+				session.Commands().At(frame.id)->configuration.tracking.head.pose.position.x == 4,
+			"Sequence capture changed pacing or lost its exact pose/frame identity");
 	Require(session.BeginFrame() == XR_SUCCESS, "Begin sequence capture");
 	auto token = session.Captures().ProducerReservation(first);
 	Require(token && pool.Consume(token), "Sequence capture has no admitted native producer");
 	auto output = std::make_shared<CaptureOutput>(std::move(token));
 	const auto layers = std::make_shared<const FrameLayers>(frame.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
-		std::vector<LayerDescription>{QuadLayerDescription{}});
-	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, frame.displayTime.value.count(),
-		XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1, nullptr};
+															std::vector<LayerDescription>{QuadLayerDescription{}});
+	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, frame.displayTime.value.count(),
+							 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
 	Require(session.EndFrame(frame, &end, layers, output) == XR_SUCCESS &&
-		session.Captures().Read(receipt->reservation.id)->phase == SnapshotPhase::GpuPending,
-		"Sequence capture bypassed producer completion");
+				session.Captures().Read(receipt->reservation.id)->phase == SnapshotPhase::GpuPending,
+			"Sequence capture bypassed producer completion");
 	Require(session.WaitFrame(frame) == XR_SUCCESS, "Capture pressure stopped real-time frame admission");
 	const auto pressure = session.History().Find({generation, frame.id})->sequenceCapture;
 	Require(pressure && pressure->reservation.result == SnapshotAdmission::Capacity &&
-		!pressure->reservation.id.value && pressure->request.frame == frame.id && frame.id != first.frame &&
-		session.BeginFrame() == XR_SUCCESS && session.EndFrame(frame) == XR_SUCCESS,
-		"Capture pressure hid failure or substituted a later frame");
+				!pressure->reservation.id.value && pressure->request.frame == frame.id && frame.id != first.frame &&
+				session.BeginFrame() == XR_SUCCESS && session.EndFrame(frame) == XR_SUCCESS,
+			"Capture pressure hid failure or substituted a later frame");
 	auto reader = session.Captures().Read(receipt->reservation.id);
 	Require(reader && reader->phase == SnapshotPhase::GpuPending && reader->metadata->key == first &&
-		reader->metadata->sequenceCapture->request.sequence == sequence->id,
-		"Pending sequence image lost its original receipt");
-	Require(session.WithCommandGeneration(generation,
-		[&]
-		{
-			session.ReleaseCommandSource(owner, true);
-		}) &&
-		!session.Captures().Read(receipt->reservation.id) && !session.Commands().PoseSequenceStatusFor(owner)->active,
-		"Disconnect retained sequence admission or an owned capture ticket");
+				reader->metadata->sequenceCapture->request.sequence == sequence->id,
+			"Pending sequence image lost its original receipt");
+	Require(session.WithCommandGeneration(generation, [&] { session.ReleaseCommandSource(owner, true); }) &&
+				!session.Captures().Read(receipt->reservation.id) &&
+				!session.Commands().PoseSequenceStatusFor(owner)->active,
+			"Disconnect retained sequence admission or an owned capture ticket");
 	session.Captures().Poll();
 	Require(session.Captures().Snapshot().retiring == 1 && pool.InUse() == 1,
-		"Disconnect destroyed a pending GPU capture before its producer completed");
+			"Disconnect destroyed a pending GPU capture before its producer completed");
 	output->status.store(CompletionStatus::Complete);
 	session.Captures().Poll();
-	Require(session.Captures().Snapshot().retiring == 0 && reader->output->PollCompletion() == CompletionStatus::Complete,
-		"Completed retired capture failed to relinquish store ownership");
+	Require(session.Captures().Snapshot().retiring == 0 &&
+				reader->output->PollCompletion() == CompletionStatus::Complete,
+			"Completed retired capture failed to relinquish store ownership");
 	session.Close();
 	session.Display().PollRetired();
 	output.reset();
 	Require(reader->output && reader->metadata->key == first && pool.InUse() == 1,
-		"Sequence retirement invalidated an independent image reader");
+			"Sequence retirement invalidated an independent image reader");
 	reader.reset();
 	Require(pool.InUse() == 0, "Sequence capture producer survived its final reader");
 }
+
 void TestSequenceStopReleasesHeldInput()
 {
 	using namespace simxr;
@@ -400,7 +400,7 @@ void TestSequenceStopReleasesHeldInput()
 	timing.mode = ExecutionMode::Deterministic;
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 	Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
-		"Begin sequence input stop test");
+			"Begin sequence input stop test");
 	PoseSequenceStep step;
 	step.controllers[0] = ControllerPosePatch{};
 	step.controllers[0]->trigger = .8f;
@@ -408,11 +408,11 @@ void TestSequenceStopReleasesHeldInput()
 	session.Commands().StartPoseSequence(source, std::make_shared<const PoseSequence>(std::vector{step}, true));
 	FramePrediction frame;
 	Require(session.WaitFrame(frame) == XR_SUCCESS && session.Input().Snapshot().controllers[0].trigger == .8f,
-		"Sequence did not publish held input");
+			"Sequence did not publish held input");
 	session.Scheduler().Pause();
 	session.StopPoseSequence(source);
 	Require(session.Input().Snapshot().controllers[0].trigger == 0 && session.Snapshot().lastIssued.id == frame.id,
-		"Sequence stop required another admitted frame to release held input");
+			"Sequence stop required another admitted frame to release held input");
 }
 
 void TestSequenceCaptureUnsupportedAndOwnership()
@@ -423,43 +423,44 @@ void TestSequenceCaptureUnsupportedAndOwnership()
 	SessionCaptureCoordinator captures(history);
 	FramePool pool(2);
 	Require(captures.Configure(FramePool(pool), false, {}, false, false) == XR_SUCCESS,
-		"Configure shared frame captures");
+			"Configure shared frame captures");
 	captures.Start(generation);
 	const CommandSource owner{CommandSourceKind::Mcp, 73};
 	const std::array targets{CaptureTarget{}};
 	const auto manual = captures.ReserveBundle(targets);
 	Require(manual.result == SnapshotAdmission::Accepted && manual.captures.size() == 1,
-		"Reserve independent manual capture");
+			"Reserve independent manual capture");
 	const SequenceCaptureIntent request{9, {1}, owner};
 	CaptureId sequenceId;
 	const FramePrediction prediction{{1}, {1}, {Duration{100}}, Duration{10}};
 	{
 		auto sequence = captures.PrepareSequenceCapture(request);
 		sequenceId = sequence.Record()->reservation.id;
-		history.Issue(prediction,
-			[&](auto issued, auto cancelled)
-			{
+		history.Issue(
+			prediction,
+			[&](auto issued, auto cancelled) {
 				captures.BindIssued(issued, cancelled);
 				sequence.Bind(issued, cancelled);
-			}, sequence.Record());
+			},
+			sequence.Record());
 	}
 	captures.Snapshots().RetireSequenceCaptures(owner);
-	Require(!captures.Snapshots().Read(sequenceId) && captures.Snapshots().Read(manual.captures.front()) && pool.InUse() == 1,
-		"Sequence cleanup retired another owner's capture of the same frame");
+	Require(!captures.Snapshots().Read(sequenceId) && captures.Snapshots().Read(manual.captures.front()) &&
+				pool.InUse() == 1,
+			"Sequence cleanup retired another owner's capture of the same frame");
 	FrameHistory unsupportedHistory;
 	SessionCaptureCoordinator unsupported(unsupportedHistory);
 	const auto unsupportedGeneration = unsupportedHistory.StartGeneration();
 	unsupported.Start(unsupportedGeneration);
 	auto rejected = unsupported.PrepareSequenceCapture(request);
 	Require(rejected.Record()->reservation.result == SnapshotAdmission::Unsupported &&
-		!rejected.Record()->reservation.id.value, "Unsupported capture was reported as accepted");
-	unsupportedHistory.Issue(prediction,
-		[&](auto issued, auto cancelled)
-		{
-			rejected.Bind(issued, cancelled);
-		}, rejected.Record());
-	Require(unsupportedHistory.Find({unsupportedGeneration, {1}})->sequenceCapture->reservation.result == SnapshotAdmission::Unsupported,
-		"Unsupported sequence capture lost its exact-frame result");
+				!rejected.Record()->reservation.id.value,
+			"Unsupported capture was reported as accepted");
+	unsupportedHistory.Issue(
+		prediction, [&](auto issued, auto cancelled) { rejected.Bind(issued, cancelled); }, rejected.Record());
+	Require(unsupportedHistory.Find({unsupportedGeneration, {1}})->sequenceCapture->reservation.result ==
+				SnapshotAdmission::Unsupported,
+			"Unsupported sequence capture lost its exact-frame result");
 }
 
 void TestRejectedOutputDestruction()
@@ -486,8 +487,7 @@ void TestRejectedOutputDestruction()
 				"Issue rejected output");
 		auto output = std::make_shared<CaptureOutput>(nullptr);
 		bool destroyed = false;
-		output->destroy = [&]
-		{
+		output->destroy = [&] {
 			session.Snapshot();
 			session.SupportsCapture();
 			session.Captures().Snapshot();
@@ -498,12 +498,10 @@ void TestRejectedOutputDestruction()
 		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
 								 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
 		bool submitted = false;
-		const auto result = session.EndFrame(prediction, &end, layers, std::move(output),
-											 [&]
-											 {
-												 submitted = true;
-												 return XR_ERROR_OUT_OF_MEMORY;
-											 });
+		const auto result = session.EndFrame(prediction, &end, layers, std::move(output), [&] {
+			submitted = true;
+			return XR_ERROR_OUT_OF_MEMORY;
+		});
 		Require(result == (full ? XR_ERROR_LIMIT_REACHED : XR_ERROR_OUT_OF_MEMORY) && destroyed && !output &&
 					submitted == !full && session.Scheduler().Snapshot().begun->id == prediction.id,
 				"Rejected last output reader was destroyed under the session mutex or consumed the frame");
@@ -524,8 +522,7 @@ void TestCaptureConfigurationOwnership()
 		const auto expectedCapacity = session->Captures().Snapshot().capacity;
 		bool destroyed = false;
 		auto reader = std::make_shared<CaptureOutput>(nullptr);
-		reader->destroy = [&]
-		{
+		reader->destroy = [&] {
 			const auto state = session->Snapshot();
 			Require(state.closed == accepted && session->SupportsCapture() == !accepted &&
 						session->Captures().Snapshot().capacity == expectedCapacity,
@@ -533,11 +530,9 @@ void TestCaptureConfigurationOwnership()
 			destroyed = true;
 		};
 		const auto configured =
-			session->ConfigureCapturePool(pool, false,
-										  [reader = std::move(reader)](const auto&, const auto&, auto)
-										  {
-											  return SnapshotAdmission::Accepted;
-										  });
+			session->ConfigureCapturePool(pool, false, [reader = std::move(reader)](const auto&, const auto&, auto) {
+				return SnapshotAdmission::Accepted;
+			});
 		Require(configured == (accepted ? XR_SUCCESS : XR_ERROR_CALL_ORDER_INVALID) && destroyed == !accepted,
 				"Rejected configuration destroyed its callback under caller/owner locks or accepted config lost it");
 		owner.reset();
@@ -567,7 +562,7 @@ void TestCaptureReservations()
 	session.Scheduler().Pause();
 	const std::array duplicateTargets{CaptureTarget{}, CaptureTarget{}};
 	Require(session.ReserveCaptureBundle(duplicateTargets).result == SnapshotAdmission::Invalid && reclamations == 0,
-		"Duplicate capture targets reclaimed retained snapshots before rejection");
+			"Duplicate capture targets reclaimed retained snapshots before rejection");
 	Require(session.Display().Pause(), "Capture display pause failed");
 	Require(session.ReserveCapture({CaptureKind::LayerView, 0, 0}).result == SnapshotAdmission::Unsupported,
 			"Unsupported raw source capture silently selected composed eyes");
@@ -592,19 +587,12 @@ void TestCaptureReservations()
 															  std::vector<LayerDescription>{QuadLayerDescription{}});
 	const XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			nullptr, prediction.displayTime.value.count(),
 							  XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		 nullptr};
-	Require(session.EndFrame(prediction, &info, prepared, output,
-							 []
-							 {
-								 return XR_ERROR_OUT_OF_MEMORY;
-							 }) == XR_ERROR_OUT_OF_MEMORY &&
+	Require(session.EndFrame(prediction, &info, prepared, output, [] { return XR_ERROR_OUT_OF_MEMORY; }) ==
+					XR_ERROR_OUT_OF_MEMORY &&
 				session.Captures().Read(capture.id)->phase == SnapshotPhase::Begun &&
 				session.Scheduler().Snapshot().begun->id == key.frame,
 			"Rejected GPU admission consumed captured frame metadata");
-	Require(session.EndFrame(prediction, &info, prepared, output,
-							 []
-							 {
-								 return XR_SUCCESS;
-							 }) == XR_SUCCESS,
+	Require(session.EndFrame(prediction, &info, prepared, output, [] { return XR_SUCCESS; }) == XR_SUCCESS,
 			"Reserved capture submission retry failed");
 	session.Captures().Poll();
 	Require(session.Captures().Read(capture.id)->phase == SnapshotPhase::GpuPending,
@@ -664,10 +652,13 @@ void TestCaptureBoundary()
 	Instance instance(reinterpret_cast<XrInstance>(72), {}, XR_MAKE_VERSION(1, 0, 27));
 	Session session(reinterpret_cast<XrSession>(73), instance);
 	FramePool pool(2);
-	Require(!session.SupportsCapture() && session.ConfigureCapturePool(pool, false, {}, false, true) == XR_SUCCESS && session.SupportsCapture(),
+	Require(!session.SupportsCapture() && session.ConfigureCapturePool(pool, false, {}, false, true) == XR_SUCCESS &&
+				session.SupportsCapture(),
 			"Actual native capture capability was not reported");
-	Require(session.SupportsCapture({CaptureKind::ProjectionLayers}) && session.SupportsCapture({CaptureKind::QuadLayers}) &&
-			!session.SupportsCapture({CaptureKind::LayerView}) && !session.SupportsCapture({CaptureKind::LayerDepth}),
+	Require(session.SupportsCapture({CaptureKind::ProjectionLayers}) &&
+				session.SupportsCapture({CaptureKind::QuadLayers}) &&
+				!session.SupportsCapture({CaptureKind::LayerView}) &&
+				!session.SupportsCapture({CaptureKind::LayerDepth}),
 			"Filtered composition support incorrectly depends on or grants raw image capture");
 	FrameSchedulerConfig config;
 	config.mode = ExecutionMode::Deterministic;
@@ -836,12 +827,7 @@ void TestLayerViewCapture()
 								  XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 2,		 nullptr};
 		std::array outputs{simxr::CaptureOutput{target, raw}};
 		Require(session.EndFrame(
-					prediction, &info, metadata, composed,
-					[]
-					{
-						return XR_SUCCESS;
-					},
-					outputs) == XR_SUCCESS,
+					prediction, &info, metadata, composed, [] { return XR_SUCCESS; }, outputs) == XR_SUCCESS,
 				"Submit exact raw target");
 		session.Captures().Poll();
 		const auto record = session.Captures().Read(capture.id);
@@ -879,8 +865,7 @@ void TestLayerCaptureRejectionReentry()
 	auto raw = std::make_shared<CaptureOutput>(session.Captures().ProducerReservation(key, target));
 	auto composed = std::make_shared<CaptureOutput>(session.Captures().ProducerReservation(key));
 	bool destroyed = false;
-	raw->destroy = [&]
-	{
+	raw->destroy = [&] {
 		session.Snapshot();
 		destroyed = true;
 	};
@@ -899,8 +884,7 @@ void TestLayerCaptureRejectionReentry()
 			"Unbounded raw output array was copied or consumed the begun frame");
 	Require(session.EndFrame(
 				prediction, &info, metadata, composed,
-				[&]
-				{
+				[&] {
 					outputs[0].output.reset();
 					return XR_ERROR_RUNTIME_FAILURE;
 				},
@@ -935,27 +919,23 @@ void TestLiveSubmissionPolicy()
 			"Begin live submission test");
 	session.Scheduler().Pause();
 	session.Display().Pause();
-	auto issue = [&]
-	{
+	auto issue = [&] {
 		FramePrediction frame;
 		Require(session.Scheduler().GrantPermits() == XR_SUCCESS && session.WaitFrame(frame) == XR_SUCCESS &&
 					session.BeginFrame() == XR_SUCCESS,
 				"Issue live frame");
 		return frame;
 	};
-	auto layers = [](const FramePrediction& frame)
-	{
+	auto layers = [](const FramePrediction& frame) {
 		return std::make_shared<const FrameLayers>(frame.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
 												   std::vector<LayerDescription>{QuadLayerDescription{}});
 	};
-	auto info = [](const FramePrediction& frame)
-	{
+	auto info = [](const FramePrediction& frame) {
 		return XrFrameEndInfo{XR_TYPE_FRAME_END_INFO,			nullptr, frame.displayTime.value.count(),
 							  XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		 nullptr};
 	};
 	unsigned nativeCalls = 0;
-	auto submit = [&]
-	{
+	auto submit = [&] {
 		++nativeCalls;
 		return XR_SUCCESS;
 	};
@@ -993,8 +973,7 @@ void TestLiveSubmissionPolicy()
 	auto presentationInfo = info(presentationDrop);
 	bool destroyed = false;
 	auto dropped = std::make_shared<CaptureOutput>(nullptr);
-	dropped->destroy = [&]
-	{
+	dropped->destroy = [&] {
 		session.Snapshot();
 		destroyed = true;
 	};
@@ -1013,8 +992,7 @@ void TestLiveSubmissionPolicy()
 	Require(abandoned.result == SnapshotAdmission::Accepted && session.Captures().Release(abandoned.id),
 			"Release admitted capture before live drop");
 	auto abandonedOutput = std::make_shared<CaptureOutput>(nullptr);
-	Require(session.EndFrame(abandonedFrame, &abandonedInfo, layers(abandonedFrame),
-							 abandonedOutput, submit, {},
+	Require(session.EndFrame(abandonedFrame, &abandonedInfo, layers(abandonedFrame), abandonedOutput, submit, {},
 							 FrameSubmissionPolicy::Live) == XR_SUCCESS,
 			"Drop released capture frame");
 	session.Captures().Poll();
@@ -1096,8 +1074,7 @@ void TestQuadHistoryCaptureCapacity()
 		FramePool pool(2);
 		Require(session.ConfigureCapturePool(
 					pool, true,
-					[](const auto& frame, const FramePool& budget, std::shared_ptr<FrameReservation> reserved)
-					{
+					[](const auto& frame, const FramePool& budget, std::shared_ptr<FrameReservation> reserved) {
 						const auto output = std::dynamic_pointer_cast<const CaptureOutput>(frame);
 						Require(output && output->slot == reserved && budget.Consume(reserved),
 								"Promote requested capture with its reserved producer");
@@ -1133,8 +1110,7 @@ void TestQuadHistoryCaptureCapacity()
 		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
 								 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
 		unsigned submits = 0;
-		auto submit = [&]
-		{
+		auto submit = [&] {
 			++submits;
 			return XR_SUCCESS;
 		};
@@ -1196,8 +1172,7 @@ void TestQuadHistoryWithoutSnapshotCapacity()
 		FramePool pool(2);
 		Require(session.ConfigureCapturePool(
 					pool, true,
-					[](const auto&, const FramePool&, std::shared_ptr<FrameReservation>)
-					{
+					[](const auto&, const FramePool&, std::shared_ptr<FrameReservation>) {
 						return SnapshotAdmission::Capacity;
 					},
 					false, true) == XR_SUCCESS &&
@@ -1225,8 +1200,7 @@ void TestQuadHistoryWithoutSnapshotCapacity()
 		const std::array quads{simxr::CaptureOutput{{CaptureKind::QuadLayers}, {}, bounds}};
 		const std::array raw{simxr::CaptureOutput{{CaptureKind::LayerView}, {}}};
 		unsigned submits = 0;
-		auto submit = [&]
-		{
+		auto submit = [&] {
 			++submits;
 			return XR_SUCCESS;
 		};
@@ -1268,8 +1242,7 @@ void TestCaptureBudgetPromotion()
 	unsigned promotions = 0;
 	Require(session.ConfigureCapturePool(
 				debug, false,
-				[&](const auto& frame, const FramePool& pool, std::shared_ptr<FrameReservation> reserved)
-				{
+				[&](const auto& frame, const FramePool& pool, std::shared_ptr<FrameReservation> reserved) {
 					auto output =
 						std::const_pointer_cast<CaptureOutput>(std::dynamic_pointer_cast<const CaptureOutput>(frame));
 					if (!output)
@@ -1326,8 +1299,7 @@ void TestLateCaptureBudgetPromotion()
 	unsigned promotions = 0;
 	Require(session.ConfigureCapturePool(
 				debug, false,
-				[&](const auto& frame, const FramePool& pool, std::shared_ptr<FrameReservation> reserved)
-				{
+				[&](const auto& frame, const FramePool& pool, std::shared_ptr<FrameReservation> reserved) {
 					auto output =
 						std::const_pointer_cast<CaptureOutput>(std::dynamic_pointer_cast<const CaptureOutput>(frame));
 					if (!output)
@@ -1352,13 +1324,11 @@ void TestLateCaptureBudgetPromotion()
 	Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
 			"Issue live frame before pause race");
 	const FrameKey key{session.Snapshot().generation, prediction.id};
-	auto prepareLive = [&]
-	{
+	auto prepareLive = [&] {
 		auto token = live.Reserve();
 		Require(token && live.Consume(token), "Reserve live preparation slot");
 		auto output = std::make_shared<CaptureOutput>(std::move(token));
-		output->destroy = [&]
-		{
+		output->destroy = [&] {
 			Require(session.Snapshot().generation == key.generation,
 					"Late promotion destroyed output under Session lock");
 		};
@@ -1380,8 +1350,7 @@ void TestLateCaptureBudgetPromotion()
 	unsigned submits = 0;
 	const auto rejected = session.EndFrame(
 		prediction, &end, metadata, output,
-		[&]
-		{
+		[&] {
 			++submits;
 			Require(output->slot == original && original->Consumed() && live.InUse() == 0 && debug.InUse() == 1,
 					"Late promotion allocated a hidden second slot or happened after native acceptance");
@@ -1404,8 +1373,7 @@ void TestLateCaptureBudgetPromotion()
 	output = prepareLive();
 	Require(session.EndFrame(
 				prediction, &end, metadata, output,
-				[&]
-				{
+				[&] {
 					++submits;
 					Require(output->slot == retry && retry->Consumed(),
 							"Retry did not promote exact replacement token");
@@ -1441,8 +1409,7 @@ void TestInteractionDevices()
 			"Instance tracker inventory before session");
 	Session session(reinterpret_cast<XrSession>(41), instance);
 	auto& registry = instance.Actions();
-	auto path = [&](const char* name)
-	{
+	auto path = [&](const char* name) {
 		XrPath value{};
 		Require(registry.StringToPath(name, value) == XR_SUCCESS, "Interaction path");
 		return value;
@@ -1452,8 +1419,7 @@ void TestInteractionDevices()
 	std::strcpy(setInfo.localizedActionSetName, "Devices");
 	XrActionSet set{};
 	Require(registry.CreateSet(setInfo, set) == XR_SUCCESS, "Interaction set");
-	auto action = [&](const char* name, XrActionType type, XrPath user)
-	{
+	auto action = [&](const char* name, XrActionType type, XrPath user) {
 		XrActionCreateInfo info{XR_TYPE_ACTION_CREATE_INFO};
 		std::strcpy(info.actionName, name);
 		std::strcpy(info.localizedActionName, name);
@@ -1487,22 +1453,18 @@ void TestInteractionDevices()
 	Require(session.Actions().CurrentProfile(waist, profile) == XR_SUCCESS && profile == XR_NULL_PATH,
 			"Tracker profile selected before synchronization");
 	const auto initialEvents = instance.Events().Observe();
-	Require(std::none_of(initialEvents.begin(), initialEvents.end(),
-						 [](const auto& event)
-						 {
-							 return std::holds_alternative<InteractionProfileEvent>(event.event);
-						 }),
-			"Nonrunning attachment emitted profile event");
+	Require(
+		std::none_of(initialEvents.begin(), initialEvents.end(),
+					 [](const auto& event) { return std::holds_alternative<InteractionProfileEvent>(event.event); }),
+		"Nonrunning attachment emitted profile event");
 	const XrActiveActionSet beforeBeginActive{set, XR_NULL_PATH};
 	const XrActionsSyncInfo beforeBeginSync{XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &beforeBeginActive};
 	Require(session.SyncActions(beforeBeginSync) == XR_SESSION_NOT_FOCUSED, "Nonrunning device sync");
 	const auto nonrunningEvents = instance.Events().Observe();
-	Require(std::none_of(nonrunningEvents.begin(), nonrunningEvents.end(),
-						 [](const auto& event)
-						 {
-							 return std::holds_alternative<InteractionProfileEvent>(event.event);
-						 }),
-			"Nonrunning sync emitted profile event");
+	Require(
+		std::none_of(nonrunningEvents.begin(), nonrunningEvents.end(),
+					 [](const auto& event) { return std::holds_alternative<InteractionProfileEvent>(event.event); }),
+		"Nonrunning sync emitted profile event");
 	FrameSchedulerConfig config;
 	config.mode = ExecutionMode::Deterministic;
 	config.epoch = {Duration{1}};
@@ -1517,19 +1479,19 @@ void TestInteractionDevices()
 	Require(session.SyncActions(sync) == XR_SUCCESS, "Device sync");
 	std::string localized;
 	Require(session.Actions().LocalizedName(path("/user/eyes_ext/input/gaze_ext/pose"),
-		XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT, localized) == XR_SUCCESS && localized == "Eye Gaze",
-		"Gaze localization selected a controller profile");
+											XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT, localized) == XR_SUCCESS &&
+				localized == "Eye Gaze",
+			"Gaze localization selected a controller profile");
 	Require(session.Actions().LocalizedName(path("/user/vive_tracker_htcx/role/waist/output/haptic"),
-		XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT, localized) == XR_SUCCESS &&
-		localized == "/user/vive_tracker_htcx/role/waist", "Tracker localization selected a controller profile");
+											XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT, localized) == XR_SUCCESS &&
+				localized == "/user/vive_tracker_htcx/role/waist",
+			"Tracker localization selected a controller profile");
 	Require(session.Actions().CurrentProfile(waist, profile) == XR_SUCCESS && profile == suggest.interactionProfile,
 			"First synchronization did not select tracker profile");
 	const auto synchronizedEvents = instance.Events().Observe();
-	const auto profileEvents = std::count_if(synchronizedEvents.begin(), synchronizedEvents.end(),
-											 [](const auto& event)
-											 {
-												 return std::holds_alternative<InteractionProfileEvent>(event.event);
-											 });
+	const auto profileEvents =
+		std::count_if(synchronizedEvents.begin(), synchronizedEvents.end(),
+					  [](const auto& event) { return std::holds_alternative<InteractionProfileEvent>(event.event); });
 	Require(profileEvents == 1, "First running synchronization did not notify profile selection");
 	XrSpace stage{}, gazeSpace{}, trackerSpace{};
 	const XrPosef identity{{0, 0, 0, 1}, {0, 0, 0}};
@@ -1564,8 +1526,7 @@ void TestInteractionDevices()
 			"Role change changed profile before synchronization");
 	const auto publishedEvents = instance.Events().Observe();
 	Require(std::count_if(publishedEvents.begin(), publishedEvents.end(),
-						  [](const auto& event)
-						  {
+						  [](const auto& event) {
 							  return std::holds_alternative<InteractionProfileEvent>(event.event);
 						  }) == profileEvents,
 			"Role change notified before synchronized profile selection");
@@ -1580,11 +1541,9 @@ void TestInteractionDevices()
 				!location.pose.flags,
 			"Inactive tracker binding remained located");
 	const auto beforeRoleCycle = instance.Events().Observe();
-	const auto beforeCycleCount = std::count_if(beforeRoleCycle.begin(), beforeRoleCycle.end(),
-												[](const auto& event)
-												{
-													return std::holds_alternative<InteractionProfileEvent>(event.event);
-												});
+	const auto beforeCycleCount = std::count_if(beforeRoleCycle.begin(), beforeRoleCycle.end(), [](const auto& event) {
+		return std::holds_alternative<InteractionProfileEvent>(event.event);
+	});
 	input.trackers[0].role = TrackerRole::Waist;
 	session.PublishTracking({Duration{3000}}, input);
 	input.trackers[0].role = TrackerRole::Camera;
@@ -1594,8 +1553,7 @@ void TestInteractionDevices()
 			"Inventory role cycle did not preserve final synchronized profile");
 	const auto roleCycleEvents = instance.Events().Observe();
 	Require(std::count_if(roleCycleEvents.begin(), roleCycleEvents.end(),
-						  [](const auto& event)
-						  {
+						  [](const auto& event) {
 							  return std::holds_alternative<InteractionProfileEvent>(event.event);
 						  }) == beforeCycleCount + 1,
 			"Bound inventory cycle lost deferred profile notification");
@@ -1682,48 +1640,33 @@ void TestRetainedInstanceAndCpuOwnership()
 	Require(std::abs(headX - 1) < 0.0001f, "Later input redirected historical body query");
 	FramePrediction frame;
 	Require(session->WaitFrame(frame) == XR_SUCCESS, "Owned session first wait");
-	auto pending = std::async(std::launch::async,
-							  [&]
-							  {
-								  FramePrediction next;
-								  return session->WaitFrame(next);
-							  });
-	Eventually(
-		[&]
-		{
-			return session->Scheduler().Snapshot().waitPending;
-		},
-		"Owned session wait did not block");
+	auto pending = std::async(std::launch::async, [&] {
+		FramePrediction next;
+		return session->WaitFrame(next);
+	});
+	Eventually([&] { return session->Scheduler().Snapshot().waitPending; }, "Owned session wait did not block");
 	std::atomic<bool> stop = false;
 	std::atomic<std::uint32_t> observations = 0;
-	auto inspection = std::async(
-		std::launch::async,
-		[&]
+	auto inspection = std::async(std::launch::async, [&] {
+		std::array<XrBodyJointLocationFB, XR_BODY_JOINT_COUNT_FB> threadJoints{};
+		XrBodyJointLocationsFB output{
+			XR_TYPE_BODY_JOINT_LOCATIONS_FB, nullptr, XR_FALSE, 0, XR_BODY_JOINT_COUNT_FB, threadJoints.data()};
+		while (!stop.load())
 		{
-			std::array<XrBodyJointLocationFB, XR_BODY_JOINT_COUNT_FB> threadJoints{};
-			XrBodyJointLocationsFB output{
-				XR_TYPE_BODY_JOINT_LOCATIONS_FB, nullptr, XR_FALSE, 0, XR_BODY_JOINT_COUNT_FB, threadJoints.data()};
-			while (!stop.load())
-			{
-				auto history = session->Tracking().Sample({Duration{1000}});
-				Require(history && std::abs(history->head.pose.position.x - 1) < 0.0001f,
-						"Close changed retained tracking history");
-				auto bodyResult = session->Body().LocateFB(trackerFB, &locate, &output);
-				Require(bodyResult == XR_SUCCESS || bodyResult == XR_ERROR_HANDLE_INVALID,
-						"Body query/close ownership race");
-				PoseSample pose;
-				auto spaceResult = session->Spaces().WorldPose(actionSpace, {Duration{1000}}, pose);
-				Require(spaceResult == XR_SUCCESS || spaceResult == XR_ERROR_HANDLE_INVALID,
-						"Action space/close ownership race");
-				++observations;
-			}
-		});
-	Eventually(
-		[&]
-		{
-			return observations.load() > 0;
-		},
-		"CPU inspection did not begin");
+			auto history = session->Tracking().Sample({Duration{1000}});
+			Require(history && std::abs(history->head.pose.position.x - 1) < 0.0001f,
+					"Close changed retained tracking history");
+			auto bodyResult = session->Body().LocateFB(trackerFB, &locate, &output);
+			Require(bodyResult == XR_SUCCESS || bodyResult == XR_ERROR_HANDLE_INVALID,
+					"Body query/close ownership race");
+			PoseSample pose;
+			auto spaceResult = session->Spaces().WorldPose(actionSpace, {Duration{1000}}, pose);
+			Require(spaceResult == XR_SUCCESS || spaceResult == XR_ERROR_HANDLE_INVALID,
+					"Action space/close ownership race");
+			++observations;
+		}
+	});
+	Eventually([&] { return observations.load() > 0; }, "CPU inspection did not begin");
 	session->Close();
 	stop.store(true);
 	Require(inspection.wait_for(1s) == std::future_status::ready, "CPU inspection did not finish after close");
@@ -1820,8 +1763,7 @@ int main()
 	XrActionSet set;
 	auto& registry = instance.Actions();
 	Require(registry.CreateSet(setInfo, set) == XR_SUCCESS, "Session action set");
-	auto path = [&](const char* name)
-	{
+	auto path = [&](const char* name) {
 		XrPath result;
 		Require(registry.StringToPath(name, result) == XR_SUCCESS, "Session action path");
 		return result;
@@ -1873,21 +1815,16 @@ int main()
 			"Disconnect synchronization");
 	auto outputs = session.Haptics().Snapshot({Duration{3000}});
 	Require(std::count_if(outputs.begin(), outputs.end(),
-						  [](const auto& output)
-						  {
-							  return output.status == HapticStatus::Active;
-						  }) == 1,
+						  [](const auto& output) { return output.status == HapticStatus::Active; }) == 1,
 			"Disconnected output remained active");
 	Require(std::any_of(outputs.begin(), outputs.end(),
-						[](const auto& output)
-						{
+						[](const auto& output) {
 							return output.status == HapticStatus::Active &&
 								   output.device == HapticDevice::RightController;
 						}),
 			"Disconnect stopped the other controller");
 	Require(std::any_of(outputs.begin(), outputs.end(),
-						[](const auto& output)
-						{
+						[](const auto& output) {
 							return output.device == HapticDevice::LeftController &&
 								   output.end == RuntimeTime{Duration{3000}};
 						}),
@@ -1896,18 +1833,11 @@ int main()
 				controllerLocation.pose.flags == 0,
 			"Inactive pose action located as tracked");
 	Require(session.WaitFrame(prediction) == XR_SUCCESS, "Session first frame");
-	auto pending = std::async(std::launch::async,
-							  [&]
-							  {
-								  FramePrediction next;
-								  return session.WaitFrame(next);
-							  });
-	Eventually(
-		[&]
-		{
-			return session.Scheduler().Snapshot().waitPending;
-		},
-		"Wait did not enter");
+	auto pending = std::async(std::launch::async, [&] {
+		FramePrediction next;
+		return session.WaitFrame(next);
+	});
+	Eventually([&] { return session.Scheduler().Snapshot().waitPending; }, "Wait did not enter");
 	Require(pending.wait_for(20ms) == std::future_status::timeout, "Admission passed begin gate");
 	Require(session.BeginFrame() == XR_SUCCESS, "Begin frame");
 	Require(pending.wait_for(1s) == std::future_status::ready && pending.get() == XR_SUCCESS, "Overlapping frame wait");
@@ -1941,18 +1871,11 @@ int main()
 	Require(session.History().Find({generation, {2}})->stage == FrameStage::Cancelled,
 			"Session end fabricated completion");
 	Require(session.WaitFrame(prediction) == XR_SUCCESS && prediction.id == FrameId{1}, "Restart scheduling");
-	pending = std::async(std::launch::async,
-						 [&]
-						 {
-							 FramePrediction next;
-							 return session.WaitFrame(next);
-						 });
-	Eventually(
-		[&]
-		{
-			return session.Scheduler().Snapshot().waitPending;
-		},
-		"Closing wait did not enter");
+	pending = std::async(std::launch::async, [&] {
+		FramePrediction next;
+		return session.WaitFrame(next);
+	});
+	Eventually([&] { return session.Scheduler().Snapshot().waitPending; }, "Closing wait did not enter");
 	session.Close();
 	Require(!session.PreviewHistory().Reserve({session.Snapshot().generation, {2}}),
 			"Closed session accepted preview admission");

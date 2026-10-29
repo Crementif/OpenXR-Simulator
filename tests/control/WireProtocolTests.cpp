@@ -24,11 +24,13 @@ void Put32(std::vector<std::byte>& bytes, std::size_t offset, std::uint32_t valu
 	for (unsigned index = 0; index < 4; ++index)
 		bytes.at(offset + index) = std::byte{static_cast<unsigned char>(value >> (index * 8))};
 }
+
 void RequireError(std::span<const std::byte> bytes, DecodeError expected, const char* message)
 {
 	const auto decoded = Decode(bytes);
 	Require(!decoded.message && decoded.error == expected && decoded.requiredBytes == 0, message);
 }
+
 Message Request()
 {
 	Message result;
@@ -36,7 +38,9 @@ Message Request()
 	result.requestId = RequestId{0xfedcba9876543210ULL};
 	return result;
 }
-template <typename Exception, typename Function> void RequireThrows(Function&& function, const char* message)
+
+template<typename Exception, typename Function>
+void RequireThrows(Function&& function, const char* message)
 {
 	bool threw = false;
 	try
@@ -92,7 +96,8 @@ void TypedAndNestedRecords()
 	auto payload = message.Find(8);
 	const auto storage = payload->value.data();
 	auto moved = std::move(payload->value);
-	Require(moved.data() == storage && moved == EncodeFields(nested), "Taking owned field bytes copied or changed them");
+	Require(moved.data() == storage && moved == EncodeFields(nested),
+			"Taking owned field bytes copied or changed them");
 	payload->value = std::move(moved);
 	const auto encoded = Encode(message);
 	const auto decoded = Decode(encoded);
@@ -225,62 +230,27 @@ void InvalidFieldsAndLimits()
 	Put32(bytes, 24, static_cast<std::uint32_t>(bytes.size() - HeaderSize));
 	RequireError(bytes, DecodeError::TooManyFields, "More than 256 fields accepted");
 	message.fields.push_back(Field::Bytes(257, {}));
-	RequireThrows<std::length_error>(
-		[&]
-		{
-			Encode(message);
-		},
-		"Outgoing field count was unbounded");
+	RequireThrows<std::length_error>([&] { Encode(message); }, "Outgoing field count was unbounded");
 	message.fields = {Field::Bytes(1, std::vector<std::byte>(MaxPayload - 8))};
 	const auto maximum = Encode(message);
 	Require(maximum.size() == MaxPayload + HeaderSize && Decode(maximum).message,
 			"Exact maximum payload boundary rejected");
 	message.fields.push_back(Field::Bytes(2, {}));
-	RequireThrows<std::length_error>(
-		[&]
-		{
-			Encode(message);
-		},
-		"Outgoing aggregate payload bound bypassed");
+	RequireThrows<std::length_error>([&] { Encode(message); }, "Outgoing aggregate payload bound bypassed");
 	message = Request();
 	message.fields = {Field::U32(1, 1), Field::U32(1, 2)};
-	RequireThrows<std::invalid_argument>(
-		[&]
-		{
-			Encode(message);
-		},
-		"Outgoing duplicate tags accepted");
+	RequireThrows<std::invalid_argument>([&] { Encode(message); }, "Outgoing duplicate tags accepted");
 	message.fields = {Field::U32(0, 1)};
-	RequireThrows<std::invalid_argument>(
-		[&]
-		{
-			Encode(message);
-		},
-		"Outgoing zero tag accepted");
+	RequireThrows<std::invalid_argument>([&] { Encode(message); }, "Outgoing zero tag accepted");
 	message.fields.clear();
 	message.requestId = {};
-	RequireThrows<std::invalid_argument>(
-		[&]
-		{
-			Encode(message);
-		},
-		"Outgoing zero request ID accepted");
+	RequireThrows<std::invalid_argument>([&] { Encode(message); }, "Outgoing zero request ID accepted");
 	message = Request();
 	message.flags = 2;
-	RequireThrows<std::invalid_argument>(
-		[&]
-		{
-			Encode(message);
-		},
-		"Outgoing invalid flags accepted");
+	RequireThrows<std::invalid_argument>([&] { Encode(message); }, "Outgoing invalid flags accepted");
 	message = Request();
 	message.major = 2;
-	RequireThrows<std::invalid_argument>(
-		[&]
-		{
-			Encode(message);
-		},
-		"Outgoing unsupported major accepted");
+	RequireThrows<std::invalid_argument>([&] { Encode(message); }, "Outgoing unsupported major accepted");
 }
 
 void TextValidation()
@@ -301,12 +271,7 @@ void TextValidation()
 							 std::string{"\xff"}};
 	for (const auto& text : invalid)
 	{
-		RequireThrows<std::invalid_argument>(
-			[&]
-			{
-				Field::Text(1, text);
-			},
-			"Invalid outgoing UTF-8/NUL text accepted");
+		RequireThrows<std::invalid_argument>([&] { Field::Text(1, text); }, "Invalid outgoing UTF-8/NUL text accepted");
 		const auto field = Field::Bytes(1, std::as_bytes(std::span{text.data(), text.size()}));
 		Require(!field.AsText(), "Typed reader accepted malformed UTF-8/NUL text");
 	}
@@ -361,21 +326,22 @@ void AdversarialLengths()
 
 void BorrowedFields()
 {
-	const auto payload = EncodeFields(std::array{
-		Field::U64(1, UINT64_MAX, true), Field::I64(2, INT64_MIN), Field::Bool(3, false),
-		Field::Text(4, "nested text"), Field::Bytes(5, EncodeFields(std::array{Field::F32(1, .25f)}))});
+	const auto payload = EncodeFields(std::array{Field::U64(1, UINT64_MAX, true), Field::I64(2, INT64_MIN),
+												 Field::Bool(3, false), Field::Text(4, "nested text"),
+												 Field::Bytes(5, EncodeFields(std::array{Field::F32(1, .25f)}))});
 	const auto decoded = DecodeFieldViews(payload);
 	Require(decoded.error == DecodeError::None && decoded.fields.size() == 5 && decoded.Find(1)->required &&
-			decoded.Find(1)->AsU64() == UINT64_MAX && decoded.Find(2)->AsI64() == INT64_MIN &&
-			decoded.Find(3)->AsBool() == false && decoded.Find(4)->AsText() == "nested text" && !decoded.Find(6),
+				decoded.Find(1)->AsU64() == UINT64_MAX && decoded.Find(2)->AsI64() == INT64_MIN &&
+				decoded.Find(3)->AsBool() == false && decoded.Find(4)->AsText() == "nested text" && !decoded.Find(6),
 			"Borrowed fields changed scalar decoding or metadata");
 	for (const auto& field : decoded.fields)
-		Require(field.value.data() >= payload.data() && field.value.data() + field.value.size() <= payload.data() + payload.size(),
+		Require(field.value.data() >= payload.data() &&
+					field.value.data() + field.value.size() <= payload.data() + payload.size(),
 				"Borrowed decoder copied a field payload");
 	const auto nested = DecodeFieldViews(decoded.Find(5)->value);
 	Require(nested.error == DecodeError::None && nested.Find(1)->AsF32() == .25f &&
-			nested.Find(1)->value.data() >= payload.data() &&
-			nested.Find(1)->value.data() + 4 <= payload.data() + payload.size(),
+				nested.Find(1)->value.data() >= payload.data() &&
+				nested.Find(1)->value.data() + 4 <= payload.data() + payload.size(),
 			"Nested view lost its backing payload");
 	for (std::size_t size = 0; size < payload.size(); ++size)
 	{
@@ -400,19 +366,12 @@ void SimulationCommandBoundaries()
 			"Version-one release-control command targeted a different channel");
 	for (const auto nonfinite : {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()})
 		RequireThrows<std::invalid_argument>(
-			[&]
-			{
-				DecodeSimulationCommand(EncodeSimulationCommand(simxr::SetGaze{{nonfinite, 0, true, true}}));
-			},
+			[&] { DecodeSimulationCommand(EncodeSimulationCommand(simxr::SetGaze{{nonfinite, 0, true, true}})); },
 			"Nonfinite command values reached simulation admission");
 	auto envelope = DecodeFields(encoded.value).fields;
 	envelope.push_back(Field::U32(65000, 1, true));
-	RequireThrows<std::invalid_argument>(
-		[&]
-		{
-			DecodeSimulationCommand(Field::Bytes(1, EncodeFields(envelope)));
-		},
-		"Unknown required command field was accepted");
+	RequireThrows<std::invalid_argument>([&] { DecodeSimulationCommand(Field::Bytes(1, EncodeFields(envelope))); },
+										 "Unknown required command field was accepted");
 	Message transaction;
 	transaction.fields = {Field::U64(tag::TransactionId, 1), Field::U32(tag::SourceKind, 2),
 						  Field::U32(tag::LatePolicy, 0),
@@ -425,18 +384,14 @@ void SimulationCommandBoundaries()
 			"Conditional simulation input did not round-trip");
 	transaction.minor = 16;
 	RequireThrows<std::invalid_argument>([&] { DecodeSimulationTransaction(transaction, 17); },
-		"Preconditions were accepted from a pre-1.17 request");
+										 "Preconditions were accepted from a pre-1.17 request");
 	transaction.minor = ProtocolMinor;
 	transaction.fields.pop_back();
 	auto commandWithGap = encoded;
 	commandWithGap.tag = 2;
 	transaction.fields.back() = Field::Bytes(tag::Commands, EncodeFields(std::array{commandWithGap}));
-	RequireThrows<std::invalid_argument>(
-		[&]
-		{
-			DecodeSimulationTransaction(transaction, 17);
-		},
-		"A command-list gap changed command order instead of failing");
+	RequireThrows<std::invalid_argument>([&] { DecodeSimulationTransaction(transaction, 17); },
+										 "A command-list gap changed command order instead of failing");
 }
 } // namespace
 

@@ -40,6 +40,7 @@ static httplib::Result Post(httplib::Client& client, const httplib::Headers& hea
 	client.set_payload_max_length(16 * 1024 * 1024);
 	return client.Post("/mcp", headers, message.dump(), "application/json");
 }
+
 static httplib::Result Post(std::uint16_t port, const httplib::Headers& headers, const Json& message)
 {
 	httplib::Client client("127.0.0.1", port);
@@ -56,7 +57,8 @@ static void DeleteSession(std::uint16_t port, const std::string& token, const st
 		client.set_read_timeout(2s);
 		client.Delete("/mcp", Headers(token, session, version));
 	}
-	catch (...) {}
+	catch (...)
+	{}
 }
 
 static Json Error(const Json& id, int code, const std::string& message)
@@ -69,11 +71,11 @@ static Json ListChanged()
 	return {{"jsonrpc", "2.0"}, {"method", "notifications/tools/list_changed"}};
 }
 
-McpConnector::McpConnector(std::uint16_t port, std::string token)
-	: m_fixedEndpoint(McpEndpoint{port, std::move(token)})
+McpConnector::McpConnector(std::uint16_t port, std::string token) : m_fixedEndpoint(McpEndpoint{port, std::move(token)})
 {
-	if (m_fixedEndpoint->token.size() != 64 || !std::ranges::all_of(m_fixedEndpoint->token, [](unsigned char value)
-		{ return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); }))
+	if (m_fixedEndpoint->token.size() != 64 || !std::ranges::all_of(m_fixedEndpoint->token, [](unsigned char value) {
+			return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
+		}))
 		throw std::invalid_argument("SIMXR_MCP_TOKEN must contain 64 lowercase hexadecimal characters");
 }
 
@@ -149,21 +151,24 @@ void McpConnector::Monitor()
 						return;
 					continue;
 				}
-				const Json initialize = {{"jsonrpc", "2.0"}, {"id", "connector-initialize"},
-					{"method", "initialize"}, {"params", initializationParams}};
+				const Json initialize = {{"jsonrpc", "2.0"},
+										 {"id", "connector-initialize"},
+										 {"method", "initialize"},
+										 {"params", initializationParams}};
 				const auto response = Post(endpoint->port, Headers(endpoint->token), initialize);
 				if (response && response->status == 200)
 				{
 					const auto body = Json::parse(response->body, nullptr, false);
 					const auto session = response->get_header_value("MCP-Session-Id");
-					if (!body.is_discarded() && body.is_object() && body.value("id", Json()) == "connector-initialize" &&
-						body.contains("result") && body["result"].is_object() &&
-						body["result"].contains("protocolVersion") && body["result"]["protocolVersion"].is_string() &&
+					if (!body.is_discarded() && body.is_object() &&
+						body.value("id", Json()) == "connector-initialize" && body.contains("result") &&
+						body["result"].is_object() && body["result"].contains("protocolVersion") &&
+						body["result"]["protocolVersion"].is_string() &&
 						SupportedVersion(body["result"]["protocolVersion"].get<std::string>()) && !session.empty())
 					{
 						const auto version = body["result"]["protocolVersion"].get<std::string>();
 						const auto initialized = Post(endpoint->port, Headers(endpoint->token, session, version),
-							{{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}});
+													  {{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}});
 						if (initialized && initialized->status == 202)
 						{
 							bool notify = false, stopping = false;
@@ -198,16 +203,17 @@ void McpConnector::Monitor()
 				if (m_discovery)
 				{
 					const auto endpoint = m_discovery->Read();
-					if (!endpoint || endpoint->port != current->endpoint.port || endpoint->token != current->endpoint.token)
+					if (!endpoint || endpoint->port != current->endpoint.port ||
+						endpoint->token != current->endpoint.token)
 					{
 						Invalidate(current->generation);
 						continue;
 					}
 				}
 #endif
-				const auto response = Post(current->endpoint.port,
-					Headers(current->endpoint.token, current->session, current->version),
-					{{"jsonrpc", "2.0"}, {"id", "connector-ping"}, {"method", "ping"}});
+				const auto response =
+					Post(current->endpoint.port, Headers(current->endpoint.token, current->session, current->version),
+						 {{"jsonrpc", "2.0"}, {"id", "connector-ping"}, {"method", "ping"}});
 				if (!response || response->status != 200)
 					Invalidate(current->generation);
 			}
@@ -258,8 +264,9 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 		if (m_requestedVersion.empty())
 			m_requestedVersion = "2025-11-25";
 		m_stateChanged.notify_all();
-		if (!m_stateChanged.wait_for(lock, 10s, [&]
-			{ return m_stopping || m_connection.has_value() || !m_unavailableReason.empty(); }) || !m_connection)
+		if (!m_stateChanged.wait_for(
+				lock, 10s, [&] { return m_stopping || m_connection.has_value() || !m_unavailableReason.empty(); }) ||
+			!m_connection)
 		{
 			m_handshakeActive = false;
 			const auto reason = m_unavailableReason.empty() ? "OpenXR Simulator is unavailable" : m_unavailableReason;
@@ -304,8 +311,10 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 	if (!current)
 	{
 		if (!notification)
-			Send(Error(id, -32000, unavailableReason.empty() ?
-				"OpenXR Simulator is unavailable; the connector will reconnect when it returns" : unavailableReason));
+			Send(Error(id, -32000,
+					   unavailableReason.empty()
+						   ? "OpenXR Simulator is unavailable; the connector will reconnect when it returns"
+						   : unavailableReason));
 		return;
 	}
 	{
@@ -322,7 +331,8 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 	else
 	{
 		const bool videoSave = message.contains("params") && message["params"].is_object() &&
-			message["params"].contains("name") && message["params"]["name"].is_string() && message["params"]["name"] == "debug_save_video";
+							   message["params"].contains("name") && message["params"]["name"].is_string() &&
+							   message["params"]["name"] == "debug_save_video";
 		const auto readTimeout = videoSave ? 605s : 35s;
 #ifdef _WIN32
 		response = windows::CancelablePost(current->endpoint.port, headers, message.dump(), m_closed, readTimeout);
@@ -334,14 +344,20 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 				return;
 			job->transport = transport;
 		}
-		const auto release = [&]
-		{
+		const auto release = [&] {
 			std::lock_guard lock(m_queueMutex);
 			job->transport.reset();
 			m_queueChanged.notify_all();
 		};
-		try { response = Post(*transport, headers, message, readTimeout); }
-		catch (...) { release(); throw; }
+		try
+		{
+			response = Post(*transport, headers, message, readTimeout);
+		}
+		catch (...)
+		{
+			release();
+			throw;
+		}
 		release();
 #endif
 	}
@@ -369,9 +385,11 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 	}
 	if (!response || response->status != 503)
 		Invalidate(current->generation);
-	Send(Error(id, -32000, method == "tools/call"
-		? "The simulator request was interrupted; its outcome may be unknown. Inspect applications before retrying."
-		: "The simulator request was interrupted; the connector will reconnect when it returns"));
+	Send(Error(
+		id, -32000,
+		method == "tools/call"
+			? "The simulator request was interrupted; its outcome may be unknown. Inspect applications before retrying."
+			: "The simulator request was interrupted; the connector will reconnect when it returns"));
 }
 
 void McpConnector::Work(bool notifications)
@@ -397,7 +415,10 @@ void McpConnector::Work(bool notifications)
 		}
 		const auto id = job->message.value("id", Json());
 		const bool hasId = job->message.contains("id");
-		try { Handle(job); }
+		try
+		{
+			Handle(job);
+		}
 		catch (const std::exception& error)
 		{
 			std::fprintf(stderr, "MCP connector request: %s\n", error.what());
@@ -440,8 +461,8 @@ void McpConnector::Run()
 				Send(Error(nullptr, -32700, "Invalid or oversized JSON message"));
 				continue;
 			}
-			if (!message.is_object() || message.value("jsonrpc", Json()) != "2.0" ||
-				!message.contains("method") || !message["method"].is_string() ||
+			if (!message.is_object() || message.value("jsonrpc", Json()) != "2.0" || !message.contains("method") ||
+				!message["method"].is_string() ||
 				(message.contains("id") && !message["id"].is_string() && !message["id"].is_number_integer()))
 			{
 				Send(Error(nullptr, -32600, "Invalid request"));
@@ -491,7 +512,10 @@ void McpConnector::Run()
 				m_queueChanged.notify_all();
 			else if (immediate)
 			{
-				try { Handle(immediate); }
+				try
+				{
+					Handle(immediate);
+				}
 				catch (const std::exception& error)
 				{
 					std::fprintf(stderr, "MCP connector notification: %s\n", error.what());

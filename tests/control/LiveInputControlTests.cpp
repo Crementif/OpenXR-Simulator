@@ -18,6 +18,7 @@
 namespace simxr::tests
 {
 using namespace control;
+
 static void BodyCodec()
 {
 	for (const auto set :
@@ -66,6 +67,7 @@ static void BodyCodec()
 		}
 	}
 }
+
 static void TrackerCodec()
 {
 	LiveInputSample sample;
@@ -89,8 +91,7 @@ static void TrackerCodec()
 					decoded.trackers->back().poseFlags == XR_SPACE_LOCATION_POSITION_VALID_BIT,
 				"Optional eye/tracker components changed during decoding");
 	}
-	const auto rejectComponents = [&](std::vector<Field> components)
-	{
+	const auto rejectComponents = [&](std::vector<Field> components) {
 		Message malformed;
 		malformed.fields = EncodeLiveInput(sample);
 		std::vector<std::byte> encoded;
@@ -133,6 +134,7 @@ static void TrackerCodec()
 	empty.fields = EncodeLiveInput(sample);
 	Require(!DecodeLiveInput(empty).trackers, "Absent inventory became an owned empty inventory");
 }
+
 static void Transport()
 {
 	Instance instance(reinterpret_cast<XrInstance>(991), {}, XR_MAKE_VERSION(1, 0, 27));
@@ -146,8 +148,7 @@ static void Transport()
 	std::vector<SnapshotRecord> held;
 	auto connection = std::make_unique<SimulationConnection>(ConnectionId{23}, game);
 	std::uint64_t requestId = 0;
-	const auto send = [&](OpCode opcode, std::vector<Field> fields = {}, std::uint16_t minor = ProtocolMinor)
-	{
+	const auto send = [&](OpCode opcode, std::vector<Field> fields = {}, std::uint16_t minor = ProtocolMinor) {
 		Message request;
 		request.opcode = static_cast<std::uint16_t>(opcode);
 		request.requestId = {++requestId};
@@ -161,8 +162,7 @@ static void Transport()
 		response.minor = minor;
 		return connection->Dispatch(*decoded.message, binding, response, held);
 	};
-	const auto claim = [&](std::uint64_t transaction, std::uint64_t frame)
-	{
+	const auto claim = [&](std::uint64_t transaction, std::uint64_t frame) {
 		const std::array commands{EncodeSimulationCommand(TakeControl{ControlChannel::Head}, 1),
 								  EncodeSimulationCommand(TakeControl{ControlChannel::LeftPose}, 2),
 								  EncodeSimulationCommand(TakeControl{ControlChannel::LeftControls}, 3)};
@@ -217,11 +217,7 @@ static void Transport()
 	sample.controlsActive = false;
 	suspended.fields = EncodeLiveInput(sample);
 	Require(!DecodeLiveInput(suspended).controlsActive, "Transport preserves focus suspension");
-	std::erase_if(suspended.fields,
-				  [](const auto& field)
-				  {
-					  return field.tag == tag::Enabled;
-				  });
+	std::erase_if(suspended.fields, [](const auto& field) { return field.tag == tag::Enabled; });
 	Require(DecodeLiveInput(suspended).controlsActive, "Legacy live samples default to active controls");
 	sample.controlsActive = true;
 	Message malformed;
@@ -309,8 +305,7 @@ static void Transport()
 	Require(session->Ready(timing.epoch) == XR_SUCCESS && session->Begin(begin, timing) == XR_SUCCESS,
 			"Begin real-time clock session");
 	const auto realAttachment = *send(OpCode::AttachLiveInput).Find(tag::AttachmentId)->AsU64();
-	const auto readClock = [&]
-	{
+	const auto readClock = [&] {
 		return send(OpCode::ReadLiveClock, {Field::U64(tag::AttachmentId, realAttachment)});
 	};
 	const auto wireClock = readClock();
@@ -344,8 +339,7 @@ static void Transport()
 	sample.clockRevision = mapped->revision;
 	Require(send(OpCode::SubmitLiveInput, EncodeLiveInput(sample)).Find(tag::Phase)->AsText() == "queued",
 			"Current clock revision admits input");
-	const auto predict = [&](std::uint64_t sequence)
-	{
+	const auto predict = [&](std::uint64_t sequence) {
 		return send(OpCode::PublishDisplayPrediction,
 					{Field::U64(tag::AttachmentId, realAttachment), Field::U64(tag::SampleSequence, sequence),
 					 Field::U64(tag::ClockRevision, sample.clockRevision),
@@ -361,8 +355,7 @@ static void Transport()
 				physical.displayPeriod == std::chrono::milliseconds(50),
 			"Wire prediction reaches application admission unchanged");
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto selected = session->Display().Snapshot().latest;
 			return selected && selected->time == sample.targetTime;
 		},
@@ -412,16 +405,8 @@ static void Transport()
 			"Pause/recovery preserves previously issued physical frame");
 	connection.reset();
 	FramePrediction fallback;
-	auto waiting = std::async(std::launch::async,
-							  [&]
-							  {
-								  return session->Scheduler().WaitFrame(fallback);
-							  });
-	const auto cleanup = std::shared_ptr<void>(nullptr,
-											   [&](void*)
-											   {
-												   session->Scheduler().Stop();
-											   });
+	auto waiting = std::async(std::launch::async, [&] { return session->Scheduler().WaitFrame(fallback); });
+	const auto cleanup = std::shared_ptr<void>(nullptr, [&](void*) { session->Scheduler().Stop(); });
 	Require(waiting.wait_for(std::chrono::seconds(1)) == std::future_status::ready && waiting.get() == XR_SUCCESS &&
 				fallback.displayPeriod == timing.period && fallback.displayTime > physical.displayTime,
 			"Connection destruction restores virtual pacing without waiting for another host pulse");
@@ -429,6 +414,7 @@ static void Transport()
 	session->Close();
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

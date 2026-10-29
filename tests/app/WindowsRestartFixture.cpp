@@ -49,7 +49,7 @@ int wmain(int argc, wchar_t** argv)
 	if (!RegisterClassW(&windowClass))
 		return 1;
 	const auto window = CreateWindowExW(0, windowClass.lpszClassName, L"Simxr restart test", WS_OVERLAPPEDWINDOW,
-										 CW_USEDEFAULT, CW_USEDEFAULT, 240, 120, nullptr, nullptr, instance, nullptr);
+										CW_USEDEFAULT, CW_USEDEFAULT, 240, 120, nullptr, nullptr, instance, nullptr);
 	if (!window)
 		return 2;
 	std::unique_ptr<ControlFixture> control;

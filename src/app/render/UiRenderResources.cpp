@@ -67,6 +67,7 @@ UiRenderer::Resources::~Resources()
 	if (instance)
 		vkDestroyInstance(instance, nullptr);
 }
+
 void UiRenderer::Resources::DestroySwapchain()
 {
 	if (!device)

@@ -22,6 +22,7 @@ void RotationalDisplay::Reset() noexcept
 	m_ready.reset();
 	m_failure = XR_SUCCESS;
 }
+
 PresentationImage RotationalDisplay::Process(const PresentationTick& baseline, const PoseSample& head)
 {
 	if (m_source != baseline.source || !baseline.output)

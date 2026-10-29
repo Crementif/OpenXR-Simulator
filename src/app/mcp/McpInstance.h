@@ -18,7 +18,7 @@ struct McpEndpoint
 // One lock belongs to an app executable path and remains held by its app process.
 class McpInstanceDiscovery
 {
-  public:
+public:
 	explicit McpInstanceDiscovery(std::filesystem::path executable, bool windowless = false);
 	~McpInstanceDiscovery();
 	McpInstanceDiscovery(const McpInstanceDiscovery&) = delete;
@@ -27,7 +27,7 @@ class McpInstanceDiscovery
 	std::optional<McpEndpoint> Read();
 	const std::string& StartupError() const noexcept;
 
-  private:
+private:
 	std::filesystem::path m_executable, m_directory;
 	std::string m_key;
 	std::string m_startupError;
@@ -41,14 +41,14 @@ class McpInstanceDiscovery
 
 class McpInstanceRegistration
 {
-  public:
+public:
 	explicit McpInstanceRegistration(std::intptr_t inheritedHandle);
 	~McpInstanceRegistration();
 	McpInstanceRegistration(const McpInstanceRegistration&) = delete;
 	McpInstanceRegistration& operator=(const McpInstanceRegistration&) = delete;
 	void Publish(const McpEndpoint& endpoint);
 
-  private:
+private:
 	std::filesystem::path m_executable, m_directory;
 	std::string m_key;
 #ifdef _WIN32

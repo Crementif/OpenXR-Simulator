@@ -8,19 +8,23 @@
 namespace simxr::app
 {
 static constexpr float s_degrees = 180 / std::numbers::pi_v<float>;
+
 static XrVector3f Cross(XrVector3f a, XrVector3f b)
 {
 	return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
+
 static float Dot(XrVector3f a, XrVector3f b)
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
 }
+
 static XrVector3f Normalize(XrVector3f a)
 {
 	const float length = std::sqrt(Dot(a, a));
 	return length > 1e-6f ? XrVector3f{a.x / length, a.y / length, a.z / length} : XrVector3f{1, 0, 0};
 }
+
 static XrVector3f Lift(XrVector2f point)
 {
 	const float squared = point.x * point.x + point.y * point.y;
@@ -29,39 +33,40 @@ static XrVector3f Lift(XrVector2f point)
 	const float length = std::sqrt(squared);
 	return {point.x / length, point.y / length, 0};
 }
+
 static float AngleAbout(XrVector3f axis, XrVector2f from, XrVector2f to)
 {
-	auto project = [&](XrVector3f value)
-	{
+	auto project = [&](XrVector3f value) {
 		const float along = Dot(value, axis);
 		return XrVector3f{value.x - axis.x * along, value.y - axis.y * along, value.z - axis.z * along};
 	};
 	const auto first = project(Lift(from)), second = project(Lift(to));
 	return std::atan2(Dot(Cross(first, second), axis), Dot(first, second));
 }
+
 struct OrbCanvas
 {
 	ImDrawList* draw;
 	ImVec2 center;
 	float radius, scale;
+
 	ImVec2 Point(XrVector3f view) const
 	{
 		return {center.x + view.x * radius, center.y - view.y * radius};
 	}
 };
+
 static void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf local, ImU32 color)
 {
 	auto* draw = canvas.draw;
-	const auto view = [&](XrVector3f point)
-	{
+	const auto view = [&](XrVector3f point) {
 		return Rotate(local, point);
 	};
 	const auto ink = theme::Ink;
 	if (model == OrbModel::Controller)
 	{
 		// Parts toward the viewer are brighter and thicker; the ring's far half is drawn behind the handle.
-		const auto tone = [&](float depth)
-		{
+		const auto tone = [&](float depth) {
 			return theme::Mix(theme::Mix(ink, color, .35f), color, std::clamp(.55f + depth * .6f, 0.0f, 1.0f));
 		};
 		const auto bottom = view({0, -.28f, .38f}), top = view({0, .04f, -.24f});
@@ -73,8 +78,7 @@ static void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf loc
 			ring[step] = view({c, .12f - .866f * s, -.45f - .5f * s});
 		}
 		const float handleDepth = (bottom.z + top.z) / 2;
-		const auto drawRing = [&](bool front)
-		{
+		const auto drawRing = [&](bool front) {
 			for (const bool outline : {true, false})
 				for (std::size_t step = 0; step < ring.size(); ++step)
 				{
@@ -130,12 +134,14 @@ static void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf loc
 											{.45f, -.25f, .2f},
 											{.45f, .25f, .2f},
 											{-.45f, .25f, .2f}};
+
 	struct Face
 	{
 		std::array<int, 4> corners;
 		XrVector3f normal;
 		bool front;
 	};
+
 	const std::array<Face, 6> faces{Face{{0, 1, 2, 3}, {0, 0, -1}, true}, Face{{5, 4, 7, 6}, {0, 0, 1}, false},
 									Face{{1, 5, 6, 2}, {1, 0, 0}, false}, Face{{4, 0, 3, 7}, {-1, 0, 0}, false},
 									Face{{3, 2, 6, 7}, {0, 1, 0}, false}, Face{{4, 5, 1, 0}, {0, -1, 0}, false}};
@@ -152,6 +158,7 @@ static void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf loc
 		draw->AddPolyline(points.data(), 4, ink, ImDrawFlags_Closed, 1.5f * canvas.scale);
 	}
 }
+
 void CancelRotationOrb(ArcballState& state)
 {
 	if (state.activeField && ImGui::GetActiveID() == state.activeField)
@@ -159,6 +166,7 @@ void CancelRotationOrb(ArcballState& state)
 	state.dragging = false;
 	state.activeField = 0;
 }
+
 SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf& orientation, XrQuaternionf view,
 							  XrQuaternionf reference, bool enabled, OrbModel model, ImU32 color, float width,
 							  float size)
@@ -203,8 +211,7 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	const std::array colors{theme::AxisY, theme::AxisX, theme::AxisZ};
 	int hoveredRing = -1;
 	float nearest = 7 * scale;
-	const auto drawRings = [&](bool front)
-	{
+	const auto drawRings = [&](bool front) {
 		for (std::size_t ring = 0; ring < axes.size(); ++ring)
 		{
 			const auto axis = state.dragging && state.ring == static_cast<int>(ring) ? state.axis : axes[ring];

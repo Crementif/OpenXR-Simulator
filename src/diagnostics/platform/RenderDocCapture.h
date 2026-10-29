@@ -14,11 +14,11 @@ struct RenderDocResult
 
 class RenderDocCapture
 {
-  public:
+public:
 	RenderDocCapture();
 	RenderDocResult Trigger(uint64_t frame);
 
-  private:
+private:
 	bool m_enabled = false;
 	std::string m_captureTemplate;
 	uint32_t m_frameCount = 3;

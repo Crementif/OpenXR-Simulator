@@ -8,32 +8,38 @@ namespace simxr::app
 {
 static void WriteRangeMetadata(const std::vector<HistoryFrame>& frames, const std::filesystem::path& destination)
 {
-	SaveExportFile(destination, [&](std::ostream& output)
-	{
-		output.imbue(std::locale::classic());
-		output << "epoch,session,run,frame,run_seconds,display_interval_ms,snapshot,preview,dropped\n";
-		for (const auto& frame : frames)
-			output << frame.epoch << ',' << frame.identity.session << ',' << frame.identity.run << ','
-				   << frame.identity.frame << ',' << frame.runSeconds << ',' << frame.frameMilliseconds << ','
-				   << bool(frame.flags & HistorySnapshot) << ',' << bool(frame.flags & HistoryPreview) << ','
-				   << bool(frame.flags & HistoryDropped) << '\n';
-	}, true);
+	SaveExportFile(
+		destination,
+		[&](std::ostream& output) {
+			output.imbue(std::locale::classic());
+			output << "epoch,session,run,frame,run_seconds,display_interval_ms,snapshot,preview,dropped\n";
+			for (const auto& frame : frames)
+				output << frame.epoch << ',' << frame.identity.session << ',' << frame.identity.run << ','
+					   << frame.identity.frame << ',' << frame.runSeconds << ',' << frame.frameMilliseconds << ','
+					   << bool(frame.flags & HistorySnapshot) << ',' << bool(frame.flags & HistoryPreview) << ','
+					   << bool(frame.flags & HistoryDropped) << '\n';
+		},
+		true);
 }
 
 RangeExportTask::RangeExportTask(RuntimeSession& session) : m_session(session) {}
+
 RangeExportTask::Protection::Protection(PreviewImages& preview, std::span<const std::uint64_t> images)
 	: m_preview(preview)
 {
 	m_preview.ProtectExports(images);
 }
+
 RangeExportTask::Protection::~Protection()
 {
 	m_preview.ProtectExports({});
 }
+
 bool RangeExportTask::Busy() const
 {
 	return m_csv.valid() || m_protection.has_value();
 }
+
 void RangeExportTask::Finish(std::string result)
 {
 	m_images = std::move(result);
@@ -41,6 +47,7 @@ void RangeExportTask::Finish(std::string result)
 	m_requested = false;
 	m_protection.reset();
 }
+
 bool RangeExportTask::Start(FrameIdentity first, FrameIdentity last, std::uint64_t epoch, const std::string& path)
 {
 	if (Busy() || m_session.Exports().Busy())
@@ -81,10 +88,7 @@ bool RangeExportTask::Start(FrameIdentity first, FrameIdentity last, std::uint64
 		else
 			m_protection.emplace(m_session.Preview(), images);
 		m_csv = std::async(std::launch::async,
-						   [frames = std::move(frames), destination]
-						   {
-							   WriteRangeMetadata(frames, destination);
-						   });
+						   [frames = std::move(frames), destination] { WriteRangeMetadata(frames, destination); });
 		return true;
 	}
 	catch (const std::exception& error)
@@ -94,6 +98,7 @@ bool RangeExportTask::Start(FrameIdentity first, FrameIdentity last, std::uint64
 		return false;
 	}
 }
+
 void RangeExportTask::Poll()
 {
 	if (m_protection && (m_epoch != m_session.Epoch() || !m_session.Connected()))

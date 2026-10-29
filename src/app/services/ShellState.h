@@ -20,39 +20,47 @@ enum class DevicePage
 	Gaze,
 	Trackers
 };
+
 struct DeviceSel
 {
 	DevicePage page = DevicePage::Player;
 	std::uint32_t slot = 0;
 	bool operator==(const DeviceSel&) const = default;
 };
+
 struct FrameSel
 {
 	FrameIdentity identity;
 	std::uint64_t epoch = 0;
 	bool operator==(const FrameSel&) const = default;
 };
+
 struct RangeSel
 {
 	FrameIdentity first, last;
 	std::uint64_t epoch = 0;
 	bool operator==(const RangeSel&) const = default;
 };
+
 struct TakeSel
 {
 	std::string id;
 	bool operator==(const TakeSel&) const = default;
 };
+
 struct ScriptSel
 {
 	std::string id;
 	bool operator==(const ScriptSel&) const = default;
 };
+
 struct AdvancedSel
 {
 	bool operator==(const AdvancedSel&) const = default;
 };
+
 using Selection = std::variant<std::monostate, DeviceSel, FrameSel, RangeSel, TakeSel, ScriptSel, AdvancedSel>;
+
 // Where a take cut from history came from, so its replay can show the source.
 struct TakeSource
 {
@@ -60,6 +68,7 @@ struct TakeSource
 	FrameIdentity first, last;
 	std::uint64_t epoch = 0;
 };
+
 // The timeline's visible span, owned by the timeline.
 struct TimelineWindow
 {
@@ -84,6 +93,7 @@ enum class RunState
 	Disconnected,
 	Failed
 };
+
 struct SessionState
 {
 	RunState state = RunState::NotConnected;
@@ -94,10 +104,12 @@ struct SessionState
 struct SessionView;
 SessionState DeriveRunState(const SessionView& view, bool launching, const std::string& launchError);
 const char* RunStateLabel(RunState state);
+
 struct ShellRect
 {
 	float x = 0, y = 0, width = 0, height = 0;
 };
+
 struct ShellState
 {
 	SessionState session;
@@ -113,6 +125,7 @@ struct ShellState
 	bool openAppPicker = false;
 	bool addApplication = false;
 };
+
 // Returning to the live edge ends a frame selection (and, with range, a range
 // selection) and shows the device page that was open before.
 void LeaveHistory(ShellState& shell, bool range);

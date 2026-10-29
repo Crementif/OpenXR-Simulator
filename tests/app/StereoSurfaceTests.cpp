@@ -38,8 +38,8 @@ int main(int argc, char** argv)
 					right[(std::size_t(y) * width + x) * 3 + channel] =
 						left[(std::size_t(y) * width + std::min(width - 1, x + 12)) * 3 + channel];
 	}
-	const auto result = MatchStereoSurface(left, right, width, height, argc > 1 ? std::optional<float>(.0625f) : std::nullopt,
-		[] {});
+	const auto result =
+		MatchStereoSurface(left, right, width, height, argc > 1 ? std::optional<float>(.0625f) : std::nullopt, [] {});
 	std::vector<float> matched;
 	for (std::size_t i = 0; i < result.trusted.size(); ++i)
 		if (result.trusted[i])
@@ -48,8 +48,14 @@ int main(int argc, char** argv)
 	const auto expected = argc > 1 ? 35.f : 12.f;
 	Require(std::abs(Median(matched) - expected) < (argc > 1 ? 8.f : 1.f), "Recover known surface disparity");
 	bool interrupted = false;
-	try { (void)MatchStereoSurface(left, right, width, height, {}, [] { throw std::runtime_error("cancelled"); }); }
-	catch (const std::runtime_error&) { interrupted = true; }
+	try
+	{
+		(void)MatchStereoSurface(left, right, width, height, {}, [] { throw std::runtime_error("cancelled"); });
+	}
+	catch (const std::runtime_error&)
+	{
+		interrupted = true;
+	}
 	Require(interrupted, "Stereo surface matching checks cancellation");
 	return 0;
 }

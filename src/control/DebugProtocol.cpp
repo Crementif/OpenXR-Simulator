@@ -19,10 +19,12 @@ static std::uint32_t ReadU32(const Message& message, std::uint16_t name, std::op
 		throw ControlRequestError{ErrorCode::Invalid, "Missing or invalid uint32 field"};
 	return *value;
 }
+
 static Field Nested(std::uint16_t name, std::vector<Field> fields)
 {
 	return Field::Bytes(name, EncodeFields(fields));
 }
+
 static Field EncodePrediction(std::uint16_t name, const FramePrediction& prediction)
 {
 	return Nested(name,
@@ -30,6 +32,7 @@ static Field EncodePrediction(std::uint16_t name, const FramePrediction& predict
 				   Field::I64(tag::Time, prediction.displayTime.value.count()),
 				   Field::I64(tag::Period, prediction.displayPeriod.count())});
 }
+
 static Field EncodeCaptureIds(std::uint16_t name, const std::vector<CaptureId>& ids)
 {
 	std::vector<Field> fields;
@@ -70,6 +73,7 @@ Field EncodeCaptureTarget(CaptureTarget target)
 	return Nested(tag::Target, {Field::U32(tag::CaptureKind, static_cast<std::uint32_t>(kind)),
 								Field::U32(tag::Layer, target.layer), Field::U32(tag::View, target.view)});
 }
+
 CaptureTarget DecodeCaptureTarget(const Message& request)
 {
 	const auto* field = request.Find(tag::Target);
@@ -112,6 +116,7 @@ CaptureTarget DecodeCaptureTarget(const Message& request)
 	}
 	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported capture target"};
 }
+
 static DebugCommand DecodeCommandKind(std::uint32_t kind)
 {
 	switch (static_cast<CommandKind>(kind))
@@ -143,6 +148,7 @@ static DebugCommand DecodeCommandKind(std::uint32_t kind)
 	}
 	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported debug command"};
 }
+
 static const char* Name(DebugPhase value)
 {
 	switch (value)
@@ -162,6 +168,7 @@ static const char* Name(DebugPhase value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown operation phase"};
 }
+
 static const char* Name(DebugProgress value)
 {
 	switch (value)
@@ -215,6 +222,7 @@ static const char* Name(DebugProgress value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown operation progress"};
 }
+
 const char* SnapshotPhaseName(SnapshotPhase value)
 {
 	switch (value)
@@ -244,6 +252,7 @@ const char* SnapshotPhaseName(SnapshotPhase value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown snapshot phase"};
 }
+
 static const char* Name(FrameStage value)
 {
 	switch (value)
@@ -261,6 +270,7 @@ static const char* Name(FrameStage value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown frame stage"};
 }
+
 static const char* Name(FrameOutputDisposition value)
 {
 	switch (value)
@@ -276,6 +286,7 @@ static const char* Name(FrameOutputDisposition value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown frame output disposition"};
 }
+
 static const char* Name(FrameDropReason value)
 {
 	switch (value)
@@ -289,6 +300,7 @@ static const char* Name(FrameDropReason value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown frame drop reason"};
 }
+
 static const char* Name(PresentationKind value)
 {
 	switch (value)
@@ -304,6 +316,7 @@ static const char* Name(PresentationKind value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown presentation kind"};
 }
+
 static const char* Name(SnapshotAdmission value)
 {
 	switch (value)
@@ -321,6 +334,7 @@ static const char* Name(SnapshotAdmission value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown snapshot admission"};
 }
+
 // The applied device input and action activity of one frame, so the companion
 // can draw input over time and cut takes from any range. Fields 1-5 are head and
 // hands, 6 body, 7 gaze and 8-11 the tracker slots; body overrides stay sparse.
@@ -373,7 +387,9 @@ static Field EncodeAppliedInput(const FrameSubmissionState& submission, bool tra
 	fields.push_back(Field::U32(tag::ActiveActions, active));
 	return Nested(tag::AppliedInput, std::move(fields));
 }
-static Field EncodeFrameMetadata(const FrameRecord& frame, bool trackerCollections = false, bool bodyObservations = false)
+
+static Field EncodeFrameMetadata(const FrameRecord& frame, bool trackerCollections = false,
+								 bool bodyObservations = false)
 {
 	std::vector<Field> fields{
 		Field::U64(tag::Generation, frame.key.generation.value), Field::U64(tag::FrameId, frame.key.frame.value),
@@ -399,6 +415,7 @@ static Field EncodeFrameMetadata(const FrameRecord& frame, bool trackerCollectio
 	}
 	return Nested(tag::Frame, std::move(fields));
 }
+
 static ErrorCode AdmissionError(DebugAdmission value)
 {
 	switch (value)
@@ -420,6 +437,7 @@ static ErrorCode AdmissionError(DebugAdmission value)
 	}
 	return ErrorCode::Internal;
 }
+
 Field EncodeFrameKey(std::uint16_t name, FrameKey key)
 {
 	return Nested(name, {Field::U64(tag::Generation, key.generation.value), Field::U64(tag::FrameId, key.frame.value)});
@@ -502,6 +520,7 @@ DebugRequest DecodeDebugRequest(const Message& request)
 		command.capture = {RequireRequestU64(request, tag::CaptureId)};
 	return command;
 }
+
 std::optional<std::vector<std::string>> DecodeCompatibilityDeviations(const Message& status)
 {
 	const auto* field = status.Find(tag::CompatibilityDeviations);
@@ -566,6 +585,7 @@ void EncodeDebuggerStatus(Message& response, const DebugControllerSnapshot& stat
 		presented.push_back(EncodeDisplayTick(tag::Display, *display.latest));
 	response.fields.push_back(Nested(tag::Presentation, std::move(presented)));
 }
+
 void EncodeDebugOperation(Message& response, const DebugOperation& operation)
 {
 	response.fields.push_back(Field::U64(tag::OperationId, operation.id.value));
@@ -587,6 +607,7 @@ void EncodeDebugOperation(Message& response, const DebugOperation& operation)
 		outstanding.push_back(EncodeFrameKey(static_cast<std::uint16_t>(outstanding.size() + 1), key));
 	response.fields.push_back(Nested(tag::Outstanding, std::move(outstanding)));
 }
+
 void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture, bool trackerCollections)
 {
 	response.fields.push_back(Field::U64(tag::CaptureId, capture.id.value));
@@ -611,6 +632,7 @@ void EncodeDebugAdmission(Message& response, const DebugSubmission& admitted)
 		response.fields.push_back(Field::U64(tag::OperationId, admitted.operation.value));
 	response.fields.push_back(Field::Bool(tag::Duplicate, admitted.result == DebugAdmission::Duplicate));
 }
+
 void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count,
 						bool trackerCollections)
 {
@@ -641,10 +663,7 @@ void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, 
 	response.fields.push_back(Field::I64(tag::Time, history.origin.value.count()));
 	response.fields.push_back(Field::U64(tag::Capacity, history.capacity));
 	const auto oldest = std::find_if(history.frames.begin(), history.frames.end(),
-									 [&](const auto& frame)
-									 {
-										 return frame->key.generation == history.generation;
-									 });
+									 [&](const auto& frame) { return frame->key.generation == history.generation; });
 	response.fields.push_back(Field::U64(tag::Offset, oldest == history.frames.end() ? 0 : (*oldest)->key.frame.value));
 	response.fields.push_back(Nested(tag::Frames, std::move(frames)));
 }

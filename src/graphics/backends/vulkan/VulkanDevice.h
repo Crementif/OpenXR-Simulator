@@ -14,13 +14,14 @@ class VulkanCommands;
 
 class VulkanError : public std::runtime_error
 {
-  public:
+public:
 	VulkanError(VkResult result, const char* operation);
 	VkResult Result() const noexcept;
 
-  private:
+private:
 	VkResult m_result;
 };
+
 void CheckVulkan(VkResult result, const char* operation);
 
 struct VulkanBinding
@@ -36,7 +37,7 @@ struct VulkanBinding
 // optional shared native owner extends an inspection device's lifetime.
 class VulkanDevice
 {
-  public:
+public:
 	explicit VulkanDevice(const VulkanBinding& binding, std::shared_ptr<const void> owner = {});
 	~VulkanDevice();
 	std::unique_ptr<VulkanCommands> AcquireCommands();
@@ -55,7 +56,7 @@ class VulkanDevice
 	bool HasNativeOwner() const noexcept;
 	std::uint32_t MemoryType(std::uint32_t bits, VkMemoryPropertyFlags required) const;
 
-  private:
+private:
 	const std::shared_ptr<const void> m_owner;
 	std::mutex m_commandsMutex;
 	std::array<std::unique_ptr<VulkanCommands>, 16> m_commands;

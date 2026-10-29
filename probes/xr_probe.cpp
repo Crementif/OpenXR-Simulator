@@ -32,16 +32,19 @@ static void Ok(const char* what)
 {
 	printf("  [ ok ] %s\n", what);
 }
+
 [[noreturn]] static void Fail(const char* what, XrResult r)
 {
 	printf("  [FAIL] %s -> XrResult %d\n", what, static_cast<int>(r));
 	throw std::runtime_error(what);
 }
+
 static void Warn(const char* what)
 {
 	printf("  [warn] %s\n", what);
 	s_warn++;
 }
+
 static void Step(const char* what)
 {
 	printf("\n== %s\n", what);
@@ -58,11 +61,11 @@ static void Step(const char* what)
 static std::unique_ptr<control::LocalControlClient> HoldControllerInputs()
 {
 	const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
-	const auto endpoint = selected && *selected ? std::string(selected) :
-		std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
+	const auto endpoint = selected && *selected
+							  ? std::string(selected)
+							  : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
 	auto client = std::make_unique<control::LocalControlClient>(endpoint);
-	const auto exchange = [&](control::OpCode operation, std::vector<control::Field> fields = {})
-	{
+	const auto exchange = [&](control::OpCode operation, std::vector<control::Field> fields = {}) {
 		control::ControlPacket request;
 		request.message.opcode = static_cast<std::uint16_t>(operation);
 		request.message.fields = std::move(fields);
@@ -72,9 +75,10 @@ static std::unique_ptr<control::LocalControlClient> HoldControllerInputs()
 			throw std::runtime_error("Controller input control request failed");
 		return response;
 	};
-	exchange(control::OpCode::Hello, {control::Field::Text(control::tag::ClientName, "XR probe"),
-		control::Field::U64(control::tag::RequiredCapabilities,
-			static_cast<std::uint64_t>(control::Capability::SimulationCommands))});
+	exchange(control::OpCode::Hello,
+			 {control::Field::Text(control::tag::ClientName, "XR probe"),
+			  control::Field::U64(control::tag::RequiredCapabilities,
+								  static_cast<std::uint64_t>(control::Capability::SimulationCommands))});
 	const auto sessions = exchange(control::OpCode::Sessions);
 	const auto* field = sessions.Find(control::tag::Sessions);
 	if (!field)
@@ -94,8 +98,7 @@ static std::unique_ptr<control::LocalControlClient> HoldControllerInputs()
 	if (!session || !*session || !generation || !*generation)
 		throw std::runtime_error("Control session identity is missing");
 	std::vector<control::Field> commands;
-	const auto add = [&](const SimulationCommand& command)
-	{
+	const auto add = [&](const SimulationCommand& command) {
 		commands.push_back(control::EncodeSimulationCommand(command, static_cast<std::uint16_t>(commands.size() + 1)));
 	};
 	for (std::uint32_t hand = 0; hand < 2; ++hand)
@@ -108,10 +111,11 @@ static std::unique_ptr<control::LocalControlClient> HoldControllerInputs()
 		add(SetControllerControls{hand, input});
 	}
 	exchange(control::OpCode::SubmitSimulation,
-		{control::Field::U64(control::tag::Session, *session), control::Field::U64(control::tag::Generation, *generation),
-		 control::Field::U64(control::tag::TransactionId, 1), control::Field::U64(control::tag::ApplyFrame, 1),
-		 control::Field::U32(control::tag::SourceKind, 0), control::Field::U32(control::tag::LatePolicy, 1),
-		 control::Field::Bytes(control::tag::Commands, control::EncodeFields(commands))});
+			 {control::Field::U64(control::tag::Session, *session),
+			  control::Field::U64(control::tag::Generation, *generation),
+			  control::Field::U64(control::tag::TransactionId, 1), control::Field::U64(control::tag::ApplyFrame, 1),
+			  control::Field::U32(control::tag::SourceKind, 0), control::Field::U32(control::tag::LatePolicy, 1),
+			  control::Field::Bytes(control::tag::Commands, control::EncodeFields(commands))});
 	return client;
 }
 
@@ -123,6 +127,7 @@ static void Check(XrResult result, const char* operation)
 }
 
 static XrInstance s_instance = XR_NULL_HANDLE;
+
 static XrPath Path(const char* value)
 {
 	XrPath path = XR_NULL_PATH;
@@ -256,8 +261,7 @@ static int Run(int argc, char** argv)
 	}
 
 	Step("startup query contracts");
-	auto expect = [](XrResult actual, XrResult expected, const char* label)
-	{
+	auto expect = [](XrResult actual, XrResult expected, const char* label) {
 		if (actual == expected)
 			Ok(label);
 		else
@@ -486,8 +490,7 @@ static int Run(int argc, char** argv)
 		strcpy_s(asci.localizedActionSetName, "Menu Navigation");
 		Check(xrCreateActionSet(s_instance, &asci, &menuSet), "xrCreateActionSet(menu)");
 
-		auto mkAction = [&](XrActionSet set, const char* id, const char* name, XrActionType type, XrAction& out)
-		{
+		auto mkAction = [&](XrActionSet set, const char* id, const char* name, XrActionType type, XrAction& out) {
 			XrActionCreateInfo aci = {XR_TYPE_ACTION_CREATE_INFO};
 			aci.actionType = type;
 			strncpy_s(aci.actionName, id, XR_MAX_ACTION_NAME_SIZE - 1);
@@ -641,13 +644,14 @@ static int Run(int argc, char** argv)
 		if (subRect)
 			printf("       sub-rect mode: %ux%u swapchain, imageRect (%d,%d) %dx%d\n", width, height, viewRect.offset.x,
 				   viewRect.offset.y, viewRect.extent.width, viewRect.extent.height);
+
 		struct Chain
 		{
 			XrSwapchain m_handle = XR_NULL_HANDLE;
 			std::vector<ComPtr<ID3D12Resource>> m_tex;
 		};
-		auto makeChain = [&](DXGI_FORMAT fmt, bool depth, Chain& c, const char* label) -> bool
-		{
+
+		auto makeChain = [&](DXGI_FORMAT fmt, bool depth, Chain& c, const char* label) -> bool {
 			XrSwapchainCreateInfo ci = {XR_TYPE_SWAPCHAIN_CREATE_INFO};
 			ci.width = width;
 			ci.height = height;
@@ -731,8 +735,7 @@ static int Run(int argc, char** argv)
 		bool sawSaneFov = true;
 		for (int f = 0; f < totalFrames; ++f)
 		{
-			PollXrEvents(s_instance, [&](const XrEventDataBuffer& event)
-			{
+			PollXrEvents(s_instance, [&](const XrEventDataBuffer& event) {
 				if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 					state = reinterpret_cast<const XrEventDataSessionStateChanged&>(event).state;
 			});
@@ -878,8 +881,7 @@ static int Run(int argc, char** argv)
 			// RENDER_TARGET and depth in DEPTH_WRITE and wants them back that way
 			// (renderer.cpp:492 and :514). A runtime that tracks them as anything else
 			// issues a mismatched barrier, which is what validation catches here.
-			auto cycle = [&](Chain& c, bool depth, int eye = -1) -> bool
-			{
+			auto cycle = [&](Chain& c, bool depth, int eye = -1) -> bool {
 				std::uint32_t idx = 0;
 				if (XR_FAILED(xrAcquireSwapchainImage(c.m_handle, nullptr, &idx)))
 					return false;

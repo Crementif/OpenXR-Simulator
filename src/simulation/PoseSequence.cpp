@@ -6,13 +6,10 @@
 
 namespace simxr
 {
-template <class T, std::size_t N> static bool Any(const std::array<std::optional<T>, N>& values)
+template<class T, std::size_t N>
+static bool Any(const std::array<std::optional<T>, N>& values)
 {
-	return std::any_of(values.begin(), values.end(),
-					   [](const auto& value)
-					   {
-						   return value.has_value();
-					   });
+	return std::any_of(values.begin(), values.end(), [](const auto& value) { return value.has_value(); });
 }
 
 static void Position(XrVector3f& value, const std::array<std::optional<float>, 3>& patch)
@@ -170,14 +167,11 @@ PoseSequence::PoseSequence(std::vector<PoseSequenceStep> steps, bool loop) : m_s
 			{
 				m_channels[hand + 1] = m_channels[hand + 1] || Any(patch->position) || patch->orientation.has_value();
 				m_channels[hand + 3] = m_channels[hand + 3] || patch->trigger || patch->grip || Any(patch->stick) ||
-					patch->primary || patch->secondary;
+									   patch->primary || patch->secondary;
 			}
 	}
 	std::stable_sort(m_steps.begin(), m_steps.end(),
-					 [](const auto& left, const auto& right)
-					 {
-						 return left.frame < right.frame;
-					 });
+					 [](const auto& left, const auto& right) { return left.frame < right.frame; });
 }
 
 std::size_t PoseSequence::Size() const noexcept

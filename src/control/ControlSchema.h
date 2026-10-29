@@ -18,6 +18,7 @@ enum class RequestDomain
 	Simulation,
 	Game
 };
+
 struct RequestSchema
 {
 	OpCode opcode;
@@ -25,9 +26,11 @@ struct RequestSchema
 	std::uint16_t minimumMinor;
 	std::span<const std::uint16_t> fields;
 };
+
 const RequestSchema& ValidateControlRequest(const ControlPacket& packet, bool nativeHandles);
 std::uint64_t RequireRequestU64(const Message& request, std::uint16_t tag);
 std::uint32_t RequireRequestU32(const Message& request, std::uint16_t tag);
+
 namespace tag
 {
 inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 4, Lease = 5, CommandId = 6,
@@ -69,7 +72,9 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   MediaType = 214, FirstFrame = 215, LastFrame = 216, AimPose = 217, AttachmentId = 218,
 							   SampleSequence = 219, ObservedTime = 220, PredictionTime = 221, MaxSampleAgeMs = 222,
 							   ClockDomain = 223, ClockRevision = 224, NativeTime = 225, RuntimeTimeBefore = 226,
-							   RuntimeTimeAfter = 227, ClockResolution = 228, SourceAge = 229, TrackerCollection = 230, BodyObservation = 231, BodyObservationOrigin = 232, RecordingId = 233, RecordingDrain = 234, ImageRegion = 235, ExpectedInputs = 236, ApplicationOwned = 237;
+							   RuntimeTimeAfter = 227, ClockResolution = 228, SourceAge = 229, TrackerCollection = 230,
+							   BodyObservation = 231, BodyObservationOrigin = 232, RecordingId = 233,
+							   RecordingDrain = 234, ImageRegion = 235, ExpectedInputs = 236, ApplicationOwned = 237;
 }
 
 enum class Capability : std::uint64_t

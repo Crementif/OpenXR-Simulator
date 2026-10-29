@@ -22,29 +22,29 @@ void TestStandaloneInput()
 	LegacyInput input;
 	const auto tracking = input.Tracking(false);
 	Require(!tracking.focused && Near(tracking.head.pose.position.y, 1.7f) &&
-		Near(tracking.controllers[0].pose.pose.position.x, -.2f) &&
-		Near(tracking.controllers[1].pose.pose.position.x, .2f) && input.Controls()[0].trigger == 0,
-		"Standalone input retains neutral head-relative controller defaults");
+				Near(tracking.controllers[0].pose.pose.position.x, -.2f) &&
+				Near(tracking.controllers[1].pose.pose.position.x, .2f) && input.Controls()[0].trigger == 0,
+			"Standalone input retains neutral head-relative controller defaults");
 	auto views = input.Views();
 	views.outerWidth = 512;
 	input.SetViews(views);
 	Require(input.Views().outerWidth == 512 && LegacyInput{}.Views().outerWidth == 1280,
-		"Standalone view settings remain instance-owned");
+			"Standalone view settings remain instance-owned");
 }
 
 void TestSequenceProgram()
 {
 	using namespace simxr;
 	std::string input(R"({"frame":9007199254740993,"head":{"x":1}})"
-							 "\n"
-							 R"({"frame":"9007199254740993","capture":true})"
-							 "\n"
-							 R"({"frame":18446744073709551615,"right":{"trigger":0.5}})"
-							 "\n"
-							 R"({"frame":18446744073709551616,"head":{"x":99}})"
-							 "\n"
-							 R"({"frame":"","head":{"x":99}})"
-							 "\n");
+					  "\n"
+					  R"({"frame":"9007199254740993","capture":true})"
+					  "\n"
+					  R"({"frame":18446744073709551615,"right":{"trigger":0.5}})"
+					  "\n"
+					  R"({"frame":18446744073709551616,"head":{"x":99}})"
+					  "\n"
+					  R"({"frame":"","head":{"x":99}})"
+					  "\n");
 	auto program = PoseSequence::Parse(input, false);
 	Require(program.Size() == 3 && program.Steps()[0].frame.value == 9007199254740993ULL &&
 				program.Steps()[1].capture && program.Steps()[2].frame.value == UINT64_MAX,
@@ -60,9 +60,9 @@ void TestSequenceProgram()
 			"Last representable frame did not finish exactly once");
 
 	std::string loop(R"({"frame":1,"capture":true})"
-							"\n"
-							R"({"frame":3,"head":{"x":4}})"
-							"\n");
+					 "\n"
+					 R"({"frame":3,"head":{"x":4}})"
+					 "\n");
 	playback.Start(PoseSequence::Parse(loop, true), {10});
 	Require(playback.NextFrame() == FrameId{11} && playback.Advance({13}).size() == 2 &&
 				playback.NextFrame() == FrameId{15},

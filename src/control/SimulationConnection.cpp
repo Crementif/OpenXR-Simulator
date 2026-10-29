@@ -29,6 +29,7 @@ static void CheckRecordingResult(RecordingResult result)
 	}
 	throw std::logic_error("Unknown recording result");
 }
+
 static InspectionValue ReadDiagnostics(Session& session, const Message& request)
 {
 	const auto after = request.Find(tag::Offset) ? RequireRequestU64(request, tag::Offset) : 0;
@@ -40,6 +41,7 @@ static InspectionValue ReadDiagnostics(Session& session, const Message& request)
 		frame = FrameKey{session.Snapshot().generation, FrameId{RequireRequestU64(request, tag::FrameId)}};
 	return InspectDiagnostics(session.History().Diagnostics(after, static_cast<std::size_t>(count), frame));
 }
+
 static InspectionValue ReadRecording(Session& session, const Message& request, Message& response)
 {
 	if (response.minor < 14 && request.Find(tag::RecordingId))
@@ -77,8 +79,7 @@ static InspectionValue ReadRecording(Session& session, const Message& request, M
 			fits = document.Encode().size() <= MaxPayload - 4096;
 		}
 		catch (const std::length_error&)
-		{
-		}
+		{}
 		if (fits)
 		{
 			response.fields.push_back(Field::U64(tag::Offset, actualOffset));
@@ -99,6 +100,7 @@ SimulationConnection::SimulationConnection(ConnectionId connection, GameBridge& 
 		throw std::invalid_argument("A simulation source requires a connection identity");
 	m_uses.reserve(64);
 }
+
 SimulationConnection::~SimulationConnection()
 {
 	for (const auto& use : m_uses)
@@ -108,10 +110,10 @@ SimulationConnection::~SimulationConnection()
 			use.session->ReleaseCommandSource(use.source, true);
 		}
 		catch (...)
-		{
-		}
+		{}
 	}
 }
+
 std::optional<CommandSource> SimulationConnection::Source(std::optional<CommandSourceKind> requested) const
 {
 	const auto kind = requested.value_or(m_kind.value_or(CommandSourceKind::Mcp));
@@ -122,6 +124,7 @@ std::optional<CommandSource> SimulationConnection::Source(std::optional<CommandS
 		return {};
 	return CommandSource{kind, m_connection.value};
 }
+
 CommandSource SimulationConnection::RequestSource(const Message& request) const
 {
 	std::optional<CommandSourceKind> kind;
@@ -132,15 +135,13 @@ CommandSource SimulationConnection::RequestSource(const Message& request) const
 		throw ControlRequestError{ErrorCode::Conflict, "A connection cannot change its simulation source kind"};
 	return *source;
 }
+
 void SimulationConnection::Track(const std::shared_ptr<Session>& session, CommandSource source)
 {
 	if (!session || source.id != m_connection.value || Source(source.kind) != source)
 		throw std::invalid_argument("Simulation source does not belong to this connection");
-	const auto found = std::find_if(m_uses.begin(), m_uses.end(),
-									[&](const auto& use)
-									{
-										return use.session == session;
-									});
+	const auto found =
+		std::find_if(m_uses.begin(), m_uses.end(), [&](const auto& use) { return use.session == session; });
 	if (found == m_uses.end())
 	{
 		if (m_uses.size() == 64)
@@ -149,6 +150,7 @@ void SimulationConnection::Track(const std::shared_ptr<Session>& session, Comman
 	}
 	m_kind = source.kind;
 }
+
 bool SimulationConnection::OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept
 {
 	if (!m_kind || !capture.metadata || !capture.metadata->sequenceCapture)
@@ -156,6 +158,7 @@ bool SimulationConnection::OwnsSequenceCapture(const SnapshotRecord& capture) co
 	const auto& receipt = *capture.metadata->sequenceCapture;
 	return receipt.request.owner == CommandSource{*m_kind, m_connection.value} && receipt.reservation.id == capture.id;
 }
+
 Message SimulationConnection::Dispatch(const Message& request, const ControlSession& binding, Message response,
 									   std::vector<SnapshotRecord>& held)
 {
@@ -176,16 +179,13 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 		{
 			const auto applied = session->Commands().Snapshot().applied;
 			const CommandSource source{CommandSourceKind::Device, m_connection.value};
-			std::erase_if(
-				snapshot->outputs,
-				[&](const HapticOutput& output)
-				{
-					if (!applied || output.device.kind != InputDeviceKind::Controller || output.device.value >= 2)
-						return true;
-					const auto hand = static_cast<std::size_t>(output.device.value);
-					return applied->owners[static_cast<std::size_t>(ControlChannel::LeftControls) + hand] != source ||
-						   applied->owners[static_cast<std::size_t>(ControlChannel::LeftPose) + hand] != source;
-				});
+			std::erase_if(snapshot->outputs, [&](const HapticOutput& output) {
+				if (!applied || output.device.kind != InputDeviceKind::Controller || output.device.value >= 2)
+					return true;
+				const auto hand = static_cast<std::size_t>(output.device.value);
+				return applied->owners[static_cast<std::size_t>(ControlChannel::LeftControls) + hand] != source ||
+					   applied->owners[static_cast<std::size_t>(ControlChannel::LeftPose) + hand] != source;
+			});
 		}
 		response.fields.push_back(Field::I64(tag::Time, snapshot->time.value.count()));
 		response.fields.push_back(EncodeHaptics(snapshot->outputs));
@@ -199,10 +199,10 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 	const bool trackerInteraction = session->Extensions().Contains(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
 	const bool applicationOwned = ApplicationOwnedSequence(request);
 	if (applicationOwned && opcode != OpCode::ReadSequence && opcode != OpCode::StopSequence)
-		throw ControlRequestError{ErrorCode::Invalid, "Application ownership only selects an existing startup sequence"};
+		throw ControlRequestError{ErrorCode::Invalid,
+								  "Application ownership only selects an existing startup sequence"};
 	const auto source = applicationOwned ? ApplicationAutomationSource : RequestSource(request);
-	const auto simulationState = [&]
-	{
+	const auto simulationState = [&] {
 		std::vector<std::uint64_t> bound;
 		if (trackerInteraction)
 			for (const auto& action : session->Actions().Snapshot().actions)
@@ -218,8 +218,7 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 					   session->Extensions().Contains(XR_BD_BODY_TRACKING_EXTENSION_NAME)});
 	};
 	InspectionValue document;
-	const auto execute = [&]
-	{
+	const auto execute = [&] {
 		switch (static_cast<OpCode>(request.opcode))
 		{
 		case OpCode::UploadSequence:
@@ -240,8 +239,7 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 			auto transaction = DecodeSimulationTransaction(request, m_connection.value);
 			if (response.minor < 10 && std::any_of(
 										   transaction.commands.begin(), transaction.commands.end(),
-										   [](const auto& command)
-										   {
+										   [](const auto& command) {
 											   const auto* tracker = std::get_if<SetTracker>(&command);
 											   return std::holds_alternative<SetTrackers>(command) ||
 													  (tracker && (tracker->value.poseFlags != TrackedPoseFlags ||
@@ -250,16 +248,14 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 				throw ControlRequestError{ErrorCode::UnsupportedField, "Tracker collections require protocol minor 10"};
 			if (response.minor < 11 && std::any_of(
 										   transaction.commands.begin(), transaction.commands.end(),
-										   [](const auto& command)
-										   {
+										   [](const auto& command) {
 											   const auto* body = std::get_if<SetBodyControls>(&command);
 											   return body && body->observation.has_value();
 										   }))
 				throw ControlRequestError{ErrorCode::UnsupportedField, "Body observations require protocol minor 11"};
 			if (response.minor < 12 && std::any_of(
 										   transaction.commands.begin(), transaction.commands.end(),
-										   [](const auto& command)
-										   {
+										   [](const auto& command) {
 											   const auto* body = std::get_if<SetBodyControls>(&command);
 											   return body && body->observationOrigin.has_value();
 										   }))
@@ -321,8 +317,8 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 			const auto through = RequireRequestU64(request, tag::Offset);
 			if (through > std::numeric_limits<std::size_t>::max())
 				throw ControlRequestError{ErrorCode::Invalid, "Recording offset exceeds native capacity"};
-			const auto result = scheduler.AcknowledgeRecording(
-				source, RequireRequestU64(request, tag::RecordingId), static_cast<std::size_t>(through));
+			const auto result = scheduler.AcknowledgeRecording(source, RequireRequestU64(request, tag::RecordingId),
+															   static_cast<std::size_t>(through));
 			CheckRecordingResult(result);
 			document = SimulationRecording(scheduler.Recorder().Snapshot({}, 0));
 			break;

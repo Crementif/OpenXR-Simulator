@@ -46,7 +46,7 @@ Window::Window(bool hidden)
 	constexpr auto subsystems = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD;
 	if (!SDL_InitSubSystem(subsystems))
 		throw std::runtime_error(std::string("Unable to initialize the desktop window: ") + SDL_GetError() +
-			"\n\nCheck that a desktop session and display connection are available.");
+								 "\n\nCheck that a desktop session and display connection are available.");
 	try
 	{
 		const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
@@ -57,12 +57,14 @@ Window::Window(bool hidden)
 		m_window =
 			SDL_CreateWindow("OpenXR Simulator", static_cast<int>(1280 * scale), static_cast<int>(800 * scale), flags);
 		if (!m_window)
-			throw std::runtime_error(std::string("Unable to open a Vulkan window: ") + SDL_GetError() +
+			throw std::runtime_error(
+				std::string("Unable to open a Vulkan window: ") + SDL_GetError() +
 				"\n\nOpenXR Simulator requires a working desktop session and a Vulkan-compatible graphics driver.");
 		if (const auto* base = SDL_GetBasePath())
 		{
 			const auto path = PathText(Utf8Path(base) / "openxr-simulator.bmp");
-			std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> icon(SDL_LoadBMP(path.c_str()), SDL_DestroySurface);
+			std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> icon(SDL_LoadBMP(path.c_str()),
+																			 SDL_DestroySurface);
 			if (icon && !SDL_SetWindowIcon(m_window, icon.get()))
 				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Cannot set application icon: %s", SDL_GetError());
 		}
@@ -159,6 +161,7 @@ bool Window::Focused() const
 {
 	return (SDL_GetWindowFlags(m_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
 }
+
 void Window::OpenGamepad()
 {
 	if (m_gamepad)
@@ -172,6 +175,7 @@ void Window::OpenGamepad()
 	m_gyroEnabled = m_gamepad && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO) &&
 					SDL_SetGamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO, true);
 }
+
 GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
 {
 	OpenGamepad();
@@ -179,13 +183,11 @@ GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
 	if (!m_gamepad)
 		return result;
 	result.connected = true;
-	const auto button = [&](const std::string& name)
-	{
+	const auto button = [&](const std::string& name) {
 		const auto key = SDL_GetGamepadButtonFromString(name.c_str());
 		return key != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(m_gamepad, key);
 	};
-	const auto axis = [&](const std::string& name)
-	{
+	const auto axis = [&](const std::string& name) {
 		const auto key = SDL_GetGamepadAxisFromString(name.c_str());
 		if (key == SDL_GAMEPAD_AXIS_INVALID)
 			return 0.0f;
@@ -216,10 +218,12 @@ std::uint32_t Window::GamepadIdentity() const noexcept
 {
 	return m_gamepad ? SDL_GetGamepadID(m_gamepad) : 0;
 }
+
 bool Window::HasGamepad() const noexcept
 {
 	return m_gamepad != nullptr;
 }
+
 bool Window::Rumble(std::array<std::uint16_t, 2> motors, std::chrono::steady_clock::time_point deadline)
 {
 	return m_feedback.Rumble(motors, deadline);
@@ -245,6 +249,7 @@ bool Window::CapturePointer(bool enabled, bool relative)
 	m_pointerMotion = {};
 	return true;
 }
+
 std::pair<float, float> Window::TakePointerMotion()
 {
 	return std::exchange(m_pointerMotion, {});

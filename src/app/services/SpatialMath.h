@@ -5,11 +5,13 @@
 namespace simxr::app
 {
 using SpatialMatrix = std::array<float, 16>;
+
 struct ProjectedPoint
 {
 	XrVector2f uv{};
 	bool behind = false;
 };
+
 SpatialMatrix PoseMatrix(XrPosef pose);
 SpatialMatrix ViewMatrix(XrPosef camera);
 SpatialMatrix ProjectionMatrix(XrFovf fov);

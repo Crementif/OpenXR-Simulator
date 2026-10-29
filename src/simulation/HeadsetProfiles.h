@@ -104,6 +104,7 @@ inline constexpr std::span<const HeadsetSpec> HeadsetProfiles()
 {
 	return HeadsetProfileTable;
 }
+
 inline constexpr const HeadsetSpec* FindHeadsetProfile(std::string_view id)
 {
 	for (const auto& profile : HeadsetProfileTable)
@@ -111,5 +112,6 @@ inline constexpr const HeadsetSpec* FindHeadsetProfile(std::string_view id)
 			return &profile;
 	return nullptr;
 }
+
 ViewSettings ProfileViews(const HeadsetSpec& profile);
 } // namespace simxr

@@ -24,12 +24,14 @@
 namespace
 {
 thread_local int failAllocationAfter = -1;
+
 struct AllocationFailure
 {
 	explicit AllocationFailure(int after)
 	{
 		failAllocationAfter = after;
 	}
+
 	~AllocationFailure()
 	{
 		failAllocationAfter = -1;
@@ -50,22 +52,27 @@ void* operator new(std::size_t size)
 		return result;
 	throw std::bad_alloc{};
 }
+
 void* operator new[](std::size_t size)
 {
 	return ::operator new(size);
 }
+
 void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 void operator delete[](void* memory) noexcept
 {
 	std::free(memory);
 }
+
 void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
 }
+
 void operator delete[](void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -368,10 +375,12 @@ void IndependentTriggerClick()
 	const std::array bindings{
 		XrActionSuggestedBinding{click, Path(registry, "/user/hand/left/input/trigger/click")},
 		XrActionSuggestedBinding{threshold, Path(registry, "/user/hand/left/input/trigger/value")}};
-	const XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr, profile, 2, bindings.data()};
+	const XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr,
+														 profile, 2, bindings.data()};
 	Require(registry.SuggestBindings(suggested) == XR_SUCCESS, "Bind trigger click and threshold independently");
 	const auto touchProfile = Path(registry, "/interaction_profiles/oculus/touch_controller");
-	const XrInteractionProfileSuggestedBinding touchSuggestion{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr, touchProfile, 1, &bindings[1]};
+	const XrInteractionProfileSuggestedBinding touchSuggestion{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr,
+															   touchProfile, 1, &bindings[1]};
 	Require(registry.SuggestBindings(touchSuggestion) == XR_SUCCESS, "Bind alternate simulated profile");
 	ActionSyncState session(registry);
 	const XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO, nullptr, 1, &set};
@@ -386,27 +395,29 @@ void IndependentTriggerClick()
 	const XrActionStateGetInfo getThreshold{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, threshold, paths[0]};
 	XrActionStateBoolean a{XR_TYPE_ACTION_STATE_BOOLEAN}, b{XR_TYPE_ACTION_STATE_BOOLEAN};
 	Require(session.Sync(sync, input, true) == XR_SUCCESS && session.GetBoolean(getClick, a) == XR_SUCCESS &&
-		session.GetBoolean(getThreshold, b) == XR_SUCCESS && !a.currentState && b.currentState,
-		"Physical false click overrides pressure only for the click component");
+				session.GetBoolean(getThreshold, b) == XR_SUCCESS && !a.currentState && b.currentState,
+			"Physical false click overrides pressure only for the click component");
 	input.controllers[0].trigger = .1f;
 	input.controllers[0].triggerClick = true;
 	Require(session.Sync(sync, input, true) == XR_SUCCESS && session.GetBoolean(getClick, a) == XR_SUCCESS &&
-		session.GetBoolean(getThreshold, b) == XR_SUCCESS && a.currentState && !b.currentState,
-		"Physical click does not overwrite analog threshold semantics");
+				session.GetBoolean(getThreshold, b) == XR_SUCCESS && a.currentState && !b.currentState,
+			"Physical click does not overwrite analog threshold semantics");
 	input.controllers[0].triggerClick.reset();
-	Require(session.Sync(sync, input, true) == XR_SUCCESS && session.GetBoolean(getClick, a) == XR_SUCCESS && !a.currentState,
-		"Legacy absent click uses analog threshold");
+	Require(session.Sync(sync, input, true) == XR_SUCCESS && session.GetBoolean(getClick, a) == XR_SUCCESS &&
+				!a.currentState,
+			"Legacy absent click uses analog threshold");
 	const auto observedProfiles = session.ControllerProfiles();
 	Require(observedProfiles && (*observedProfiles)[0] == "/interaction_profiles/valve/index_controller",
-		"Controller profile inspection resolves instance-local paths to text");
+			"Controller profile inspection resolves instance-local paths to text");
 	XrPath effective = XR_NULL_PATH;
 	Require(session.CurrentProfile(paths[0], effective) == XR_SUCCESS && effective == profile,
-		"Observed physical profile overrides simulated preference");
+			"Observed physical profile overrides simulated preference");
 	input.controllers[0].physicalProfile.clear();
 	Require(session.Sync(sync, input, true) == XR_SUCCESS &&
-		session.CurrentProfile(paths[0], effective) == XR_SUCCESS && effective == touchProfile,
-		"Releasing physical profile restores simulated preference");
+				session.CurrentProfile(paths[0], effective) == XR_SUCCESS && effective == touchProfile,
+			"Releasing physical profile restores simulated preference");
 }
+
 void ReservedSystemBindings()
 {
 	for (const auto profileName :

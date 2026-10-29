@@ -21,9 +21,10 @@
 namespace simxr::app
 {
 class UiRenderer;
+
 class RuntimeSession
 {
-  public:
+public:
 	RuntimeSession(UiRenderer& renderer, const std::string& endpoint);
 	~RuntimeSession();
 	RuntimeSession(const RuntimeSession&) = delete;
@@ -65,10 +66,12 @@ class RuntimeSession
 	void ConnectEndpoint(std::string endpoint, std::optional<std::uint64_t> expectedProcess = {});
 	void Disconnect();
 	void RefreshEndpoints();
+
 	const std::vector<std::string>& Endpoints() const noexcept
 	{
 		return m_endpoints;
 	}
+
 	std::string Endpoint() const;
 	void ChooseSession(PanelSession session);
 	void ConfigureSnapshots(std::uint32_t budgetMiB);
@@ -78,86 +81,107 @@ class RuntimeSession
 	bool Connected() const;
 	bool SupportsEdits() const;
 	bool Supports(control::Capability capability) const;
+
 	std::uint64_t Epoch() const noexcept
 	{
 		return m_requests.Epoch();
 	}
+
 	const TimeCursor& Time() const noexcept
 	{
 		return m_time;
 	}
+
 	RuntimeConnectionSnapshot Connection() const
 	{
 		return m_requests.Snapshot();
 	}
+
 	std::vector<RuntimeFrame> TimelineFrames() const;
+
 	const HistoryStore& History() const
 	{
 		return m_history.History();
 	}
+
 	const InputHistory& InputSamples() const
 	{
 		return m_history.Input();
 	}
+
 	const std::optional<ObservedSetup>& Setup() const noexcept
 	{
 		return m_setup;
 	}
+
 	DebuggerPanelController& Debugger() noexcept
 	{
 		return m_debugger;
 	}
+
 	const DebuggerPanelController& Debugger() const noexcept
 	{
 		return m_debugger;
 	}
+
 	InspectionWorkspace& Workspace() noexcept
 	{
 		return m_workspace;
 	}
+
 	const InspectionWorkspace& Workspace() const noexcept
 	{
 		return m_workspace;
 	}
+
 	PreviewImages& Preview() noexcept
 	{
 		return m_preview;
 	}
+
 	const PreviewImages& Preview() const noexcept
 	{
 		return m_preview;
 	}
+
 	ImageExportTask& Exports() noexcept
 	{
 		return m_exports;
 	}
+
 	const ImageExportTask& Exports() const noexcept
 	{
 		return m_exports;
 	}
+
 	ManualInputController& ManualInput() noexcept
 	{
 		return m_manualInput;
 	}
+
 	const ManualInputSnapshot& Input() const noexcept
 	{
 		return m_input;
 	}
+
 	bool TakeObservation();
+
 	HapticFeedback& Haptics() noexcept
 	{
 		return m_haptics;
 	}
+
 	bool AutoSelect() const noexcept
 	{
 		return m_autoSelect;
 	}
+
 	void SetAutoSelect(bool enabled) noexcept
 	{
 		m_autoSelect = enabled;
 	}
 
-  private:
+private:
 	using Clock = std::chrono::steady_clock;
 	void Reply(const PanelReply& response);
 	void ScopeChanged();

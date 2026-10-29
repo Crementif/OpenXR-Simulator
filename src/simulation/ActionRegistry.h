@@ -79,7 +79,7 @@ struct ActionSyncSnapshot;
 
 class ActionRegistry
 {
-  public:
+public:
 	ActionRegistry(XrInstance owner, const EnabledExtensions& enabled);
 	XrResult StringToPath(std::string_view text, XrPath& path);
 	XrResult PathToString(XrPath path, std::uint32_t capacity, std::uint32_t* count, char* buffer) const;
@@ -107,7 +107,7 @@ class ActionRegistry
 	XrResult ValidateSubaction(const ActionDefinition& action, XrPath path) const;
 	std::optional<std::size_t> Hand(XrPath path) const;
 
-  private:
+private:
 	XrInstance m_owner;
 	const EnabledExtensions& m_enabled;
 	mutable std::mutex m_mutex;
@@ -174,7 +174,7 @@ struct ActionSyncSnapshot
 
 class ActionSyncState
 {
-  public:
+public:
 	explicit ActionSyncState(ActionRegistry& registry);
 	XrResult Attach(const XrSessionActionSetsAttachInfo& info, const InputSnapshot& input = {});
 	// Reports profile changes with the committed snapshot, without a fallible reader copy.
@@ -196,7 +196,7 @@ class ActionSyncState
 	void SetFocused(bool focused);
 	void Reset();
 
-  private:
+private:
 	XrResult Value(const XrActionStateGetInfo& info, XrActionType type, ActionStateValue& value,
 				   bool retained = false) const;
 	XrResult Sources(XrAction action, XrPath subaction, std::vector<ResolvedActionSource>& sources,

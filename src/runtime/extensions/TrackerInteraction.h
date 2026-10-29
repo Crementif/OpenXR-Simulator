@@ -20,7 +20,7 @@ struct TrackerPathState
 
 class TrackerInteraction
 {
-  public:
+public:
 	TrackerInteraction(ActionRegistry& registry, const EnabledExtensions& enabled, EventQueue& events);
 	void BeginSession();
 	XrResult Publish(const TrackingSnapshot& snapshot, std::vector<XrPath>* changedPaths = nullptr);
@@ -29,7 +29,7 @@ class TrackerInteraction
 	PoseSample Pose(const TrackingSnapshot& snapshot, TrackerIdentity identity) const;
 	std::vector<TrackerPathState> Paths() const;
 
-  private:
+private:
 	ActionRegistry& m_registry;
 	EventQueue& m_events;
 	const bool m_enabled;

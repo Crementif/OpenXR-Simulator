@@ -18,11 +18,13 @@ struct ImagePoolGeneration
 	std::uint64_t value = 0;
 	auto operator<=>(const ImagePoolGeneration&) const = default;
 };
+
 struct SharedImageId
 {
 	std::uint64_t value = 0;
 	auto operator<=>(const SharedImageId&) const = default;
 };
+
 struct SharedImageKey
 {
 	ImagePoolGeneration pool;

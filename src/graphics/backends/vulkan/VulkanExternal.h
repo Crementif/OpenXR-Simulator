@@ -44,7 +44,7 @@ using VulkanImportFenceHandle = PFN_vkImportFenceFdKHR;
 #endif
 class VulkanExternalHandle
 {
-  public:
+public:
 	explicit VulkanExternalHandle(VulkanNativeHandle descriptor = InvalidVulkanHandle) noexcept;
 	~VulkanExternalHandle();
 	VulkanExternalHandle(VulkanExternalHandle&& other) noexcept;
@@ -57,7 +57,7 @@ class VulkanExternalHandle
 	void Reset(VulkanNativeHandle descriptor = InvalidVulkanHandle) noexcept;
 	VulkanExternalHandle Duplicate() const;
 
-  private:
+private:
 	VulkanNativeHandle m_descriptor;
 };
 
@@ -124,12 +124,12 @@ class VulkanExternalDevice;
 // The descriptor describes the agreed handoff layout, never readiness or idle.
 class VulkanExternalImage final
 {
-  public:
+public:
 	std::shared_ptr<VulkanImage> Image() const noexcept;
 	const VulkanExternalImageDescriptor& Descriptor() const noexcept;
 	VulkanExternalHandle ExportMemory() const;
 
-  private:
+private:
 	friend class VulkanExternalDevice;
 	friend class VulkanImagePool;
 	VulkanExternalImage(std::shared_ptr<VulkanImage> image, std::shared_ptr<const VulkanExternalImage> allocation);
@@ -150,14 +150,14 @@ class VulkanExternalImage final
 // owner through submitted GPU use; destruction neither waits nor infers idle.
 class VulkanExternalSemaphore final
 {
-  public:
+public:
 	~VulkanExternalSemaphore();
 	VkSemaphore Get() const noexcept;
 	std::shared_ptr<VulkanDevice> Device() const noexcept;
 	const VulkanExternalIdentity& Identity() const noexcept;
 	VulkanExternalHandle ExportOnce();
 
-  private:
+private:
 	friend class VulkanExternalDevice;
 	VulkanExternalSemaphore(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
 							VulkanGetSemaphoreHandle getSemaphoreHandle, bool exportable);
@@ -174,12 +174,12 @@ class VulkanExternalSemaphore final
 // Native submissions must retain it through their own retirement fence.
 class VulkanExternalTimeline final : public GpuCompletion
 {
-  public:
+public:
 	VkSemaphore Get() const noexcept;
 	VulkanExternalHandle ExportOnce();
 	CompletionStatus PollCompletion() const noexcept override;
 
-  private:
+private:
 	friend class VulkanExternalDevice;
 	VulkanExternalTimeline(std::shared_ptr<VulkanExternalSemaphore> semaphore,
 						   PFN_vkGetSemaphoreCounterValueKHR counter);
@@ -194,7 +194,7 @@ class VulkanExternalTimeline final : public GpuCompletion
 // completion; Failed does not authorize destruction of pending GPU resources.
 class VulkanExternalFence final : public GpuCompletion
 {
-  public:
+public:
 	~VulkanExternalFence() override;
 	VkFence Get() const noexcept;
 	std::shared_ptr<VulkanDevice> Device() const noexcept;
@@ -202,7 +202,7 @@ class VulkanExternalFence final : public GpuCompletion
 	VulkanExternalHandle ExportOnce();
 	CompletionStatus PollCompletion() const noexcept override;
 
-  private:
+private:
 	friend class VulkanExternalDevice;
 	VulkanExternalFence(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
 						VulkanGetFenceHandle getFenceHandle, bool exportable);
@@ -218,7 +218,7 @@ class VulkanExternalFence final : public GpuCompletion
 
 class VulkanExternalDevice
 {
-  public:
+public:
 	// Supply the actual instance API version and enabled logical-device names.
 	// Physical extension support alone never enables this sharing path.
 	// timelineEnabled must reflect the feature enabled during logical-device creation.
@@ -250,18 +250,20 @@ class VulkanExternalDevice
 	std::shared_ptr<VulkanExternalFence> ImportFence(const VulkanExternalIdentity& identity,
 													 VulkanExternalHandle& handle) const;
 
-  private:
+private:
 	std::shared_ptr<VulkanExternalSemaphore> CreateSemaphore(bool timeline) const;
 	std::shared_ptr<VulkanExternalSemaphore> ImportSemaphore(const VulkanExternalIdentity& identity,
 															 VulkanExternalHandle& handle, bool timeline) const;
 	PFN_vkGetSemaphoreCounterValueKHR m_counter = nullptr;
 	std::shared_ptr<VulkanImage> CreateImage(const VulkanExternalImageSpec& image) const;
 	VulkanExternalCapabilities ImageCapabilities(const VulkanExternalImageSpec& image) const;
+
 	struct ImageQuery
 	{
 		VulkanExternalImageSpec image;
 		VulkanExternalCapabilities capabilities;
 	};
+
 	mutable std::mutex m_imageQueryMutex;
 	mutable std::array<ImageQuery, 16> m_imageQueries{};
 	mutable std::size_t m_nextImageQuery = 0;

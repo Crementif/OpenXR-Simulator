@@ -21,6 +21,7 @@ namespace
 {
 thread_local bool rejectTeardownAllocation = false;
 }
+
 [[gnu::noinline]] void* operator new(std::size_t size)
 {
 	if (rejectTeardownAllocation)
@@ -29,10 +30,12 @@ thread_local bool rejectTeardownAllocation = false;
 		return memory;
 	throw std::bad_alloc{};
 }
+
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -58,6 +61,7 @@ void EnumNames()
 		XrResult value;
 		const char* expected;
 	};
+
 	const ResultCase results[]{
 		{XR_SUCCESS, "XR_SUCCESS"},
 		{XR_ERROR_HANDLE_INVALID, "XR_ERROR_HANDLE_INVALID"},
@@ -74,11 +78,13 @@ void EnumNames()
 					resultBuffer.back() == '!',
 				"Result string did not preserve its canonical name or signed fallback");
 	}
+
 	struct StructureCase
 	{
 		XrStructureType value;
 		const char* expected;
 	};
+
 	const StructureCase structures[]{
 		{XR_TYPE_INSTANCE_PROPERTIES, "XR_TYPE_INSTANCE_PROPERTIES"},
 		{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR, "XR_TYPE_GRAPHICS_BINDING_D3D11_KHR"},
@@ -141,6 +147,7 @@ void AllocationFreeShutdown()
 				rejectTeardownAllocation = false;
 			}
 		} restore;
+
 		rejectTeardownAllocation = true;
 		try
 		{
@@ -238,12 +245,10 @@ void Lifecycle()
 	Require(session->Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_LOCAL, {{0, 0, 0, 1}, {}}, space) ==
 				XR_SUCCESS,
 			"Owned child space");
-	auto waiting = std::async(std::launch::async,
-							  [session]
-							  {
-								  FramePrediction next;
-								  return session->WaitFrame(next);
-							  });
+	auto waiting = std::async(std::launch::async, [session] {
+		FramePrediction next;
+		return session->WaitFrame(next);
+	});
 	Eventually([&] { return session->Scheduler().Snapshot().waitPending; }, "Owned wait did not block");
 	const XrInstance staleInstance = first;
 	const XrSession staleSession = session;
@@ -278,6 +283,7 @@ void Lifecycle()
 struct NativeState
 {
 	std::function<void()> destroy;
+
 	~NativeState()
 	{
 		destroy();
@@ -300,8 +306,7 @@ void NativeLifetime()
 	std::weak_ptr<Session> lifetime = core.Shared();
 	const XrSession handle = core;
 	auto object = std::make_unique<NativeState>();
-	object->destroy = [&]
-	{
+	object->destroy = [&] {
 		ownerAlive = !lifetime.expired();
 		destroyed = true;
 		reentered = !bindings.Remove(handle);
@@ -328,7 +333,9 @@ void NativeLifetime()
 		NativeBindings<XrSession, Session, NativeState> scoped;
 		const XrSession nextHandle = nextCore;
 		auto scopedObject = std::make_unique<NativeState>();
-		scopedObject->destroy = [&scoped, nextHandle, &scopeDestroyed] { scopeDestroyed = !scoped.Remove(nextHandle); };
+		scopedObject->destroy = [&scoped, nextHandle, &scopeDestroyed] {
+			scopeDestroyed = !scoped.Remove(nextHandle);
+		};
 		scoped.Attach(nextCore, std::move(scopedObject));
 	}
 	Require(scopeDestroyed, "Native table scope teardown reentered a partially destroyed table");
@@ -336,16 +343,19 @@ void NativeLifetime()
 
 class ReentrantOutput final : public FrameOutput
 {
-  public:
+public:
 	std::function<void()> observe;
 	std::function<void()> destroy;
+
 	~ReentrantOutput() override
 	{
 		if (destroy)
 			destroy();
 	}
+
 	std::atomic<CompletionStatus> completion{CompletionStatus::Pending};
 	std::shared_ptr<FrameReservation> reservation;
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		observe();
@@ -378,12 +388,12 @@ void ReusedSessionReference()
 	Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS,
 			"Issue pending snapshot for reuse");
 	auto output = std::make_shared<ReentrantOutput>();
-	output->observe = [] {};
+	output->observe = [] {
+	};
 	output->reservation = session->Captures().ProducerReservation({session->Snapshot().generation, prediction.id});
 	Require(pool.Consume(output->reservation), "Consume reuse snapshot capacity");
 	bool destroyed = false;
-	output->destroy = [&]
-	{
+	output->destroy = [&] {
 		runtime.Instances();
 		destroyed = true;
 	};
@@ -459,8 +469,7 @@ void DebuggerLifetime()
 		Require(output->reservation && pool.Consume(output->reservation),
 				"Capture capacity was not reserved before issue");
 		std::atomic<unsigned> observations{0};
-		output->observe = [&]
-		{
+		output->observe = [&] {
 			runtime.FindSession(handle);
 			runtime.Instances();
 			debugger->Snapshot();
@@ -473,16 +482,14 @@ void DebuggerLifetime()
 		Require(session->EndFrame(prediction, &end, layers, output, [] { return XR_SUCCESS; }) == XR_SUCCESS,
 				"Submit observed pending debug frame");
 		Eventually([&] { return observations.load() > 1; }, "Controller did not poll completion independently");
-		auto destroy = std::async(std::launch::async,
-								  [&]
-								  {
-									  if (teardown == 0)
-										  return runtime.DestroySession(handle);
-									  if (teardown == 1)
-										  return runtime.DestroyInstance(instance);
-									  runtime.Close();
-									  return XR_SUCCESS;
-								  });
+		auto destroy = std::async(std::launch::async, [&] {
+			if (teardown == 0)
+				return runtime.DestroySession(handle);
+			if (teardown == 1)
+				return runtime.DestroyInstance(instance);
+			runtime.Close();
+			return XR_SUCCESS;
+		});
 		Require(destroy.wait_for(3s) == std::future_status::ready && destroy.get() == XR_SUCCESS,
 				"Runtime debugger teardown joined under a lock needed by a GPU observer");
 		Require(session->Snapshot().closed && !runtime.FindSession(handle) && !runtime.Debugger(handle),

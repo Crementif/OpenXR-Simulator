@@ -9,42 +9,49 @@ namespace simxr::test
 {
 class CompleteOutput final : public FrameOutput
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
 };
+
 class SubmissionBackend final : public FrameSubmissionBackend
 {
-  public:
+public:
 	FramePool live{1}, history{1};
 	XrResult result = XR_ERROR_LIMIT_REACHED;
 	bool submitted = false;
+
 	FramePool LiveReservations() const override
 	{
 		return live;
 	}
+
 	FramePool HistoryReservations() const override
 	{
 		return history;
 	}
+
 	XrResult Prepare(FrameKey, const SessionComposition&, std::shared_ptr<FrameReservation>,
 					 std::span<const FrameCaptureRequest>, PreparedFrameSubmission& output) override
 	{
 		output.producer = output.output = std::make_shared<CompleteOutput>();
 		return result;
 	}
+
 	XrResult Submit() override
 	{
 		submitted = true;
 		return XR_SUCCESS;
 	}
+
 	bool Submitted() const noexcept override
 	{
 		return submitted;
 	}
 };
+
 static void CapacityRecovery(bool reserveExhausted, bool exact, XrResult pressure = XR_ERROR_LIMIT_REACHED)
 {
 	Instance instance(reinterpret_cast<XrInstance>(902), {}, XR_MAKE_VERSION(1, 0, 27));
@@ -81,8 +88,7 @@ static void CapacityRecovery(bool reserveExhausted, bool exact, XrResult pressur
 	const auto* layer = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad);
 	XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,			 nullptr, frame.displayTime.value.count(),
 					   XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		  &layer};
-	auto describe = [](XrSwapchain) -> std::optional<SwapchainDescription>
-	{
+	auto describe = [](XrSwapchain) -> std::optional<SwapchainDescription> {
 		return SwapchainDescription{32, 32, 1, true};
 	};
 	{
@@ -129,6 +135,7 @@ static void CapacityRecovery(bool reserveExhausted, bool exact, XrResult pressur
 			"Automatic history pressure blocked application submission");
 }
 } // namespace simxr::test
+
 int main()
 {
 	try

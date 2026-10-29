@@ -28,12 +28,14 @@ const Field& Find(const std::vector<Field>& fields, std::uint16_t tag)
 			return field;
 	throw std::runtime_error("Missing inspection field");
 }
+
 std::vector<Field> Fields(std::span<const std::byte> bytes)
 {
 	auto decoded = DecodeFields(bytes);
 	Require(decoded.error == DecodeError::None, "Invalid inspection document TLV");
 	return std::move(decoded.fields);
 }
+
 std::vector<std::byte> Member(std::span<const std::byte> document, std::string_view name)
 {
 	const auto node = Fields(document);
@@ -46,16 +48,19 @@ std::vector<std::byte> Member(std::span<const std::byte> document, std::string_v
 	}
 	throw std::runtime_error("Missing inspection member");
 }
+
 std::uint64_t Unsigned(std::span<const std::byte> node)
 {
 	return *Find(Fields(node), 3).AsU64();
 }
+
 std::string Text(std::span<const std::byte> node)
 {
 	return std::string{*Find(Fields(node), 3).AsText()};
 }
 
-template <class F> void Capacity(F function)
+template<class F>
+void Capacity(F function)
 {
 	bool threw = false;
 	try
@@ -68,11 +73,11 @@ template <class F> void Capacity(F function)
 	}
 	Require(threw, "Expected bounded inspection capacity failure");
 }
+
 void CatalogTransactionsAndReaders()
 {
 	InspectionStore store{2, 2, 64};
-	const auto serialize = [](auto)
-	{
+	const auto serialize = [](auto) {
 		return std::vector<std::byte>(8);
 	};
 	const FrameKey key{{1}, {1}};
@@ -84,10 +89,7 @@ void CatalogTransactionsAndReaders()
 	try
 	{
 		store.Retain({1}, {{1}, {2}}, {{"different", {std::byte{2}}}},
-					 [](auto) -> std::vector<std::byte>
-					 {
-						 throw std::runtime_error("serialization failed");
-					 });
+					 [](auto) -> std::vector<std::byte> { throw std::runtime_error("serialization failed"); });
 	}
 	catch (const std::runtime_error&)
 	{
@@ -98,17 +100,9 @@ void CatalogTransactionsAndReaders()
 	Require(second->id == 2 && second->revisions[0] == first->revisions[0] && second->revisions[1]->id == 2,
 			"Failed publication consumed IDs or existing revision changed");
 	Require(store.Release(1) && !store.Read(1) && !store.Release(1), "Logical inspection release failed");
-	Capacity(
-		[&]
-		{
-			store.Retain({1}, {{1}, {3}}, {}, serialize);
-		});
+	Capacity([&] { store.Retain({1}, {{1}, {3}}, {}, serialize); });
 	first.reset();
-	Capacity(
-		[&]
-		{
-			store.Retain({1}, {{1}, {3}}, {{"third", {std::byte{3}}}}, serialize);
-		});
+	Capacity([&] { store.Retain({1}, {{1}, {3}}, {{"third", {std::byte{3}}}}, serialize); });
 	Require(!store.Read(3), "Revision capacity failure published a frame");
 	Require(store.Release(2), "Release second reader");
 	auto third = store.Retain({1}, {{1}, {3}}, {{"shape", {std::byte{1}}}}, serialize);
@@ -118,31 +112,20 @@ void CatalogTransactionsAndReaders()
 	second.reset();
 	third.reset();
 	store.Release(3);
-	Capacity(
-		[&]
-		{
-			store.Retain({1}, {{1}, {4}}, {},
-						 [](auto)
-						 {
-							 return std::vector<std::byte>(65);
-						 });
-		});
+	Capacity([&] { store.Retain({1}, {{1}, {4}}, {}, [](auto) { return std::vector<std::byte>(65); }); });
 	bool serializedOversizedFeatures = false;
-	Capacity(
-		[&]
-		{
-			store.Retain({1}, {{1}, {4}}, {{"oversized", std::vector<std::byte>(65)}},
-						 [&](auto)
-						 {
-							 serializedOversizedFeatures = true;
-							 return std::vector<std::byte>{};
-						 });
+	Capacity([&] {
+		store.Retain({1}, {{1}, {4}}, {{"oversized", std::vector<std::byte>(65)}}, [&](auto) {
+			serializedOversizedFeatures = true;
+			return std::vector<std::byte>{};
 		});
+	});
 	Require(!serializedOversizedFeatures && !store.Read(4) && !store.ReadRevision(3),
 			"Over-budget feature preparation reached serialization or published an identity");
 	auto fourth = store.Retain({1}, {{1}, {4}}, {}, serialize);
 	Require(fourth->id == 4, "Byte capacity failure consumed inspection ID");
 }
+
 FrameRecord Fixture()
 {
 	FrameRecord frame;
@@ -233,6 +216,7 @@ FrameRecord Fixture()
 													   std::vector<LayerDescription>{projection, quad});
 	return frame;
 }
+
 void FrameStateAndRevisions()
 {
 	auto frame = Fixture();
@@ -247,8 +231,7 @@ void FrameStateAndRevisions()
 	const auto viewRevision = Unsigned(Member(first->document, "view_settings"));
 	const auto actionRevision = Unsigned(Member(Member(first->document, "actions"), "dictionary"));
 	const auto skeletonRevision = Unsigned(Member(Member(Member(first->document, "tracking"), "body"), "skeleton"));
-	const auto bodyRoot = [](const auto& document)
-	{
+	const auto bodyRoot = [](const auto& document) {
 		return Member(Member(Member(Member(document, "tracking"), "input"), "body"), "root_pose");
 	};
 	const auto root = bodyRoot(first->document);
@@ -287,10 +270,10 @@ void FrameStateAndRevisions()
 	Require(std::search(encoded.begin(), encoded.end(), raw.begin(), raw.end()) == encoded.end(),
 			"Native source handle escaped in CPU document");
 }
+
 void DepthEncodingPreservesNonfiniteBits()
 {
-	const auto firstElement = [](std::span<const std::byte> array)
-	{
+	const auto firstElement = [](std::span<const std::byte> array) {
 		const auto pages = Fields(Find(Fields(array), 3).value);
 		return Fields(pages.at(0).value).at(0).value;
 	};
@@ -384,6 +367,7 @@ void FrameHistoryBytePages()
 		Require(collection.value.size() == count, "Collection frame transport changed tracker count");
 	}
 }
+
 void ProjectionHistoryBoundaries()
 {
 	FrameHistorySnapshot history;
@@ -433,6 +417,7 @@ void ProjectionHistoryBoundaries()
 		Require(rejected, "Projection history accepted an unbounded request");
 	}
 }
+
 void ArrayBoundaries()
 {
 	std::vector<V> values;
@@ -444,6 +429,7 @@ void ArrayBoundaries()
 			"Inspection array truncated at TLV field bound");
 }
 } // namespace
+
 int main(int argc, char** argv)
 {
 	try

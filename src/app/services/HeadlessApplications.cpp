@@ -21,12 +21,14 @@ struct HeadlessApplications::Entry
 	ProcessLauncher launcher;
 	std::unique_ptr<RuntimeConnection> discovery;
 	std::unique_ptr<LaunchAttachment> attachment;
+
 	struct PendingRestart
 	{
 		std::uint64_t process;
 		std::unique_ptr<RuntimeConnection> discovery;
 		std::unique_ptr<LaunchAttachment> attachment;
 	};
+
 	std::optional<PendingRestart> restart;
 	std::optional<LaunchedSession> session;
 	std::optional<std::uint64_t> sessionsTicket;
@@ -47,6 +49,7 @@ struct HeadlessApplications::Entry
 };
 
 HeadlessApplications::HeadlessApplications(ProcessSupervisor& processes) : m_processes(processes) {}
+
 HeadlessApplications::~HeadlessApplications() = default;
 
 std::uint64_t HeadlessApplications::LaunchApplication(const LaunchProfile& profile)
@@ -55,8 +58,7 @@ std::uint64_t HeadlessApplications::LaunchApplication(const LaunchProfile& profi
 		throw std::runtime_error("The simulator is shutting down");
 	if (m_applications.size() >= 64)
 	{
-		const auto terminal = std::ranges::find_if(m_applications, [](const auto& entry)
-		{
+		const auto terminal = std::ranges::find_if(m_applications, [](const auto& entry) {
 			const auto state = entry->launcher.Snapshot().state;
 			return state == LaunchState::Exited || state == LaunchState::Failed;
 		});
@@ -77,7 +79,8 @@ void HeadlessApplications::RequestApplicationClose(std::uint64_t id)
 		if (entry->id == id)
 		{
 			if (!entry->launcher.RequestClose())
-				throw std::runtime_error("No running simulator-launched process matches this application, or a close is pending");
+				throw std::runtime_error(
+					"No running simulator-launched process matches this application, or a close is pending");
 			return;
 		}
 	throw std::runtime_error("Application is no longer available");
@@ -93,7 +96,8 @@ void HeadlessApplications::RequestApplicationRestart(std::uint64_t id, std::uint
 			if (entry->restart || entry->retired || entry->launcher.Snapshot().process != expectedProcess)
 				throw std::runtime_error("The launched application changed or a restart is pending");
 			auto discovery = std::make_unique<RuntimeConnection>();
-			const auto replaced = entry->endpoint.empty() ? LaunchRuntimeEndpoint(entry->profile, expectedProcess) : entry->endpoint;
+			const auto replaced =
+				entry->endpoint.empty() ? LaunchRuntimeEndpoint(entry->profile, expectedProcess) : entry->endpoint;
 			auto attachment = std::make_unique<LaunchAttachment>(*discovery, entry->profile, replaced);
 			if (!entry->launcher.Restart(expectedProcess, entry->profile))
 				throw std::runtime_error("The application no longer accepts this restart request");
@@ -112,19 +116,19 @@ std::vector<ApplicationSnapshot> HeadlessApplications::Applications() const
 	{
 		auto launch = entry->launcher.Snapshot();
 		const auto connection = entry->discovery->Snapshot();
-		const bool current = !launch.restartPending &&
-			(!entry->restart || entry->restart->process == launch.process);
+		const bool current = !launch.restartPending && (!entry->restart || entry->restart->process == launch.process);
 		const bool connected = current && connection.state == RuntimeConnectionState::Connected;
 		const bool running = connected && entry->session.has_value();
 		const auto launchEndpoint = current && launch.state == LaunchState::Running && launch.process
-			? LaunchRuntimeEndpoint(entry->profile, launch.process) : std::string{};
+										? LaunchRuntimeEndpoint(entry->profile, launch.process)
+										: std::string{};
 		const auto directory = connected && launch.process && launch.process == connection.peerProcess
-			? LaunchRuntimeDataDirectory(entry->profile) : std::nullopt;
-		result.push_back({entry->id, running ? entry->session->session : 0,
-						  running ? entry->session->generation : 0, connected ? connection.peerProcess : 0,
-						  connected ? connection.epoch : 0, std::move(launch), entry->name,
-						  current ? entry->endpoint : std::string{}, entry->detail, connected, running, launchEndpoint,
-						  directory ? PathText(*directory) : std::string{}});
+								   ? LaunchRuntimeDataDirectory(entry->profile)
+								   : std::nullopt;
+		result.push_back({entry->id, running ? entry->session->session : 0, running ? entry->session->generation : 0,
+						  connected ? connection.peerProcess : 0, connected ? connection.epoch : 0, std::move(launch),
+						  entry->name, current ? entry->endpoint : std::string{}, entry->detail, connected, running,
+						  launchEndpoint, directory ? PathText(*directory) : std::string{}});
 	}
 	return result;
 }
@@ -136,29 +140,32 @@ bool HeadlessApplications::RequestShutdown()
 }
 #ifdef SIMXR_COMPANION_AUTOMATION
 std::uint64_t HeadlessApplications::StartLuau(std::uint64_t id, LuauRunRequest request,
-											 const std::shared_ptr<AutomationOwner>& owner)
+											  const std::shared_ptr<AutomationOwner>& owner)
 {
 	for (const auto& entry : m_applications)
 		if (entry->id == id)
 		{
 			const auto applications = Applications();
-			const auto application = std::ranges::find_if(applications, [id](const auto& item) { return item.id == id; });
+			const auto application =
+				std::ranges::find_if(applications, [id](const auto& item) { return item.id == id; });
 			if (application == applications.end())
 				break;
 			return StartLuauRun(entry->rigs, *application, std::move(request), owner);
 		}
 	throw std::runtime_error("Application is no longer available");
 }
+
 LuauRunStatus HeadlessApplications::LuauStatus(std::uint64_t id, std::uint64_t run,
-											const std::shared_ptr<AutomationOwner>& owner) const
+											   const std::shared_ptr<AutomationOwner>& owner) const
 {
 	for (const auto& entry : m_applications)
 		if (entry->id == id)
 			return ReadLuauRun(entry->rigs, run, owner);
 	throw std::runtime_error("Application is no longer available");
 }
+
 void HeadlessApplications::ControlLuau(std::uint64_t id, std::uint64_t run, LuauControl action,
-										const std::shared_ptr<AutomationOwner>& owner)
+									   const std::shared_ptr<AutomationOwner>& owner)
 {
 	for (const auto& entry : m_applications)
 		if (entry->id == id)
@@ -246,7 +253,8 @@ void HeadlessApplications::Poll()
 			entry->session.reset();
 			const auto* error = reply.packet.message.Find(control::tag::Error);
 			const auto* catalog = reply.packet.message.Find(control::tag::Sessions);
-			if (!reply.error.empty() || !error || error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok) || !catalog)
+			if (!reply.error.empty() || !error ||
+				error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok) || !catalog)
 				continue;
 			const auto decoded = control::DecodeFields(catalog->value);
 			if (decoded.error != control::DecodeError::None)
@@ -272,7 +280,8 @@ void HeadlessApplications::Poll()
 				}
 				if (!*running->AsBool())
 					continue;
-				if (!id || !generation || !id->AsU64().value_or(0) || !generation->AsU64().value_or(0) || entry->session)
+				if (!id || !generation || !id->AsU64().value_or(0) || !generation->AsU64().value_or(0) ||
+					entry->session)
 				{
 					ambiguous = true;
 					break;

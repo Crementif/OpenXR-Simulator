@@ -46,6 +46,7 @@ static void ValidateText(std::string_view text)
 	if (pending)
 		throw std::invalid_argument("Truncated game bridge UTF-8");
 }
+
 static bool Terminal(GameCommandPhase phase)
 {
 	return phase != GameCommandPhase::Queued && phase != GameCommandPhase::Delivered;
@@ -59,6 +60,7 @@ GameBridge::GameBridge(std::size_t observationCapacity)
 	m_commands.reserve(128);
 	m_sources.reserve(64);
 }
+
 void GameBridge::Observe(GameObservation observation) noexcept
 {
 	if (m_observationNext == std::numeric_limits<std::uint64_t>::max())
@@ -81,6 +83,7 @@ void GameBridge::Observe(GameObservation observation) noexcept
 	m_observations[m_observationNext % m_observations.size()] = std::move(observation);
 	++m_observationNext;
 }
+
 GameObservationPage GameBridge::Observations(std::optional<std::uint64_t> offset, std::size_t count) const
 {
 	if (count > 16)
@@ -101,6 +104,7 @@ GameObservationPage GameBridge::Observations(std::optional<std::uint64_t> offset
 		page.observations.push_back(*m_observations[cursor % m_observations.size()]);
 	return page;
 }
+
 std::uint64_t GameBridge::Register(std::uint32_t capabilities)
 {
 	if (!capabilities || (capabilities & ~7U))
@@ -119,6 +123,7 @@ std::uint64_t GameBridge::Register(std::uint32_t capabilities)
 	Observe(std::move(registered));
 	return m_state.game;
 }
+
 void GameBridge::Close() noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -137,6 +142,7 @@ void GameBridge::Close() noexcept
 	m_state.capabilities = 0;
 	m_state.game = 0;
 }
+
 void GameBridge::Unregister(std::uint64_t game) noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -151,6 +157,7 @@ void GameBridge::Unregister(std::uint64_t game) noexcept
 	m_state.capabilities = 0;
 	m_state.game = 0;
 }
+
 std::optional<GameCommandRecord> GameBridge::Submit(std::uint64_t game, std::uint64_t source, std::uint64_t clientId,
 													std::uint32_t kind, std::string payload)
 {
@@ -167,11 +174,8 @@ std::optional<GameCommandRecord> GameBridge::Submit(std::uint64_t game, std::uin
 				return {};
 			return command;
 		}
-	auto cursor = std::find_if(m_sources.begin(), m_sources.end(),
-							   [&](const auto& cursor)
-							   {
-								   return cursor.source == source;
-							   });
+	auto cursor =
+		std::find_if(m_sources.begin(), m_sources.end(), [&](const auto& cursor) { return cursor.source == source; });
 	if ((cursor == m_sources.end() && m_sources.size() == 64) ||
 		(cursor != m_sources.end() && clientId <= cursor->last))
 		return {};
@@ -180,10 +184,7 @@ std::optional<GameCommandRecord> GameBridge::Submit(std::uint64_t game, std::uin
 	if (m_commands.size() == 128)
 	{
 		const auto found = std::find_if(m_commands.begin(), m_commands.end(),
-										[](const auto& command)
-										{
-											return Terminal(command.phase);
-										});
+										[](const auto& command) { return Terminal(command.phase); });
 		if (found == m_commands.end())
 			return {};
 		m_commands.erase(found);
@@ -198,6 +199,7 @@ std::optional<GameCommandRecord> GameBridge::Submit(std::uint64_t game, std::uin
 		cursor->last = clientId;
 	return result;
 }
+
 std::optional<GameCommandRecord> GameBridge::Read(std::uint64_t game, std::uint64_t source, std::uint64_t id) const
 {
 	std::lock_guard lock(m_mutex);
@@ -208,6 +210,7 @@ std::optional<GameCommandRecord> GameBridge::Read(std::uint64_t game, std::uint6
 			return command;
 	return {};
 }
+
 bool GameBridge::Poll(std::uint64_t game, SimxrGameCommand& output)
 {
 	std::lock_guard lock(m_mutex);
@@ -226,6 +229,7 @@ bool GameBridge::Poll(std::uint64_t game, SimxrGameCommand& output)
 		}
 	return false;
 }
+
 bool GameBridge::Complete(std::uint64_t game, std::uint64_t id, bool success, std::string result)
 {
 	ValidateText(result);
@@ -241,6 +245,7 @@ bool GameBridge::Complete(std::uint64_t game, std::uint64_t id, bool success, st
 		}
 	return false;
 }
+
 bool GameBridge::Publish(std::uint64_t game, std::string telemetry)
 {
 	ValidateText(telemetry);
@@ -254,6 +259,7 @@ bool GameBridge::Publish(std::uint64_t game, std::string telemetry)
 	Observe(std::move(observation));
 	return true;
 }
+
 void GameBridge::Disconnect(std::uint64_t source, bool retire) noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -265,12 +271,9 @@ void GameBridge::Disconnect(std::uint64_t source, bool retire) noexcept
 				command.phase = GameCommandPhase::Cancelled;
 		}
 	if (retire)
-		std::erase_if(m_sources,
-					  [&](const auto& cursor)
-					  {
-						  return cursor.source == source;
-					  });
+		std::erase_if(m_sources, [&](const auto& cursor) { return cursor.source == source; });
 }
+
 GameBridgeSnapshot GameBridge::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
@@ -282,6 +285,7 @@ GameBridgeSnapshot GameBridge::Snapshot() const
 	}
 	return result;
 }
+
 bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcept
 {
 	if (version != SIMXR_GAME_BRIDGE_VERSION || api.size < sizeof(api))
@@ -290,8 +294,7 @@ bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcep
 	api.version = version;
 	api.size = sizeof(api);
 	api.context = this;
-	api.registerGame = [](void* context, std::uint32_t capabilities) -> std::uint64_t
-	{
+	api.registerGame = [](void* context, std::uint32_t capabilities) -> std::uint64_t {
 		try
 		{
 			return static_cast<GameBridge*>(context)->Register(capabilities);
@@ -301,18 +304,15 @@ bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcep
 			return 0;
 		}
 	};
-	api.unregisterGame = [](void* context, std::uint64_t game)
-	{
+	api.unregisterGame = [](void* context, std::uint64_t game) {
 		try
 		{
 			static_cast<GameBridge*>(context)->Unregister(game);
 		}
 		catch (...)
-		{
-		}
+		{}
 	};
-	api.poll = [](void* context, std::uint64_t game, SimxrGameCommand* command) -> int
-	{
+	api.poll = [](void* context, std::uint64_t game, SimxrGameCommand* command) -> int {
 		try
 		{
 			return command && static_cast<GameBridge*>(context)->Poll(game, *command);
@@ -323,8 +323,7 @@ bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcep
 		}
 	};
 	api.complete = [](void* context, std::uint64_t game, std::uint64_t command, int success, const char* result,
-					  std::uint32_t length) -> int
-	{
+					  std::uint32_t length) -> int {
 		try
 		{
 			return length <= SIMXR_GAME_PAYLOAD_CAPACITY && (result || !length) &&
@@ -336,8 +335,7 @@ bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcep
 			return 0;
 		}
 	};
-	api.publish = [](void* context, std::uint64_t game, const char* telemetry, std::uint32_t length) -> int
-	{
+	api.publish = [](void* context, std::uint64_t game, const char* telemetry, std::uint32_t length) -> int {
 		try
 		{
 			return length <= SIMXR_GAME_PAYLOAD_CAPACITY && (telemetry || !length) &&
@@ -348,8 +346,7 @@ bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcep
 			return 0;
 		}
 	};
-	api.shutdown = [](void* context) -> int
-	{
+	api.shutdown = [](void* context) -> int {
 		try
 		{
 			static_cast<GameBridge*>(context)->Close();

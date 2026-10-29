@@ -8,10 +8,12 @@
 namespace simxr::app
 {
 DeviceControlPanel::DeviceControlPanel(PlayerRig& rig) : m_playerRig(rig) {}
+
 bool DeviceControlPanel::Active() const
 {
 	return m_activeField && ImGui::GetActiveID() == m_activeField;
 }
+
 void DeviceControlPanel::CancelEditing()
 {
 	if (!m_activeField)
@@ -27,6 +29,7 @@ void DeviceControlPanel::CancelEditing()
 	m_activeField = 0;
 	m_fieldFrame = -1;
 }
+
 void DeviceControlPanel::SelectDevice(const DeviceSel& device)
 {
 	const unsigned slot =
@@ -40,6 +43,7 @@ void DeviceControlPanel::SelectDevice(const DeviceSel& device)
 		m_selectedTracker = static_cast<int>(slot);
 	m_fieldScope = "device/" + std::to_string(static_cast<int>(device.page)) + "/" + std::to_string(slot) + "/";
 }
+
 bool DeviceControlPanel::CanControl(ControlChannel channel) const
 {
 	if (!m_observed)
@@ -47,10 +51,10 @@ bool DeviceControlPanel::CanControl(ControlChannel channel) const
 	const auto owner = m_observed->owners[static_cast<std::size_t>(channel)];
 	return !owner || owner == m_manualSource;
 }
+
 bool DeviceControlPanel::CanReset(DevicePage page) const
 {
-	const auto allowed = [&](ControlChannel channel)
-	{
+	const auto allowed = [&](ControlChannel channel) {
 		return CanControl(channel) && !ScenarioActive(channel);
 	};
 	switch (page)
@@ -76,6 +80,7 @@ bool DeviceControlPanel::CanReset(DevicePage page) const
 	}
 	return false;
 }
+
 std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Selection* selection,
 													   const std::function<void()>& placement)
 {
@@ -136,6 +141,7 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 	ImGui::PopItemWidth();
 	return std::exchange(m_edit, {});
 }
+
 bool DeviceControlPanel::Field(const char* key, bool changed, bool continuous, const FieldValue& value)
 {
 	const std::string field = m_fieldScope + key;
@@ -163,6 +169,7 @@ bool DeviceControlPanel::Field(const char* key, bool changed, bool continuous, c
 																						 : std::string{});
 	return changed;
 }
+
 bool DeviceControlPanel::InputField(const char* key, bool changed)
 {
 	const std::string field = m_fieldScope + key;
@@ -175,6 +182,7 @@ bool DeviceControlPanel::InputField(const char* key, bool changed)
 																								: std::string{});
 	return changed;
 }
+
 std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& selection, bool showState)
 {
 	m_edit.reset();
@@ -219,18 +227,17 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 	ImGui::Dummy({0, ImGui::GetStyle().ItemSpacing.y / 2});
 	return std::exchange(m_edit, {});
 }
+
 void DeviceControlPanel::ResetPage(DevicePage page)
 {
 	if (!m_observed || !m_playerRig.Ready() || !CanReset(page))
 		return;
-	const auto allowed = [&](ControlChannel channel)
-	{
+	const auto allowed = [&](ControlChannel channel) {
 		const auto& owner = m_observed->owners[static_cast<std::size_t>(channel)];
 		return !owner || owner == m_manualSource;
 	};
 	std::vector<SimulationCommand> extra;
-	const auto resetControls = [&](std::uint32_t hand)
-	{
+	const auto resetControls = [&](std::uint32_t hand) {
 		const auto channel = hand ? ControlChannel::RightControls : ControlChannel::LeftControls;
 		m_authoredControls[hand] = {};
 		m_latches[hand] = {};
@@ -288,6 +295,7 @@ void DeviceControlPanel::ResetPage(DevicePage page)
 		if (auto edit = std::get_if<ManualTransaction>(&*m_edit))
 			edit->releaseEdge = !extra.empty();
 }
+
 void DeviceControlPanel::ObserveDelivery(bool pending, const std::string& error)
 {
 	if (pending && error.empty())
@@ -303,6 +311,7 @@ void DeviceControlPanel::ObserveDelivery(bool pending, const std::string& error)
 	if (!pending)
 		m_pendingFields.clear();
 }
+
 void DeviceControlPanel::Apply(std::vector<SimulationCommand> commands, std::string label)
 {
 	if (commands.empty())
@@ -317,11 +326,13 @@ void DeviceControlPanel::Apply(std::vector<SimulationCommand> commands, std::str
 	transaction.label = std::move(label);
 	m_edit = std::move(transaction);
 }
+
 void DeviceControlPanel::ApplyOwned(ControlChannel channel, SimulationCommand command)
 {
 	if (CanControl(channel))
 		Apply({TakeControl{channel, false}, std::move(command)});
 }
+
 void DeviceControlPanel::ResetObservations()
 {
 	ClearHeldInputs();
@@ -340,6 +351,7 @@ void DeviceControlPanel::ResetObservations()
 	m_rejectedFields.clear();
 	m_deliveryError.clear();
 }
+
 void DeviceControlPanel::LoadObservedSettings()
 {
 	if (!m_observed)
@@ -347,10 +359,7 @@ void DeviceControlPanel::LoadObservedSettings()
 	const auto& values = m_observed->values;
 	const bool topologyChanged = !std::equal(values.tracking.trackers.begin(), values.tracking.trackers.end(),
 											 m_authoredTracking.trackers.begin(), m_authoredTracking.trackers.end(),
-											 [](const auto& a, const auto& b)
-											 {
-												 return a.identity == b.identity;
-											 });
+											 [](const auto& a, const auto& b) { return a.identity == b.identity; });
 	if (topologyChanged)
 		CancelEditing();
 	if (!m_rigPiloting || topologyChanged)
@@ -368,6 +377,7 @@ void DeviceControlPanel::LoadObservedSettings()
 	}
 	m_configurationLoaded = true;
 }
+
 void DeviceControlPanel::ObserveState(const control::Message& state)
 {
 	try
@@ -378,10 +388,7 @@ void DeviceControlPanel::ObserveState(const control::Message& state)
 			!m_observed ||
 			!std::equal(observed.values.tracking.trackers.begin(), observed.values.tracking.trackers.end(),
 						m_observed->values.tracking.trackers.begin(), m_observed->values.tracking.trackers.end(),
-						[](const auto& a, const auto& b)
-						{
-							return a.identity == b.identity;
-						});
+						[](const auto& a, const auto& b) { return a.identity == b.identity; });
 		for (const auto& profile : observed.values.input.preferredProfiles)
 			if (profile.size() >= m_controllerProfiles.front().size())
 				throw std::runtime_error("Interaction profile path is too long");
@@ -400,6 +407,7 @@ void DeviceControlPanel::ObserveState(const control::Message& state)
 		m_configurationLoaded = false;
 	}
 }
+
 void DeviceControlPanel::ReloadRecoveredChannel(ControlChannel channel)
 {
 	// Failure observations include their effects. Once restored, refresh only
@@ -431,6 +439,7 @@ void DeviceControlPanel::ReloadRecoveredChannel(ControlChannel channel)
 		break;
 	}
 }
+
 bool DeviceControlPanel::ScenarioActive(ControlChannel channel) const
 {
 	if (m_observed)

@@ -13,6 +13,7 @@ static std::filesystem::path DataDirectory()
 		return std::filesystem::path(home) / ".local/share/OpenXR-Simulator";
 	return {};
 }
+
 std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
 {
 	std::vector<std::string> result;

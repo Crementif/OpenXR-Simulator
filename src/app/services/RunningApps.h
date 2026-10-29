@@ -20,6 +20,7 @@ struct RunningApp
 	std::uint64_t process = 0;
 	std::optional<std::chrono::system_clock::time_point> started;
 };
+
 // Lists the runtimes in the control socket directory, including ones no
 // companion is attached to. Each endpoint gets a bare connect probe with the
 // timeout: nothing is sent, so discovery never takes control, and sockets

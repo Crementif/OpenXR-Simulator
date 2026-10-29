@@ -20,9 +20,10 @@ enum class PilotTarget
 	Left,
 	Right
 };
+
 class PilotController
 {
-  public:
+public:
 	explicit PilotController(PlayerRig& rig);
 	void Configure(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag = false);
 	void Update(Window& window, ManualInputController& input, bool available, bool hovered,
@@ -31,6 +32,7 @@ class PilotController
 	// The HUD along the image's bottom edge: target and lock at the left, the
 	// hand's inputs in the middle, the hint at the right. Returns whether it is hovered.
 	bool DrawHud(ImVec2 imageMin, ImVec2 imageMax, ManualInputController& input);
+
 	// Folded, the HUD is one slim strip; the shell persists this.
 	bool& HudFolded()
 	{
@@ -41,20 +43,23 @@ class PilotController
 	{
 		return m_captured || m_starting;
 	}
+
 	bool Locked() const
 	{
 		return m_locked;
 	}
+
 	PilotTarget Target() const
 	{
 		return m_target;
 	}
+
 	const std::string& Error() const
 	{
 		return m_error;
 	}
 
-  private:
+private:
 	void DrawHelp() const;
 	std::string KeyName(PilotAction action) const;
 	bool Down(PilotAction action) const;

@@ -15,6 +15,7 @@
 namespace simxr::app
 {
 using TrackerDevices = std::vector<TrackerDevice>;
+
 // The applied device input of one frame, as the runtime reported it.
 struct InputSample
 {
@@ -44,6 +45,7 @@ struct InputSample
 	std::uint32_t actions = 0;
 	std::optional<RuntimeTime> runtimeTime;
 };
+
 // The sample's body controls with their root; requires sample.body.
 BodyControls BodyOf(const InputSample& sample);
 // How strongly a hand is pressed, 0..1, for the timeline sparkline.
@@ -53,7 +55,7 @@ float Intensity(const ControllerControls& controls);
 // history frame keeps its sample after the ring has moved on (or reports it gone).
 class InputHistory
 {
-  public:
+public:
 	explicit InputHistory(std::size_t capacity = 32768, std::size_t byteBudget = 64 * 1024 * 1024);
 	// Owned record storage, counting shared blocks once and including allocation allowances.
 	std::size_t RetainedBytes() const noexcept;
@@ -63,14 +65,16 @@ class InputHistory
 	const InputSample* Find(std::uint64_t sequence) const noexcept;
 	void Clear() noexcept;
 
-  private:
+private:
 	std::vector<InputSample> m_samples;
 	std::uint64_t m_next = 1;
 	std::size_t m_size = 0;
+
 	struct Block
 	{
 		std::size_t bytes = 0, references = 0;
 	};
+
 	std::map<const void*, Block> m_blocks;
 	std::size_t m_bytes = 0, m_byteBudget = 0;
 	void Retain(const void* identity, std::size_t bytes);

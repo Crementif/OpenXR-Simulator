@@ -13,11 +13,12 @@ struct PanelReply
 	PanelTask task;
 	RuntimeReply response;
 };
+
 // UI-thread admission bookkeeping; RuntimeConnection owns every socket operation.
 // Request identity and its source scope are prepared before transport acceptance.
 class RuntimePanelRequests
 {
-  public:
+public:
 	void Connect(std::string path, std::optional<std::uint64_t> expectedProcess = {});
 	void Disconnect();
 	void Close() noexcept;
@@ -34,13 +35,14 @@ class RuntimePanelRequests
 	void FlushReleases();
 	std::string TakeError();
 
-  private:
+private:
 	struct ReleaseRequest
 	{
 		control::OpCode code = control::OpCode::ReleaseImage;
 		std::uint16_t field = 0;
 		std::uint64_t id = 0, epoch = 0, session = 0, generation = 0;
 	};
+
 	RuntimeConnection m_connection;
 	std::map<std::uint64_t, PanelTask> m_tasks;
 	std::array<ReleaseRequest, 64> m_releases{};

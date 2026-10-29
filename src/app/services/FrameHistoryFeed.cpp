@@ -11,11 +11,14 @@ static std::size_t InputBudget(const HistoryStore& history)
 		throw std::length_error("Timeline records exceed the CPU history budget");
 	return budget - history.RetainedBytes();
 }
+
 FrameHistoryFeed::FrameHistoryFeed() : m_input(32768, InputBudget(m_history)) {}
+
 std::size_t FrameHistoryFeed::RetainedBytes() const noexcept
 {
 	return m_history.RetainedBytes() + m_input.RetainedBytes();
 }
+
 static InputSample ReadInput(const control::Message& applied)
 {
 	using namespace panel;
@@ -94,6 +97,7 @@ static InputSample ReadInput(const control::Message& applied)
 	sample.actions = U32(applied, tag::ActiveActions);
 	return sample;
 }
+
 void FrameHistoryFeed::SetScope(PanelScope scope)
 {
 	if (scope == m_scope)
@@ -106,6 +110,7 @@ void FrameHistoryFeed::SetScope(PanelScope scope)
 	m_newSegment = true;
 	m_offset = m_history.Size() ? m_history.At(m_history.Size() - 1).seconds + .1 : 0;
 }
+
 std::string FrameHistoryFeed::Accept(const control::Message& message)
 {
 	using namespace panel;
@@ -150,6 +155,7 @@ std::string FrameHistoryFeed::Accept(const control::Message& message)
 		return std::string(error.what()) + (m_unreadable ? ". History stopped. Reconnect to resume." : "");
 	}
 }
+
 void FrameHistoryFeed::Append(const control::Message& message, const control::Message& frames)
 {
 	using namespace panel;
@@ -217,8 +223,7 @@ void FrameHistoryFeed::Append(const control::Message& message, const control::Me
 		// a gap of a second or more is a pause or stall, not a missed frame.
 		if (interval > periodMilliseconds * 1.5L && interval < 1000)
 			flags |= HistoryLate;
-		const auto milliseconds = [&](std::uint16_t tag)
-		{
+		const auto milliseconds = [&](std::uint16_t tag) {
 			const auto* value = frame.Find(tag);
 			const auto ns = value ? value->AsI64() : std::nullopt;
 			return ns && *ns >= 0 ? float(static_cast<long double>(*ns) / 1000000.L) : -1.f;

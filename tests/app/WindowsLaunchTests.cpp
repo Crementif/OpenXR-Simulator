@@ -18,10 +18,12 @@ namespace
 {
 using namespace simxr::app;
 using namespace std::chrono_literals;
+
 std::string Utf8(const std::filesystem::path& path)
 {
 	return windows::Utf8(path.native());
 }
+
 const std::vector<std::wstring> arguments = {L"",
 											 L"two words",
 											 L"literal $(never-execute) ; & | >",
@@ -34,33 +36,37 @@ const std::vector<std::wstring> arguments = {L"",
 											 L"\"quoted\"",
 											 L"line\nbreak",
 											 L"日本語 Ελληνικά 🥽"};
+
 struct Directory
 {
 	std::filesystem::path path = std::filesystem::temp_directory_path() /
 								 (L"SimXR launch 日本語 " + std::to_wstring(GetCurrentProcessId()) + L" " +
 								  std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count()));
+
 	Directory()
 	{
 		std::filesystem::create_directories(path);
 	}
+
 	~Directory()
 	{
 		std::error_code ignored;
 		std::filesystem::remove_all(path, ignored);
 	}
 };
+
 LaunchSnapshot Terminal(ProcessLauncher& launcher)
 {
 	LaunchSnapshot state;
 	Eventually(
-		[&]
-		{
+		[&] {
 			state = launcher.Snapshot();
 			return state.state == LaunchState::Exited || state.state == LaunchState::Failed;
 		},
 		"Child did not finish");
 	return state;
 }
+
 std::filesystem::path Executable()
 {
 	std::wstring path(32768, L'\0');
@@ -69,10 +75,12 @@ std::filesystem::path Executable()
 	path.resize(size);
 	return path;
 }
+
 struct ParentEnvironment
 {
 	std::wstring name, value;
 	bool exists = false;
+
 	explicit ParentEnvironment(const wchar_t* key) : name(key)
 	{
 		SetLastError(ERROR_SUCCESS);
@@ -84,11 +92,13 @@ struct ParentEnvironment
 			value.resize(GetEnvironmentVariableW(key, value.data(), size));
 		}
 	}
+
 	~ParentEnvironment()
 	{
 		SetEnvironmentVariableW(name.c_str(), exists ? value.c_str() : nullptr);
 	}
 };
+
 struct RuntimeRegistration
 {
 	bool exists = false;
@@ -96,6 +106,7 @@ struct RuntimeRegistration
 	std::vector<std::byte> bytes;
 	bool operator==(const RuntimeRegistration&) const = default;
 };
+
 RuntimeRegistration ReadRuntimeRegistration(HKEY root)
 {
 	constexpr auto flags = RRF_RT_ANY | RRF_NOEXPAND | RRF_SUBKEY_WOW6464KEY;
@@ -113,12 +124,14 @@ RuntimeRegistration ReadRuntimeRegistration(HKEY root)
 	result.bytes.resize(size);
 	return result;
 }
+
 RuntimeRegistration ManifestRegistration(const std::filesystem::path& path)
 {
 	const auto canonical = std::filesystem::canonical(path).native();
 	const auto* begin = reinterpret_cast<const std::byte*>(canonical.c_str());
 	return {true, REG_SZ, {begin, begin + (canonical.size() + 1) * sizeof(wchar_t)}};
 }
+
 void PrivatePrefixTests()
 {
 	Directory directory;
@@ -140,8 +153,7 @@ void PrivatePrefixTests()
 	profile.privateProtonPrefix = Utf8(unowned);
 	ProcessSupervisor processes;
 	ProcessLauncher launcher(processes);
-	const auto reject = [&](const LaunchProfile& requested, const char* reason)
-	{
+	const auto reject = [&](const LaunchProfile& requested, const char* reason) {
 		const auto machine = ReadRuntimeRegistration(HKEY_LOCAL_MACHINE);
 		const auto user = ReadRuntimeRegistration(HKEY_CURRENT_USER);
 		Require(launcher.Launch(requested), "Admit private-prefix launch for validation");
@@ -213,10 +225,10 @@ void PrivatePrefixTests()
 			"Private-prefix launch preserves user registration and parent environment");
 	std::cout << "Private Proton prefix refusals and child runtime selection passed\n";
 }
+
 void DiscoveryTests()
 {
-	const auto endpoint =
-		std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
+	const auto endpoint = std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
 	const auto path = LocalPipePath(endpoint);
 	const windows::Handle pipe(CreateNamedPipeW(
 		path.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -226,12 +238,13 @@ void DiscoveryTests()
 	const auto endpoints = DiscoverRuntimeEndpoints(false);
 	Require(std::find(endpoints.begin(), endpoints.end(), endpoint) != endpoints.end(),
 			"Runtime discovery must include actual native pipe paths");
-	const windows::Handle client(CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-		OPEN_EXISTING, 0, nullptr));
+	const windows::Handle client(
+		CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
 	Require(client.Get() != INVALID_HANDLE_VALUE, "Discovery must not consume the pipe connection");
 	Require(RuntimeEndpointExists(endpoint), "Busy runtime endpoints still exist");
 	Require(!RuntimeEndpointExists(endpoint + ".Absent"), "Missing runtime endpoint must not exist");
 }
+
 void LaunchTests()
 {
 	Directory directory;
@@ -269,9 +282,11 @@ void LaunchTests()
 	HANDLE handle = nullptr;
 	Require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &handle), "Inspect launcher integrity");
 	const windows::Handle token(handle);
-	alignas(TOKEN_MANDATORY_LABEL) std::array<std::byte, sizeof(TOKEN_MANDATORY_LABEL) + SECURITY_MAX_SID_SIZE> buffer{};
+	alignas(TOKEN_MANDATORY_LABEL) std::array<std::byte, sizeof(TOKEN_MANDATORY_LABEL) + SECURITY_MAX_SID_SIZE>
+		buffer{};
 	DWORD size = 0;
-	Require(GetTokenInformation(token.Get(), TokenIntegrityLevel, buffer.data(), static_cast<DWORD>(buffer.size()), &size),
+	Require(
+		GetTokenInformation(token.Get(), TokenIntegrityLevel, buffer.data(), static_cast<DWORD>(buffer.size()), &size),
 		"Read launcher integrity");
 	const auto* label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(buffer.data());
 	const auto count = *GetSidSubAuthorityCount(label->Label.Sid);
@@ -281,8 +296,8 @@ void LaunchTests()
 		Require(launcher.Launch(profile), "Admit elevated runtime selection for validation");
 		const auto rejected = Terminal(launcher);
 		Require(rejected.state == LaunchState::Failed && !rejected.process &&
-			rejected.detail.find("ignores runtime overrides") != std::string::npos,
-			"Reject ignored runtime override before starting the wrong application runtime");
+					rejected.detail.find("ignores runtime overrides") != std::string::npos,
+				"Reject ignored runtime override before starting the wrong application runtime");
 		profile.runtimeManifest.clear();
 	}
 	profile.environment.emplace_back("SIMXR_EXPECTED_RUNTIME", profile.runtimeManifest);
@@ -317,8 +332,7 @@ void LaunchTests()
 		ProcessLauncher observer(processes);
 		Require(observer.Launch(profile), "Admit independent application");
 		Eventually(
-			[&]
-			{
+			[&] {
 				const auto launched = observer.Snapshot();
 				pid = static_cast<DWORD>(launched.process);
 				return launched.state == LaunchState::Running;
@@ -335,6 +349,7 @@ void LaunchTests()
 	Require(std::filesystem::exists(directory.path / L"survived.txt"),
 			"Child must continue after launcher destruction");
 }
+
 int Child(int argc, wchar_t** argv)
 {
 	Require(static_cast<std::size_t>(argc) == arguments.size() + 2, "Child argument count");
@@ -351,6 +366,7 @@ int Child(int argc, wchar_t** argv)
 	return 37;
 }
 } // namespace
+
 int wmain(int argc, wchar_t** argv)
 {
 	try

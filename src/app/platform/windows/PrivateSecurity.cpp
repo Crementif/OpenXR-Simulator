@@ -28,22 +28,25 @@ PrivateSecurity::PrivateSecurity(bool directory, bool inherit)
 	const std::unique_ptr<wchar_t, decltype(&LocalFree)> text(rawSid, LocalFree);
 	m_sidText = text.get();
 	const auto descriptor = L"O:" + m_sidText + L"D:P(A;" + (directory ? L"OICI" : L"") + L";GA;;;" + m_sidText + L")";
-	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptor.c_str(), SDDL_REVISION_1, &m_descriptor, nullptr))
+	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptor.c_str(), SDDL_REVISION_1, &m_descriptor,
+															  nullptr))
 		throw Error("Cannot create private security descriptor");
 	m_attributes = {sizeof(SECURITY_ATTRIBUTES), m_descriptor, inherit ? TRUE : FALSE};
 }
+
 PrivateSecurity::~PrivateSecurity()
 {
 	if (m_descriptor)
 		LocalFree(m_descriptor);
 }
+
 void PrivateSecurity::Check(HANDLE handle, SE_OBJECT_TYPE type, bool requireProtected) const
 {
 	PSID owner = nullptr;
 	PACL dacl = nullptr;
 	PSECURITY_DESCRIPTOR raw = nullptr;
-	const DWORD result = GetSecurityInfo(handle, type, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-		&owner, nullptr, &dacl, nullptr, &raw);
+	const DWORD result = GetSecurityInfo(handle, type, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner,
+										 nullptr, &dacl, nullptr, &raw);
 	if (result != ERROR_SUCCESS)
 		throw Error("Cannot inspect object permissions", result);
 	const std::unique_ptr<void, decltype(&LocalFree)> descriptor(raw, LocalFree);

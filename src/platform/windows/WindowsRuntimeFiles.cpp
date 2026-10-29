@@ -12,10 +12,12 @@ WindowsRuntimeFiles::WindowsRuntimeFiles(std::filesystem::path directory) : m_di
 	m_logs.reserve(s_maxLogs);
 	m_worker = std::thread([this] { Run(); });
 }
+
 WindowsRuntimeFiles::~WindowsRuntimeFiles()
 {
 	Close();
 }
+
 bool WindowsRuntimeFiles::PublishStatus(std::string document)
 {
 	if (document.size() > 1024 * 1024)
@@ -30,6 +32,7 @@ bool WindowsRuntimeFiles::PublishStatus(std::string document)
 	m_changed.notify_all();
 	return true;
 }
+
 bool WindowsRuntimeFiles::Log(std::string message)
 {
 	if (message.size() > 4096)
@@ -48,11 +51,13 @@ bool WindowsRuntimeFiles::Log(std::string message)
 	m_changed.notify_all();
 	return true;
 }
+
 WindowsFileStatus WindowsRuntimeFiles::Status() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_status;
 }
+
 void WindowsRuntimeFiles::Close()
 {
 	std::lock_guard lifecycle(m_closeMutex);
@@ -64,6 +69,7 @@ void WindowsRuntimeFiles::Close()
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 void WindowsRuntimeFiles::RecordError(std::string_view error) noexcept
 {
 	try
@@ -73,9 +79,9 @@ void WindowsRuntimeFiles::RecordError(std::string_view error) noexcept
 		m_status.detail.assign(error.substr(0, 2048));
 	}
 	catch (...)
-	{
-	}
+	{}
 }
+
 void WindowsRuntimeFiles::Run() noexcept
 {
 	try
@@ -107,8 +113,9 @@ void WindowsRuntimeFiles::Run() noexcept
 			if (!logs.empty())
 				try
 				{
-					std::ofstream file(m_directory /
-						("openxr_simulator." + std::to_string(mcp::WindowsLegacyProcessId()) + ".log"), std::ios::app);
+					std::ofstream file(
+						m_directory / ("openxr_simulator." + std::to_string(mcp::WindowsLegacyProcessId()) + ".log"),
+						std::ios::app);
 					file.exceptions(std::ios::badbit | std::ios::failbit);
 					for (const auto& line : logs)
 						file << line << '\n';

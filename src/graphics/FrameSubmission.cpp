@@ -13,8 +13,7 @@ bool FrameCaptureRequest::IgnoreFailure(XrResult result) const noexcept
 
 FrameSubmission::FrameSubmission(Session& session, FrameSubmissionBackend& backend)
 	: m_session(session), m_backend(backend)
-{
-}
+{}
 
 FrameSubmission::~FrameSubmission()
 {
@@ -22,11 +21,9 @@ FrameSubmission::~FrameSubmission()
 		m_session.Captures().AbandonProducer(m_key, {});
 	for (const auto& request : m_captures)
 	{
-		const auto prepared = std::any_of(m_prepared.captures.begin(), m_prepared.captures.end(),
-										  [&](const CaptureOutput& output)
-										  {
-											  return output.target == request.target && output.output;
-										  });
+		const auto prepared =
+			std::any_of(m_prepared.captures.begin(), m_prepared.captures.end(),
+						[&](const CaptureOutput& output) { return output.target == request.target && output.output; });
 		if (!request.history && request.reservation && (!m_backend.Submitted() || !prepared) &&
 			m_session.Captures().ProducerReservation(m_key, request.target) == request.reservation)
 			m_session.Captures().AbandonProducer(m_key, request.target);
@@ -50,11 +47,9 @@ XrResult FrameSubmission::PrepareCaptures()
 		{
 			request.composition = m_composition.plan;
 			const bool projection = target.kind == CaptureKind::ProjectionLayers;
-			std::erase_if(request.composition->draws,
-						  [projection](const CompositionDraw& draw)
-						  {
-							  return (draw.constants.control[0] == 0) != projection;
-						  });
+			std::erase_if(request.composition->draws, [projection](const CompositionDraw& draw) {
+				return (draw.constants.control[0] == 0) != projection;
+			});
 			if (request.composition->draws.empty())
 				continue;
 			if (target.kind == CaptureKind::QuadLayers)
@@ -127,19 +122,15 @@ void FrameSubmission::PrepareQuadHistory()
 		request.history = true;
 		request.composition = m_composition.plan;
 		std::erase_if(request.composition->draws,
-					  [](const CompositionDraw& draw)
-					  {
-						  return draw.constants.control[0] != 1;
-					  });
+					  [](const CompositionDraw& draw) { return draw.constants.control[0] != 1; });
 		request.quadBounds = CompositionQuadBounds(*request.composition);
 		m_captures.push_back(std::move(request));
 		auto& history = m_captures.back();
 		const auto& plan = *history.composition;
-		if (plan.draws.empty() || std::none_of(history.quadBounds->begin(), history.quadBounds->end(),
-											   [](const XrRect2Di& rectangle)
-											   {
-												   return rectangle.extent.width > 0 && rectangle.extent.height > 0;
-											   }))
+		if (plan.draws.empty() ||
+			std::none_of(history.quadBounds->begin(), history.quadBounds->end(), [](const XrRect2Di& rectangle) {
+				return rectangle.extent.width > 0 && rectangle.extent.height > 0;
+			}))
 			return;
 		const auto bytes = static_cast<std::uint64_t>(plan.width) * plan.height * 8;
 		if (!bytes || bytes > FrameImageHistory::MaxImageBytes)
@@ -166,8 +157,7 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 	if (!begun)
 		return XR_ERROR_CALL_ORDER_INVALID;
 	m_key = {snapshot.generation, begun->id};
-	const auto trace = [&](std::string_view stage, XrResult result = XR_SUCCESS)
-	{
+	const auto trace = [&](std::string_view stage, XrResult result = XR_SUCCESS) {
 		m_session.History().Trace(FrameTraceKind::RuntimeWork, m_key, {Duration{info.displayTime}}, result,
 								  FrameDiagnosticCategory::Performance, 0, stage);
 	};
@@ -182,8 +172,7 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			return result;
 		}
 		trace("composition_prepared");
-		auto dropLive = [&]
-		{
+		auto dropLive = [&] {
 			m_prepared = {};
 			FramePrediction prediction;
 			const auto result =
@@ -221,8 +210,7 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 		trace("graphics_prepared");
 		std::function<XrResult()> submit;
 		if (m_prepared.producer && m_prepared.output)
-			submit = [&]
-			{
+			submit = [&] {
 				const auto result = m_backend.Submit();
 				if (XR_SUCCEEDED(result))
 					m_session.History().Trace(FrameTraceKind::NativeSubmitted, m_key, m_composition.layers->displayTime,

@@ -82,7 +82,9 @@ void CheckToolbarLaunch(const char* executable)
 		LaunchProfilesDialog editor;
 		editor.Edit(settings, 0);
 		bool open = true, changed = false;
-		test.extraDraw = [&] { editor.Draw(settings, {}, open, changed); };
+		test.extraDraw = [&] {
+			editor.Draw(settings, {}, open, changed);
+		};
 		for (unsigned frame = 0; frame < 3; ++frame)
 			test.Frame();
 		auto* form = FindPanel("Profile form");
@@ -94,7 +96,7 @@ void CheckToolbarLaunch(const char* executable)
 		for (unsigned frame = 0; frame < 3; ++frame)
 			test.Frame();
 		Require(editor.Profile() == profile && !form->ScrollbarX,
-			"Private Proton launch form lost configuration or overflows horizontally");
+				"Private Proton launch form lost configuration or overflows horizontally");
 		test.renderer.RequestScreenshot(directory / "private-prefix-profile.bmp");
 		test.Frame();
 		ImGui::ClosePopupToLevel(0, true);
@@ -177,7 +179,11 @@ void CheckToolbarLaunch(const char* executable)
 	if (std::getenv("SIMXR_RETENTION_QA"))
 		CheckSnapshotRetention(test);
 #endif
-	Eventually([&] { test.Frame(); return test.runtime.History().Size() > 0; },
+	Eventually(
+		[&] {
+			test.Frame();
+			return test.runtime.History().Size() > 0;
+		},
 		"Launched runtime did not populate timeline history");
 	Require(test.runtime.Snapshot().error.empty(), "Launched runtime reported a control error");
 	test.renderer.RequestScreenshot(directory / "toolbar-launch.bmp");
@@ -204,7 +210,8 @@ void CaptureLayouts(const std::filesystem::path& directory)
 				for (int frame = 0; frame < 4; ++frame)
 					test.Frame();
 				const bool overlay = size.x / scale < 800;
-				for (const char* name : {"Top bar", overlay ? "Device rail" : "Device tabs", "Inspector", "Timeline", "GPU preview"})
+				for (const char* name :
+					 {"Top bar", overlay ? "Device rail" : "Device tabs", "Inspector", "Timeline", "GPU preview"})
 				{
 					const auto* window = FindPanel(name);
 					Require(window && !window->ScrollbarX, "Shell region has horizontal scrolling");
@@ -226,12 +233,15 @@ void CheckDistributionOnboarding()
 {
 	IgnoreRealPointer();
 	Interaction test(true);
-	const auto resize = [&](int width, int height)
-	{
+	const auto resize = [&](int width, int height) {
 		const auto rebuilds = test.renderer.RebuildCount();
 		test.window.Resize(width, height);
-		Eventually([&] { test.Frame(); return test.renderer.RebuildCount() > rebuilds; },
-				   "Distribution UI resize did not rebuild the swapchain");
+		Eventually(
+			[&] {
+				test.Frame();
+				return test.renderer.RebuildCount() > rebuilds;
+			},
+			"Distribution UI resize did not rebuild the swapchain");
 	};
 	resize(1280, 720);
 	for (unsigned frame = 0; frame < 4; ++frame)
@@ -344,7 +354,9 @@ void CheckProfileCopyButton(const std::filesystem::path& executable)
 	LaunchProfilesDialog editor;
 	editor.Edit(settings, 0);
 	bool open = true, changed = false;
-	test.extraDraw = [&] { editor.Draw(settings, {}, open, changed); };
+	test.extraDraw = [&] {
+		editor.Draw(settings, {}, open, changed);
+	};
 	for (unsigned frame = 0; frame < 3; ++frame)
 		test.Frame();
 	auto* form = FindPanel("Profile form");
@@ -389,11 +401,11 @@ void CheckProfileClipboard(const std::filesystem::path& executable)
 	const auto* base = SDL_GetBasePath();
 	Require(base, "Cannot locate simulator for clipboard check");
 #ifdef _WIN32
-	const auto expected = ProfileLaunchCommand(Utf8Path(base) / "simxr_companion.exe", profile.name,
-										   LaunchCommandShell::PowerShell);
+	const auto expected =
+		ProfileLaunchCommand(Utf8Path(base) / "simxr_companion.exe", profile.name, LaunchCommandShell::PowerShell);
 #else
-	const auto expected = ProfileLaunchCommand(Utf8Path(base) / "simxr_companion", profile.name,
-										   LaunchCommandShell::Posix);
+	const auto expected =
+		ProfileLaunchCommand(Utf8Path(base) / "simxr_companion", profile.name, LaunchCommandShell::Posix);
 #endif
 	char* clipboard = SDL_GetClipboardText();
 	const bool copied = clipboard && expected == clipboard;
@@ -418,14 +430,16 @@ void CheckHeadsetLaunchProfile()
 	editor.Edit(settings, 0);
 	bool open = true, changed = false, launched = false;
 	std::optional<std::array<HeadsetEyeSize, 2>> eyes = std::array<HeadsetEyeSize, 2>{{{2048, 2160}, {2200, 2300}}};
-	test.extraDraw = [&] { launched |= editor.Draw(settings, {}, open, changed, eyes); };
+	test.extraDraw = [&] {
+		launched |= editor.Draw(settings, {}, open, changed, eyes);
+	};
 	for (unsigned frame = 0; frame < 3; ++frame)
 		test.Frame();
-	Require(settings.profiles.front() == profile && !changed, "Headset discovery changed launch settings without a click");
+	Require(settings.profiles.front() == profile && !changed,
+			"Headset discovery changed launch settings without a click");
 	auto* form = FindPanel("Profile form");
 	Require(form, "Headset launch profile form missing");
-	const auto activate = [&]
-	{
+	const auto activate = [&] {
 		ImGui::ActivateItemByID(ImHashStr("Use headset size", 0, ImHashStr("1", 0, form->ID)));
 		for (unsigned frame = 0; frame < 3; ++frame)
 			test.Frame();
@@ -440,8 +454,9 @@ void CheckHeadsetLaunchProfile()
 	const auto saved = settings.profiles.front();
 	const auto environment = std::map<std::string, std::string>(saved.environment.begin(), saved.environment.end());
 	Require(changed && !launched && saved.arguments == profile.arguments && saved.environment.size() == 3 &&
-		environment.at("SIMXR_WIDTH") == "2200" && environment.at("SIMXR_HEIGHT") == "2300" &&
-		environment.at("KEEP") == "unchanged", "Headset sizes were not saved exactly or changed unrelated launch fields");
+				environment.at("SIMXR_WIDTH") == "2200" && environment.at("SIMXR_HEIGHT") == "2300" &&
+				environment.at("KEEP") == "unchanged",
+			"Headset sizes were not saved exactly or changed unrelated launch fields");
 	changed = false;
 	eyes = std::array<HeadsetEyeSize, 2>{{{9000, 2160}, {2200, 2300}}};
 	test.Frame();
@@ -450,7 +465,8 @@ void CheckHeadsetLaunchProfile()
 	eyes.reset();
 	test.Frame();
 	activate();
-	Require(!changed && settings.profiles.front() == saved && !launched, "Disconnected headset changed saved launch dimensions");
+	Require(!changed && settings.profiles.front() == saved && !launched,
+			"Disconnected headset changed saved launch dimensions");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Headset launch editor produced Vulkan validation errors");
 }
@@ -466,7 +482,8 @@ void CheckHeadsetRestartProfile()
 #else
 	profile.executable = PathText(Utf8Path(SDL_GetBasePath()) / "companion_interaction_tests");
 #endif
-	Require(PathProblem(profile.executable, PathKind::Executable).empty(), ("Restart test executable is invalid: " + profile.executable).c_str());
+	Require(PathProblem(profile.executable, PathKind::Executable).empty(),
+			("Restart test executable is invalid: " + profile.executable).c_str());
 	profile.environment = {{"KEEP", "unchanged"}};
 	settings.profiles.push_back(profile);
 	LaunchProfilesDialog editor;
@@ -474,10 +491,10 @@ void CheckHeadsetRestartProfile()
 	LaunchSnapshot process{LaunchState::Running, "Original game", {}, 42};
 	bool open = true, changed = false, canRestart = false;
 	std::optional<std::array<HeadsetEyeSize, 2>> eyes = std::array<HeadsetEyeSize, 2>{{{2048, 2160}, {2200, 2300}}};
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::PushID("restart-editor");
-		Require(!editor.Draw(settings, process, open, changed, eyes, canRestart), "Restart accidentally requested an ordinary launch");
+		Require(!editor.Draw(settings, process, open, changed, eyes, canRestart),
+				"Restart accidentally requested an ordinary launch");
 		ImGui::PopID();
 	};
 	for (unsigned frame = 0; frame < 3; ++frame)
@@ -485,11 +502,12 @@ void CheckHeadsetRestartProfile()
 	auto* form = FindPanel("Profile form");
 	Require(form, "Restart profile form missing");
 	ImGui::SetScrollY(form, form->ScrollMax.y);
-	test.Frame(); test.Frame();
-	const auto activate = [&](const char* label)
-	{
+	test.Frame();
+	test.Frame();
+	const auto activate = [&](const char* label) {
 		ImGui::ActivateItemByID(ImHashStr(label, 0, ImHashStr("1", 0, form->ID)));
-		test.Frame(); test.Frame();
+		test.Frame();
+		test.Frame();
 	};
 	activate("Restart with headset settings");
 	Require(!editor.TakeRestartRequest(), "Unowned app allowed restart");
@@ -505,10 +523,13 @@ void CheckHeadsetRestartProfile()
 		test.Frame();
 	}
 	test.workspace.SetScale(1.25f);
-	test.Frame(); test.Frame(); test.Frame();
+	test.Frame();
+	test.Frame();
+	test.Frame();
 	Require(!review->ScrollbarX && review->Pos.x >= 0 && review->Pos.y >= 0 &&
-		review->Pos.x + review->Size.x <= ImGui::GetIO().DisplaySize.x &&
-		review->Pos.y + review->Size.y <= ImGui::GetIO().DisplaySize.y, "Enlarged restart review exceeds the viewport");
+				review->Pos.x + review->Size.x <= ImGui::GetIO().DisplaySize.x &&
+				review->Pos.y + review->Size.y <= ImGui::GetIO().DisplaySize.y,
+			"Enlarged restart review exceeds the viewport");
 	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
 		test.renderer.RequestScreenshot(directory / "headset-restart-review-enlarged.bmp");
@@ -516,29 +537,37 @@ void CheckHeadsetRestartProfile()
 	}
 	process.process = 43;
 	ImGui::ActivateItemByID(review->GetID("Restart"));
-	test.Frame(); test.Frame();
+	test.Frame();
+	test.Frame();
 	Require(!editor.TakeRestartRequest(), "Changed process accepted stale restart review");
 	ImGui::ActivateItemByID(review->GetID("Keep running"));
-	test.Frame(); test.Frame();
+	test.Frame();
+	test.Frame();
 	Require(!editor.TakeRestartRequest(), "Keep running requested restart");
 	activate("Restart with headset settings");
 	eyes = std::array<HeadsetEyeSize, 2>{{{3000, 3000}, {3000, 3000}}};
 	ImGui::ActivateItemByID(review->GetID("Restart"));
-	test.Frame(); test.Frame();
+	test.Frame();
+	test.Frame();
 	const auto request = editor.TakeRestartRequest();
 	Require(request && request->process == 43, "Confirmed restart lost original process identity");
-	const auto environment = std::map<std::string, std::string>(request->profile.environment.begin(), request->profile.environment.end());
-	Require(environment.at("SIMXR_WIDTH") == "2200" && environment.at("SIMXR_HEIGHT") == "2300" && environment.at("KEEP") == "unchanged",
-		"Restart changed reviewed dimensions or unrelated environment");
-	Require(!editor.TakeRestartRequest() && !changed && settings.profiles.front() == profile, "Restart replayed a request or changed saved settings");
+	const auto environment =
+		std::map<std::string, std::string>(request->profile.environment.begin(), request->profile.environment.end());
+	Require(environment.at("SIMXR_WIDTH") == "2200" && environment.at("SIMXR_HEIGHT") == "2300" &&
+				environment.at("KEEP") == "unchanged",
+			"Restart changed reviewed dimensions or unrelated environment");
+	Require(!editor.TakeRestartRequest() && !changed && settings.profiles.front() == profile,
+			"Restart replayed a request or changed saved settings");
 	process.restartPending = true;
 	canRestart = false;
 	eyes.reset();
 	test.Frame();
 	ImGui::SetScrollY(form, form->ScrollMax.y);
-	test.Frame(); test.Frame();
+	test.Frame();
+	test.Frame();
 	activate("Cancel restart");
-	Require(editor.TakeRestartCancellation() && !editor.TakeRestartCancellation(), "Pending restart cancellation was lost or repeated");
+	Require(editor.TakeRestartCancellation() && !editor.TakeRestartCancellation(),
+			"Pending restart cancellation was lost or repeated");
 	Require(!form->ScrollbarX, "Restart controls overflow horizontally");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Restart editor produced Vulkan validation errors");
@@ -556,8 +585,7 @@ void CheckPhysicalHeadsetPage()
 	bool available = true;
 	std::optional<HeadsetPageRequest> request;
 	float width = 400;
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({width, 620}, ImGuiCond_Always);
 		ImGui::Begin("Headset QA", nullptr, ImGuiWindowFlags_NoSavedSettings);
@@ -566,10 +594,10 @@ void CheckPhysicalHeadsetPage()
 				"Physical headset controls overflow the inspector width");
 		ImGui::End();
 	};
-	test.Frame(); test.Frame();
+	test.Frame();
+	test.Frame();
 	auto* window = ImGui::FindWindowByName("Headset QA");
-	const auto activate = [&](const char* label)
-	{
+	const auto activate = [&](const char* label) {
 		ImGui::ActivateItemByID(ImHashStr(label, 0, ImHashStr("physical-headset", 0, window->ID)));
 		test.Frame();
 	};
@@ -577,15 +605,15 @@ void CheckPhysicalHeadsetPage()
 	Require(request && request->connect && request->options.runtimeManifest.empty() && !request->options.localEyeHeight,
 			"Connect defaults to the system runtime without fabricating LOCAL calibration");
 	Require(!page.BodyEnabled() && !request->options.body, "Body forwarding must default to Off");
-	const auto selectBody = [&](int index, const char* label)
-	{
+	const auto selectBody = [&](int index, const char* label) {
 		activate("##body-provider");
 		test.Frame();
 		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 		Require(!popups.empty() && popups.back().Window, "Body provider menu did not open");
 		const auto seed = ImHashData(&index, sizeof(index), popups.back().Window->ID);
 		ImGui::ActivateItemByID(ImHashStr(label, 0, seed));
-		test.Frame(); test.Frame();
+		test.Frame();
+		test.Frame();
 	};
 	const std::array labels{"FB upper body", "META full body", "BD without arms", "BD full body"};
 	for (int provider = 0; provider < 4; ++provider)
@@ -603,7 +631,8 @@ void CheckPhysicalHeadsetPage()
 	Require(!request, "Unavailable target allowed connection");
 	activate("Detect headset");
 	Require(request && request->connect && request->options.discover && request->options.endpoint.empty() &&
-		!request->options.takeOver && !request->options.alignment, "Targetless discovery claimed game input");
+				!request->options.takeOver && !request->options.alignment,
+			"Targetless discovery claimed game input");
 	host.phase = HeadsetHostPhase::Running;
 	host.discovering = true;
 	host.recommendedEyes = std::array<HeadsetEyeSize, 2>{{{2048, 2160}, {2200, 2300}}};
@@ -612,7 +641,7 @@ void CheckPhysicalHeadsetPage()
 	available = true;
 	activate("Connect");
 	Require(request && request->connect && !request->options.discover && !request->options.takeOver,
-		"Detected headset cannot connect directly to the running game");
+			"Detected headset cannot connect directly to the running game");
 	available = false;
 	activate("Stop detection");
 	Require(request && !request->connect, "Discovery cannot be stopped without a game");
@@ -628,7 +657,8 @@ void CheckPhysicalHeadsetPage()
 	activate("Custom runtime");
 	conflict = "Headset input is owned by a rig (source 81).";
 	activate("Take over and connect");
-	Require(request && request->connect && request->options.takeOver, "Explicit takeover action must forward authorization");
+	Require(request && request->connect && request->options.takeOver,
+			"Explicit takeover action must forward authorization");
 	conflict.clear();
 	activate("Connect");
 	Require(request && !request->options.takeOver, "Normal connect must not retain previous takeover authorization");
@@ -653,24 +683,29 @@ void CheckPhysicalHeadsetPage()
 	{
 		test.workspace.SetScale(scale);
 		width = scale == 1 ? 400 : 320 * scale;
-		test.Frame(); test.Frame();
+		test.Frame();
+		test.Frame();
 		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 		{
-			test.renderer.RequestScreenshot(directory / (scale == 1 ? "headset-controls.bmp" : "headset-controls-enlarged.bmp"));
+			test.renderer.RequestScreenshot(directory /
+											(scale == 1 ? "headset-controls.bmp" : "headset-controls-enlarged.bmp"));
 			test.Frame();
 		}
 		ImGui::SetScrollY(window, window->ScrollMax.y);
-		test.Frame(); test.Frame();
+		test.Frame();
+		test.Frame();
 		activate("Take over and connect");
 		Require(request && request->options.takeOver && request->options.body == simxr::BodyJointSet::FullBodyBD,
 				"Scrolled body takeover must remain reachable at every scale");
 		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 		{
-			test.renderer.RequestScreenshot(directory / (scale == 1 ? "headset-body-takeover.bmp" : "headset-body-takeover-enlarged.bmp"));
+			test.renderer.RequestScreenshot(
+				directory / (scale == 1 ? "headset-body-takeover.bmp" : "headset-body-takeover-enlarged.bmp"));
 			test.Frame();
 		}
 		ImGui::SetScrollY(window, 0);
-		test.Frame(); test.Frame();
+		test.Frame();
+		test.Frame();
 	}
 	conflict.clear();
 	host.phase = HeadsetHostPhase::Running;
@@ -679,16 +714,18 @@ void CheckPhysicalHeadsetPage()
 	{
 		test.workspace.SetScale(scale);
 		width = scale == 1 ? 400 : 320 * scale;
-		for (const auto mode : {HeadsetOutputState::Live, HeadsetOutputState::Inspection,
-			HeadsetOutputState::Hidden, HeadsetOutputState::Waiting})
+		for (const auto mode : {HeadsetOutputState::Live, HeadsetOutputState::Inspection, HeadsetOutputState::Hidden,
+								HeadsetOutputState::Waiting})
 		{
 			host.output = mode;
-			host.input = mode == HeadsetOutputState::Inspection ? HeadsetInputState::Suspended : HeadsetInputState::Ready;
-			test.Frame(); test.Frame();
+			host.input =
+				mode == HeadsetOutputState::Inspection ? HeadsetInputState::Suspended : HeadsetInputState::Ready;
+			test.Frame();
+			test.Frame();
 			if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 			{
 				const auto name = "headset-output-" + std::to_string(static_cast<unsigned>(mode)) +
-					(scale == 1 ? "-normal.bmp" : "-enlarged.bmp");
+								  (scale == 1 ? "-normal.bmp" : "-enlarged.bmp");
 				test.renderer.RequestScreenshot(directory / name);
 				test.Frame();
 			}
@@ -707,16 +744,18 @@ void CheckArchiveRecordingUi()
 	XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 	create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
 	std::strcpy(create.applicationInfo.applicationName, "Archive recording UI");
-	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS && engine.CreateSession(instance, session) == XR_SUCCESS,
-		"Create archive UI session");
+	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS &&
+				engine.CreateSession(instance, session) == XR_SUCCESS,
+			"Create archive UI session");
 	FrameSchedulerConfig config;
 	config.mode = ExecutionMode::RealTime;
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-	Require(session->Ready(config.epoch) == XR_SUCCESS && session->Begin(begin, config) == XR_SUCCESS, "Begin archive UI session");
+	Require(session->Ready(config.epoch) == XR_SUCCESS && session->Begin(begin, config) == XR_SUCCESS,
+			"Begin archive UI session");
 	control::ControlService service{engine};
 #ifdef _WIN32
-	const auto endpoint = std::string(R"(\\.\pipe\SimXR.Control.)") +
-		std::to_string(GetCurrentProcessId()) + ".archive-ui";
+	const auto endpoint =
+		std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId()) + ".archive-ui";
 #else
 	const auto endpoint = (CompanionSettingsPath().parent_path() / "capture.sock").string();
 #endif
@@ -725,15 +764,16 @@ void CheckArchiveRecordingUi()
 	Require(game && engine.Game().Publish(game, "checkpoint:start"), "Publish UI SDK origin");
 	RecordingPanel panel;
 	panel.SetTarget({endpoint, 1, session->Snapshot().generation.value});
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::SetNextWindowPos({30, 50}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({500, 250}, ImGuiCond_Always);
 		ImGui::Begin("Recording fixture");
 		panel.Poll(true);
-		if (ImGui::Button("Record")) panel.RequestStart();
+		if (ImGui::Button("Record"))
+			panel.RequestStart();
 		ImGui::SameLine();
-		if (ImGui::Button("Stop")) panel.RequestStop();
+		if (ImGui::Button("Stop"))
+			panel.RequestStop();
 		panel.DrawPopovers(true);
 		ImGui::End();
 	};
@@ -745,35 +785,62 @@ void CheckArchiveRecordingUi()
 		test.Frame();
 		ImGui::ActivateItemByID(FindPanel("Recording fixture")->GetID("Record"));
 		test.Frame();
-		Eventually([&] { test.Frame(); return panel.Snapshot().phase == RecordingCapturePhase::Capturing; }, "UI capture did not start");
+		Eventually(
+			[&] {
+				test.Frame();
+				return panel.Snapshot().phase == RecordingCapturePhase::Capturing;
+			},
+			"UI capture did not start");
 		++frameId;
-		CommandTransaction edit{frameId, {CommandSourceKind::Manual, 987}, {FrameId{frameId}, {}},
-			CommandLatePolicy::Reject, {TakeControl{ControlChannel::Head}, SetHeadPose{PoseSample{}}}};
+		CommandTransaction edit{frameId,
+								{CommandSourceKind::Manual, 987},
+								{FrameId{frameId}, {}},
+								CommandLatePolicy::Reject,
+								{TakeControl{ControlChannel::Head}, SetHeadPose{PoseSample{}}}};
 		Require(session->Commands().Submit(edit).result == CommandResult::Queued, "Queue UI recorded input");
 		FramePrediction prediction;
-		Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS && session->EndFrame(prediction) == XR_SUCCESS,
-			"Apply UI recorded input");
+		Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS &&
+					session->EndFrame(prediction) == XR_SUCCESS,
+				"Apply UI recorded input");
 		for (unsigned event = 0; event < 20; ++event)
-			Require(engine.Game().Publish(game, "checkpoint:target event " + std::to_string(event) +
-				" · 日本語 · Recorded gameplay telemetry remains readable in a bounded panel."), "Publish UI SDK evidence");
+			Require(engine.Game().Publish(
+						game, "checkpoint:target event " + std::to_string(event) +
+								  " · 日本語 · Recorded gameplay telemetry remains readable in a bounded panel."),
+					"Publish UI SDK evidence");
 		++frameId;
-		CommandTransaction tail{frameId, {CommandSourceKind::Manual, 987}, {FrameId{frameId}, {}},
-			CommandLatePolicy::Reject, {SetHeadPose{PoseSample{}}}};
+		CommandTransaction tail{frameId,
+								{CommandSourceKind::Manual, 987},
+								{FrameId{frameId}, {}},
+								CommandLatePolicy::Reject,
+								{SetHeadPose{PoseSample{}}}};
 		Require(session->Commands().Submit(tail).result == CommandResult::Queued, "Queue second UI input boundary");
-		Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS && session->EndFrame(prediction) == XR_SUCCESS,
-			"Apply second UI input boundary");
+		Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS &&
+					session->EndFrame(prediction) == XR_SUCCESS,
+				"Apply second UI input boundary");
 		ImGui::ActivateItemByID(FindPanel("Recording fixture")->GetID("Stop"));
 		test.Frame();
-		Eventually([&] { test.Frame(); return !panel.Snapshot().busy; }, "UI capture did not finish");
+		Eventually(
+			[&] {
+				test.Frame();
+				return !panel.Snapshot().busy;
+			},
+			"UI capture did not finish");
 		test.Frame();
-		Require(panel.Snapshot().phase == RecordingCapturePhase::Complete && panel.Snapshot().error.empty() && panel.Snapshot().transactions == 2, "UI archive failed");
+		Require(panel.Snapshot().phase == RecordingCapturePhase::Complete && panel.Snapshot().error.empty() &&
+					panel.Snapshot().transactions == 2,
+				"UI archive failed");
 		const auto saved = panel.TakeSaved();
-		if (saved) lastTake = *saved;
-		Require(saved && std::filesystem::exists(Utf8Path(*saved) / "input.simxr"), "UI omitted saved archive notification");
-		Require(ImGui::IsPopupOpen(FindPanel("Recording fixture")->GetID("Recorded take"), ImGuiPopupFlags_AnyPopupLevel), "Saved take popup missing");
+		if (saved)
+			lastTake = *saved;
+		Require(saved && std::filesystem::exists(Utf8Path(*saved) / "input.simxr"),
+				"UI omitted saved archive notification");
+		Require(
+			ImGui::IsPopupOpen(FindPanel("Recording fixture")->GetID("Recorded take"), ImGuiPopupFlags_AnyPopupLevel),
+			"Saved take popup missing");
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 		{
-			test.renderer.RequestScreenshot(std::filesystem::path(directory) / (scale == 1 ? "take-saved.bmp" : "take-saved-enlarged.bmp"));
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) /
+											(scale == 1 ? "take-saved.bmp" : "take-saved-enlarged.bmp"));
 			test.Frame();
 			test.renderer.WaitIdle();
 		}
@@ -786,18 +853,20 @@ void CheckArchiveRecordingUi()
 	test.workspace.SetScale(1);
 	test.workspace.ShowLibrary(true);
 	test.workspace.Select(TakeSel{lastTake});
-	for (int frame = 0; frame < 30; ++frame) test.Frame();
+	for (int frame = 0; frame < 30; ++frame)
+		test.Frame();
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "archive-library.bmp");
 		test.Frame();
 	}
-	Eventually([&]
-	{
-		test.Frame();
-		const auto* events = FindPanel("SDK events");
-		return events && events->Active;
-	}, "SDK evidence inspector did not load its journal page");
+	Eventually(
+		[&] {
+			test.Frame();
+			const auto* events = FindPanel("SDK events");
+			return events && events->Active;
+		},
+		"SDK evidence inspector did not load its journal page");
 	for (const auto scale : {1.f, 1.5f})
 	{
 		test.workspace.SetScale(scale);
@@ -809,7 +878,7 @@ void CheckArchiveRecordingUi()
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 		{
 			test.renderer.RequestScreenshot(std::filesystem::path(directory) /
-				(scale == 1 ? "sdk-evidence.bmp" : "sdk-evidence-enlarged.bmp"));
+											(scale == 1 ? "sdk-evidence.bmp" : "sdk-evidence-enlarged.bmp"));
 			test.Frame();
 			test.renderer.WaitIdle();
 		}
@@ -820,39 +889,42 @@ void CheckArchiveRecordingUi()
 	test.Frame();
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Next events"));
 	test.Frame();
-	Eventually([&]
-	{
-		test.Frame();
-		return FindPanel("SDK events")->ScrollMax.y < 2 * ImGui::GetFontSize();
-	}, "SDK inspector did not load the final four-event page");
+	Eventually(
+		[&] {
+			test.Frame();
+			return FindPanel("SDK events")->ScrollMax.y < 2 * ImGui::GetFontSize();
+		},
+		"SDK inspector did not load the final four-event page");
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("First events"));
 	test.Frame();
-	Eventually([&]
-	{
-		test.Frame();
-		return FindPanel("SDK events")->ScrollMax.y > 8 * ImGui::GetFontSize();
-	}, "SDK inspector did not return to its first page");
+	Eventually(
+		[&] {
+			test.Frame();
+			return FindPanel("SDK events")->ScrollMax.y > 8 * ImGui::GetFontSize();
+		},
+		"SDK inspector did not return to its first page");
 	const auto evidence = automation::ReadRecordingEvidence(Utf8Path(lastTake));
 	Require(!evidence.entries.empty() && evidence.entries.front().first && evidence.entries.front().last,
-		"UI SDK evidence has no surrounding recorded range");
+			"UI SDK evidence has no surrounding recorded range");
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Use nearby range"));
 	test.Frame();
 	ImGui::SetScrollY(FindPanel("Inspector"), 0);
 	test.Frame();
 	test.renderer.WaitIdle();
 	const auto editable = CompanionSettingsPath().parent_path() / "recordings" /
-		("Range " + std::to_string(evidence.entries.front().first->value) + "-" +
-		 std::to_string(evidence.entries.front().last->value) + ".luau");
+						  ("Range " + std::to_string(evidence.entries.front().first->value) + "-" +
+						   std::to_string(evidence.entries.front().last->value) + ".luau");
 	Require(!std::filesystem::exists(editable), "Range UI fixture needs a fresh output name");
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Export editable rig"));
-	Eventually([&]
-	{
-		test.Frame();
-		const auto selected = std::get_if<TakeSel>(&test.workspace.State().selection);
-		return selected && selected->id == PathText(editable);
-	}, "Archive range export did not select the editable rig");
+	Eventually(
+		[&] {
+			test.Frame();
+			const auto selected = std::get_if<TakeSel>(&test.workspace.State().selection);
+			return selected && selected->id == PathText(editable);
+		},
+		"Archive range export did not select the editable rig");
 	Require(std::filesystem::exists(editable) && !OpenSavedRecording(PathText(editable)).path.empty(),
-		"Archive UI did not save a reopenable editable range");
+			"Archive UI did not save a reopenable editable range");
 	Require(test.validation->errors.load() == 0, "Archive range UI Vulkan validation errors");
 	std::cout << "PASS archive recording controls, automatic persistence and normal/enlarged completion popup\n";
 }

@@ -18,6 +18,7 @@ enum class ImageHistoryView
 	Composed,
 	Quads
 };
+
 struct HistoricalImage
 {
 	std::shared_ptr<const FrameRecord> metadata;
@@ -27,6 +28,7 @@ struct HistoricalImage
 	bool quadVisible = false;
 	ImageHistoryView view = ImageHistoryView::Composed;
 };
+
 struct ImageHistorySnapshot
 {
 	SessionGeneration generation;
@@ -46,11 +48,12 @@ struct ImageWindowSnapshot
 	std::vector<HistoricalImage> entries;
 	ImageHistoryView view = ImageHistoryView::Composed;
 };
+
 class FrameImageWindow
 {
 	friend class FrameImageHistory;
 
-  public:
+public:
 	static constexpr std::size_t PostCount = 12;
 	static constexpr std::size_t Capacity = 22;
 	~FrameImageWindow();
@@ -58,7 +61,7 @@ class FrameImageWindow
 	HistoricalImage Find(FrameId frame) const;
 	void Cancel() noexcept;
 
-  private:
+private:
 	void Append(const HistoricalImage& image) noexcept;
 	mutable std::mutex m_mutex;
 	std::array<HistoricalImage, Capacity> m_entries;
@@ -73,24 +76,29 @@ class FrameImageWindow
 // Returned retired readers must outlive caller locks that native destruction may reenter.
 class FrameImageHistory
 {
-  public:
+public:
 	static constexpr std::size_t Capacity = 10;
 	static constexpr std::uint64_t MaxImageBytes = 16 * 1024 * 1024;
+
 	struct Retired
 	{
 		std::array<HistoricalImage, Capacity> images;
 		std::shared_ptr<FrameImageWindow> window;
 	};
+
 	struct StartedWindow
 	{
 		std::shared_ptr<FrameImageWindow> window;
 		std::shared_ptr<FrameImageWindow> previous;
 	};
+
 	~FrameImageHistory();
+
 	const FramePool& Budget(ImageHistoryView view = ImageHistoryView::Composed) const noexcept
 	{
 		return view == ImageHistoryView::Quads ? m_quadBudget : m_budget;
 	}
+
 	Retired Start(SessionGeneration generation) noexcept;
 	Retired Clear() noexcept;
 	Retired Append(HistoricalImage image) noexcept;
@@ -99,7 +107,7 @@ class FrameImageHistory
 								  ImageHistoryView view = ImageHistoryView::Composed) const;
 	HistoricalImage Find(FrameKey frame, ImageHistoryView view = ImageHistoryView::Composed) const;
 
-  private:
+private:
 	mutable std::mutex m_mutex;
 	FramePool m_budget{24};
 	FramePool m_quadBudget{24};

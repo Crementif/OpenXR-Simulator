@@ -19,7 +19,7 @@ namespace simxr
 {
 class CommandScheduler
 {
-  public:
+public:
 	explicit CommandScheduler(std::size_t pendingCapacity = 128, std::size_t historyCapacity = 256);
 	void Start(std::uint64_t seed = 0, std::optional<CommandConfiguration> initial = {});
 	void Close();
@@ -49,18 +49,20 @@ class CommandScheduler
 	std::shared_ptr<const AppliedCommandSnapshot> At(FrameId frame) const;
 	// Capture origin and start recording under command admission serialization.
 	RecordingResult StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces,
-		bool drain = false, CommandSource owner = ApplicationAutomationSource);
+								   bool drain = false, CommandSource owner = ApplicationAutomationSource);
 	RecordingResult StopRecording(CommandSource owner, std::uint64_t identity = 0);
 	RecordingResult AcknowledgeRecording(CommandSource owner, std::uint64_t identity, std::size_t through);
 	CommandRecorder& Recorder();
 
-  private:
+private:
 	class PreparedCommandBoundary;
+
 	struct SourceCursor
 	{
 		CommandSource source;
 		std::uint64_t last = 0;
 	};
+
 	const std::size_t m_pendingCapacity, m_historyCapacity;
 	mutable std::mutex m_mutex;
 	bool m_closed = false;

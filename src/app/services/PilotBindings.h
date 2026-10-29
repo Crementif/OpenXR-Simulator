@@ -66,15 +66,18 @@ inline constexpr std::array<const char*, static_cast<std::size_t>(PilotAction::C
 	"Pilot right",
 	"Pilot player",
 	"End capture"};
+
 struct PilotBinding
 {
 	std::string key;
 	unsigned modifiers = 0; // Ctrl=1, Shift=2, Alt=4, Super=8.
 	bool operator==(const PilotBinding&) const = default;
 };
+
 std::string PilotBindingLabel(const PilotBinding& binding);
 using PilotBindings = std::array<PilotBinding, static_cast<std::size_t>(PilotAction::Count)>;
 PilotBindings DefaultPilotBindings();
+
 struct GamepadBindings
 {
 	// SDL's stable mapping names, independent of the controller's hardware layout.

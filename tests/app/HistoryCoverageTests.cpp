@@ -12,8 +12,7 @@ static void OverlappingSources()
 	HistoryStore history(8);
 	history.Append({{1, 2, 3}, 4, 0, 1, 16, HistoryLate | HistoryMarker});
 	HistoryCoverage coverage;
-	const auto publish = [&](bool snapshot, bool preview, bool pin)
-	{
+	const auto publish = [&](bool snapshot, bool preview, bool pin) {
 		coverage.Begin();
 		if (preview)
 			coverage.Add({1, 2, 3}, 4, 0, HistoryPreview);

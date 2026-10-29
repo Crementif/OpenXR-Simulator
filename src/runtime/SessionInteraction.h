@@ -11,7 +11,7 @@ class Instance;
 // outlive this owner; public action/haptic snapshots use their own reader locks.
 class SessionInteraction
 {
-  public:
+public:
 	SessionInteraction(XrSession session, Instance& instance);
 	void Reset();
 	void SetFocused(bool focused, RuntimeTime time);
@@ -25,7 +25,7 @@ class SessionInteraction
 	ActionSyncState& Actions();
 	HapticState& Haptics();
 
-  private:
+private:
 	void RetireInactiveHaptics(RuntimeTime time);
 	XrSession m_session;
 	Instance& m_instance;

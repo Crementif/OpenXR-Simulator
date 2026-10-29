@@ -18,6 +18,7 @@ static HistoryBucket Merge(HistoryBucket a, HistoryBucket b) noexcept
 			a.missed + b.missed,
 			a.driven + b.driven};
 }
+
 HistoryStore::HistoryStore(std::size_t capacity)
 {
 	if (!capacity || capacity > 1000000)
@@ -29,11 +30,13 @@ HistoryStore::HistoryStore(std::size_t capacity)
 	// One run per frame, plus the pending append before the oldest run retires.
 	m_segments.reserve(capacity + 1);
 }
+
 std::size_t HistoryStore::RetainedBytes() const noexcept
 {
 	return m_frames.capacity() * sizeof(HistoryFrame) + m_buckets.capacity() * sizeof(HistoryBucket) +
 		   m_segments.capacity() * sizeof(Segment);
 }
+
 void HistoryStore::Clear() noexcept
 {
 	if (m_identityRevision != std::numeric_limits<std::uint64_t>::max())
@@ -43,16 +46,19 @@ void HistoryStore::Clear() noexcept
 	m_segments.clear();
 	std::fill(m_buckets.begin(), m_buckets.end(), HistoryBucket{});
 }
+
 std::size_t HistoryStore::Physical(std::size_t index) const noexcept
 {
 	return (m_start + index) % Capacity();
 }
+
 const HistoryFrame& HistoryStore::At(std::size_t index) const
 {
 	if (index >= m_size)
 		throw std::out_of_range("Frame history index");
 	return m_frames[Physical(index)];
 }
+
 void HistoryStore::Update(std::size_t physical) noexcept
 {
 	const auto& frame = m_frames[physical];
@@ -71,6 +77,7 @@ void HistoryStore::Update(std::size_t physical) noexcept
 		m_buckets[node] = Merge(m_buckets[node * 2], m_buckets[node * 2 + 1]);
 	}
 }
+
 void HistoryStore::Append(const HistoryFrame& frame)
 {
 	if (!std::isfinite(frame.seconds) || !std::isfinite(frame.frameMilliseconds) || frame.frameMilliseconds < 0 ||
@@ -100,6 +107,7 @@ void HistoryStore::Append(const HistoryFrame& frame)
 		m_segments.erase(m_segments.begin());
 	Update(physical);
 }
+
 void HistoryStore::SetCoverage(std::size_t index, std::uint64_t capture, std::uint32_t flags)
 {
 	(void)At(index);
@@ -114,6 +122,7 @@ void HistoryStore::SetCoverage(std::size_t index, std::uint64_t capture, std::ui
 		Update(physical);
 	}
 }
+
 std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint64_t epoch) const
 {
 	const auto oldest = m_appended - m_size;
@@ -137,6 +146,7 @@ std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint6
 	}
 	return {};
 }
+
 std::optional<std::pair<std::uint64_t, std::uint64_t>> HistoryStore::FrameBounds(FrameIdentity scope,
 																				 std::uint64_t epoch) const
 {
@@ -158,12 +168,14 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> HistoryStore::FrameBounds
 		}
 	return bounds;
 }
+
 std::optional<std::size_t> HistoryStore::Latest(FrameIdentity scope, std::uint64_t epoch) const
 {
 	if (const auto segment = LatestSegment(scope, epoch))
 		return segment->second - 1;
 	return {};
 }
+
 std::optional<std::pair<std::size_t, std::size_t>> HistoryStore::LatestSegment(FrameIdentity scope,
 																			   std::uint64_t epoch) const
 {
@@ -174,19 +186,19 @@ std::optional<std::pair<std::size_t, std::size_t>> HistoryStore::LatestSegment(F
 							 static_cast<std::size_t>(segment->end - oldest)};
 	return {};
 }
+
 std::pair<std::size_t, std::size_t> HistoryStore::SegmentAt(std::size_t index) const
 {
 	if (index >= m_size)
 		throw std::out_of_range("Frame history segment");
 	const auto oldest = m_appended - m_size;
-	const auto segment = std::lower_bound(m_segments.begin(), m_segments.end(), oldest + index,
-										  [](const Segment& candidate, std::uint64_t position)
-										  {
-											  return candidate.end <= position;
-										  });
+	const auto segment =
+		std::lower_bound(m_segments.begin(), m_segments.end(), oldest + index,
+						 [](const Segment& candidate, std::uint64_t position) { return candidate.end <= position; });
 	return {static_cast<std::size_t>(std::max(segment->begin, oldest) - oldest),
 			static_cast<std::size_t>(segment->end - oldest)};
 }
+
 void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)
 {
 	(void)At(index);
@@ -199,6 +211,7 @@ void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)
 		Update(physical);
 	}
 }
+
 std::size_t HistoryStore::LowerBound(double seconds) const noexcept
 {
 	std::size_t first = 0, end = m_size;
@@ -212,6 +225,7 @@ std::size_t HistoryStore::LowerBound(double seconds) const noexcept
 	}
 	return first;
 }
+
 std::optional<std::size_t> HistoryStore::Nearest(double seconds) const noexcept
 {
 	if (!m_size || !std::isfinite(seconds))
@@ -224,6 +238,7 @@ std::optional<std::size_t> HistoryStore::Nearest(double seconds) const noexcept
 	return seconds - m_frames[Physical(next - 1)].seconds <= m_frames[Physical(next)].seconds - seconds ? next - 1
 																										: next;
 }
+
 HistoryBucket HistoryStore::PhysicalQuery(std::size_t first, std::size_t end) const noexcept
 {
 	HistoryBucket result;
@@ -236,6 +251,7 @@ HistoryBucket HistoryStore::PhysicalQuery(std::size_t first, std::size_t end) co
 	}
 	return result;
 }
+
 HistoryBucket HistoryStore::Query(std::size_t first, std::size_t end) const
 {
 	if (first > end || end > m_size)

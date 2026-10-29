@@ -34,7 +34,8 @@ static void APIENTRY Debug(GLenum, GLenum type, GLuint, GLenum, GLsizei, const G
 	}
 }
 
-template <typename Function> static Function GLFunction(const char* name)
+template<typename Function>
+static Function GLFunction(const char* name)
 {
 	auto function = reinterpret_cast<Function>(eglGetProcAddress(name));
 	if (!function)
@@ -44,10 +45,11 @@ template <typename Function> static Function GLFunction(const char* name)
 
 class Context
 {
-  public:
+public:
 	Context() = default;
 	Context(const Context&) = delete;
 	Context& operator=(const Context&) = delete;
+
 	~Context()
 	{
 		if (m_context != EGL_NO_CONTEXT)
@@ -175,7 +177,7 @@ class Context
 		m_completion = nullptr;
 	}
 
-  private:
+private:
 	static void CleanupFailed(const char* operation) noexcept
 	{
 		++s_glErrors;
@@ -192,10 +194,11 @@ class Context
 
 class ImportedImage
 {
-  public:
+public:
 	ImportedImage() = default;
 	ImportedImage(const ImportedImage&) = delete;
 	ImportedImage& operator=(const ImportedImage&) = delete;
+
 	~ImportedImage()
 	{
 		glDeleteFramebuffers(1, &m_framebuffer);
@@ -238,12 +241,13 @@ class ImportedImage
 	{
 		return m_texture;
 	}
+
 	GLuint Framebuffer() const
 	{
 		return m_framebuffer;
 	}
 
-  private:
+private:
 	PFNGLDELETEMEMORYOBJECTSEXTPROC m_deleteMemory = nullptr;
 	GLuint m_texture = 0;
 	GLuint m_framebuffer = 0;
@@ -252,10 +256,11 @@ class ImportedImage
 
 class ImportedSemaphore
 {
-  public:
+public:
 	ImportedSemaphore() = default;
 	ImportedSemaphore(const ImportedSemaphore&) = delete;
 	ImportedSemaphore& operator=(const ImportedSemaphore&) = delete;
+
 	~ImportedSemaphore()
 	{
 		if (m_handle)
@@ -280,7 +285,7 @@ class ImportedSemaphore
 		return m_handle;
 	}
 
-  private:
+private:
 	PFNGLDELETESEMAPHORESEXTPROC m_delete = nullptr;
 	GLuint m_handle = 0;
 };
@@ -302,9 +307,11 @@ static void Prove(Context& context, VkPhysicalDevice physicalDevice, std::uint32
 	ImportedSemaphore glAvailable, glReady;
 	glAvailable.Create(consumer, available);
 	glReady.Create(consumer, ready);
+
 	struct Drain
 	{
 		Context& context;
+
 		~Drain()
 		{
 			try
@@ -367,6 +374,7 @@ static void Prove(Context& context, VkPhysicalDevice physicalDevice, std::uint32
 			consumer.VerifyImage(physicalDevice, retained[frame], frame);
 	CheckGL("complete GL image handoffs");
 }
+
 static void ProveProcess(Context& context, VkPhysicalDevice physicalDevice, std::uint32_t family,
 						 std::uint32_t consumerQueue, bool verifyPixels, bool disconnect, const std::string& companion,
 						 const std::string& screenshot)
@@ -394,9 +402,11 @@ static void ProveProcess(Context& context, VkPhysicalDevice physicalDevice, std:
 	ImportedSemaphore glAvailable, glReady;
 	glAvailable.Create(owner, available);
 	glReady.Create(owner, ready);
+
 	struct Drain
 	{
 		Context& context;
+
 		~Drain()
 		{
 			try
@@ -411,6 +421,7 @@ static void ProveProcess(Context& context, VkPhysicalDevice physicalDevice, std:
 			}
 		}
 	} drain{context};
+
 	sharing::Descriptors exported;
 	VkMemoryGetFdInfoKHR memoryInfo{VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR};
 	memoryInfo.memory = backing;
@@ -479,10 +490,7 @@ static bool HasPath(int index, int argc, char** argv)
 		"--verify-pixels",		 "--companion", "--companion-screenshot",  "--cross-process", "--verify-disconnect",
 		"--consumer-disconnect", "--consumer",	"--consumer-verify-pixels"};
 	return std::none_of(options.begin(), options.end(),
-						[&](const char* option)
-						{
-							return std::strcmp(argv[index + 1], option) == 0;
-						});
+						[&](const char* option) { return std::strcmp(argv[index + 1], option) == 0; });
 }
 
 int main(int argc, char** argv)

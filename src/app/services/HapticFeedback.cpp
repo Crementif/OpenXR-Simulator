@@ -66,6 +66,7 @@ void HapticFeedback::Observe(control::HapticObservation observation, Clock::time
 	m_observed = true;
 	m_recent = std::move(observation);
 }
+
 std::array<std::uint16_t, 2> HapticFeedback::Motors(Clock::time_point now, bool enabled)
 {
 	std::array<std::uint16_t, 2> result{};
@@ -78,6 +79,7 @@ std::array<std::uint16_t, 2> HapticFeedback::Motors(Clock::time_point now, bool 
 	}
 	return result;
 }
+
 HapticFeedback::Clock::time_point HapticFeedback::Deadline() const noexcept
 {
 	auto deadline = Clock::time_point::max();
@@ -86,14 +88,17 @@ HapticFeedback::Clock::time_point HapticFeedback::Deadline() const noexcept
 			deadline = std::min(deadline, motor.end);
 	return deadline;
 }
+
 const control::HapticObservation& HapticFeedback::Recent() const noexcept
 {
 	return m_recent;
 }
+
 bool HapticFeedback::Fresh(Clock::time_point now) const noexcept
 {
 	return m_observed && now - m_received <= std::chrono::milliseconds(250);
 }
+
 void HapticFeedback::Reset()
 {
 	*this = {};

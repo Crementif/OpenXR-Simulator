@@ -8,18 +8,20 @@ namespace simxr::headset::tests
 {
 class Files
 {
-  public:
+public:
 	Files()
 	{
 		m_path = std::filesystem::temp_directory_path() /
 				 ("simxr-headset-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 		Require(std::filesystem::create_directory(m_path), "Create isolated manifest directory");
 	}
+
 	~Files()
 	{
 		std::error_code ignored;
 		std::filesystem::remove_all(m_path, ignored);
 	}
+
 	std::filesystem::path Write(const std::filesystem::path& name, std::string_view text)
 	{
 		const auto path = m_path / name;
@@ -30,7 +32,7 @@ class Files
 		return path;
 	}
 
-  private:
+private:
 	std::filesystem::path m_path;
 };
 

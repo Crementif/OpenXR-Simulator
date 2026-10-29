@@ -22,7 +22,7 @@ struct WindowsSharedImage
 // enable Win32 external memory, Win32 external semaphores and timeline semaphores.
 class WindowsVulkanImport
 {
-  public:
+public:
 	static std::shared_ptr<WindowsVulkanImport> Create(std::shared_ptr<VulkanDevice> device,
 													   const WindowsSharedImage& source,
 													   std::shared_ptr<const FrameOutput> owner);
@@ -30,7 +30,7 @@ class WindowsVulkanImport
 	const std::shared_ptr<VulkanImage>& Image() const noexcept;
 	VkSemaphore Ready() const noexcept;
 
-  private:
+private:
 	WindowsVulkanImport(std::shared_ptr<VulkanDevice> device, std::shared_ptr<const FrameOutput> owner);
 	const std::shared_ptr<VulkanDevice> m_device;
 	const std::shared_ptr<const FrameOutput> m_owner;

@@ -17,7 +17,8 @@ inline bool EnvOn(const char* name)
 	return value && *value && std::strcmp(value, "0") != 0;
 }
 
-template <std::integral T> T EnvironmentCount(const char* name, T fallback, T minimum, T maximum = std::numeric_limits<T>::max())
+template<std::integral T>
+T EnvironmentCount(const char* name, T fallback, T minimum, T maximum = std::numeric_limits<T>::max())
 {
 	const char* value = std::getenv(name);
 	if (!value)

@@ -16,21 +16,16 @@ static Instance& RetainedInstance(const std::shared_ptr<Instance>& instance)
 Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> clock)
 	: m_handle(handle), m_instance(instance), m_clock(std::move(clock)), m_scheduler(m_clock),
 	  m_display(m_clock, 8, &m_history,
-				[this](FrameKey key, const FramePrediction& prediction, RuntimeTime observed)
-				{
+				[this](FrameKey key, const FramePrediction& prediction, RuntimeTime observed) {
 					m_scheduler.ObserveCompletion(key, prediction, observed);
 				}),
 	  m_captures(m_history), m_interaction(handle, instance), m_publication(instance, m_interaction.Actions()),
 	  m_spaces(
 		  handle, m_publication.Tracking(),
-		  [this](XrAction action, XrPath path, RuntimeTime time)
-		  {
+		  [this](XrAction action, XrPath path, RuntimeTime time) {
 			  return m_publication.ActionPose(action, path, time);
 		  },
-		  [this](XrAction action, XrPath path)
-		  {
-			  return m_publication.ValidatePoseAction(action, path);
-		  },
+		  [this](XrAction action, XrPath path) { return m_publication.ValidatePoseAction(action, path); },
 		  &instance.Events(), instance.Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME)),
 	  m_body(handle, m_publication.Tracking(), m_spaces, instance.Extensions())
 {
@@ -70,7 +65,7 @@ XrResult Session::Ready(RuntimeTime time)
 }
 
 XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config, PresentationPolicy policy,
-	std::shared_ptr<const PoseSequence> startupSequence)
+						std::shared_ptr<const PoseSequence> startupSequence)
 {
 	if (info.type != XR_TYPE_SESSION_BEGIN_INFO ||
 		(policy != PresentationPolicy::Repeat && policy != PresentationPolicy::Rotational))
@@ -104,12 +99,10 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 			throw std::runtime_error("Cannot admit application startup sequence");
 		retiredHistory = m_captures.Start(m_state.generation);
 		m_scheduler.Start(timing, m_state.generation);
-		m_display.ConfigurePolicy(policy,
-								  [this](RuntimeTime time)
-								  {
-									  const auto sample = m_publication.Tracking().Sample(time);
-									  return sample ? sample->head : PoseSample{};
-								  });
+		m_display.ConfigurePolicy(policy, [this](RuntimeTime time) {
+			const auto sample = m_publication.Tracking().Sample(time);
+			return sample ? sample->head : PoseSample{};
+		});
 		m_display.Start(m_state.generation, {timing.epoch, timing.period}, timing.mode, timing.hostEpoch);
 		if (XR_FAILED(m_spaces.StartGeneration(timing.epoch, publication.ReferenceSpaces())))
 			throw std::invalid_argument("Invalid session reference-space origin");
@@ -252,16 +245,13 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 	}
 	m_history.Trace(FrameTraceKind::WaitStarted, traceFrame, traceTime);
 	std::unique_lock publication(m_publicationMutex, std::defer_lock);
-	const auto prepareBoundary = [this, &boundary](const FramePrediction& candidate)
-	{
+	const auto prepareBoundary = [this, &boundary](const FramePrediction& candidate) {
 		if (!m_spaces.CanPublish(candidate.displayTime))
 			throw std::invalid_argument("Reference-space history exceeds the next frame boundary");
-		const auto reserveHistory = [this, &candidate](const AppliedCommandSnapshot& applied)
-		{
+		const auto reserveHistory = [this, &candidate](const AppliedCommandSnapshot& applied) {
 			auto sequenceCapture = m_captures.PrepareSequenceCapture(applied.sequenceCapture);
 			const auto reserveCaptures = [this, &sequenceCapture](std::shared_ptr<const FrameRecord> issued,
-																  std::shared_ptr<const FrameRecord> cancelled)
-			{
+																  std::shared_ptr<const FrameRecord> cancelled) {
 				m_captures.BindIssued(issued, cancelled);
 				sequenceCapture.Bind(std::move(issued), std::move(cancelled));
 			};
@@ -276,8 +266,7 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 		m_history.Trace(FrameTraceKind::ApiError, traceFrame, traceTime, result, FrameDiagnosticCategory::ApiError);
 		return result;
 	}
-	auto loseSession = [&](XrResult cause, XrResult returned = XR_ERROR_SESSION_LOST)
-	{
+	auto loseSession = [&](XrResult cause, XrResult returned = XR_ERROR_SESSION_LOST) {
 		m_history.Trace(FrameTraceKind::ApiError, {traceFrame.generation, prediction.id}, prediction.displayTime, cause,
 						FrameDiagnosticCategory::ApiError, 0, "Frame publication failed; session lost");
 		if (publication.owns_lock())
@@ -441,12 +430,13 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 		runNative = false;
 	}
 	XrResult result = XR_SUCCESS;
+
 	struct CommitFailure
 	{
 		XrResult result;
 	};
-	auto commit = [&]
-	{
+
+	auto commit = [&] {
 		const auto accepted = m_history.Submit(pending->id, std::move(submission), runNative ? submit : noSubmit);
 		if (XR_FAILED(accepted))
 			throw CommitFailure{accepted};
@@ -585,14 +575,17 @@ XrResult Session::EnableImageHistory()
 	std::lock_guard lock(m_mutex);
 	return m_captures.EnableImageHistory();
 }
+
 bool Session::SupportsImageHistory() const
 {
 	return m_captures.SupportsImageHistory();
 }
+
 FrameImageHistory& Session::ImageHistory()
 {
 	return m_captures.Images();
 }
+
 XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CapturePromoter promoter, bool depthViews,
 									   bool filteredComposition)
 {
@@ -849,8 +842,8 @@ XrResult Session::LocateViews(const XrViewLocateInfo& info, XrViewState* state, 
 	if (!sample)
 		sample.emplace();
 	ViewQuerySnapshot query;
-	const auto result = simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), *sample, info, state, capacity,
-										   count, views, &m_instance.Extensions(), &query);
+	const auto result = simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), *sample, info, state,
+										   capacity, count, views, &m_instance.Extensions(), &query);
 	if (XR_SUCCEEDED(result) && capacity)
 		m_publication.RecordViewQuery(std::move(query));
 	return result;

@@ -37,6 +37,7 @@ struct PreviewTexture::State
 {
 	struct Retirement;
 	static Retirement& Retirements();
+
 	struct Reservation
 	{
 		std::size_t index;
@@ -46,7 +47,9 @@ struct PreviewTexture::State
 		Reservation(const Reservation&) = delete;
 		Reservation& operator=(const Reservation&) = delete;
 	} reservation;
+
 	explicit State(std::uint64_t imageBytes) : reservation(imageBytes) {}
+
 	std::shared_ptr<const void> deviceOwner;
 #if defined(__linux__) || defined(_WIN32)
 	std::unique_ptr<control::VulkanImageConsumer> native;
@@ -59,11 +62,13 @@ struct PreviewTexture::State
 	bool ready = false;
 	bool drawn = false;
 	bool sampled = false;
+
 	~State()
 	{
 		for (auto descriptor : descriptors)
 			ImGui_ImplVulkan_RemoveTexture(descriptor);
 	}
+
 	bool Retired()
 	{
 		if (lastSubmission > completed)
@@ -89,6 +94,7 @@ struct PreviewTexture::State::Retirement
 	std::array<std::uint64_t, SnapshotBudget::MaxCapacity> charges{};
 	std::array<std::unique_ptr<State>, SnapshotBudget::MaxCapacity> preserved;
 	std::uint64_t preservedBytes = 0, chargedBytes = 0;
+
 	void Recalculate() noexcept
 	{
 		chargedBytes = 0;
@@ -102,6 +108,7 @@ struct PreviewTexture::State::Retirement
 			chargedBytes += charge;
 		}
 	}
+
 	std::size_t Reserve(std::uint64_t bytes)
 	{
 		std::lock_guard lock(mutex);
@@ -118,6 +125,7 @@ struct PreviewTexture::State::Retirement
 			}
 		throw std::runtime_error("Companion texture preservation capacity exhausted");
 	}
+
 	void Release(std::size_t index) noexcept
 	{
 		std::lock_guard lock(mutex);
@@ -125,6 +133,7 @@ struct PreviewTexture::State::Retirement
 		Recalculate();
 		reserved[index] = false;
 	}
+
 	void Grow(std::size_t index, std::uint64_t bytes)
 	{
 		std::lock_guard lock(mutex);
@@ -138,16 +147,19 @@ struct PreviewTexture::State::Retirement
 		if (exhausted)
 			throw std::runtime_error("Companion texture snapshot budget exhausted");
 	}
+
 	std::uint64_t Charge(std::size_t index)
 	{
 		std::lock_guard lock(mutex);
 		return charges[index];
 	}
+
 	std::uint64_t TotalCharge()
 	{
 		std::lock_guard lock(mutex);
 		return chargedBytes;
 	}
+
 	bool CanReserve(std::uint64_t bytes)
 	{
 		std::lock_guard lock(mutex);
@@ -155,6 +167,7 @@ struct PreviewTexture::State::Retirement
 		return bytes <= budget && chargedBytes <= budget - bytes &&
 			   std::ranges::find(reserved, false) != reserved.end();
 	}
+
 	void Preserve(std::unique_ptr<State> texture) noexcept
 	{
 		const auto index = texture->reservation.index;
@@ -163,12 +176,13 @@ struct PreviewTexture::State::Retirement
 #if defined(__linux__) || defined(_WIN32)
 		const auto bytes = texture->native ? texture->native->AllocatedBytes() : 0;
 		preservedBytes = bytes > std::numeric_limits<std::uint64_t>::max() - preservedBytes
-						 ? std::numeric_limits<std::uint64_t>::max()
-						 : preservedBytes + bytes;
+							 ? std::numeric_limits<std::uint64_t>::max()
+							 : preservedBytes + bytes;
 #endif
 		preserved[index] = std::move(texture);
 	}
 };
+
 PreviewTexture::State::Retirement& PreviewTexture::State::Retirements()
 {
 	// Process lifetime is deliberate: neither shutdown order nor a failed wait
@@ -176,32 +190,38 @@ PreviewTexture::State::Retirement& PreviewTexture::State::Retirements()
 	static auto* retirement = new Retirement;
 	return *retirement;
 }
+
 static std::uint64_t SnapshotCharge(std::uint64_t bytes, std::uint64_t copies)
 {
 	if (bytes > std::numeric_limits<std::uint64_t>::max() / copies)
 		throw std::runtime_error("Companion image size exceeds snapshot budget");
 	return bytes * copies;
 }
+
 PreviewTexture::State::Reservation::Reservation(std::uint64_t imageBytes)
 	: index(Retirements().Reserve(SnapshotCharge(std::max<std::uint64_t>(imageBytes, 16 * 1024 * 1024), 4)))
-{
-}
+{}
+
 PreviewTexture::State::Reservation::~Reservation()
 {
 	Retirements().Release(index);
 }
+
 void PreviewTexture::State::Reservation::Grow(std::uint64_t bytes)
 {
 	Retirements().Grow(index, bytes);
 }
+
 std::uint64_t PreviewTexture::SnapshotChargeBytes() const
 {
 	return State::Retirements().Charge(m_state->reservation.index);
 }
+
 std::uint64_t PreviewTexture::TotalSnapshotChargeBytes()
 {
 	return State::Retirements().TotalCharge();
 }
+
 bool PreviewTexture::CanReserveSnapshot(std::uint64_t imageBytes)
 {
 	imageBytes = std::max<std::uint64_t>(imageBytes, 16 * 1024 * 1024);
@@ -228,7 +248,7 @@ PreviewTexture::PreviewTexture(const VulkanDeviceAccess& device, control::ImageD
 	auto consumerDevice = std::make_shared<VulkanDevice>(
 		VulkanBinding{device.instance, device.physical, device.device, device.queueFamily, 1}, device.owner);
 	m_state->native = std::make_unique<control::VulkanImageConsumer>(consumerDevice, extensions, VK_API_VERSION_1_1,
-																							 kind, device.externalTimeline, true);
+																	 kind, device.externalTimeline, true);
 	if (m_state->description.identity != m_state->native->Identity())
 		throw std::runtime_error("The app and companion use different GPUs or drivers. Select the app's GPU.");
 #else
@@ -236,6 +256,7 @@ PreviewTexture::PreviewTexture(const VulkanDeviceAccess& device, control::ImageD
 	throw std::runtime_error("Native preview is unavailable on this companion platform");
 #endif
 }
+
 PreviewTexture::~PreviewTexture()
 {
 	if (!m_state)
@@ -259,6 +280,7 @@ PreviewTexture::~PreviewTexture()
 	std::fputs("Companion texture completion unknown; preserving bounded native owners\n", stderr);
 	State::Retirements().Preserve(std::move(m_state));
 }
+
 control::ImageDeviceIdentity PreviewTexture::Identity() const
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -267,6 +289,7 @@ control::ImageDeviceIdentity PreviewTexture::Identity() const
 	return {};
 #endif
 }
+
 std::shared_ptr<control::TransferHandle> PreviewTexture::ConsumerFence()
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -275,6 +298,7 @@ std::shared_ptr<control::TransferHandle> PreviewTexture::ConsumerFence()
 	return {};
 #endif
 }
+
 void PreviewTexture::Import(control::ImageDescription description,
 							std::span<const std::shared_ptr<control::TransferHandle>> handles)
 {
@@ -292,12 +316,14 @@ void PreviewTexture::Import(control::ImageDescription description,
 	(void)handles;
 #endif
 }
+
 void PreviewTexture::AbandonUnsent()
 {
 #if defined(__linux__) || defined(_WIN32)
 	m_state->native->AbandonUnsent();
 #endif
 }
+
 CompletionStatus PreviewTexture::Poll()
 {
 	if (m_state->ready)
@@ -334,22 +360,27 @@ CompletionStatus PreviewTexture::Poll()
 	return CompletionStatus::Failed;
 #endif
 }
+
 bool PreviewTexture::Ready() const
 {
 	return m_state->ready;
 }
+
 const control::ImageDescription& PreviewTexture::Description() const
 {
 	return m_state->description;
 }
+
 std::size_t PreviewTexture::SliceCount() const
 {
 	return m_state->descriptors.size();
 }
+
 void PreviewTexture::BeginFrame()
 {
 	m_state->drawn = false;
 }
+
 void PreviewTexture::Draw(float width, std::optional<std::size_t> slice, ImVec4 crop, bool correctProportions)
 {
 	if (!m_state->ready || (slice && *slice >= m_state->descriptors.size()))
@@ -367,6 +398,7 @@ void PreviewTexture::Draw(float width, std::optional<std::size_t> slice, ImVec4 
 	}
 	m_state->drawn = true;
 }
+
 VkSemaphore PreviewTexture::ReadyWait() const
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -375,6 +407,7 @@ VkSemaphore PreviewTexture::ReadyWait() const
 #endif
 	return VK_NULL_HANDLE;
 }
+
 void PreviewTexture::Submitted(std::uint64_t serial)
 {
 	if (m_state->drawn)
@@ -384,10 +417,12 @@ void PreviewTexture::Submitted(std::uint64_t serial)
 		m_state->drawn = false;
 	}
 }
+
 void PreviewTexture::ObserveCompletion(std::uint64_t serial)
 {
 	m_state->completed = std::max(m_state->completed, serial);
 }
+
 VkImage PreviewTexture::UseForCopy()
 {
 	if (!m_state->ready)
@@ -399,17 +434,20 @@ VkImage PreviewTexture::UseForCopy()
 	return VK_NULL_HANDLE;
 #endif
 }
+
 std::uint64_t PreviewTexture::PreservedBytes()
 {
 	auto& retirement = State::Retirements();
 	std::lock_guard lock(retirement.mutex);
 	return retirement.preservedBytes;
 }
+
 bool PreviewTexture::CanRetire(std::uint64_t completed)
 {
 	ObserveCompletion(completed);
 	return m_state->Retired();
 }
+
 void PreviewTexture::PreserveUnfinished(std::uint64_t completed) noexcept
 {
 	if (!m_state)
@@ -421,8 +459,7 @@ void PreviewTexture::PreserveUnfinished(std::uint64_t completed) noexcept
 			return;
 	}
 	catch (...)
-	{
-	}
+	{}
 	State::Retirements().Preserve(std::move(m_state));
 }
 } // namespace simxr::app

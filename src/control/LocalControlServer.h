@@ -7,9 +7,10 @@
 namespace simxr::control
 {
 class ControlService;
+
 class LocalControlServer
 {
-  public:
+public:
 	LocalControlServer(ControlService& service, std::string path, std::size_t maxClients = 16);
 	~LocalControlServer();
 	LocalControlServer(const LocalControlServer&) = delete;
@@ -17,7 +18,7 @@ class LocalControlServer
 	const std::string& Path() const;
 	void Close() noexcept;
 
-  private:
+private:
 	struct State;
 	std::unique_ptr<State> m_state;
 };

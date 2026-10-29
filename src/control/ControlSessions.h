@@ -17,6 +17,7 @@ namespace simxr
 class Runtime;
 class Session;
 } // namespace simxr
+
 namespace simxr::control
 {
 struct ControlSession
@@ -25,22 +26,24 @@ struct ControlSession
 	XrSession handle = XR_NULL_HANDLE;
 	std::shared_ptr<Session> session;
 };
+
 class ControlSessions
 {
-  public:
+public:
 	static constexpr std::size_t Capacity = 64;
+
 	// Retains partial discovery on failure as well as successful resolution.
 	// The service keeps this owner until request admission has reopened.
 	class Snapshot
 	{
 		friend class ControlSessions;
 
-	  public:
+	public:
 		std::span<const ControlSession> Sessions() const;
 		std::span<const ControlSessionId> Ids() const;
 		const ControlSession& Resolve(ControlSessionId session, SessionGeneration generation) const;
 
-	  private:
+	private:
 		enum class Phase
 		{
 			Empty,
@@ -51,16 +54,18 @@ class ControlSessions
 		std::vector<ControlSession> m_sessions;
 		std::array<ControlSessionId, Capacity> m_ids;
 	};
+
 	explicit ControlSessions(Runtime& runtime);
 	void Discover(Snapshot& snapshot);
 
-  private:
+private:
 	struct Registration
 	{
 		ControlSessionId id;
 		XrSession handle;
 		std::weak_ptr<Session> session;
 	};
+
 	Runtime& m_runtime;
 	std::mutex m_mutex;
 	std::vector<Registration> m_sessions;

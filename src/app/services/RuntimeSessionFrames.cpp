@@ -9,6 +9,7 @@ using panel::Boolean;
 using panel::Nested;
 using panel::U64;
 using Work = PanelWork;
+
 static const char* ConnectionName(RuntimeConnectionState state)
 {
 	switch (state)
@@ -24,11 +25,13 @@ static const char* ConnectionName(RuntimeConnectionState state)
 	}
 	return "Unknown";
 }
+
 static bool SameFrame(const PanelScope& scope, std::uint64_t frame, const HistoryFrame& history)
 {
 	return scope.epoch == history.epoch && scope.session == history.identity.session &&
 		   scope.generation == history.identity.run && frame == history.identity.frame;
 }
+
 void RuntimeSession::ShowCapture(std::uint64_t capture)
 {
 	const bool canFetch = m_workspace.Select(capture);
@@ -46,6 +49,7 @@ void RuntimeSession::ShowCapture(std::uint64_t capture)
 	fields.push_back(wire::Field::U64(tag::CaptureId, capture, true));
 	m_requests.Send(wire::OpCode::Capture, Work::Capture, std::move(fields), capture);
 }
+
 void RuntimeSession::SelectCapture(std::uint64_t capture)
 {
 	m_time.following = false;
@@ -57,6 +61,7 @@ void RuntimeSession::SelectCapture(std::uint64_t capture)
 		}
 	ShowCapture(capture);
 }
+
 void RuntimeSession::SelectFrame(std::uint64_t local)
 {
 	for (const auto& capture : m_workspace.Captures())
@@ -74,6 +79,7 @@ void RuntimeSession::SelectFrame(std::uint64_t local)
 			return;
 		}
 }
+
 void RuntimeSession::SelectImage(std::uint64_t id)
 {
 	for (const auto& image : m_preview.Images())
@@ -84,6 +90,7 @@ void RuntimeSession::SelectImage(std::uint64_t id)
 			m_workspace.SelectImage(image.scope, image.capture);
 		}
 }
+
 void RuntimeSession::LookAt(std::size_t index)
 {
 	const auto frame = m_history.History().At(index);
@@ -105,6 +112,7 @@ void RuntimeSession::LookAt(std::size_t index)
 			break;
 		}
 }
+
 const control::Message* RuntimeSession::PastState() const
 {
 	if (m_time.following)
@@ -119,37 +127,45 @@ const control::Message* RuntimeSession::PastState() const
 		return nullptr;
 	return &m_pastState;
 }
+
 bool RuntimeSession::LoadingPastImage() const
 {
 	const auto image = m_preview.Selected();
 	return m_requests.Has(Work::PastPreview) || (image && !image->ready && !image->released);
 }
+
 std::uint64_t RuntimeSession::PreviewBytes() const
 {
 	return Supports(wire::Capability::ContinuousPreviews) ? U64(m_debugger.Status(), tag::PreviewBytes)
 														  : m_preview.History().Bytes();
 }
+
 std::uint64_t RuntimeSession::PreviewBudget() const
 {
 	return Supports(wire::Capability::ContinuousPreviews) ? U64(m_debugger.Status(), tag::PreviewBudget)
 														  : m_preview.History().Budget();
 }
+
 std::uint64_t RuntimeSession::PreviewRamBytes() const
 {
 	return U64(m_debugger.Status(), tag::PreviewRamBytes);
 }
+
 std::uint64_t RuntimeSession::PreviewRamBudget() const
 {
 	return U64(m_debugger.Status(), tag::PreviewRamBudget);
 }
+
 std::string RuntimeSession::PreviewError() const
 {
 	return panel::Text(m_debugger.Status(), tag::PreviewError);
 }
+
 void RuntimeSession::MarkHistoryFrame(std::size_t index, bool enabled)
 {
 	m_history.History().SetFlags(index, HistoryMarker, enabled);
 }
+
 void RuntimeSession::TogglePin(std::size_t index)
 {
 	const auto& frame = m_history.History().At(index);
@@ -161,6 +177,7 @@ void RuntimeSession::TogglePin(std::size_t index)
 			return;
 		}
 }
+
 void RuntimeSession::Command(wire::CommandKind kind, std::uint64_t capture, bool raw, std::uint32_t layer,
 							 std::uint32_t view)
 {
@@ -171,20 +188,24 @@ void RuntimeSession::Command(wire::CommandKind kind, std::uint64_t capture, bool
 		m_stepRequested = false;
 	m_debugger.Command(kind, capture, raw, layer, view);
 }
+
 void RuntimeSession::Pause()
 {
 	Command(wire::CommandKind::Pause);
 }
+
 void RuntimeSession::Step()
 {
 	m_time.following = true;
 	Command(wire::CommandKind::Step);
 	m_stepRequested = true;
 }
+
 std::optional<SteppedFrame> RuntimeSession::TakeSteppedFrame()
 {
 	return std::exchange(m_stepped, {});
 }
+
 void RuntimeSession::ResumeLive()
 {
 	m_time.following = true;
@@ -193,6 +214,7 @@ void RuntimeSession::ResumeLive()
 	m_followOnResume = true;
 	m_debugger.Command(wire::CommandKind::Resume);
 }
+
 void RuntimeSession::SetLive(bool enabled)
 {
 	if (!enabled && m_time.following)
@@ -205,11 +227,13 @@ void RuntimeSession::SetLive(bool enabled)
 	m_time.following = enabled;
 	m_preview.ShowLive(enabled);
 }
+
 void RuntimeSession::CancelPending()
 {
 	m_stepRequested = false;
 	m_debugger.CancelPending();
 }
+
 void RuntimeSession::ReleaseSelected()
 {
 	if (const auto capture = m_workspace.Selected();
@@ -218,6 +242,7 @@ void RuntimeSession::ReleaseSelected()
 	m_workspace.ReleaseSelected();
 	m_preview.ReleaseSelected();
 }
+
 bool RuntimeSession::RequestExport(std::string path)
 {
 	const auto image = m_preview.Selected();
@@ -229,6 +254,7 @@ bool RuntimeSession::RequestExport(std::string path)
 	}
 	return true;
 }
+
 std::vector<RuntimeFrame> RuntimeSession::TimelineFrames() const
 {
 	std::vector<RuntimeFrame> frames;
@@ -238,12 +264,10 @@ std::vector<RuntimeFrame> RuntimeSession::TimelineFrames() const
 	{
 		if (!capture.frame)
 			continue;
-		const bool imageReady = std::any_of(images.begin(), images.end(),
-											[&](const auto& image)
-											{
-												return image.scope == capture.scope && image.capture == capture.id &&
-													   image.frame == capture.frame && image.ready && !image.released;
-											});
+		const bool imageReady = std::any_of(images.begin(), images.end(), [&](const auto& image) {
+			return image.scope == capture.scope && image.capture == capture.id && image.frame == capture.frame &&
+				   image.ready && !image.released;
+		});
 		frames.push_back({{capture.scope.epoch, capture.scope.session, capture.scope.generation},
 						  capture.local,
 						  capture.id,
@@ -255,6 +279,7 @@ std::vector<RuntimeFrame> RuntimeSession::TimelineFrames() const
 	}
 	return frames;
 }
+
 SessionView RuntimeSession::View() const
 {
 	SessionView view;

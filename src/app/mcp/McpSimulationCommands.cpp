@@ -16,6 +16,7 @@ static void Keys(const Json& object, std::initializer_list<std::string_view> all
 		if (std::find(allowed.begin(), allowed.end(), it.key()) == allowed.end())
 			throw std::invalid_argument("Unknown simulation command argument: " + it.key());
 }
+
 static std::string Text(const Json& object, const char* key)
 {
 	const auto it = object.find(key);
@@ -26,6 +27,7 @@ static std::string Text(const Json& object, const char* key)
 		throw std::invalid_argument(std::string("Invalid ") + key);
 	return value;
 }
+
 static bool Boolean(const Json& object, const char* key, bool fallback)
 {
 	const auto it = object.find(key);
@@ -35,6 +37,7 @@ static bool Boolean(const Json& object, const char* key, bool fallback)
 		throw std::invalid_argument(std::string(key) + " must be boolean");
 	return it->get<bool>();
 }
+
 static std::uint32_t Integer(const Json& object, const char* key, std::uint32_t fallback, std::uint32_t maximum)
 {
 	const auto it = object.find(key);
@@ -44,12 +47,14 @@ static std::uint32_t Integer(const Json& object, const char* key, std::uint32_t 
 		throw std::invalid_argument(std::string(key) + " is out of range");
 	return it->get<std::uint32_t>();
 }
+
 static std::uint32_t Device(const Json& object, const char* key, std::uint32_t maximum)
 {
 	if (!object.contains(key))
 		throw std::invalid_argument(std::string(key) + " is required");
 	return Integer(object, key, 0, maximum);
 }
+
 static std::uint64_t WideInteger(const Json& object, const char* key, std::uint64_t maximum, bool allowZero = true)
 {
 	const auto it = object.find(key);
@@ -73,6 +78,7 @@ static std::uint64_t WideInteger(const Json& object, const char* key, std::uint6
 		throw std::invalid_argument(std::string(key) + " is out of range");
 	return value;
 }
+
 static float Float(const Json& value)
 {
 	if (!value.is_number())
@@ -82,11 +88,13 @@ static float Float(const Json& value)
 		throw std::invalid_argument("Simulation values must fit a finite float");
 	return static_cast<float>(number);
 }
+
 static float Float(const Json& object, const char* key, float fallback)
 {
 	const auto it = object.find(key);
 	return it == object.end() ? fallback : Float(*it);
 }
+
 static float Axis(const Json& object, const char* key, float minimum = 0)
 {
 	const auto value = Float(object, key, 0);
@@ -94,7 +102,8 @@ static float Axis(const Json& object, const char* key, float minimum = 0)
 		throw std::invalid_argument(std::string(key) + " is outside its input range");
 	return value;
 }
-template <std::size_t Size>
+
+template<std::size_t Size>
 static std::array<float, Size> Vector(const Json& object, const char* key, std::array<float, Size> fallback)
 {
 	const auto it = object.find(key);
@@ -106,12 +115,14 @@ static std::array<float, Size> Vector(const Json& object, const char* key, std::
 		fallback[index] = Float((*it)[index]);
 	return fallback;
 }
+
 static XrPosef Pose(const Json& object, const char* position = "position", const char* orientation = "orientation")
 {
 	const auto p = Vector<3>(object, position, {0, 0, 0});
 	const auto q = Vector<4>(object, orientation, {0, 0, 0, 1});
 	return {{q[0], q[1], q[2], q[3]}, {p[0], p[1], p[2]}};
 }
+
 static PoseSample Sample(const Json& object)
 {
 	PoseSample result;
@@ -119,20 +130,23 @@ static PoseSample Sample(const Json& object)
 	result.flags = Integer(object, "flags", 15, 15);
 	return result;
 }
+
 static std::uint32_t Joint(const Json& object, const char* key)
 {
 	if (!object.contains(key))
 		throw std::invalid_argument(std::string(key) + " is required");
 	return Integer(object, key, 0, BodyJointCount - 1);
 }
+
 static RuntimeTime BodyTime(const Json& object, const char* key, bool allowZero = false)
 {
 	return RuntimeTime{Duration{static_cast<std::int64_t>(WideInteger(object, key, INT64_MAX, allowZero))}};
 }
+
 static BodyObservation Observation(const Json& object)
 {
 	Keys(object, {"joint_set", "requested_time", "returned_time", "located", "active", "all_joint_poses_tracked",
-		"confidence", "skeleton_revision", "joints", "skeleton"});
+				  "confidence", "skeleton_revision", "joints", "skeleton"});
 	if (!object.contains("joint_set") || !object.contains("located"))
 		throw std::invalid_argument("Body observation requires joint_set and located");
 	BodyObservation result;
@@ -187,10 +201,11 @@ static BodyObservation Observation(const Json& object)
 	}
 	return NormalizeBodyObservation(std::move(result));
 }
+
 static SetBodyControls Body(const Json& object)
 {
 	Keys(object, {"kind", "active", "confidence", "preset", "root_pose", "controls", "joints", "observation",
-		"observation_origin"});
+				  "observation_origin"});
 	SetBodyControls result;
 	result.value.active = Boolean(object, "active", true);
 	result.value.confidence = Float(object, "confidence", 1);
@@ -243,13 +258,15 @@ static SetBodyControls Body(const Json& object)
 	}
 	return result;
 }
+
 static TrackerDevice Tracker(const Json& object)
 {
 	Keys(object, {"kind", "index", "identity", "role", "connected", "tracked", "anchor", "position", "orientation",
-		"joint_offset", "flags", "source_path"});
+				  "joint_offset", "flags", "source_path"});
 	TrackerDevice result{{WideInteger(object, "identity", UINT64_MAX, false)},
-		static_cast<TrackerRole>(Integer(object, "role", 4, 17)), Boolean(object, "connected", true),
-		Boolean(object, "tracked", true)};
+						 static_cast<TrackerRole>(Integer(object, "role", 4, 17)),
+						 Boolean(object, "connected", true),
+						 Boolean(object, "tracked", true)};
 	result.poseFlags = Integer(object, "flags", 15, 15);
 	if (const auto source = object.find("source_path"); source != object.end())
 	{
@@ -270,10 +287,11 @@ static TrackerDevice Tracker(const Json& object)
 		throw std::invalid_argument("Tracker cannot combine world and joint-relative poses");
 	return result;
 }
+
 static ControlChannel Channel(const Json& object)
 {
 	static constexpr std::array names{"head", "left_pose", "right_pose", "left_controls", "right_controls", "body",
-		"gaze", "trackers", "views", "proportions", "profiles", "session"};
+									  "gaze", "trackers",  "views",		 "proportions",	  "profiles",		"session"};
 	const auto it = object.find("channel");
 	if (it == object.end())
 		throw std::invalid_argument("channel is required");
@@ -287,6 +305,7 @@ static ControlChannel Channel(const Json& object)
 	}
 	return static_cast<ControlChannel>(Integer(object, "channel", UINT32_MAX, names.size() - 1));
 }
+
 static SimulationCommand Canonical(const Json& object)
 {
 	Keys(object, {"encoding", "data"});
@@ -298,8 +317,7 @@ static SimulationCommand Canonical(const Json& object)
 	const auto hex = it->get<std::string>();
 	if (hex.empty() || hex.size() > 262144 || hex.size() % 2)
 		throw std::invalid_argument("Invalid canonical command size");
-	const auto digit = [](char value) -> unsigned
-	{
+	const auto digit = [](char value) -> unsigned {
 		if (value >= '0' && value <= '9')
 			return value - '0';
 		if (value >= 'a' && value <= 'f')
@@ -317,6 +335,7 @@ static SimulationCommand Canonical(const Json& object)
 		throw std::invalid_argument("Command is not in canonical form");
 	return command;
 }
+
 SimulationCommand SimulationCommandFromJson(const Json& object)
 {
 	if (!object.is_object())
@@ -354,10 +373,31 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	}
 	if (kind == "controller_controls")
 	{
-		Keys(object, {"kind", "hand", "trigger", "grip", "grip_force", "stick_x", "stick_y", "trackpad_x", "trackpad_y",
-					  "trackpad_force", "primary", "secondary", "menu", "back", "thumb_click", "trackpad_click",
-					  "primary_touch", "secondary_touch", "trigger_touch", "thumb_touch", "trackpad_touch", "thumbrest_touch",
-					  "connected", "trigger_click", "physical_profile"});
+		Keys(object, {"kind",
+					  "hand",
+					  "trigger",
+					  "grip",
+					  "grip_force",
+					  "stick_x",
+					  "stick_y",
+					  "trackpad_x",
+					  "trackpad_y",
+					  "trackpad_force",
+					  "primary",
+					  "secondary",
+					  "menu",
+					  "back",
+					  "thumb_click",
+					  "trackpad_click",
+					  "primary_touch",
+					  "secondary_touch",
+					  "trigger_touch",
+					  "thumb_touch",
+					  "trackpad_touch",
+					  "thumbrest_touch",
+					  "connected",
+					  "trigger_click",
+					  "physical_profile"});
 		ControllerControls value;
 		value.trigger = Axis(object, "trigger");
 		value.grip = Axis(object, "grip");
@@ -413,14 +453,14 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	if (kind == "gaze")
 	{
 		Keys(object, {"kind", "yaw", "pitch", "available", "tracked"});
-		return SetGaze{{Float(object, "yaw", 0), Float(object, "pitch", 0),
-						Boolean(object, "available", true), Boolean(object, "tracked", true)}};
+		return SetGaze{{Float(object, "yaw", 0), Float(object, "pitch", 0), Boolean(object, "available", true),
+						Boolean(object, "tracked", true)}};
 	}
 	if (kind == "proportions")
 	{
 		Keys(object, {"kind", "height", "shoulder_width", "hip_width"});
-		return SetBodyProportions{{Float(object, "height", 1.7f), Float(object, "shoulder_width", 0.38f),
-								   Float(object, "hip_width", 0.24f)}};
+		return SetBodyProportions{
+			{Float(object, "height", 1.7f), Float(object, "shoulder_width", 0.38f), Float(object, "hip_width", 0.24f)}};
 	}
 	if (kind == "controller_profile")
 	{
@@ -456,12 +496,13 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	if (kind == "reference_spaces")
 	{
 		Keys(object, {"kind", "local_position", "local_orientation", "stage_position", "stage_orientation",
-			"bounds_available", "stage_bounds"});
+					  "bounds_available", "stage_bounds"});
 		ReferenceSpaceState value;
 		value.local = Pose(object, "local_position", "local_orientation");
 		value.stage = Pose(object, "stage_position", "stage_orientation");
 		const auto available = Boolean(object, "bounds_available", true);
-		const auto bounds = Vector<2>(object, "stage_bounds", available ? std::array<float, 2>{2, 2} : std::array<float, 2>{0, 0});
+		const auto bounds =
+			Vector<2>(object, "stage_bounds", available ? std::array<float, 2>{2, 2} : std::array<float, 2>{0, 0});
 		if (!available && (bounds[0] != 0 || bounds[1] != 0))
 			throw std::invalid_argument("Unavailable stage bounds must have zero extent");
 		value.stageBounds = available ? std::optional{XrExtent2Df{bounds[0], bounds[1]}} : std::nullopt;
@@ -469,7 +510,8 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	}
 	if (kind == "views")
 	{
-		Keys(object, {"kind", "ipd", "inset_half_angle", "outer_fov", "outer_width", "outer_height", "inset_width", "inset_height"});
+		Keys(object, {"kind", "ipd", "inset_half_angle", "outer_fov", "outer_width", "outer_height", "inset_width",
+					  "inset_height"});
 		ViewSettings value;
 		value.ipd = Float(object, "ipd", value.ipd);
 		value.insetHalfAngle = Float(object, "inset_half_angle", value.insetHalfAngle);
@@ -485,9 +527,10 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	if (kind == "scenario")
 	{
 		Keys(object, {"kind", "scenario", "enabled"});
-		static constexpr std::array names{"head_untracked", "head_unavailable", "body_untracked", "body_unavailable",
-			"gaze_untracked", "gaze_unavailable", "left_disconnected", "right_disconnected", "trackers_disconnected",
-			"unfocused", "hidden", "recenter", "session_loss"};
+		static constexpr std::array names{
+			"head_untracked",	"head_unavailable",	 "body_untracked",	   "body_unavailable",		"gaze_untracked",
+			"gaze_unavailable", "left_disconnected", "right_disconnected", "trackers_disconnected", "unfocused",
+			"hidden",			"recenter",			 "session_loss"};
 		const auto it = object.find("scenario");
 		if (it == object.end())
 			throw std::invalid_argument("scenario is required");

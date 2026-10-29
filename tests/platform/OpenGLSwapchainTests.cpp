@@ -28,7 +28,8 @@ constexpr GLenum UnpackBufferBinding = 0x88EF;
 constexpr GLenum UnpackImageHeight = 0x806E;
 constexpr GLenum UnpackSkipImages = 0x806D;
 
-template <class Function> Function Procedure(const char* name)
+template<class Function>
+Function Procedure(const char* name)
 {
 	const auto procedure = wglGetProcAddress(name);
 	const auto address = std::bit_cast<std::uintptr_t>(procedure);
@@ -39,7 +40,7 @@ template <class Function> Function Procedure(const char* name)
 
 class ContextFixture final
 {
-  public:
+public:
 	ContextFixture()
 	{
 		m_window = CreateWindowExW(0, L"STATIC", L"SimXR GL swapchain fixture", WS_POPUP, 0, 0, 16, 16, nullptr,
@@ -79,6 +80,7 @@ class ContextFixture final
 		m_context = modern;
 		m_ready = wglMakeCurrent(m_device, m_context) != FALSE;
 	}
+
 	~ContextFixture()
 	{
 		wglMakeCurrent(nullptr, nullptr);
@@ -89,20 +91,23 @@ class ContextFixture final
 		if (m_window)
 			DestroyWindow(m_window);
 	}
+
 	bool Ready() const noexcept
 	{
 		return m_ready;
 	}
+
 	HDC Device() const noexcept
 	{
 		return m_device;
 	}
+
 	HGLRC Context() const noexcept
 	{
 		return m_context;
 	}
 
-  private:
+private:
 	HWND m_window = nullptr;
 	HDC m_device = nullptr;
 	HGLRC m_context = nullptr;
@@ -131,6 +136,7 @@ XrSwapchainCreateInfo Description()
 }
 
 std::atomic<unsigned> s_debugErrors{0};
+
 void APIENTRY DebugMessage(GLenum, GLenum type, GLuint, GLenum, GLsizei, const GLchar* message, const void*)
 {
 	if (type == GL_DEBUG_TYPE_ERROR)
@@ -221,29 +227,19 @@ void Exercise(ContextFixture& fixture)
 	bool acquired = false;
 	bool release = false;
 	bool workerCurrent = false;
-	std::thread borrower(
-		[&]
+	std::thread borrower([&] {
+		workerCurrent = wglMakeCurrent(fixture.Device(), fixture.Context()) != FALSE;
 		{
-			workerCurrent = wglMakeCurrent(fixture.Device(), fixture.Context()) != FALSE;
-			{
-				std::unique_lock lock(mutex);
-				acquired = true;
-				changed.notify_one();
-				changed.wait(lock,
-							 [&]
-							 {
-								 return release;
-							 });
-			}
-			wglMakeCurrent(nullptr, nullptr);
-		});
+			std::unique_lock lock(mutex);
+			acquired = true;
+			changed.notify_one();
+			changed.wait(lock, [&] { return release; });
+		}
+		wglMakeCurrent(nullptr, nullptr);
+	});
 	{
 		std::unique_lock lock(mutex);
-		changed.wait(lock,
-					 [&]
-					 {
-						 return acquired;
-					 });
+		changed.wait(lock, [&] { return acquired; });
 	}
 	const auto rejectedClose = !owner->Close();
 	const auto retainedImages = owner->Images().size();
@@ -311,10 +307,12 @@ void Exercise(ContextFixture& fixture)
 			owner.reset();
 		}
 	description.mipCount = 2;
-	Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) == XR_ERROR_VALIDATION_FAILURE);
+	Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) ==
+		  XR_ERROR_VALIDATION_FAILURE);
 	description.mipCount = 1;
 	description.sampleCount = 3;
-	Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) == XR_ERROR_VALIDATION_FAILURE);
+	Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) ==
+		  XR_ERROR_VALIDATION_FAILURE);
 	description.sampleCount = 1;
 	Check(s_debugErrors == 0);
 	Procedure<PFNGLDEBUGMESSAGECALLBACKPROC>("glDebugMessageCallback")(nullptr, nullptr);
@@ -336,6 +334,7 @@ int main()
 		return 77;
 	}
 	Exercise(fixture);
-	std::cout << "PASS: OpenGL 3.3 formats, mip arrays, exact maximum samples, binding preservation and context-close retry\n";
+	std::cout << "PASS: OpenGL 3.3 formats, mip arrays, exact maximum samples, binding preservation and context-close "
+				 "retry\n";
 	return 0;
 }

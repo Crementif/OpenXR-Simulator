@@ -16,13 +16,15 @@ void RigProgress::Start(const RigOptions& options)
 	m_result.phase = RigPhase::Running;
 	m_result.seed = options.seed;
 	m_deadline = options.background ? std::chrono::steady_clock::time_point::max()
-		: std::chrono::steady_clock::now() + options.deadline;
+									: std::chrono::steady_clock::now() + options.deadline;
 }
+
 void RigProgress::Pause()
 {
 	std::lock_guard lock(m_mutex);
 	m_paused = true;
 }
+
 void RigProgress::Resume()
 {
 	{
@@ -32,6 +34,7 @@ void RigProgress::Resume()
 	}
 	m_changed.notify_all();
 }
+
 void RigProgress::Step()
 {
 	{
@@ -42,6 +45,7 @@ void RigProgress::Step()
 	}
 	m_changed.notify_all();
 }
+
 void RigProgress::Cancel()
 {
 	{
@@ -50,6 +54,7 @@ void RigProgress::Cancel()
 	}
 	m_changed.notify_all();
 }
+
 void RigProgress::Check(bool bindingBoundary)
 {
 	if (Cancelled())
@@ -72,6 +77,7 @@ void RigProgress::Check(bool bindingBoundary)
 		--m_permits;
 	m_result.phase = RigPhase::Running;
 }
+
 void RigProgress::WaitUntil(std::chrono::steady_clock::time_point target)
 {
 	{
@@ -80,6 +86,7 @@ void RigProgress::WaitUntil(std::chrono::steady_clock::time_point target)
 	}
 	Check();
 }
+
 void RigProgress::Finish(RigPhase phase, std::string error)
 {
 	{
@@ -89,25 +96,30 @@ void RigProgress::Finish(RigPhase phase, std::string error)
 	}
 	m_changed.notify_all();
 }
+
 bool RigProgress::Cancelled() const
 {
 	return m_cancelled.load();
 }
+
 void RigProgress::SetCompatibility(std::optional<std::vector<std::string>> deviations)
 {
 	std::lock_guard lock(m_mutex);
 	m_result.compatibilityDeviations = std::move(deviations);
 }
+
 void RigProgress::TransactionScheduled()
 {
 	std::lock_guard lock(m_mutex);
 	++m_result.transactions;
 }
+
 void RigProgress::CaptureRetained()
 {
 	std::lock_guard lock(m_mutex);
 	++m_result.captures;
 }
+
 void RigProgress::Checkpoint(RigCheckpoint checkpoint)
 {
 	const auto passed = checkpoint.passed;
@@ -121,6 +133,7 @@ void RigProgress::Checkpoint(RigCheckpoint checkpoint)
 	if (!passed)
 		throw std::runtime_error(failure);
 }
+
 void RigProgress::Print(std::string line)
 {
 	if (line.size() > 4096)
@@ -130,18 +143,21 @@ void RigProgress::Print(std::string line)
 		throw std::length_error("Rig output capacity exhausted");
 	m_result.output.push_back(std::move(line));
 }
+
 void RigProgress::BeginObservation()
 {
 	if (m_background && m_deadline == std::chrono::steady_clock::time_point::max())
 		m_deadline = std::chrono::steady_clock::now() + m_observationTimeout;
 }
+
 void RigProgress::EndObservation()
 {
 	if (m_background)
 		m_deadline = std::chrono::steady_clock::time_point::max();
 }
-void RigProgress::ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed,
-	std::uint64_t skipped, std::uint64_t pairs, std::uint64_t gaps)
+
+void RigProgress::ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed, std::uint64_t skipped,
+								std::uint64_t pairs, std::uint64_t gaps)
 {
 	std::lock_guard lock(m_mutex);
 	m_coverage.Add(frames);
@@ -151,17 +167,20 @@ void RigProgress::ObserveWindow(const std::vector<MonitorFrame>& frames, std::ui
 	m_coverage.report.lastGaps = gaps;
 	m_result.monitor = m_coverage.report;
 }
+
 void RigProgress::MissedCadences(std::uint64_t count)
 {
 	std::lock_guard lock(m_mutex);
 	m_coverage.report.missedCadences += count;
 	m_result.monitor.missedCadences = m_coverage.report.missedCadences;
 }
+
 RigPhase RigProgress::Phase() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_result.phase;
 }
+
 RigSnapshot RigProgress::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);

@@ -7,16 +7,20 @@
 
 namespace simxr::control
 {
-template <class Resource> ConnectionImages::ImageTable<Resource>::ImageTable()
+template<class Resource>
+ConnectionImages::ImageTable<Resource>::ImageTable()
 {
 	m_entries.reserve(SnapshotBudget::Capacity());
 }
-template <class Resource> void ConnectionImages::ImageTable<Resource>::CheckCapacity() const
+
+template<class Resource>
+void ConnectionImages::ImageTable<Resource>::CheckCapacity() const
 {
 	if (m_entries.size() >= SnapshotBudget::Capacity() || m_next == std::numeric_limits<std::uint64_t>::max())
 		throw RequestFailure{ErrorCode::Capacity, "Connection image resource capacity exhausted"};
 }
-template <class Resource>
+
+template<class Resource>
 auto ConnectionImages::ImageTable<Resource>::Find(std::uint64_t id) const -> std::shared_ptr<const ImageEntry<Resource>>
 {
 	for (const auto& entry : m_entries)
@@ -24,7 +28,8 @@ auto ConnectionImages::ImageTable<Resource>::Find(std::uint64_t id) const -> std
 			return entry;
 	return {};
 }
-template <class Resource>
+
+template<class Resource>
 auto ConnectionImages::ImageTable<Resource>::Find(const ImageSource& source) const
 	-> std::shared_ptr<const ImageEntry<Resource>>
 {
@@ -33,7 +38,8 @@ auto ConnectionImages::ImageTable<Resource>::Find(const ImageSource& source) con
 			return entry;
 	return {};
 }
-template <class Resource>
+
+template<class Resource>
 auto ConnectionImages::ImageTable<Resource>::Add(std::shared_ptr<Resource> value, ImageSource source,
 												 std::uint64_t reader) -> std::shared_ptr<const ImageEntry<Resource>>
 {
@@ -43,7 +49,8 @@ auto ConnectionImages::ImageTable<Resource>::Add(std::shared_ptr<Resource> value
 	++m_next;
 	return entry;
 }
-template <class Resource>
+
+template<class Resource>
 auto ConnectionImages::ImageTable<Resource>::Release(std::uint64_t id) noexcept
 	-> std::shared_ptr<const ImageEntry<Resource>>
 {
@@ -69,6 +76,7 @@ static Message Response(const Message& request, ErrorCode error = ErrorCode::Ok,
 		response.fields.push_back(Field::Text(tag::Detail, detail));
 	return response;
 }
+
 static std::uint64_t U64(const Message& message, std::uint16_t name)
 {
 	const auto* field = message.Find(name);
@@ -77,6 +85,7 @@ static std::uint64_t U64(const Message& message, std::uint16_t name)
 		throw ConnectionImages::RequestFailure{ErrorCode::Invalid, "Missing or invalid uint64 field"};
 	return *value;
 }
+
 static std::uint32_t U32(const Message& message, std::uint16_t name, std::optional<std::uint32_t> fallback = {})
 {
 	const auto* field = message.Find(name);
@@ -87,10 +96,12 @@ static std::uint32_t U32(const Message& message, std::uint16_t name, std::option
 		throw ConnectionImages::RequestFailure{ErrorCode::Invalid, "Missing or invalid uint32 field"};
 	return *value;
 }
+
 static Field Nested(std::uint16_t name, std::vector<Field> fields)
 {
 	return Field::Bytes(name, EncodeFields(fields));
 }
+
 static ImageRegion ReadRegion(const Field& field)
 {
 	const auto decoded = DecodeFields(field.value);
@@ -103,6 +114,7 @@ static ImageRegion ReadRegion(const Field& field)
 		throw ConnectionImages::RequestFailure{ErrorCode::UnsupportedField, "Unknown image region field"};
 	return {U32(message, 1), U32(message, 2), U32(message, 3), U32(message, 4), U32(message, 5), U32(message, 6)};
 }
+
 static void ExportSelection(Message& response, const ImageExport& value)
 {
 	if (const auto layer = value.SourceLayer())
@@ -110,10 +122,12 @@ static void ExportSelection(Message& response, const ImageExport& value)
 	if (const auto region = value.Region())
 		response.fields.push_back(EncodeImageRegion(*region));
 }
+
 static Field Key(std::uint16_t name, FrameKey key)
 {
 	return Nested(name, {Field::U64(tag::Generation, key.generation.value), Field::U64(tag::FrameId, key.frame.value)});
 }
+
 static const char* CompletionName(CompletionStatus status)
 {
 	switch (status)
@@ -127,11 +141,13 @@ static const char* CompletionName(CompletionStatus status)
 	}
 	return "failed";
 }
+
 static std::uint64_t ImageMask(ImageCapabilities capabilities, bool handles)
 {
 	return (capabilities.imageExport ? static_cast<std::uint64_t>(Capability::ImageExport) : 0) |
 		   (capabilities.gpuPreview && handles ? static_cast<std::uint64_t>(Capability::GpuPreview) : 0);
 }
+
 static void Source(Message& response, const ImageSource& source, bool session = true)
 {
 	if (session)
@@ -145,6 +161,7 @@ static void Source(Message& response, const ImageSource& source, bool session = 
 	if (source.imageTick)
 		response.fields.push_back(Field::U64(tag::ImageTick, source.imageTick->value));
 }
+
 static ImageDeviceIdentity DeviceIdentity(const Message& message)
 {
 	const auto device = message.Find(tag::DeviceUuid), driver = message.Find(tag::DriverUuid);
@@ -156,27 +173,31 @@ static ImageDeviceIdentity DeviceIdentity(const Message& message)
 	std::copy(driver->value.begin(), driver->value.end(), identity.driver.begin());
 	return identity;
 }
+
 ConnectionImages::ConnectionImages() = default;
 ConnectionImages::~ConnectionImages() = default;
 
 ConnectionImages::Publication::Publication(ConnectionImages& owner, RetiredResource& retired)
 	: m_owner(owner), m_retired(retired)
-{
-}
+{}
+
 ConnectionImages::Publication::~Publication()
 {
 	if (m_kind && !m_committed)
 		m_retired.m_value = m_owner.Release(*m_kind, m_id);
 }
+
 void ConnectionImages::Publication::Track(ResourceKind kind, std::uint64_t id) noexcept
 {
 	m_kind = kind;
 	m_id = id;
 }
+
 void ConnectionImages::Publication::Commit() noexcept
 {
 	m_committed = true;
 }
+
 std::shared_ptr<const void> ConnectionImages::Release(ResourceKind kind, std::uint64_t id) noexcept
 {
 	switch (kind)
@@ -323,8 +344,8 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 		const auto* regionField = request.Find(tag::ImageRegion);
 		if (regionField && minor < 16)
 			throw RequestFailure{ErrorCode::UnsupportedField, "Image region export requires protocol minor 16"};
-		auto readback = regionField ? image->value->ExportRegion(layer, ReadRegion(*regionField))
-									: image->value->Export(layer);
+		auto readback =
+			regionField ? image->value->ExportRegion(layer, ReadRegion(*regionField)) : image->value->Export(layer);
 		if (!readback)
 			throw RequestFailure{ErrorCode::Internal, "Image provider returned no export"};
 		publication.m_retired.m_value = readback;

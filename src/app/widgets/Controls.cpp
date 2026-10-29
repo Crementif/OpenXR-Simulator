@@ -31,6 +31,7 @@ bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled, co
 		ImGui::SetItemTooltip("%s", tooltip);
 	return pressed;
 }
+
 int Segmented(std::span<const char* const> labels, int selected, float width, std::span<const char* const> tooltips)
 {
 	const int count = static_cast<int>(labels.size());
@@ -72,6 +73,7 @@ int Segmented(std::span<const char* const> labels, int selected, float width, st
 	ImGui::Dummy({width, height});
 	return clicked;
 }
+
 void PageTitle(Icon icon, const char* title)
 {
 	const float height = ImGui::GetFrameHeight(), size = ImGui::GetFontSize() * 1.12f;
@@ -83,11 +85,13 @@ void PageTitle(Icon icon, const char* title)
 				  ImGui::GetColorU32(theme::Text), title);
 	ImGui::Dummy({textX + ImGui::CalcTextSize(title).x * 1.12f, height});
 }
+
 bool PageClose()
 {
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - ImGui::GetFrameHeight()));
 	return IconButton("Close page", Icon::Close, "Back to the device page (Esc)");
 }
+
 static std::string Capitals(const char* label)
 {
 	std::string text = label;
@@ -96,11 +100,13 @@ static std::string Capitals(const char* label)
 			character = static_cast<char>(character - 'a' + 'A');
 	return text;
 }
+
 static void SectionGap()
 {
 	if (ImGui::GetCursorPosY() > ImGui::GetCursorStartPos().y + 1)
 		ImGui::Dummy({0, ImGui::GetFontSize() * .3f});
 }
+
 void FieldLabel(const char* label)
 {
 	ImGui::AlignTextToFramePadding();
@@ -108,6 +114,7 @@ void FieldLabel(const char* label)
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetFontSize() * 6.5f));
 	ImGui::SetNextItemWidth(-FLT_MIN);
 }
+
 void SectionLabel(const char* label)
 {
 	SectionGap();
@@ -117,6 +124,7 @@ void SectionLabel(const char* label)
 	ImGui::PopStyleColor();
 	ImGui::PopFont();
 }
+
 bool Section(const char* label, ImGuiTreeNodeFlags flags)
 {
 	SectionGap();
@@ -131,12 +139,14 @@ bool Section(const char* label, ImGuiTreeNodeFlags flags)
 	ImGui::PopFont();
 	return open;
 }
+
 static ImU32 IconColor(const RailStatus& status, bool selected)
 {
 	if (status.tint)
 		return ImGui::GetColorU32(selected ? status.tint : theme::Fade(status.tint, .7f));
 	return ImGui::GetColorU32(selected ? theme::Text : theme::TextDim);
 }
+
 static void TabTooltip(const char* label, const RailStatus& status)
 {
 	ImGui::BeginTooltip();
@@ -149,6 +159,7 @@ static void TabTooltip(const char* label, const RailStatus& status)
 		ImGui::TextDisabled(status.pilotKey ? "Pilot with %s" : "%s", status.key);
 	ImGui::EndTooltip();
 }
+
 bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& status, float height)
 {
 	const float unit = ImGui::GetFontSize() / 17;
@@ -202,6 +213,7 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 		TabTooltip(label, status);
 	return pressed;
 }
+
 bool DeviceTab(const char* label, Icon icon, bool selected, const RailStatus& status, ImVec2 size, bool named)
 {
 	const float unit = ImGui::GetFontSize() / 17;

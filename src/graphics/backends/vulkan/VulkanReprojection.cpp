@@ -21,12 +21,12 @@ static bool SameImage(const LayerImageDescription& a, const LayerImageDescriptio
 
 class VulkanRotationalSource final : public RotationalSource
 {
-  public:
+public:
 	VulkanRotationalSource(RuntimeTime time, XrEnvironmentBlendMode blend, std::vector<LayerDescription> layers,
 						   CompositionTarget target, PoseSample head, std::vector<VulkanRetainedImage> images)
 		: m_layers(time, blend, std::move(layers)), m_target(target), m_head(head), m_images(std::move(images))
-	{
-	}
+	{}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		auto status = CompletionStatus::Complete;
@@ -42,10 +42,12 @@ class VulkanRotationalSource final : public RotationalSource
 		}
 		return status;
 	}
+
 	PoseSample SubmittedHead() const noexcept override
 	{
 		return m_head;
 	}
+
 	XrResult Reproject(const PoseSample& head, std::shared_ptr<const FrameOutput>& output) const override
 	{
 		const auto status = PollCompletion();
@@ -54,8 +56,7 @@ class VulkanRotationalSource final : public RotationalSource
 		CompositionPlan plan;
 		const auto result = PrepareRotationalComposition(
 			m_layers, m_target, m_head, head,
-			[this](XrSwapchain source) -> std::optional<XrExtent2Di>
-			{
+			[this](XrSwapchain source) -> std::optional<XrExtent2Di> {
 				const auto index = reinterpret_cast<std::uintptr_t>(source) - 1;
 				if (index >= m_images.size())
 					return {};
@@ -85,7 +86,7 @@ class VulkanRotationalSource final : public RotationalSource
 		}
 	}
 
-  private:
+private:
 	const FrameLayers m_layers;
 	const CompositionTarget m_target;
 	const PoseSample m_head;
@@ -103,16 +104,14 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 		return XR_ERROR_VALIDATION_FAILURE;
 	const auto result = Prepare(
 		inspection, layers, target, head,
-		[&resolve](XrSwapchain source) -> std::optional<XrExtent2Di>
-		{
+		[&resolve](XrSwapchain source) -> std::optional<XrExtent2Di> {
 			const auto image = resolve(source);
 			if (!image)
 				return {};
 			return XrExtent2Di{static_cast<std::int32_t>(image->extent.width),
 							   static_cast<std::int32_t>(image->extent.height)};
 		},
-		[&backend, &resolve](const LayerImageDescription& image, std::shared_ptr<VulkanFrame>& frame)
-		{
+		[&backend, &resolve](const LayerImageDescription& image, std::shared_ptr<VulkanFrame>& frame) {
 			return backend.PrepareRetainedLayer(image, resolve, frame);
 		},
 		capacity, output, std::move(deliveryRetired));
@@ -137,13 +136,9 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanInspection& inspection, co
 	auto prepared = std::unique_ptr<VulkanReprojectionPreparation>(new VulkanReprojectionPreparation);
 	auto normalized = layers.layers;
 	std::vector<VulkanRetainedImage> images;
-	const auto retain = [&](LayerImageDescription& description) -> XrResult
-	{
+	const auto retain = [&](LayerImageDescription& description) -> XrResult {
 		auto found = std::find_if(images.begin(), images.end(),
-								  [&](const auto& image)
-								  {
-									  return SameImage(image.original, description);
-								  });
+								  [&](const auto& image) { return SameImage(image.original, description); });
 		std::size_t index = static_cast<std::size_t>(found - images.begin());
 		if (found == images.end())
 		{
@@ -212,14 +207,17 @@ std::span<const std::shared_ptr<VulkanFrame>> VulkanReprojectionPreparation::Fra
 {
 	return m_frames;
 }
+
 std::span<const XrSwapchain> VulkanReprojectionPreparation::Swapchains() const noexcept
 {
 	return m_swapchains;
 }
+
 std::shared_ptr<const RotationalSource> VulkanReprojectionPreparation::Source() const noexcept
 {
 	return m_source;
 }
+
 void VulkanReprojectionPreparation::Commit() noexcept
 {
 	for (const auto& transfer : m_transfers)

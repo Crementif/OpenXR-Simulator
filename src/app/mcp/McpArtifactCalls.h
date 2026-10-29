@@ -21,31 +21,34 @@ namespace simxr::app
 class McpApplication;
 class McpCancellation;
 class McpDebug;
+
 namespace mcp
 {
 class ArtifactError : public std::runtime_error
 {
-  public:
+public:
 	ArtifactError(std::string message, std::uint32_t value) : std::runtime_error(std::move(message)), code(value) {}
+
 	std::uint32_t code;
 };
+
 // A bounded operation on a caller-owned debugger connection. A deadline or
 // cancellation closes that connection to interrupt an in-flight transport call.
 class ArtifactCalls
 {
-  public:
+public:
 	ArtifactCalls(McpApplication& app, McpDebug& debug, std::string connection,
-		std::shared_ptr<McpCancellation> cancellation, double seconds, std::string operation);
+				  std::shared_ptr<McpCancellation> cancellation, double seconds, std::string operation);
 	~ArtifactCalls();
 	ArtifactCalls(const ArtifactCalls&) = delete;
 	ArtifactCalls& operator=(const ArtifactCalls&) = delete;
 	void Check() const;
 	control::Message Request(control::OpCode opcode, std::vector<control::Field> fields,
-		std::optional<std::string_view> program = {});
+							 std::optional<std::string_view> program = {});
 	nlohmann::json Sequence(control::OpCode opcode, std::vector<control::Field> fields,
-		std::optional<std::string_view> program = {});
+							std::optional<std::string_view> program = {});
 
-  private:
+private:
 	std::shared_ptr<McpCancellation> Begin();
 	void End() noexcept;
 	void Disconnect() noexcept;

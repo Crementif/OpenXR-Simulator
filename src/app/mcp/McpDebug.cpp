@@ -56,6 +56,7 @@ struct McpDebug::Entry
 			throw std::runtime_error("Control connection is closed");
 		return client;
 	}
+
 	void Close() noexcept
 	{
 		if (closed.exchange(true))
@@ -74,10 +75,12 @@ static Json Result(const Json& value, bool error = false)
 {
 	return {{"content", Json::array({{{"type", "text"}, {"text", value.dump()}}})}, {"isError", error}};
 }
+
 static Json Failure(const std::string& message)
 {
 	return Result({{"ok", false}, {"error", message}}, true);
 }
+
 static std::string Text(const Json& object, const char* key)
 {
 	const auto found = object.find(key);
@@ -88,6 +91,7 @@ static std::string Text(const Json& object, const char* key)
 		throw std::invalid_argument(std::string("Invalid ") + key);
 	return value;
 }
+
 static std::uint64_t Number(const Json& object, const char* key, bool allowZero = false)
 {
 	const auto found = object.find(key);
@@ -101,9 +105,10 @@ static std::uint64_t Number(const Json& object, const char* key, bool allowZero 
 	if ((value.size() > 1 && value.front() == '0') || parsed.ec != std::errc{} ||
 		parsed.ptr != value.data() + value.size() || (!allowZero && !result))
 		throw std::invalid_argument(std::string(key) + " must be a canonical decimal string" +
-			(allowZero ? "" : " greater than zero"));
+									(allowZero ? "" : " greater than zero"));
 	return result;
 }
+
 static void Keys(const Json& object, std::initializer_list<std::string_view> allowed)
 {
 	if (!object.is_object())
@@ -112,6 +117,7 @@ static void Keys(const Json& object, std::initializer_list<std::string_view> all
 		if (std::find(allowed.begin(), allowed.end(), item.key()) == allowed.end())
 			throw std::invalid_argument("Unknown argument: " + item.key());
 }
+
 static std::uint64_t U64(const wire::Message& message, std::uint16_t name)
 {
 	const auto* field = message.Find(name);
@@ -120,6 +126,7 @@ static std::uint64_t U64(const wire::Message& message, std::uint16_t name)
 		throw std::runtime_error("Runtime omitted a required identifier");
 	return *value;
 }
+
 static wire::Message Nested(const wire::Field* field)
 {
 	if (!field)
@@ -131,30 +138,35 @@ static wire::Message Nested(const wire::Field* field)
 	message.fields = std::move(decoded.fields);
 	return message;
 }
+
 static void AddId(Json& result, const wire::Message& message, std::uint16_t name, const char* key)
 {
 	if (const auto* field = message.Find(name))
 		if (const auto value = field->AsU64())
 			result[key] = std::to_string(*value);
 }
+
 static void AddText(Json& result, const wire::Message& message, std::uint16_t name, const char* key)
 {
 	if (const auto* field = message.Find(name))
 		if (const auto value = field->AsText())
 			result[key] = std::string(*value);
 }
+
 static void AddBool(Json& result, const wire::Message& message, std::uint16_t name, const char* key)
 {
 	if (const auto* field = message.Find(name))
 		if (const auto value = field->AsBool())
 			result[key] = *value;
 }
+
 static void AddU32(Json& result, const wire::Message& message, std::uint16_t name, const char* key)
 {
 	if (const auto* field = message.Find(name))
 		if (const auto value = field->AsU32())
 			result[key] = *value;
 }
+
 static Json IdList(const wire::Field* field)
 {
 	const auto values = Nested(field);
@@ -168,6 +180,7 @@ static Json IdList(const wire::Field* field)
 	}
 	return result;
 }
+
 Json McpDebug::Document(const wire::Message& message, bool metadataOnly)
 {
 	const auto* error = message.Find(tag::Error);
@@ -183,12 +196,14 @@ Json McpDebug::Document(const wire::Message& message, bool metadataOnly)
 	Json value = {{"ok", true}};
 	if (metadataOnly)
 		value["metadata_only"] = true;
-	for (const auto& [field, name] : {std::pair{tag::Lease, "lease"}, {tag::OperationId, "operation_id"},
-									 {tag::CommandId, "command_id"}, {tag::CaptureId, "capture_id"},
-									 {tag::Capabilities, "capabilities"}})
+	for (const auto& [field, name] : {std::pair{tag::Lease, "lease"},
+									  {tag::OperationId, "operation_id"},
+									  {tag::CommandId, "command_id"},
+									  {tag::CaptureId, "capture_id"},
+									  {tag::Capabilities, "capabilities"}})
 		AddId(value, message, field, name);
-	for (const auto& [field, name] : {std::pair{tag::Phase, "phase"}, {tag::Progress, "progress"},
-									 {tag::RetentionResult, "retention_result"}})
+	for (const auto& [field, name] :
+		 {std::pair{tag::Phase, "phase"}, {tag::Progress, "progress"}, {tag::RetentionResult, "retention_result"}})
 		AddText(value, message, field, name);
 	AddU32(value, message, tag::SnapshotBudgetMiB, "snapshot_budget_mib");
 	AddId(value, message, tag::SnapshotImageBytes, "snapshot_image_bytes");
@@ -221,9 +236,12 @@ Json McpDebug::Document(const wire::Message& message, bool metadataOnly)
 		}
 		value["image_recording"] = std::move(data);
 	}
-	for (const auto& [field, name] : {std::pair{tag::Duplicate, "duplicate"}, {tag::Running, "running"},
-									 {tag::Closed, "closed"}, {tag::Manual, "manual"},
-									 {tag::ImageAvailable, "image_available"}, {tag::Pinned, "pinned"}})
+	for (const auto& [field, name] : {std::pair{tag::Duplicate, "duplicate"},
+									  {tag::Running, "running"},
+									  {tag::Closed, "closed"},
+									  {tag::Manual, "manual"},
+									  {tag::ImageAvailable, "image_available"},
+									  {tag::Pinned, "pinned"}})
 		AddBool(value, message, field, name);
 	if (const auto* field = message.Find(tag::Result))
 		if (const auto number = field->AsI64())
@@ -289,74 +307,89 @@ Json McpDebug::Definitions()
 	lease["lease"] = number;
 	auto command = lease;
 	command["command_id"] = number;
-	const auto tool = [](const char* name, const char* description, Json properties, Json required)
-	{
-		return Json{{"name", name}, {"description", description},
-					{"inputSchema", {{"type", "object"}, {"properties", std::move(properties)},
-									 {"required", std::move(required)}, {"additionalProperties", false}}}};
+	const auto tool = [](const char* name, const char* description, Json properties, Json required) {
+		return Json{{"name", name},
+					{"description", description},
+					{"inputSchema",
+					 {{"type", "object"},
+					  {"properties", std::move(properties)},
+					  {"required", std::move(required)},
+					  {"additionalProperties", false}}}};
 	};
 	Json tools = Json::array();
-	tools.push_back(tool("debug_connect", "Open a client-owned debugger connection to a running application. "
-						"The connection is tied to its current process and XR session generation.",
-						{{"application_id", text}}, Json::array({"application_id"})));
-	tools.push_back(tool("game_bridge_connect", "Connect to a simulator-launched game bridge without requiring an XR session. "
-						"The connection belongs to this MCP session and is tied to the selected process.",
-						{{"application_id", text}}, Json::array({"application_id"})));
+	tools.push_back(tool("debug_connect",
+						 "Open a client-owned debugger connection to a running application. "
+						 "The connection is tied to its current process and XR session generation.",
+						 {{"application_id", text}}, Json::array({"application_id"})));
+	tools.push_back(tool("game_bridge_connect",
+						 "Connect to a simulator-launched game bridge without requiring an XR session. "
+						 "The connection belongs to this MCP session and is tied to the selected process.",
+						 {{"application_id", text}}, Json::array({"application_id"})));
 	tools.push_back(tool("debug_disconnect", "Close a debugger connection and release its runtime ownership.",
-						connection, Json::array({"connection"})));
-	tools.push_back(tool("debug_status", "Read debugger and frame-pacing status without advancing a frame.",
-						connection, Json::array({"connection"})));
-	tools.push_back(tool("debug_acquire", "Acquire the session's debugger lease. Another owner may reject this request.",
-						connection, Json::array({"connection"})));
-	tools.push_back(tool("debug_renew", "Renew this connection's debugger lease.", lease,
-						Json::array({"connection", "lease"})));
+						 connection, Json::array({"connection"})));
+	tools.push_back(tool("debug_status", "Read debugger and frame-pacing status without advancing a frame.", connection,
+						 Json::array({"connection"})));
+	tools.push_back(tool("debug_acquire",
+						 "Acquire the session's debugger lease. Another owner may reject this request.", connection,
+						 Json::array({"connection"})));
+	tools.push_back(
+		tool("debug_renew", "Renew this connection's debugger lease.", lease, Json::array({"connection", "lease"})));
 	tools.push_back(tool("debug_relinquish", "Release this connection's debugger lease.", lease,
-						Json::array({"connection", "lease"})));
-	for (const auto& [name, description] : {
-		std::pair{"debug_pause", "Request a pause at the next safe boundary."},
-		{"debug_resume", "Resume normal frame pacing."},
-		{"debug_stop_image_recording", "Stop reserving stream frames; retained captures remain available."},
-		{"debug_display_step", "Advance one virtual display tick while paused."}})
+						 Json::array({"connection", "lease"})));
+	for (const auto& [name, description] :
+		 {std::pair{"debug_pause", "Request a pause at the next safe boundary."},
+		  {"debug_resume", "Resume normal frame pacing."},
+		  {"debug_stop_image_recording", "Stop reserving stream frames; retained captures remain available."},
+		  {"debug_display_step", "Advance one virtual display tick while paused."}})
 		tools.push_back(tool(name, description, command, Json::array({"connection", "lease", "command_id"})));
 	auto step = command;
 	step["lookahead"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 4}};
-	step["target"] = {{"type", "string"}, {"enum", Json::array({"composed_eyes", "projection_layers", "quad_layers", "layer_view", "layer_depth", "layer_depth_linear"})}};
+	step["target"] = {{"type", "string"},
+					  {"enum", Json::array({"composed_eyes", "projection_layers", "quad_layers", "layer_view",
+											"layer_depth", "layer_depth_linear"})}};
 	step["layer"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}};
 	step["view"] = step["layer"];
 	step["advance_display"] = {{"type", "boolean"}};
 	tools.push_back(tool("debug_step", "Admit one frame and retain its selected capture.", step,
-						Json::array({"connection", "lease", "command_id"})));
+						 Json::array({"connection", "lease", "command_id"})));
 	tools.push_back(tool("debug_strict_admission", "Reserve an exact capture and admit one frame.", step,
-						Json::array({"connection", "lease", "command_id"})));
+						 Json::array({"connection", "lease", "command_id"})));
 	auto recording = command;
 	recording["target"] = step["target"];
 	recording["layer"] = step["layer"];
 	recording["view"] = step["view"];
 	recording["capacity"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 4}};
-	recording["frames"] = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
-		{{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
-	tools.push_back(tool("debug_start_image_recording", "Start a bounded real-time image stream without changing pacing; poll status for captures and overrun.", recording,
-		Json::array({"connection", "lease", "command_id"})));
+	recording["frames"] = {
+		{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
+							   {{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
+	tools.push_back(
+		tool("debug_start_image_recording",
+			 "Start a bounded real-time image stream without changing pacing; poll status for captures and overrun.",
+			 recording, Json::array({"connection", "lease", "command_id"})));
 	auto budget = command;
 	budget["budget_mib"] = {{"type", "integer"}, {"minimum", 128}, {"maximum", 8192}};
-	tools.push_back(tool("debug_configure_snapshots", "Set the runtime process-wide snapshot image budget in MiB.", budget,
-		Json::array({"connection", "lease", "command_id", "budget_mib"})));
-	for (const auto& [name, field, description] : {
-		std::tuple{"debug_cancel", "operation", "Cancel unused permits for an operation."},
-		{"debug_release", "capture", "Release a retained capture."},
-		{"debug_pin_snapshot", "capture", "Pin an exact capture against automatic eviction."},
-		{"debug_unpin_snapshot", "capture", "Allow an exact capture to be evicted again."}})
+	tools.push_back(tool("debug_configure_snapshots", "Set the runtime process-wide snapshot image budget in MiB.",
+						 budget, Json::array({"connection", "lease", "command_id", "budget_mib"})));
+	for (const auto& [name, field, description] :
+		 {std::tuple{"debug_cancel", "operation", "Cancel unused permits for an operation."},
+		  {"debug_release", "capture", "Release a retained capture."},
+		  {"debug_pin_snapshot", "capture", "Pin an exact capture against automatic eviction."},
+		  {"debug_unpin_snapshot", "capture", "Allow an exact capture to be evicted again."}})
 	{
 		auto properties = command;
 		properties[field] = number;
-		tools.push_back(tool(name, description, std::move(properties), Json::array({"connection", "lease", "command_id", field})));
+		tools.push_back(
+			tool(name, description, std::move(properties), Json::array({"connection", "lease", "command_id", field})));
 	}
-	for (const auto& [name, field, description] : {
-		std::tuple{"debug_operation", "operation", "Inspect an admitted debugger operation."},
-		{"debug_capture", "capture", "Inspect metadata for an exact retained capture."},
-		{"debug_inspect", "capture", "Retain historical CPU state and its immutable feature revisions for an exact capture."},
-		{"debug_revision", "revision", "Read a connection-owned immutable feature revision while its inspection is retained."},
-		{"debug_release_inspection", "inspection", "Release a retained CPU inspection and unused feature revisions."}})
+	for (const auto& [name, field, description] :
+		 {std::tuple{"debug_operation", "operation", "Inspect an admitted debugger operation."},
+		  {"debug_capture", "capture", "Inspect metadata for an exact retained capture."},
+		  {"debug_inspect", "capture",
+		   "Retain historical CPU state and its immutable feature revisions for an exact capture."},
+		  {"debug_revision", "revision",
+		   "Read a connection-owned immutable feature revision while its inspection is retained."},
+		  {"debug_release_inspection", "inspection",
+		   "Release a retained CPU inspection and unused feature revisions."}})
 	{
 		auto properties = connection;
 		properties[field] = number;
@@ -365,7 +398,7 @@ Json McpDebug::Definitions()
 	auto acknowledgement = lease;
 	acknowledgement["through"] = number;
 	tools.push_back(tool("debug_acknowledge", "Retire completed debugger command IDs through this value.",
-						acknowledgement, Json::array({"connection", "lease", "through"})));
+						 acknowledgement, Json::array({"connection", "lease", "through"})));
 	for (auto& definition : mcp::SimulationDefinitions())
 		tools.push_back(std::move(definition));
 	for (auto& definition : mcp::GameDefinitions())
@@ -395,13 +428,37 @@ Json McpDebug::Definitions()
 
 bool McpDebug::Handles(const std::string& name)
 {
-	static const std::set<std::string> names{"debug_connect", "game_bridge_connect", "debug_disconnect", "debug_status", "debug_acquire",
-		"debug_renew", "debug_relinquish", "debug_pause", "debug_resume", "debug_step", "debug_strict_admission",
-		"debug_display_step", "debug_cancel", "debug_release", "debug_operation", "debug_capture", "debug_acknowledge",
-		"debug_inspect", "debug_revision", "debug_release_inspection", "debug_start_image_recording",
-		"debug_stop_image_recording", "debug_pin_snapshot", "debug_unpin_snapshot", "debug_configure_snapshots"};
-	return name == "read_logs" || name == "clear_logs" || name == "capture_screenshot" || name == "validate_stereo" || name == "analyze_stereo_consistency" || name == "debug_save_video" || name == "debug_save_image" || name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) || mcp::IncidentHandles(name) || mcp::ControlsHandles(name) || mcp::SequenceHandles(name) || names.contains(name) || mcp::SimulationHandles(name) || mcp::ImageHandles(name) || mcp::GameHandles(name) ||
-		mcp::HistoryHandles(name);
+	static const std::set<std::string> names{"debug_connect",
+											 "game_bridge_connect",
+											 "debug_disconnect",
+											 "debug_status",
+											 "debug_acquire",
+											 "debug_renew",
+											 "debug_relinquish",
+											 "debug_pause",
+											 "debug_resume",
+											 "debug_step",
+											 "debug_strict_admission",
+											 "debug_display_step",
+											 "debug_cancel",
+											 "debug_release",
+											 "debug_operation",
+											 "debug_capture",
+											 "debug_acknowledge",
+											 "debug_inspect",
+											 "debug_revision",
+											 "debug_release_inspection",
+											 "debug_start_image_recording",
+											 "debug_stop_image_recording",
+											 "debug_pin_snapshot",
+											 "debug_unpin_snapshot",
+											 "debug_configure_snapshots"};
+	return name == "read_logs" || name == "clear_logs" || name == "capture_screenshot" || name == "validate_stereo" ||
+		   name == "analyze_stereo_consistency" || name == "debug_save_video" || name == "debug_save_image" ||
+		   name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) || mcp::IncidentHandles(name) ||
+		   mcp::ControlsHandles(name) || mcp::SequenceHandles(name) || names.contains(name) ||
+		   mcp::SimulationHandles(name) || mcp::ImageHandles(name) || mcp::GameHandles(name) ||
+		   mcp::HistoryHandles(name);
 }
 
 static Json DebugReply(const wire::Message& message, bool metadataOnly = false)
@@ -410,32 +467,36 @@ static Json DebugReply(const wire::Message& message, bool metadataOnly = false)
 	return Result(value, !value.at("ok").get<bool>());
 }
 
-static void ValidateTarget(const ApplicationSnapshot& status, const std::string& endpoint,
-	std::uint64_t process, std::uint64_t session, std::uint64_t generation, std::uint64_t epoch)
+static void ValidateTarget(const ApplicationSnapshot& status, const std::string& endpoint, std::uint64_t process,
+						   std::uint64_t session, std::uint64_t generation, std::uint64_t epoch)
 {
 	if (!status.connected || !status.running || status.endpoint != endpoint || status.runtimeProcess != process ||
 		status.runtimeEpoch != epoch || status.session != session || status.generation != generation)
 		throw std::runtime_error("Application process or XR session changed; open a new debugger connection");
 }
-static void ValidateGameTarget(const ApplicationSnapshot& status, const std::string& endpoint,
-	std::uint64_t process, std::uint64_t epoch, bool launched)
+
+static void ValidateGameTarget(const ApplicationSnapshot& status, const std::string& endpoint, std::uint64_t process,
+							   std::uint64_t epoch, bool launched)
 {
 	if (status.launch.restartPending)
 		throw std::runtime_error("The selected game process changed; open a new bridge connection");
 	if (launched)
 	{
-		if (status.launch.state != LaunchState::Running || status.launch.process != process || status.launchEndpoint != endpoint)
+		if (status.launch.state != LaunchState::Running || status.launch.process != process ||
+			status.launchEndpoint != endpoint)
 			throw std::runtime_error("The selected game process changed; open a new bridge connection");
 	}
-	else if (!status.connected || status.endpoint != endpoint || status.runtimeProcess != process || status.runtimeEpoch != epoch)
+	else if (!status.connected || status.endpoint != endpoint || status.runtimeProcess != process ||
+			 status.runtimeEpoch != epoch)
 		throw std::runtime_error("The selected runtime changed; open a new bridge connection");
 }
 
 class DebugTransportFailure : public std::runtime_error
 {
-  public:
+public:
 	using std::runtime_error::runtime_error;
 };
+
 static wire::Message Exchange(const std::shared_ptr<wire::LocalControlClient>& client, wire::OpCode opcode,
 							  std::vector<wire::Field> fields)
 {
@@ -455,7 +516,8 @@ static wire::Message Exchange(const std::shared_ptr<wire::LocalControlClient>& c
 			catch (const wire::ControlExchangeTimeout&)
 			{
 				if (std::chrono::steady_clock::now() >= deadline)
-					throw DebugTransportFailure("Runtime request timed out after admission; its outcome may be unknown. The connection was closed.");
+					throw DebugTransportFailure("Runtime request timed out after admission; its outcome may be "
+												"unknown. The connection was closed.");
 				retry = true;
 			}
 		}
@@ -466,7 +528,8 @@ static wire::Message Exchange(const std::shared_ptr<wire::LocalControlClient>& c
 	}
 	catch (const std::exception& error)
 	{
-		throw DebugTransportFailure(std::string("Runtime connection failed; the request outcome may be unknown: ") + error.what());
+		throw DebugTransportFailure(std::string("Runtime connection failed; the request outcome may be unknown: ") +
+									error.what());
 	}
 }
 
@@ -479,6 +542,7 @@ McpDebug::~McpDebug()
 {
 	Close();
 }
+
 void McpDebug::Close() noexcept
 {
 	std::unordered_map<std::string, std::shared_ptr<Entry>> retired;
@@ -492,7 +556,7 @@ void McpDebug::Close() noexcept
 }
 
 std::optional<McpConnection> McpDebug::Connect(McpApplication& application, const std::string& target,
-	const std::shared_ptr<McpCancellation>& cancellation, bool gameOnly)
+											   const std::shared_ptr<McpCancellation>& cancellation, bool gameOnly)
 {
 	auto response = application.Lookup(target, cancellation);
 	if (!response)
@@ -505,8 +569,7 @@ std::optional<McpConnection> McpDebug::Connect(McpApplication& application, cons
 	auto entry = std::make_shared<Entry>();
 	entry->application = target;
 	entry->gameOnly = gameOnly;
-	entry->launched = gameOnly && status.launch.state == LaunchState::Running &&
-		!status.launchEndpoint.empty();
+	entry->launched = gameOnly && status.launch.state == LaunchState::Running && !status.launchEndpoint.empty();
 	if (entry->launched)
 	{
 		entry->endpoint = status.launchEndpoint;
@@ -527,7 +590,8 @@ std::optional<McpConnection> McpDebug::Connect(McpApplication& application, cons
 	}
 	else
 		ValidateGameTarget(status, entry->endpoint, entry->process, entry->epoch, entry->launched);
-	if (!entry->process || (!entry->launched && !entry->epoch) || (!gameOnly && (!entry->session || !entry->generation)))
+	if (!entry->process || (!entry->launched && !entry->epoch) ||
+		(!gameOnly && (!entry->session || !entry->generation)))
 		throw std::runtime_error("Application has an invalid process or session identity");
 	const auto identity = NewMcpIdentifier();
 	{
@@ -564,9 +628,11 @@ std::optional<McpConnection> McpDebug::Connect(McpApplication& application, cons
 				throw std::runtime_error("MCP session is closed");
 			entry->client = client;
 		}
-		const auto hello = Exchange(client, wire::OpCode::Hello,
-			{wire::Field::Text(tag::ClientName, "OpenXR Simulator MCP"),
-			 wire::Field::U64(tag::RequiredCapabilities, gameOnly ? 0 : static_cast<std::uint64_t>(wire::Capability::DebugCommands))});
+		const auto hello =
+			Exchange(client, wire::OpCode::Hello,
+					 {wire::Field::Text(tag::ClientName, "OpenXR Simulator MCP"),
+					  wire::Field::U64(tag::RequiredCapabilities,
+									   gameOnly ? 0 : static_cast<std::uint64_t>(wire::Capability::DebugCommands))});
 		const auto* error = hello.Find(tag::Error);
 		if (!error || error->AsU32() != 0)
 			throw std::runtime_error("Runtime did not negotiate debugger capabilities");
@@ -583,7 +649,8 @@ std::optional<McpConnection> McpDebug::Connect(McpApplication& application, cons
 			if (entry->closed.load() || cancellation->Requested())
 				throw std::runtime_error("Game bridge connection was cancelled");
 		}
-		return McpConnection{identity, entry->process, entry->epoch, entry->session, entry->generation, entry->capabilities};
+		return McpConnection{identity,		 entry->process,	entry->epoch,
+							 entry->session, entry->generation, entry->capabilities};
 	}
 	catch (...)
 	{
@@ -605,6 +672,7 @@ void McpDebug::Disconnect(const std::string& connection) noexcept
 	}
 	entry->Close();
 }
+
 std::shared_ptr<McpDebug::Entry> McpDebug::FindConnection(const std::string& connection)
 {
 	std::shared_ptr<Entry> entry;
@@ -617,8 +685,10 @@ std::shared_ptr<McpDebug::Entry> McpDebug::FindConnection(const std::string& con
 	}
 	return entry;
 }
+
 std::unique_lock<std::timed_mutex> McpDebug::LockConnection(McpApplication& application, const std::string& connection,
-	const std::shared_ptr<Entry>& entry, const std::shared_ptr<McpCancellation>& cancellation)
+															const std::shared_ptr<Entry>& entry,
+															const std::shared_ptr<McpCancellation>& cancellation)
 {
 	if (cancellation->Requested())
 		throw std::runtime_error("Control request was cancelled");
@@ -627,8 +697,7 @@ std::unique_lock<std::timed_mutex> McpDebug::LockConnection(McpApplication& appl
 		auto status = application.Lookup(entry->application, cancellation);
 		if (!status)
 			throw std::runtime_error("Control application is unavailable");
-		ValidateTarget(*status, entry->endpoint,
-			entry->process, entry->session, entry->generation, entry->epoch);
+		ValidateTarget(*status, entry->endpoint, entry->process, entry->session, entry->generation, entry->epoch);
 	}
 	catch (...)
 	{
@@ -664,25 +733,30 @@ static void ValidateExportRead(const wire::Message& response, std::uint64_t offs
 		throw DebugTransportFailure("Runtime returned an invalid artifact range");
 }
 
-control::Message McpDebug::Request(McpApplication& application, const std::string& connection,
-	wire::OpCode opcode, std::vector<wire::Field> fields,
-	const std::shared_ptr<McpCancellation>& requestedCancellation, std::optional<std::string_view> program)
+control::Message McpDebug::Request(McpApplication& application, const std::string& connection, wire::OpCode opcode,
+								   std::vector<wire::Field> fields,
+								   const std::shared_ptr<McpCancellation>& requestedCancellation,
+								   std::optional<std::string_view> program)
 {
 	const bool imageWindow = opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::ReadImageWindow ||
-		opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow;
+							 opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow;
 	const bool sequence = opcode == wire::OpCode::UploadSequence || opcode == wire::OpCode::StartSequence ||
-		opcode == wire::OpCode::ReadSequence || opcode == wire::OpCode::StopSequence || opcode == wire::OpCode::ReleaseSequenceCapture;
+						  opcode == wire::OpCode::ReadSequence || opcode == wire::OpCode::StopSequence ||
+						  opcode == wire::OpCode::ReleaseSequenceCapture;
 	const bool debugger = opcode == wire::OpCode::Acquire || opcode == wire::OpCode::Renew ||
-		opcode == wire::OpCode::Relinquish || opcode == wire::OpCode::Submit || opcode == wire::OpCode::Operation;
+						  opcode == wire::OpCode::Relinquish || opcode == wire::OpCode::Submit ||
+						  opcode == wire::OpCode::Operation;
 	if (opcode != wire::OpCode::ReadExport && opcode != wire::OpCode::ExportInfo &&
 		opcode != wire::OpCode::StartVideoExport && opcode != wire::OpCode::ReleaseExport &&
 		opcode != wire::OpCode::Capture && opcode != wire::OpCode::RetainImage && opcode != wire::OpCode::ImageInfo &&
 		opcode != wire::OpCode::ReleaseImage && opcode != wire::OpCode::StartExport && !sequence &&
 		opcode != wire::OpCode::Status && opcode != wire::OpCode::ReadProjectionHistory &&
-		opcode != wire::OpCode::SimulationStatus && opcode != wire::OpCode::ReadDiagnostics && !imageWindow && !debugger &&
-		opcode != wire::OpCode::RetainPreview && opcode != wire::OpCode::InspectFrame && opcode != wire::OpCode::FeatureRevision)
+		opcode != wire::OpCode::SimulationStatus && opcode != wire::OpCode::ReadDiagnostics && !imageWindow &&
+		!debugger && opcode != wire::OpCode::RetainPreview && opcode != wire::OpCode::InspectFrame &&
+		opcode != wire::OpCode::FeatureRevision)
 		throw std::invalid_argument("Unsupported control request");
-	if (program && (opcode != wire::OpCode::StartSequence || program->size() > 512 * 1024 || program->find('\0') != std::string_view::npos))
+	if (program && (opcode != wire::OpCode::StartSequence || program->size() > 512 * 1024 ||
+					program->find('\0') != std::string_view::npos))
 		throw std::invalid_argument("Sequence program must be JSONL text of at most 512 KiB without NUL bytes");
 	wire::Message request;
 	request.fields = std::move(fields);
@@ -690,7 +764,8 @@ control::Message McpDebug::Request(McpApplication& application, const std::strin
 	const auto* generation = request.Find(tag::Generation);
 	const auto offset = opcode == wire::OpCode::ReadExport ? U64(request, tag::Offset) : 0;
 	const auto length = opcode == wire::OpCode::ReadExport ? U64(request, tag::Length) : 0;
-	if (opcode == wire::OpCode::ReadExport && (!U64(request, tag::ExportId) || !length || length > wire::MaxPayload - 4096))
+	if (opcode == wire::OpCode::ReadExport &&
+		(!U64(request, tag::ExportId) || !length || length > wire::MaxPayload - 4096))
 		throw std::invalid_argument("Invalid artifact range");
 	const auto entry = FindConnection(connection);
 	if (entry->gameOnly)
@@ -700,8 +775,8 @@ control::Message McpDebug::Request(McpApplication& application, const std::strin
 	if (session && (session->AsU64() != entry->session || generation->AsU64() != entry->generation))
 		throw std::invalid_argument("Session or generation does not match this debugger connection");
 	if (sequence || debugger || opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::Capture ||
-		opcode == wire::OpCode::RetainImage || opcode == wire::OpCode::RetainPreview || opcode == wire::OpCode::InspectFrame ||
-		opcode == wire::OpCode::StartVideoExport ||
+		opcode == wire::OpCode::RetainImage || opcode == wire::OpCode::RetainPreview ||
+		opcode == wire::OpCode::InspectFrame || opcode == wire::OpCode::StartVideoExport ||
 		opcode == wire::OpCode::Status || opcode == wire::OpCode::ReadProjectionHistory ||
 		opcode == wire::OpCode::SimulationStatus || opcode == wire::OpCode::ReadDiagnostics)
 	{
@@ -712,10 +787,8 @@ control::Message McpDebug::Request(McpApplication& application, const std::strin
 		}
 	}
 	else
-		std::erase_if(request.fields, [](const auto& field)
-		{
-			return field.tag == tag::Session || field.tag == tag::Generation;
-		});
+		std::erase_if(request.fields,
+					  [](const auto& field) { return field.tag == tag::Session || field.tag == tag::Generation; });
 	const auto cancellation = requestedCancellation ? requestedCancellation : std::make_shared<McpCancellation>();
 	if (opcode == wire::OpCode::StartVideoExport &&
 		!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::VideoExport)))
@@ -725,11 +798,14 @@ control::Message McpDebug::Request(McpApplication& application, const std::strin
 	if (opcode == wire::OpCode::StartExport && request.Find(tag::ImageRegion) &&
 		!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::ImageRegionExport)))
 		throw std::runtime_error("The connected runtime does not support image region export");
-	if (((sequence && opcode != wire::OpCode::ReleaseSequenceCapture) ||
-		opcode == wire::OpCode::SimulationStatus || opcode == wire::OpCode::ReadDiagnostics) && !request.Find(tag::SourceKind))
+	if (((sequence && opcode != wire::OpCode::ReleaseSequenceCapture) || opcode == wire::OpCode::SimulationStatus ||
+		 opcode == wire::OpCode::ReadDiagnostics) &&
+		!request.Find(tag::SourceKind))
 		request.fields.push_back(wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)));
-	for (const auto& [operation, capability] : {std::pair{wire::OpCode::ReadProjectionHistory, wire::Capability::ProjectionHistory},
-		{wire::OpCode::SimulationStatus, wire::Capability::SimulationCommands}, {wire::OpCode::ReadDiagnostics, wire::Capability::FrameDiagnostics}})
+	for (const auto& [operation, capability] :
+		 {std::pair{wire::OpCode::ReadProjectionHistory, wire::Capability::ProjectionHistory},
+		  {wire::OpCode::SimulationStatus, wire::Capability::SimulationCommands},
+		  {wire::OpCode::ReadDiagnostics, wire::Capability::FrameDiagnostics}})
 		if (opcode == operation && !(entry->capabilities & static_cast<std::uint64_t>(capability)))
 			throw std::runtime_error("The connected runtime does not support this diagnostic operation");
 	auto operation = LockConnection(application, connection, entry, cancellation);
@@ -745,11 +821,14 @@ control::Message McpDebug::Request(McpApplication& application, const std::strin
 				if (cancellation->Requested())
 					throw DebugTransportFailure("Sequence upload was cancelled");
 				const auto length = std::min<std::size_t>(256 * 1024, program->size() - offset);
-				mcp::SequenceRequest chunk{wire::OpCode::UploadSequence,
-					{wire::Field::U64(tag::Session, entry->session, true), wire::Field::U64(tag::Generation, entry->generation, true),
+				mcp::SequenceRequest chunk{
+					wire::OpCode::UploadSequence,
+					{wire::Field::U64(tag::Session, entry->session, true),
+					 wire::Field::U64(tag::Generation, entry->generation, true),
 					 wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)),
 					 wire::Field::U64(tag::ProgramId, U64(request, tag::ProgramId), true),
-					 wire::Field::U64(tag::Offset, offset, true), wire::Field::U64(tag::TotalBytes, program->size(), true),
+					 wire::Field::U64(tag::Offset, offset, true),
+					 wire::Field::U64(tag::TotalBytes, program->size(), true),
 					 wire::Field::Bytes(tag::Bytes, std::as_bytes(std::span(program->data() + offset, length)), true)}};
 				const auto uploaded = Exchange(client, chunk.opcode, chunk.fields);
 				try
@@ -762,7 +841,8 @@ control::Message McpDebug::Request(McpApplication& application, const std::strin
 					throw DebugTransportFailure(error.what());
 				}
 				offset += length;
-			} while (offset < program->size());
+			}
+			while (offset < program->size());
 			if (cancellation->Requested())
 				throw DebugTransportFailure("Sequence upload was cancelled");
 		}
@@ -782,19 +862,21 @@ control::Message McpDebug::Request(McpApplication& application, const std::strin
 }
 
 std::vector<std::byte> McpDebug::ReadArtifact(McpApplication& application, const std::string& connection,
-	std::uint64_t ticket, std::uint64_t offset, std::uint64_t length,
-	const std::shared_ptr<McpCancellation>& cancellation)
+											  std::uint64_t ticket, std::uint64_t offset, std::uint64_t length,
+											  const std::shared_ptr<McpCancellation>& cancellation)
 {
 	auto response = Request(application, connection, wire::OpCode::ReadExport,
-		{wire::Field::U64(tag::ExportId, ticket, true), wire::Field::U64(tag::Offset, offset, true),
-		 wire::Field::U64(tag::Length, length, true)}, cancellation);
+							{wire::Field::U64(tag::ExportId, ticket, true), wire::Field::U64(tag::Offset, offset, true),
+							 wire::Field::U64(tag::Length, length, true)},
+							cancellation);
 	if (response.Find(tag::Error)->AsU32() != 0)
 		throw std::runtime_error("Artifact export is unavailable or released");
 	return std::move(response.Find(tag::Bytes)->value);
 }
 
 mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::string& connection,
-	const mcp::ImageRenderRequest& render, const std::shared_ptr<McpCancellation>& cancellation)
+										const mcp::ImageRenderRequest& render,
+										const std::shared_ptr<McpCancellation>& cancellation)
 {
 	if (!render.ticket || render.quality < 1 || render.quality > 100 || bool(render.session) != bool(render.generation))
 		throw std::invalid_argument("Invalid image render request");
@@ -807,8 +889,8 @@ mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::
 	const auto client = entry->Client();
 	try
 	{
-		mcp::ImageRenderResult result{Exchange(client, wire::OpCode::ExportInfo,
-			{wire::Field::U64(tag::ExportId, render.ticket, true)}), {}};
+		mcp::ImageRenderResult result{
+			Exchange(client, wire::OpCode::ExportInfo, {wire::Field::U64(tag::ExportId, render.ticket, true)}), {}};
 		const auto& info = result.info;
 		const auto* error = info.Find(tag::Error);
 		if (!error || !error->AsU32())
@@ -831,8 +913,7 @@ mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::
 			std::uint64_t{description.width} * description.height > MaxImageInput / pixelBytes ||
 			total != std::uint64_t{description.width} * description.height * pixelBytes)
 			throw std::runtime_error("Choose a supported single-layer image within the 32 MiB encoding limit");
-		const auto check = [&]
-		{
+		const auto check = [&] {
 			if (cancellation->Requested() || entry->closed.load())
 				throw std::runtime_error("Image rendering was interrupted");
 		};
@@ -846,16 +927,19 @@ mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::
 			const auto* tickField = info.Find(tag::ImageTick);
 			const auto tick = tickField ? tickField->AsU64() : std::optional<std::uint64_t>{};
 			// A live display can change while the submitted frame stays the same.
-			if (mcp::CacheableImageSource(metadata.at("target").at("kind").get<std::uint32_t>(), tickField != nullptr, tick.has_value()))
+			if (mcp::CacheableImageSource(metadata.at("target").at("kind").get<std::uint32_t>(), tickField != nullptr,
+										  tick.has_value()))
 			{
 				// Older providers can omit the selected layer or region. In that
 				// case reuse only this validated ticket, not another export.
 				const bool selectionKnown = metadata.contains("layer") && metadata.contains("region");
-				const Json key = Json::array({entry->application, entry->endpoint, entry->process, entry->epoch,
-					entry->session, entry->generation, metadata.at("frame"), metadata.at("target"), metadata.at("capture"),
-					tick ? Json(std::to_string(*tick)) : Json(nullptr), metadata.value("layer", Json(nullptr)),
-					metadata.value("region", Json(nullptr)), metadata.at("image_description"), render.png, render.quality,
-					selectionKnown ? Json(nullptr) : Json(connection), selectionKnown ? Json(nullptr) : Json(render.ticket)});
+				const Json key = Json::array(
+					{entry->application, entry->endpoint, entry->process, entry->epoch, entry->session,
+					 entry->generation, metadata.at("frame"), metadata.at("target"), metadata.at("capture"),
+					 tick ? Json(std::to_string(*tick)) : Json(nullptr), metadata.value("layer", Json(nullptr)),
+					 metadata.value("region", Json(nullptr)), metadata.at("image_description"), render.png,
+					 render.quality, selectionKnown ? Json(nullptr) : Json(connection),
+					 selectionKnown ? Json(nullptr) : Json(render.ticket)});
 				cacheKey = key.dump();
 				if (const auto cached = s_imageCache.Find(cacheKey))
 				{
@@ -869,23 +953,23 @@ mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::
 		ImageEncodingPermit permit;
 		std::vector<std::byte> pixels;
 		pixels.reserve(static_cast<std::size_t>(total));
-		control::ExportReader::Read([&](auto opcode, auto fields)
-		{
-			check();
-			auto chunk = Exchange(client, opcode, std::move(fields));
-			const auto* error = chunk.Find(tag::Error);
-			if (!error || !error->AsU32())
-				throw DebugTransportFailure("Control response omitted its error code");
-			if (*error->AsU32())
-				throw std::runtime_error("Image export is unavailable or released");
-			return chunk;
-		}, render.ticket, total, [&](std::span<const std::byte> bytes)
-		{
-			pixels.insert(pixels.end(), bytes.begin(), bytes.end());
-		});
+		control::ExportReader::Read(
+			[&](auto opcode, auto fields) {
+				check();
+				auto chunk = Exchange(client, opcode, std::move(fields));
+				const auto* error = chunk.Find(tag::Error);
+				if (!error || !error->AsU32())
+					throw DebugTransportFailure("Control response omitted its error code");
+				if (*error->AsU32())
+					throw std::runtime_error("Image export is unavailable or released");
+				return chunk;
+			},
+			render.ticket, total,
+			[&](std::span<const std::byte> bytes) { pixels.insert(pixels.end(), bytes.begin(), bytes.end()); });
 		operation.unlock();
 		check();
-		const auto encoded = EncodeImage(pixels, description.format, description.width, description.height, render.png, render.quality);
+		const auto encoded =
+			EncodeImage(pixels, description.format, description.width, description.height, render.png, render.quality);
 		check();
 		auto image = std::make_shared<mcp::CachedImage>();
 		image->mediaType = encoded.mediaType;
@@ -906,12 +990,11 @@ mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::
 }
 
 std::optional<Json> McpDebug::Call(McpApplication& application, const std::string& name, const Json& arguments,
-									  const std::shared_ptr<McpCancellation>& cancellation)
+								   const std::shared_ptr<McpCancellation>& cancellation)
 {
 	std::shared_ptr<Entry> entry;
 	std::string identity;
-	const auto retire = [&]
-	{
+	const auto retire = [&] {
 		{
 			std::lock_guard lock(m_mutex);
 			const auto found = m_entries.find(identity);
@@ -951,8 +1034,10 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			metadata["encoded_bytes"] = image.encodedBytes;
 			if (image.lossy && render.png)
 				metadata["conversion"] = "clamped to 8-bit RGBA";
-			return Json{{"content", Json::array({{{"type", "text"}, {"text", metadata.dump()}},
-				{{"type", "image"}, {"mimeType", image.mediaType}, {"data", image.data}}})}, {"isError", false}};
+			return Json{
+				{"content", Json::array({{{"type", "text"}, {"text", metadata.dump()}},
+										 {{"type", "image"}, {"mimeType", image.mediaType}, {"data", image.data}}})},
+				{"isError", false}};
 		}
 		if (name == "debug_save_video")
 			return mcp::SaveVideo(application, *this, arguments, cancellation);
@@ -965,13 +1050,18 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			identity = Text(arguments, "connection");
 			if (arguments.contains("session") != arguments.contains("generation"))
 				throw std::invalid_argument("Supply both session and generation, or omit both");
-			auto request = mcp::PrepareSequence(name, arguments,
-				arguments.contains("session") ? Number(arguments, "session") : 0,
-				arguments.contains("generation") ? Number(arguments, "generation") : 0);
+			auto request =
+				mcp::PrepareSequence(name, arguments, arguments.contains("session") ? Number(arguments, "session") : 0,
+									 arguments.contains("generation") ? Number(arguments, "generation") : 0);
 			if (!arguments.contains("session"))
-				std::erase_if(request.fields, [](const auto& field) { return field.tag == tag::Session || field.tag == tag::Generation; });
-			const auto response = Request(application, identity, request.opcode, request.fields, cancellation,
-				arguments.contains("program") ? std::optional<std::string_view>{arguments.at("program").get_ref<const std::string&>()} : std::nullopt);
+				std::erase_if(request.fields, [](const auto& field) {
+					return field.tag == tag::Session || field.tag == tag::Generation;
+				});
+			const auto response =
+				Request(application, identity, request.opcode, request.fields, cancellation,
+						arguments.contains("program")
+							? std::optional<std::string_view>{arguments.at("program").get_ref<const std::string&>()}
+							: std::nullopt);
 			try
 			{
 				return mcp::SequenceReply(response, request);
@@ -994,8 +1084,10 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			const auto opened = Connect(application, target, cancellation, gameOnly);
 			if (!opened)
 				return {};
-			Json result = {{"ok", true}, {"connection", opened->id}, {"application_id", target},
-				{"capabilities", std::to_string(opened->capabilities)}};
+			Json result = {{"ok", true},
+						   {"connection", opened->id},
+						   {"application_id", target},
+						   {"capabilities", std::to_string(opened->capabilities)}};
 			if (gameOnly)
 				result["process_id"] = std::to_string(opened->process);
 			else
@@ -1004,7 +1096,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				result["runtime_epoch"] = std::to_string(opened->epoch);
 				result["session"] = std::to_string(opened->session);
 				result["generation"] = std::to_string(opened->generation);
-				result["sessions"] = Json::array({{{"session", result["session"]}, {"generation", result["generation"]}}});
+				result["sessions"] =
+					Json::array({{{"session", result["session"]}, {"generation", result["generation"]}}});
 			}
 			return Result(result);
 		}
@@ -1040,8 +1133,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			if (entry->gameOnly)
 				ValidateGameTarget(*status, entry->endpoint, entry->process, entry->epoch, entry->launched);
 			else
-				ValidateTarget(*status, entry->endpoint,
-							   entry->process, entry->session, entry->generation, entry->epoch);
+				ValidateTarget(*status, entry->endpoint, entry->process, entry->session, entry->generation,
+							   entry->epoch);
 		}
 		catch (...)
 		{
@@ -1078,7 +1171,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				}
 				catch (const std::exception& error)
 				{
-					throw DebugTransportFailure(std::string("Invalid runtime response; the request may have applied: ") + error.what());
+					throw DebugTransportFailure(
+						std::string("Invalid runtime response; the request may have applied: ") + error.what());
 				}
 			}
 			catch (...)
@@ -1089,7 +1183,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		}
 		if (mcp::HistoryHandles(name))
 		{
-			const auto required = name == "debug_frame_history" ? wire::Capability::FrameHistory : wire::Capability::ProjectionHistory;
+			const auto required =
+				name == "debug_frame_history" ? wire::Capability::FrameHistory : wire::Capability::ProjectionHistory;
 			if (!(entry->capabilities & static_cast<std::uint64_t>(required)))
 				throw std::runtime_error("The connected runtime does not support this history operation");
 			auto request = mcp::PrepareHistory(name, arguments, entry->session, entry->generation);
@@ -1108,9 +1203,11 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		}
 		if (mcp::ImageHandles(name))
 		{
-			if (name == "debug_start_video_export" && !(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::VideoExport)))
+			if (name == "debug_start_video_export" &&
+				!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::VideoExport)))
 				throw std::runtime_error("The connected runtime does not support video export");
-			if (arguments.contains("region") && !(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::ImageRegionExport)))
+			if (arguments.contains("region") &&
+				!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::ImageRegionExport)))
 				throw std::runtime_error("The connected runtime does not support image region export");
 			auto request = mcp::PrepareImage(name, arguments, entry->session, entry->generation);
 			if (!cancellation->TryAdmit())
@@ -1124,7 +1221,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				}
 				catch (const std::exception& error)
 				{
-					throw DebugTransportFailure(std::string("Invalid runtime response; the request may have applied: ") + error.what());
+					throw DebugTransportFailure(
+						std::string("Invalid runtime response; the request may have applied: ") + error.what());
 				}
 			}
 			catch (...)
@@ -1140,16 +1238,17 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			if (entry->minor < 17)
 				throw std::runtime_error("Controls controls require runtime control protocol 1.17");
 			const auto transaction = Number(arguments, "transaction_id");
-			const auto read = [&](std::optional<std::uint64_t> id = {})
-			{
-				std::vector<wire::Field> fields{wire::Field::U64(tag::Session, entry->session, true),
+			const auto read = [&](std::optional<std::uint64_t> id = {}) {
+				std::vector<wire::Field> fields{
+					wire::Field::U64(tag::Session, entry->session, true),
 					wire::Field::U64(tag::Generation, entry->generation, true),
 					wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp))};
 				if (id)
 					fields.push_back(wire::Field::U64(tag::TransactionId, *id, true));
 				try
 				{
-					const auto result = mcp::SimulationDocument(Exchange(client, wire::OpCode::SimulationStatus, std::move(fields)));
+					const auto result =
+						mcp::SimulationDocument(Exchange(client, wire::OpCode::SimulationStatus, std::move(fields)));
 					if (!result.at("ok").get<bool>())
 						throw DebugTransportFailure("Could not read simulation state; the connection was closed");
 					return result;
@@ -1178,32 +1277,37 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				const auto prior = read(*entry->controlEditPending);
 				const auto phase = prior.value("phase", "");
 				if (phase == "queued" || phase == "rescheduled")
-					throw std::runtime_error("The previous input edit is pending; advance the application frame and retry explicitly");
+					throw std::runtime_error(
+						"The previous input edit is pending; advance the application frame and retry explicitly");
 				entry->controlEditPending.reset();
 				if (phase != "applied")
-					throw std::runtime_error("The previous input edit did not apply; inspect its transaction and retry explicitly");
+					throw std::runtime_error(
+						"The previous input edit did not apply; inspect its transaction and retry explicitly");
 			}
 			if (cancellation->Requested())
 				return {};
 			const auto observed = read();
 			const auto& document = observed.at("document");
 			if (Number(document, "pending", true))
-				throw std::runtime_error("Simulation transactions are pending; wait for them before editing applied state");
+				throw std::runtime_error(
+					"Simulation transactions are pending; wait for them before editing applied state");
 			const auto frame = Number(document, "frame_id", true);
 			if (frame == UINT64_MAX)
 				throw std::runtime_error("Simulation frame identity is exhausted");
 			const auto commands = mcp::ControlsCommands(name, arguments, document.at("configuration"));
 			const auto expected = mcp::ControlsExpectedInputs(name, document.at("configuration"));
-			std::vector<wire::Field> fields{wire::Field::U64(tag::Session, entry->session, true),
+			std::vector<wire::Field> fields{
+				wire::Field::U64(tag::Session, entry->session, true),
 				wire::Field::U64(tag::Generation, entry->generation, true),
 				wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)),
-				wire::Field::U64(tag::TransactionId, transaction, true), wire::Field::U64(tag::ApplyFrame, frame + 1, true),
+				wire::Field::U64(tag::TransactionId, transaction, true),
+				wire::Field::U64(tag::ApplyFrame, frame + 1, true),
 				wire::Field::U32(tag::LatePolicy, static_cast<std::uint32_t>(CommandLatePolicy::RescheduleNext))};
-			const auto encode = [&](std::uint16_t tagValue, const auto& values)
-			{
+			const auto encode = [&](std::uint16_t tagValue, const auto& values) {
 				std::vector<wire::Field> encoded;
 				for (const auto& command : values)
-					encoded.push_back(wire::EncodeSimulationCommand(command, static_cast<std::uint16_t>(encoded.size() + 1)));
+					encoded.push_back(
+						wire::EncodeSimulationCommand(command, static_cast<std::uint16_t>(encoded.size() + 1)));
 				fields.push_back(wire::Field::Bytes(tagValue, wire::EncodeFields(encoded), true));
 			};
 			encode(tag::Commands, commands);
@@ -1214,7 +1318,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				return {};
 			try
 			{
-				auto result = mcp::SimulationDocument(Exchange(client, wire::OpCode::SubmitSimulation, std::move(fields)));
+				auto result =
+					mcp::SimulationDocument(Exchange(client, wire::OpCode::SubmitSimulation, std::move(fields)));
 				if (result.at("ok").get<bool>())
 				{
 					const auto phase = result.value("phase", "");
@@ -1222,7 +1327,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 					{
 						entry->controlEditPending = transaction;
 						entry->controlEditLast = transaction;
-						entry->controlEditRequests.emplace_back(transaction, Json{{"name", name}, {"arguments", arguments}});
+						entry->controlEditRequests.emplace_back(transaction,
+																Json{{"name", name}, {"arguments", arguments}});
 						if (entry->controlEditRequests.size() > 64)
 							entry->controlEditRequests.pop_front();
 					}
@@ -1238,8 +1344,10 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		if (mcp::SimulationHandles(name))
 		{
 			const auto required = name == "simulation_diagnostics" ? wire::Capability::FrameDiagnostics
-				: (name == "simulation_start_recording" || name == "simulation_stop_recording" || name == "simulation_read_recording" || name == "simulation_acknowledge_recording")
-					? wire::Capability::CommandRecording : wire::Capability::SimulationCommands;
+								  : (name == "simulation_start_recording" || name == "simulation_stop_recording" ||
+									 name == "simulation_read_recording" || name == "simulation_acknowledge_recording")
+									  ? wire::Capability::CommandRecording
+									  : wire::Capability::SimulationCommands;
 			if (!(entry->capabilities & static_cast<std::uint64_t>(required)))
 				throw std::runtime_error("The connected runtime does not support this simulation operation");
 			auto request = mcp::PrepareSimulation(name, arguments, entry->session, entry->generation);
@@ -1254,7 +1362,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				}
 				catch (const std::exception& error)
 				{
-					throw DebugTransportFailure(std::string("Invalid runtime response; the request may have applied: ") + error.what());
+					throw DebugTransportFailure(
+						std::string("Invalid runtime response; the request may have applied: ") + error.what());
 				}
 			}
 			catch (...)
@@ -1278,8 +1387,9 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			auto fields = inspect ? SessionFields(entry->session, entry->generation) : std::vector<wire::Field>{};
 			const auto field = inspect ? tag::CaptureId : revision ? tag::RevisionId : tag::InspectionId;
 			fields.push_back(wire::Field::U64(field, requested, true));
-			const auto opcode = inspect ? wire::OpCode::InspectFrame
-										: revision ? wire::OpCode::FeatureRevision : wire::OpCode::ReleaseInspection;
+			const auto opcode = inspect	   ? wire::OpCode::InspectFrame
+								: revision ? wire::OpCode::FeatureRevision
+										   : wire::OpCode::ReleaseInspection;
 			if (!cancellation->TryAdmit())
 				return {};
 			try
@@ -1296,7 +1406,7 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 					result["inspection"] = std::to_string(U64(response, tag::InspectionId));
 					const auto frame = Nested(response.Find(tag::Frame));
 					result["frame"] = {{"generation", std::to_string(U64(frame, tag::Generation))},
-										   {"frame_id", std::to_string(U64(frame, tag::FrameId))}};
+									   {"frame_id", std::to_string(U64(frame, tag::FrameId))}};
 				}
 				if (revision)
 				{
@@ -1343,10 +1453,12 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		else if (name == "debug_operation" || name == "debug_capture")
 		{
 			const bool operationQuery = name == "debug_operation";
-			Keys(arguments, operationQuery ? std::initializer_list<std::string_view>{"connection", "session", "generation", "operation"}
-										  : std::initializer_list<std::string_view>{"connection", "session", "generation", "capture"});
+			Keys(arguments,
+				 operationQuery
+					 ? std::initializer_list<std::string_view>{"connection", "session", "generation", "operation"}
+					 : std::initializer_list<std::string_view>{"connection", "session", "generation", "capture"});
 			fields.push_back(wire::Field::U64(operationQuery ? tag::OperationId : tag::CaptureId,
-												Number(arguments, operationQuery ? "operation" : "capture"), true));
+											  Number(arguments, operationQuery ? "operation" : "capture"), true));
 			opcode = operationQuery ? wire::OpCode::Operation : wire::OpCode::Capture;
 		}
 		else if (name == "debug_acknowledge")
@@ -1358,12 +1470,16 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		}
 		else
 		{
-			Keys(arguments, {"connection", "session", "generation", "lease", "command_id", "operation", "capture", "lookahead", "target", "layer", "view", "advance_display", "capacity", "frames", "budget_mib"});
+			Keys(arguments,
+				 {"connection", "session", "generation", "lease", "command_id", "operation", "capture", "lookahead",
+				  "target", "layer", "view", "advance_display", "capacity", "frames", "budget_mib"});
 			const bool step = name == "debug_step" || name == "debug_strict_admission";
 			const bool recording = name == "debug_start_image_recording";
-			const bool captureCommand = name == "debug_release" || name == "debug_pin_snapshot" || name == "debug_unpin_snapshot";
+			const bool captureCommand =
+				name == "debug_release" || name == "debug_pin_snapshot" || name == "debug_unpin_snapshot";
 			if ((!step && (arguments.contains("lookahead") || arguments.contains("advance_display"))) ||
-				(!step && !recording && (arguments.contains("target") || arguments.contains("layer") || arguments.contains("view"))) ||
+				(!step && !recording &&
+				 (arguments.contains("target") || arguments.contains("layer") || arguments.contains("view"))) ||
 				(!recording && (arguments.contains("capacity") || arguments.contains("frames"))) ||
 				(arguments.contains("budget_mib") != (name == "debug_configure_snapshots")))
 				throw std::invalid_argument("Options do not match this debugger command");
@@ -1371,29 +1487,42 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				arguments.contains("capture") != captureCommand)
 				throw std::invalid_argument("Operation or capture does not match this command");
 			wire::CommandKind kind;
-			if (name == "debug_pause") kind = wire::CommandKind::Pause;
-			else if (name == "debug_resume") kind = wire::CommandKind::Resume;
-			else if (name == "debug_step") kind = wire::CommandKind::Step;
-			else if (name == "debug_strict_admission") kind = wire::CommandKind::StrictAdmission;
-			else if (name == "debug_display_step") kind = wire::CommandKind::DisplayStep;
-			else if (name == "debug_cancel") kind = wire::CommandKind::Cancel;
-			else if (name == "debug_release") kind = wire::CommandKind::Release;
-			else if (name == "debug_pin_snapshot") kind = wire::CommandKind::PinSnapshot;
-			else if (name == "debug_unpin_snapshot") kind = wire::CommandKind::UnpinSnapshot;
-			else if (name == "debug_configure_snapshots") kind = wire::CommandKind::ConfigureSnapshots;
-			else if (recording) kind = wire::CommandKind::StartImageRecording;
-			else if (name == "debug_stop_image_recording") kind = wire::CommandKind::StopImageRecording;
-			else throw std::invalid_argument("Unknown debugger tool");
+			if (name == "debug_pause")
+				kind = wire::CommandKind::Pause;
+			else if (name == "debug_resume")
+				kind = wire::CommandKind::Resume;
+			else if (name == "debug_step")
+				kind = wire::CommandKind::Step;
+			else if (name == "debug_strict_admission")
+				kind = wire::CommandKind::StrictAdmission;
+			else if (name == "debug_display_step")
+				kind = wire::CommandKind::DisplayStep;
+			else if (name == "debug_cancel")
+				kind = wire::CommandKind::Cancel;
+			else if (name == "debug_release")
+				kind = wire::CommandKind::Release;
+			else if (name == "debug_pin_snapshot")
+				kind = wire::CommandKind::PinSnapshot;
+			else if (name == "debug_unpin_snapshot")
+				kind = wire::CommandKind::UnpinSnapshot;
+			else if (name == "debug_configure_snapshots")
+				kind = wire::CommandKind::ConfigureSnapshots;
+			else if (recording)
+				kind = wire::CommandKind::StartImageRecording;
+			else if (name == "debug_stop_image_recording")
+				kind = wire::CommandKind::StopImageRecording;
+			else
+				throw std::invalid_argument("Unknown debugger tool");
 			fields.push_back(wire::Field::U64(tag::Lease, Number(arguments, "lease"), true));
 			fields.push_back(wire::Field::U64(tag::CommandId, Number(arguments, "command_id"), true));
 			fields.push_back(wire::Field::U32(tag::CommandKind, static_cast<std::uint32_t>(kind), true));
 			if (name == "debug_cancel" || captureCommand)
 				fields.push_back(wire::Field::U64(name == "debug_cancel" ? tag::OperationId : tag::CaptureId,
-												Number(arguments, name == "debug_cancel" ? "operation" : "capture"), true));
+												  Number(arguments, name == "debug_cancel" ? "operation" : "capture"),
+												  true));
 			if (step || recording)
 			{
-				const auto bounded = [&](const char* key, std::uint32_t fallback, std::uint32_t maximum)
-				{
+				const auto bounded = [&](const char* key, std::uint32_t fallback, std::uint32_t maximum) {
 					const auto found = arguments.find(key);
 					if (found == arguments.end())
 						return fallback;
@@ -1409,15 +1538,23 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				const auto layer = bounded("layer", 0, UINT32_MAX), view = bounded("view", 0, UINT32_MAX);
 				const auto target = arguments.contains("target") ? Text(arguments, "target") : "composed_eyes";
 				wire::TargetKind capture;
-				if (target == "composed_eyes") capture = wire::TargetKind::ComposedEyes;
-				else if (target == "projection_layers") capture = wire::TargetKind::ProjectionLayers;
-				else if (target == "quad_layers") capture = wire::TargetKind::QuadLayers;
-				else if (target == "layer_view") capture = wire::TargetKind::LayerView;
-				else if (target == "layer_depth") capture = wire::TargetKind::LayerDepth;
-				else if (target == "layer_depth_linear") capture = wire::TargetKind::LayerDepthLinear;
-				else throw std::invalid_argument("Unknown capture target");
+				if (target == "composed_eyes")
+					capture = wire::TargetKind::ComposedEyes;
+				else if (target == "projection_layers")
+					capture = wire::TargetKind::ProjectionLayers;
+				else if (target == "quad_layers")
+					capture = wire::TargetKind::QuadLayers;
+				else if (target == "layer_view")
+					capture = wire::TargetKind::LayerView;
+				else if (target == "layer_depth")
+					capture = wire::TargetKind::LayerDepth;
+				else if (target == "layer_depth_linear")
+					capture = wire::TargetKind::LayerDepthLinear;
+				else
+					throw std::invalid_argument("Unknown capture target");
 				if ((capture == wire::TargetKind::ComposedEyes || capture == wire::TargetKind::ProjectionLayers ||
-					 capture == wire::TargetKind::QuadLayers) && (layer || view))
+					 capture == wire::TargetKind::QuadLayers) &&
+					(layer || view))
 					throw std::invalid_argument("This capture target has no layer or view index");
 				if (step)
 					fields.push_back(wire::Field::U32(tag::Lookahead, lookahead));
@@ -1437,7 +1574,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 					if (!capacity)
 						throw std::invalid_argument("capacity must be at least one");
 					fields.push_back(wire::Field::U32(tag::Capacity, capacity, true));
-					fields.push_back(wire::Field::U64(tag::Length, arguments.contains("frames") ? Number(arguments, "frames", true) : 0, true));
+					fields.push_back(wire::Field::U64(
+						tag::Length, arguments.contains("frames") ? Number(arguments, "frames", true) : 0, true));
 				}
 			}
 			if (name == "debug_configure_snapshots")

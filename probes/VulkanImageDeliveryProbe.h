@@ -13,6 +13,7 @@
 namespace simxr
 {
 class VulkanInspectionFrame;
+
 namespace probe
 {
 void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, std::span<const std::byte> expected);

@@ -2,7 +2,6 @@
 #include "control/legacy/WindowsRuntimeSettings.h"
 namespace settings = simxr::legacy::settings;
 
-
 static int s_failures = 0;
 
 static void Check(bool condition, const char* message)
@@ -88,13 +87,11 @@ int main()
 	Check(width == 1280 && MatchesFovAspect(width, height), "older settings migrate to the performance resolution");
 
 	settings::SetHeadsetProfile(settings::HeadsetProfile::Quest3);
-	std::thread writer(
-		[]
-		{
-			for (int i = 0; i < 10000; ++i)
-				settings::SetHeadsetProfile(i % 2 ? settings::HeadsetProfile::Quest3
-												  : settings::HeadsetProfile::GenericSymmetric);
-		});
+	std::thread writer([] {
+		for (int i = 0; i < 10000; ++i)
+			settings::SetHeadsetProfile(i % 2 ? settings::HeadsetProfile::Quest3
+											  : settings::HeadsetProfile::GenericSymmetric);
+	});
 	bool consistent = true;
 	for (int i = 0; i < 10000; ++i)
 	{

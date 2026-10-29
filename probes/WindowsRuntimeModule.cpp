@@ -62,7 +62,7 @@ static void Check(XrResult result, const char* operation)
 		throw std::runtime_error(std::string(operation) + ": " + std::to_string(result));
 }
 
-template <typename Function>
+template<typename Function>
 static Function RuntimeFunction(PFN_xrGetInstanceProcAddr getProcedure, XrInstance instance, const char* name)
 {
 	PFN_xrVoidFunction procedure = nullptr;

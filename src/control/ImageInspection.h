@@ -50,20 +50,22 @@ struct ImageDescription
 	ImageCompletionKind completionKind = ImageCompletionKind::Fence;
 	std::vector<FrameView> views;
 };
+
 Field EncodeImageDescription(const ImageDescription& description, bool external = false);
 ImageDescription DecodeImageDescription(const Field& field);
 Field EncodeImageRegion(const ImageRegion& region, bool required = false);
 
 class ImageInspectionError : public std::runtime_error
 {
-  public:
+public:
 	ImageInspectionError(ErrorCode code, const char* message) : std::runtime_error(message), code(code) {}
+
 	const ErrorCode code;
 };
 
 class ImageDelivery : public PacketExposure
 {
-  public:
+public:
 	virtual SharedImageKey Key() const noexcept = 0;
 	virtual ImageDescription Description() const = 0;
 	virtual CompletionStatus ProducerCompletion() const noexcept = 0;
@@ -75,23 +77,27 @@ class ImageDelivery : public PacketExposure
 
 class ImageExport : public GpuCompletion
 {
-  public:
+public:
 	virtual std::optional<ImageRegion> Region() const noexcept
 	{
 		return {};
 	}
+
 	virtual std::optional<std::uint32_t> SourceLayer() const noexcept
 	{
 		return {};
 	}
+
 	virtual std::string_view MediaType() const noexcept
 	{
 		return "image/raw";
 	}
+
 	virtual std::string Error() const
 	{
 		return {};
 	}
+
 	virtual ImageDescription Description() const = 0;
 	virtual std::uint64_t ByteSize() const noexcept = 0;
 	// Explicit export only; immutable borrowed storage lives through this ticket.
@@ -100,13 +106,15 @@ class ImageExport : public GpuCompletion
 
 class ImageReader : public GpuCompletion
 {
-  public:
+public:
 	virtual ImageDescription Description() const = 0;
 	virtual ImageCapabilities Capabilities() const noexcept = 0;
 	virtual std::shared_ptr<ImageDelivery> Share(const ImageDeviceIdentity& identity,
 												 const std::shared_ptr<TransferHandle>& consumer) const = 0;
 	virtual std::shared_ptr<ImageExport> Export(std::optional<std::uint32_t> layer) const = 0;
-	virtual std::shared_ptr<ImageExport> ExportRegion(std::optional<std::uint32_t> layer, const ImageRegion& region) const
+
+	virtual std::shared_ptr<ImageExport> ExportRegion(std::optional<std::uint32_t> layer,
+													  const ImageRegion& region) const
 	{
 		(void)layer;
 		(void)region;
@@ -116,7 +124,7 @@ class ImageReader : public GpuCompletion
 
 class ImageInspectionProvider
 {
-  public:
+public:
 	virtual ~ImageInspectionProvider() = default;
 	virtual ImageCapabilities Capabilities(XrSession session) const noexcept = 0;
 	virtual std::shared_ptr<ImageReader> Retain(std::shared_ptr<const FrameOutput> output) const = 0;

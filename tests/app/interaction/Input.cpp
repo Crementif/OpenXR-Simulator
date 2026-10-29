@@ -32,29 +32,25 @@ void CheckSpatialEditing(Interaction& test)
 	Require(target.selectedViews.size() == 2, "Displayed image omitted exact compositor views");
 	ManualInputController observer;
 	observer.SetTarget({target.endpoint, target.session, target.generation});
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto observe = [&]
-	{
+	const auto observe = [&] {
 		const auto previous = observer.Snapshot().observation;
 		observer.Refresh();
 		Eventually(
-			[&]
-			{
+			[&] {
 				pump(1);
 				return observer.Snapshot().observation > previous;
 			},
 			"Spatial observation stalled");
 		return ReadObservedSetup(observer.Snapshot().state);
 	};
-	const auto pointer = [&](ImVec2 position, int button)
-	{
+	const auto pointer = [&](ImVec2 position, int button) {
 		SDL_WarpMouseInWindow(test.window.Native(), position.x, position.y);
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
@@ -75,8 +71,7 @@ void CheckSpatialEditing(Interaction& test)
 		}
 		pump(1);
 	};
-	const auto drag = [&](ImVec2 from, ImVec2 to)
-	{
+	const auto drag = [&](ImVec2 from, ImVec2 to) {
 		pointer(from, 1);
 		for (int step = 1; step <= 6; ++step)
 			pointer({from.x + (to.x - from.x) * step / 6, from.y + (to.y - from.y) * step / 6}, -1);
@@ -89,7 +84,12 @@ void CheckSpatialEditing(Interaction& test)
 	SDL_WarpMouseInWindow(test.window.Native(), 960, 540);
 	test.workspace.SetScale(1);
 	test.workspace.Select(DeviceSel{DevicePage::Right});
-	Eventually([&] { pump(1); return test.window.Focused(); }, "Spatial window did not receive focus");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.window.Focused();
+		},
+		"Spatial window did not receive focus");
 	pump(6);
 	auto before = observe();
 	PlayerRig rig;
@@ -126,7 +126,7 @@ void CheckSpatialEditing(Interaction& test)
 			pump(1);
 		}
 		std::cout << "Spatial orb focus=" << test.window.Focused() << " tip=" << tip.x << "," << tip.y
-			<< " up=" << Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y << '\n';
+				  << " up=" << Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y << '\n';
 	}
 	Require(Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y > .99f,
 			"Rotation ball did not point the hand up");
@@ -139,7 +139,7 @@ void CheckSpatialEditing(Interaction& test)
 	pump(8);
 	const auto interrupted = observe().values.tracking.controllers[1].pose.pose;
 	Require(std::abs(RelativePose(interrupted, after.values.tracking.controllers[1].pose.pose).orientation.w) < .9999f,
-		"Interrupted rotation fixture did not move the right hand");
+			"Interrupted rotation fixture did not move the right hand");
 	test.workspace.SetPreviewExpanded(true);
 	pump(2);
 	pointer(orbEnd, 0);
@@ -152,14 +152,15 @@ void CheckSpatialEditing(Interaction& test)
 		 {leftBall.x + leftBall.width * .32f + 18, leftBall.y + leftBall.height * .32f + 22});
 	const auto editedLeft = observe().values.tracking.controllers[0].pose.pose;
 	Require(std::abs(RelativePose(editedLeft, leftBefore).orientation.w) < .9999f,
-		"Second rotation fixture did not move the left hand");
+			"Second rotation fixture did not move the left hand");
 	Require(test.runtime.Changes().size() == changesBefore + 2,
-		"Interrupted rotation merged with a different device's undo gesture");
+			"Interrupted rotation merged with a different device's undo gesture");
 	test.runtime.UndoChanges(1);
 	pump(8);
 	const auto undone = observe();
-	Require(std::abs(RelativePose(undone.values.tracking.controllers[0].pose.pose, leftBefore).orientation.w) > .9999f &&
-		std::abs(RelativePose(undone.values.tracking.controllers[1].pose.pose, interrupted).orientation.w) > .9999f,
+	Require(
+		std::abs(RelativePose(undone.values.tracking.controllers[0].pose.pose, leftBefore).orientation.w) > .9999f &&
+			std::abs(RelativePose(undone.values.tracking.controllers[1].pose.pose, interrupted).orientation.w) > .9999f,
 		"Undo after a hidden rotation changed the wrong gesture");
 	test.runtime.UndoChanges(1);
 	pump(8);
@@ -182,7 +183,7 @@ void CheckSpatialEditing(Interaction& test)
 	Require(activeChanges != 0, "Active-field undo fixture has no prior gesture");
 	test.runtime.UndoChanges(1);
 	Require(test.runtime.Changes().size() == activeChanges && ImGui::GetActiveID() == inspector->GetID("##X"),
-		"Undo changed history while a device field was active");
+			"Undo changed history while a device field was active");
 	auto& io = ImGui::GetIO();
 	io.AddKeyEvent(ImGuiMod_Ctrl, true);
 	io.AddKeyEvent(ImGuiKey_A, true);
@@ -219,9 +220,8 @@ void CheckSpatialEditing(Interaction& test)
 	after = observe();
 	const auto hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
 	Require(std::abs(hand.position.x - .2f) < .015f && std::abs(hand.position.z + .55f) < .015f,
-			("One-click off-screen recovery did not apply Forward: hand at " + std::to_string(hand.position.x) +
-			 ", " + std::to_string(hand.position.z) + "; arrow at " + std::to_string(arrow.x) + ", " +
-			 std::to_string(arrow.y))
+			("One-click off-screen recovery did not apply Forward: hand at " + std::to_string(hand.position.x) + ", " +
+			 std::to_string(hand.position.z) + "; arrow at " + std::to_string(arrow.x) + ", " + std::to_string(arrow.y))
 				.c_str());
 	std::cout << "PASS one-click off-screen recovery\n";
 	const auto gizmoState = test.runtime.Snapshot();
@@ -242,22 +242,22 @@ void CheckSpatialEditing(Interaction& test)
 	const auto leftPose = after.values.tracking.controllers[0].pose.pose;
 	const auto retargetMarker = test.runtime.Snapshot().markers[2];
 	const ImVec2 retargetOrigin{retargetMarker.x + retargetMarker.width / 2,
-		retargetMarker.y + retargetMarker.height / 2};
+								retargetMarker.y + retargetMarker.height / 2};
 	const ImVec2 heldHandle{retargetOrigin.x + direction.x * 45, retargetOrigin.y + direction.y * 45};
 	pointer({retargetOrigin.x + direction.x * 28, retargetOrigin.y + direction.y * 28}, 1);
 	pointer(heldHandle, -1);
 	pump(4);
 	Require(observe().values.tracking.controllers[1].pose.pose.position.x >
-		after.values.tracking.controllers[1].pose.pose.position.x + .005f,
-		"Retarget fixture did not begin a gizmo drag");
+				after.values.tracking.controllers[1].pose.pose.position.x + .005f,
+			"Retarget fixture did not begin a gizmo drag");
 	test.workspace.Select(DeviceSel{DevicePage::Left});
 	pump(2);
 	pointer({heldHandle.x + direction.x * 35, heldHandle.y + direction.y * 35}, -1);
 	pump(4);
 	const auto retargeted = observe().values.tracking.controllers[0].pose.pose;
 	Require(std::hypot(retargeted.position.x - leftPose.position.x, retargeted.position.y - leftPose.position.y,
-		retargeted.position.z - leftPose.position.z) < .001f,
-		"Changing selection transferred an active gizmo to another device");
+					   retargeted.position.z - leftPose.position.z) < .001f,
+			"Changing selection transferred an active gizmo to another device");
 	pointer(heldHandle, 0);
 	test.workspace.Select(DeviceSel{DevicePage::Right});
 	pump(3);
@@ -277,10 +277,20 @@ void CheckSpatialEditing(Interaction& test)
 	Require(!test.runtime.Snapshot().rigExpanded, "Rig view did not restore the image");
 	std::cout << "PASS expanded rig view and picture-in-picture restore\n";
 	test.runtime.PrepareReplay();
-	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Replay input release did not complete");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.ReplayReady();
+		},
+		"Replay input release did not complete");
 	test.runtime.PrepareReplay();
 	Require(!test.runtime.ReplayReady(), "Replay used the observation from before its release request");
-	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Replay did not observe its new input release");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.ReplayReady();
+		},
+		"Replay did not observe its new input release");
 	test.runtime.FinishReplayPreparation();
 	std::cout << "PASS active device field blocks undo and replay waits for a fresh release observation\n";
 
@@ -301,21 +311,18 @@ void CheckSpatialEditing(Interaction& test)
 
 static void DrivePilotPulses(Interaction& test, const std::function<void(int)>& onPulse = {})
 {
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto push = [&](SDL_Event event)
-	{
+	const auto push = [&](SDL_Event event) {
 		Require(SDL_PushEvent(&event), "Push take input");
 		pump(1);
 	};
-	const auto button = [&](unsigned code, bool down)
-	{
+	const auto button = [&](unsigned code, bool down) {
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.windowID = SDL_GetWindowID(test.window.Native());
@@ -336,8 +343,7 @@ static void DrivePilotPulses(Interaction& test, const std::function<void(int)>& 
 		}
 		push(event);
 	};
-	const auto key = [&](SDL_Scancode code, bool down)
-	{
+	const auto key = [&](SDL_Scancode code, bool down) {
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
 		event.key.windowID = SDL_GetWindowID(test.window.Native());
@@ -348,11 +354,20 @@ static void DrivePilotPulses(Interaction& test, const std::function<void(int)>& 
 	};
 	Require(SDL_ShowWindow(test.window.Native()), "Show take window");
 	SDL_RaiseWindow(test.window.Native());
-	Eventually([&] { pump(1); return test.window.Focused(); }, "Take window did not receive focus");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.window.Focused();
+		},
+		"Take window did not receive focus");
 	pump(3);
 	button(SDL_BUTTON_RIGHT, true);
-	Eventually([&] { pump(1); return SDL_GetWindowRelativeMouseMode(test.window.Native()); },
-			   "Take pilot did not capture pointer");
+	Eventually(
+		[&] {
+			pump(1);
+			return SDL_GetWindowRelativeMouseMode(test.window.Native());
+		},
+		"Take pilot did not capture pointer");
 	for (int pulse = 0; pulse < 4; ++pulse)
 	{
 		if (onPulse)
@@ -370,10 +385,10 @@ static void DrivePilotPulses(Interaction& test, const std::function<void(int)>& 
 	button(SDL_BUTTON_RIGHT, false);
 	pump(10);
 }
+
 void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 {
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
@@ -386,23 +401,26 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	const auto target = test.runtime.Snapshot();
 	ManualInputController devices;
 	devices.SetTarget({target.endpoint, target.session, target.generation});
-	Eventually([&] { pump(1); return devices.Snapshot().observation != 0; }, "Device client did not connect");
+	Eventually(
+		[&] {
+			pump(1);
+			return devices.Snapshot().observation != 0;
+		},
+		"Device client did not connect");
 	auto tracking = ReadObservedSetup(devices.Snapshot().state).values.tracking;
-	const auto submitDevices = [&](int pulse)
-	{
+	const auto submitDevices = [&](int pulse) {
 		tracking.body.preset = pulse >= 1 ? simxr::BodyPreset::TPose : simxr::BodyPreset::Standing;
 		tracking.gaze.yaw = pulse >= 2 ? .3f : 0;
 		tracking.trackers[0].jointOffset.reset();
 		tracking.trackers[0].poseOverride = XrPosef{{0, 0, 0, 1}, {0.1f * float(pulse), 1.0f, -0.3f}};
 		ManualTransaction edit;
-		edit.commands = {simxr::TakeControl{simxr::ControlChannel::Body, false}, simxr::SetBodyControls{tracking.body},
-						 simxr::TakeControl{simxr::ControlChannel::Gaze, false}, simxr::SetGaze{tracking.gaze},
-						 simxr::TakeControl{simxr::ControlChannel::Trackers, false},
-						 simxr::SetTracker{0, tracking.trackers[0]}};
+		edit.commands = {
+			simxr::TakeControl{simxr::ControlChannel::Body, false},		simxr::SetBodyControls{tracking.body},
+			simxr::TakeControl{simxr::ControlChannel::Gaze, false},		simxr::SetGaze{tracking.gaze},
+			simxr::TakeControl{simxr::ControlChannel::Trackers, false}, simxr::SetTracker{0, tracking.trackers[0]}};
 		Require(devices.Submit(edit), "Device edit refused");
 		Eventually(
-			[&]
-			{
+			[&] {
 				pump(1);
 				const auto s = devices.Snapshot();
 				Require(s.error.empty(), s.error.c_str());
@@ -415,7 +433,12 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	const auto begin = history.Size();
 	DrivePilotPulses(test, submitDevices);
 	Require(devices.Submit(ReleaseManualInputs{}), "Device release refused");
-	Eventually([&] { pump(1); return !devices.Snapshot().editPending; }, "Device release did not apply");
+	Eventually(
+		[&] {
+			pump(1);
+			return !devices.Snapshot().editPending;
+		},
+		"Device release did not apply");
 	Require(history.Size() > begin + 60, "Too few frames while driving input");
 	std::size_t pressed = 0;
 	for (auto index = begin; index < history.Size(); ++index)
@@ -438,8 +461,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		if (entry.path().extension() == ".luau")
 			take = entry.path();
 	Require(!take.empty(), "Save as take wrote no file");
-	const auto readTake = [&]
-	{
+	const auto readTake = [&] {
 		std::ifstream input(take, std::ios::binary);
 		Require(input.good(), "Could not read the saved range take");
 		return std::string(std::istreambuf_iterator<char>(input), {});
@@ -469,8 +491,9 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		const float ruler = ImGui::GetFrameHeight() + 2 * ImGui::GetFontSize() / 16;
 		const float lane = (canvas.height - ruler) / 3;
 		const float tab = std::min(ImGui::GetFontSize() * (1 + 4.0f / 16), lane);
-		const float x = canvas.x + float((first.seconds - shell.timeline.first) /
-			(shell.timeline.last - shell.timeline.first)) * canvas.width;
+		const float x =
+			canvas.x +
+			float((first.seconds - shell.timeline.first) / (shell.timeline.last - shell.timeline.first)) * canvas.width;
 		SDL_Event motion{};
 		motion.type = SDL_EVENT_MOUSE_MOTION;
 		motion.motion.which = TestMouse;
@@ -513,7 +536,11 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 			ImGui::GetIO().AddKeyEvent(ImGuiKey_F6, true);
 			pump(1);
 			ImGui::GetIO().AddKeyEvent(ImGuiKey_F6, false);
-			Eventually([&] { pump(1); return test.workspace.State().timeline.playbackPaused; },
+			Eventually(
+				[&] {
+					pump(1);
+					return test.workspace.State().timeline.playbackPaused;
+				},
 				"F6 did not hold the active take");
 			pump(10);
 			const auto held = history.Size();
@@ -524,7 +551,8 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 			ImGui::GetIO().AddKeyEvent(ImGuiKey_F8, false);
 			checkedHold = true;
 		}
-		if (anchor && history.Size() >= *anchor + sourceCount && !(history.At(history.Size() - 1).flags & HistoryDriven))
+		if (anchor && history.Size() >= *anchor + sourceCount &&
+			!(history.At(history.Size() - 1).flags & HistoryDriven))
 			break;
 		if (std::chrono::steady_clock::now() >= deadline)
 		{
@@ -553,8 +581,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	}
 	std::cout << "Replay matched " << matched << "/" << sourceCount << " frames\n";
 	Require(matched == sourceCount, "Replayed input diverges from the source frames");
-	const auto sampleAt = [&](std::size_t index)
-	{
+	const auto sampleAt = [&](std::size_t index) {
 		const auto* sample = test.runtime.InputSamples().Find(history.At(index).input);
 		Require(sample && sample->body && sample->trackers && sample->gaze, "Frame lacks body, gaze or trackers");
 		return sample;
@@ -569,18 +596,18 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		tposed += a->body->preset == simxr::BodyPreset::TPose;
 		if (x)
 			trackerPositions.insert(x->position.x);
-		const bool same = a->body->preset == b->body->preset && a->gaze->yaw == b->gaze->yaw &&
-						  x.has_value() == y.has_value() &&
-						  (!x || (std::abs(x->position.x - y->position.x) < 1e-4f &&
-								  std::abs(x->position.z - y->position.z) < 1e-4f));
+		const bool same =
+			a->body->preset == b->body->preset && a->gaze->yaw == b->gaze->yaw && x.has_value() == y.has_value() &&
+			(!x ||
+			 (std::abs(x->position.x - y->position.x) < 1e-4f && std::abs(x->position.z - y->position.z) < 1e-4f));
 		devicesMatched += same;
 		if (!same)
 			std::cout << "device mismatch at " << offset << ": preset " << int(a->body->preset) << "/"
 					  << int(b->body->preset) << " yaw " << a->gaze->yaw << "/" << b->gaze->yaw << " tracker "
 					  << (x ? x->position.x : -1) << "/" << (y ? y->position.x : -1) << '\n';
 	}
-	std::cout << "Body/gaze/tracker replay matched " << devicesMatched << "/" << sourceCount << " frames ("
-			  << tposed << " in T pose, " << trackerPositions.size() << " tracker positions)\n";
+	std::cout << "Body/gaze/tracker replay matched " << devicesMatched << "/" << sourceCount << " frames (" << tposed
+			  << " in T pose, " << trackerPositions.size() << " tracker positions)\n";
 	Require(tposed > 0 && tposed < sourceCount && trackerPositions.size() >= 3,
 			"Source range lacks T pose or tracker motion");
 	Require(devicesMatched == sourceCount, "Replayed body, gaze or trackers diverge from the source");
@@ -617,16 +644,14 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 
 void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 {
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto click = [&](ImVec2 point)
-	{
+	const auto click = [&](ImVec2 point) {
 		for (const bool down : {true, false})
 		{
 			SDL_Event event{};
@@ -648,11 +673,13 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 			pump(2);
 		}
 	};
+
 	struct Size
 	{
 		int width, height;
 		float scale;
 	};
+
 	const std::array<Selection, 3> pages{DeviceSel{DevicePage::Player}, DeviceSel{DevicePage::Right},
 										 DeviceSel{DevicePage::Head}};
 	for (const auto size : {Size{1280, 720, 1}, Size{1280, 720, 1.5f}, Size{1920, 1080, 1}, Size{1920, 1080, 1.5f},
@@ -667,7 +694,8 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 			pump(6);
 			const auto& shell = test.workspace.State();
 			Require(shell.inspectorVisible, "Selecting a page did not show the inspector");
-			for (const char* name : {"Top bar", overlay ? "Device rail" : "Device tabs", "Inspector", "Timeline", "GPU preview"})
+			for (const char* name :
+				 {"Top bar", overlay ? "Device rail" : "Device tabs", "Inspector", "Timeline", "GPU preview"})
 			{
 				const auto* window = FindPanel(name);
 				Require(window && !window->ScrollbarX, "Shell region has horizontal scrolling");
@@ -688,8 +716,7 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 				const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 				Require(!popups.empty() && popups.back().Window, "Rig help did not open");
 				const auto* help = popups.back().Window;
-				Require(help->Pos.x >= 0 && help->Pos.x + help->Size.x <= size.width + 1,
-						"Rig help is clipped");
+				Require(help->Pos.x >= 0 && help->Pos.x + help->Size.x <= size.width + 1, "Rig help is clipped");
 				test.renderer.RequestScreenshot(qa / ("help-" + name));
 				pump(2);
 				ImGui::ClosePopupsExceptModals();
@@ -736,16 +763,14 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 
 void CheckShell(Interaction& test, const char* qa)
 {
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto pointer = [&](ImVec2 point, std::optional<bool> down)
-	{
+	const auto pointer = [&](ImVec2 point, std::optional<bool> down) {
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -765,15 +790,13 @@ void CheckShell(Interaction& test, const char* qa)
 		}
 		pump(2);
 	};
-	const auto activate = [&](const char* window, const char* id)
-	{
+	const auto activate = [&](const char* window, const char* id) {
 		auto* panel = FindPanel(window);
 		Require(panel != nullptr, (std::string("Missing ") + window).c_str());
 		ImGui::ActivateItemByID(panel->GetID(id));
 		pump(3);
 	};
-	const auto screenshot = [&](const std::string& name)
-	{
+	const auto screenshot = [&](const std::string& name) {
 		if (qa)
 		{
 			test.renderer.RequestScreenshot(std::filesystem::path(qa) / name);
@@ -795,11 +818,12 @@ void CheckShell(Interaction& test, const char* qa)
 			const auto* area = FindPanel("Image area");
 			Require(preview && area, "Preview image missing during the width sweep");
 			const auto* timeline = FindPanel("Timeline");
-			Require(timeline && timeline->ContentSize.x <= timeline->Size.x + 1,
-					("Timeline transport overflows at width " + std::to_string(width) + ", scale " +
-					 std::to_string(scale))
-						.c_str());
-			Require(area->ContentSize.x <= area->Size.x + 1 && area->Pos.x + area->Size.x <= preview->Pos.x + preview->Size.x + 1,
+			Require(
+				timeline && timeline->ContentSize.x <= timeline->Size.x + 1,
+				("Timeline transport overflows at width " + std::to_string(width) + ", scale " + std::to_string(scale))
+					.c_str());
+			Require(area->ContentSize.x <= area->Size.x + 1 &&
+						area->Pos.x + area->Size.x <= preview->Pos.x + preview->Size.x + 1,
 					("Image overflows its region at width " + std::to_string(width)).c_str());
 			if (width == 640 || width == 1040)
 				screenshot("width-" + std::to_string(width) + "-" + std::to_string(int(scale * 100)) + ".bmp");
@@ -841,14 +865,12 @@ void CheckShell(Interaction& test, const char* qa)
 	Require(SDL_ShowWindow(test.window.Native()), "Show preview interaction window");
 	SDL_RaiseWindow(test.window.Native());
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(1);
 			return test.window.Focused();
 		},
 		"Preview interaction window did not receive focus");
-	const auto checkControls = [&]
-	{
+	const auto checkControls = [&] {
 		const auto* controls = FindPanel("Image controls");
 		const auto* preview = FindPanel("GPU preview");
 		Require(controls && controls->Active && preview && controls->Pos.x >= preview->Pos.x &&
@@ -865,8 +887,7 @@ void CheckShell(Interaction& test, const char* qa)
 				"Preview corner clips its controls or leaves the primary row incomplete");
 	};
 	checkControls();
-	const auto chooseView = [&](const char* choice)
-	{
+	const auto chooseView = [&](const char* choice) {
 		activate("Image controls", "View");
 		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 		Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
@@ -885,8 +906,7 @@ void CheckShell(Interaction& test, const char* qa)
 	motion.motion.x = controlPoint.x;
 	motion.motion.y = controlPoint.y;
 	Require(SDL_PushEvent(&motion), "Move onto preview controls in the capture frame");
-	const auto rightButton = [&](bool down)
-	{
+	const auto rightButton = [&](bool down) {
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.windowID = SDL_GetWindowID(test.window.Native());
@@ -908,8 +928,7 @@ void CheckShell(Interaction& test, const char* qa)
 	pump(2);
 	Require(!capturedBehindControls, "Moving onto preview controls started piloting behind them");
 	chooseView("Fit");
-	const auto pickRegion = [&]
-	{
+	const auto pickRegion = [&] {
 		activate("Image controls", "View");
 		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 		Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
@@ -958,8 +977,7 @@ void CheckShell(Interaction& test, const char* qa)
 	pump(4);
 	activate("Timeline", "Pause");
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(1);
 			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
 		},
@@ -968,8 +986,7 @@ void CheckShell(Interaction& test, const char* qa)
 	{
 		activate("Timeline", "Step forward");
 		Eventually(
-			[&]
-			{
+			[&] {
 				pump(1);
 				return !test.runtime.Snapshot().operationPending;
 			},
@@ -989,12 +1006,15 @@ void CheckShell(Interaction& test, const char* qa)
 	Require(forward && forward->identity.frame > older, "Step forward did not select a newer frame");
 	test.runtime.PreviewCrop().reset();
 	activate("Timeline", "Continue");
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual && test.runtime.Snapshot().time.following; },
-			   "Shell check did not continue");
+	Eventually(
+		[&] {
+			pump(1);
+			return !test.runtime.Snapshot().manual && test.runtime.Snapshot().time.following;
+		},
+		"Shell check did not continue");
 	std::size_t late = 0;
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(5);
 			const auto& history = test.runtime.History();
 			late = 0;
@@ -1018,16 +1038,14 @@ void CheckShell(Interaction& test, const char* qa)
 void CheckIdConflicts(Interaction& test, bool frameOnly)
 {
 	ImGui::GetIO().ConfigDebugHighlightIdConflicts = true;
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(5);
 		}
 	};
-	const auto move = [&](ImVec2 point)
-	{
+	const auto move = [&](ImVec2 point) {
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -1037,8 +1055,7 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 		Require(SDL_PushEvent(&event), "Push sweep motion");
 	};
 	std::set<std::string> conflicts;
-	const auto sweep = [&](const char* page, const char* region)
-	{
+	const auto sweep = [&](const char* page, const char* region) {
 		const auto* window = FindPanel(region);
 		if (!window)
 			return;
@@ -1059,12 +1076,11 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 	};
 	test.window.Resize(1280, 800);
 	test.workspace.SetScale(1);
-	const std::array<Selection, 7> pages{DeviceSel{DevicePage::Player}, DeviceSel{DevicePage::Head},
-										 DeviceSel{DevicePage::Left},	DeviceSel{DevicePage::Right},
-										 DeviceSel{DevicePage::Body},	DeviceSel{DevicePage::Gaze},
+	const std::array<Selection, 7> pages{DeviceSel{DevicePage::Player},	 DeviceSel{DevicePage::Head},
+										 DeviceSel{DevicePage::Left},	 DeviceSel{DevicePage::Right},
+										 DeviceSel{DevicePage::Body},	 DeviceSel{DevicePage::Gaze},
 										 DeviceSel{DevicePage::Trackers}};
-	const auto openSections = [&]
-	{
+	const auto openSections = [&] {
 		for (const char* region : {"Inspector", "Head details", "Hand details", "Configuration details"})
 			if (auto* window = FindPanel(region))
 				for (const char* header : {"Position & rotation", "Role", "Connection and profile", "Output",
@@ -1088,7 +1104,6 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 					sweep(("page bottom " + std::to_string(page)).c_str(), region);
 					ImGui::SetScrollY(details, 0);
 				}
-
 		}
 		const auto directory = std::filesystem::path(test.runtime.Snapshot().endpoint).parent_path();
 		for (const char* folder : {"recordings", "scripts"})
@@ -1127,24 +1142,34 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 		pump(3);
 	}
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Pause"));
-	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Sweep pause");
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().operationPending; }, "Sweep pause completion");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Snapshot().manual;
+		},
+		"Sweep pause");
+	Eventually(
+		[&] {
+			pump(1);
+			return !test.runtime.Snapshot().operationPending;
+		},
+		"Sweep pause completion");
 	const auto previousCapture = test.runtime.Snapshot().selectedCapture;
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Step forward"));
-	Eventually([&]
-	{
-		pump(1);
-		const auto state = test.runtime.Snapshot();
-		return !state.operationPending && state.selectedReady && state.selectedCapture &&
-			state.selectedCapture != previousCapture &&
-			state.inspectedFrame == state.selectedFrame;
-	}, "ID sweep exact capture not ready");
+	Eventually(
+		[&] {
+			pump(1);
+			const auto state = test.runtime.Snapshot();
+			return !state.operationPending && state.selectedReady && state.selectedCapture &&
+				   state.selectedCapture != previousCapture && state.inspectedFrame == state.selectedFrame;
+		},
+		"ID sweep exact capture not ready");
 	const auto captured = test.runtime.Snapshot();
 	test.workspace.Select(FrameSel{captured.selectedIdentity, captured.selectedEpoch});
 	pump(30);
 	auto* inspector = FindPanel("Inspector");
-	for (const char* header : {"All input values", "Input sources and commands", "All actions and bindings", "Layers",
-							   "Timing", "Raw"})
+	for (const char* header :
+		 {"All input values", "Input sources and commands", "All actions and bindings", "Layers", "Timing", "Raw"})
 	{
 		auto* details = FindPanel("Frame details");
 		(details ? details : inspector)->StateStorage.SetInt((details ? details : inspector)->GetID(header), 1);
@@ -1174,21 +1199,20 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 	for (const auto& conflict : conflicts)
 		std::cout << "ID conflict: " << conflict << '\n';
 	Require(conflicts.empty(), "Duplicate ImGui IDs on a page");
-	std::cout << "PASS no duplicate IDs under the pointer on " << (frameOnly ? "frame and raw pages" : "all checked pages") << '\n';
+	std::cout << "PASS no duplicate IDs under the pointer on "
+			  << (frameOnly ? "frame and raw pages" : "all checked pages") << '\n';
 }
 
 void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 {
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto screenshot = [&](const char* name)
-	{
+	const auto screenshot = [&](const char* name) {
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 		{
 			test.renderer.RequestScreenshot(std::filesystem::path(qa) / name);
@@ -1197,11 +1221,25 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	};
 	test.workspace.Select(DeviceSel{});
 	test.runtime.ResumeLive();
-	Eventually([&] { pump(1); return test.runtime.Snapshot().time.following && !test.runtime.Snapshot().manual; },
-			   "Library check did not start live");
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().recordingBusy; }, "Recorder did not finish its first read");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Snapshot().time.following && !test.runtime.Snapshot().manual;
+		},
+		"Library check did not start live");
+	Eventually(
+		[&] {
+			pump(1);
+			return !test.runtime.Snapshot().recordingBusy;
+		},
+		"Recorder did not finish its first read");
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Rec"));
-	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Snapshot().recording;
+		},
+		"Rec did not start recording");
 	DrivePilotPulses(test);
 	Require(test.runtime.Snapshot().recordedChanges > 0, "Piloting recorded no input");
 	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
@@ -1209,31 +1247,54 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	screenshot("timeline-recording-folded.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
 	const auto popover = FindPanel("Top bar")->GetID("Recorded take");
-	Eventually([&] { pump(1); return ImGui::IsPopupOpen(popover, ImGuiPopupFlags_AnyPopupLevel); },
-			   "Stop did not open the save popover");
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().recording && !test.runtime.Snapshot().recordingBusy; },
-			   "Recording did not stop");
+	Eventually(
+		[&] {
+			pump(1);
+			return ImGui::IsPopupOpen(popover, ImGuiPopupFlags_AnyPopupLevel);
+		},
+		"Stop did not open the save popover");
+	Eventually(
+		[&] {
+			pump(1);
+			return !test.runtime.Snapshot().recording && !test.runtime.Snapshot().recordingBusy;
+		},
+		"Recording did not stop");
 	screenshot("library-save.bmp");
 	auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
 	Require(popup, "Save popover has no window");
 	ImGui::ActivateItemByID(popup->GetID("Done"));
-	Eventually([&] { pump(1); return std::holds_alternative<TakeSel>(test.workspace.State().selection); },
+	Eventually(
+		[&] {
+			pump(1);
+			return std::holds_alternative<TakeSel>(test.workspace.State().selection);
+		},
 		"Saved archive was not selected in the Library");
 	const auto path = std::get<TakeSel>(test.workspace.State().selection).id;
 	const auto existingPath = Utf8Path(path);
 	Require(existingPath.parent_path() == directory / "recordings" && existingPath.extension() == ".simxrtake" &&
-		std::filesystem::exists(existingPath / "input.simxr"), "Stop did not automatically persist its archive");
+				std::filesystem::exists(existingPath / "input.simxr"),
+			"Stop did not automatically persist its archive");
 	auto& io = ImGui::GetIO();
 	pump(3);
 	screenshot("library-take.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	pump(3);
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Play take"));
-	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Library replay did not drive the app");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Snapshot().manual;
+		},
+		"Library replay did not drive the app");
 	pump(10);
 	screenshot("library-replay.bmp");
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Stop take"));
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Stop take did not release the app");
+	Eventually(
+		[&] {
+			pump(1);
+			return !test.runtime.Snapshot().manual;
+		},
+		"Stop take did not release the app");
 	std::cout << "PASS Rec, automatic archive save, Library replay and cancel\n";
 
 	std::filesystem::create_directories(directory / "scripts");
@@ -1267,14 +1328,14 @@ simxr.resume())";
 	const auto otherTake = directory / "recordings" / "Other library take.simxrtake";
 	const auto otherScript = directory / "scripts" / "other_library_script.luau";
 	std::filesystem::create_directory(otherTake);
-	Require(std::filesystem::copy_file(existingPath / "input.simxr", otherTake / "input.simxr") && std::filesystem::copy_file(script, otherScript),
+	Require(std::filesystem::copy_file(existingPath / "input.simxr", otherTake / "input.simxr") &&
+				std::filesystem::copy_file(script, otherScript),
 			"Could not prepare same-kind Library selections");
 	int oldWidth = 0, oldHeight = 0;
 	Require(SDL_GetWindowSize(test.window.Native(), &oldWidth, &oldHeight), "Could not read Library window size");
 	const float oldScale = ImGui::GetStyle().FontScaleMain;
 	test.workspace.SetScale(1);
-	const auto reopenEntry = [&](Selection before, Selection after, const std::filesystem::path& entry)
-	{
+	const auto reopenEntry = [&](Selection before, Selection after, const std::filesystem::path& entry) {
 		test.window.Resize(1280, oldHeight);
 		test.workspace.Select(std::move(before));
 		pump(3);
@@ -1284,15 +1345,16 @@ simxr.resume())";
 		ImGui::ActivateItemByID(FindPanel("Library")->GetID("Refresh library"));
 		pump(1);
 		const auto entryPath = PathText(entry);
-		Eventually([&]
-		{
-			auto* browser = FindPanel("Library");
-			Require(browser && browser->Active, "Library browser is not visible");
-			const auto row = ImHashStr(entryPath.c_str(), 0, browser->GetID("Library entries"));
-			ImGui::ActivateItemByID(ImHashStr("##Entry", 0, row));
-			pump(1);
-			return test.workspace.State().selection == after;
-		}, "Library entry did not become the selected page");
+		Eventually(
+			[&] {
+				auto* browser = FindPanel("Library");
+				Require(browser && browser->Active, "Library browser is not visible");
+				const auto row = ImHashStr(entryPath.c_str(), 0, browser->GetID("Library entries"));
+				ImGui::ActivateItemByID(ImHashStr("##Entry", 0, row));
+				pump(1);
+				return test.workspace.State().selection == after;
+			},
+			"Library entry did not become the selected page");
 		pump(2);
 		Require(test.workspace.State().inspectorVisible,
 				"Selecting another Library entry of the same kind left the inspector closed");
@@ -1307,25 +1369,40 @@ simxr.resume())";
 	pump(3);
 	auto* inspector = FindPanel("Inspector");
 	ImGui::ActivateItemByID(inspector->GetID("Run script"));
-	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Script did not start");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Snapshot().manual;
+		},
+		"Script did not start");
 	ImGui::ActivateItemByID(inspector->GetID("Pause script"));
 	pump(5);
 	ImGui::ActivateItemByID(inspector->GetID("Step script"));
 	pump(5);
 	screenshot("library-script-paused.bmp");
 	ImGui::ActivateItemByID(inspector->GetID("Resume script"));
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Script did not finish and release the app");
+	Eventually(
+		[&] {
+			pump(1);
+			return !test.runtime.Snapshot().manual;
+		},
+		"Script did not finish and release the app");
 	pump(5);
 	ImGui::ActivateItemByID(inspector->GetID("Save JSON report"));
-	Eventually([&] { pump(1); return std::filesystem::exists(directory / "scripts" / "pose_sweep.report.json"); },
+	Eventually(
+		[&] {
+			pump(1);
+			return std::filesystem::exists(directory / "scripts" / "pose_sweep.report.json");
+		},
 		"Script report was not saved");
 	screenshot("library-script.bmp");
-	Eventually([&]
-	{
-		ImGui::ActivateItemByID(inspector->GetID("Rename entry"));
-		pump(1);
-		return ImGui::IsPopupOpen(inspector->GetID("Rename"), ImGuiPopupFlags_AnyPopupLevel);
-	}, "Library rename popup did not open");
+	Eventually(
+		[&] {
+			ImGui::ActivateItemByID(inspector->GetID("Rename entry"));
+			pump(1);
+			return ImGui::IsPopupOpen(inspector->GetID("Rename"), ImGuiPopupFlags_AnyPopupLevel);
+		},
+		"Library rename popup did not open");
 	auto* rename = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
 	Require(rename, "Library rename popup is missing");
 	ImGui::ActivateItemByID(rename->GetID("##New name"));
@@ -1341,30 +1418,34 @@ simxr.resume())";
 	ImGui::ActivateItemByID(rename->GetID("Rename"));
 	pump(1);
 	const auto renamed = directory / "scripts" / Utf8Path("pose-étude.luau");
-	Eventually([&]
-	{
-		pump(1);
-		const auto selected = std::get_if<ScriptSel>(&test.workspace.State().selection);
-		return selected && selected->id == PathText(renamed);
-	}, "Library selection did not follow the completed rename");
-	Require(std::filesystem::exists(renamed) && !std::filesystem::exists(script), "Library rename did not change the file");
+	Eventually(
+		[&] {
+			pump(1);
+			const auto selected = std::get_if<ScriptSel>(&test.workspace.State().selection);
+			return selected && selected->id == PathText(renamed);
+		},
+		"Library selection did not follow the completed rename");
+	Require(std::filesystem::exists(renamed) && !std::filesystem::exists(script),
+			"Library rename did not change the file");
 	screenshot("library-renamed.bmp");
-	Eventually([&]
-	{
-		ImGui::ActivateItemByID(inspector->GetID("Delete entry"));
-		pump(1);
-		return ImGui::IsPopupOpen(inspector->GetID("Delete?"), ImGuiPopupFlags_AnyPopupLevel);
-	}, "Library delete popup did not open");
+	Eventually(
+		[&] {
+			ImGui::ActivateItemByID(inspector->GetID("Delete entry"));
+			pump(1);
+			return ImGui::IsPopupOpen(inspector->GetID("Delete?"), ImGuiPopupFlags_AnyPopupLevel);
+		},
+		"Library delete popup did not open");
 	auto* remove = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
 	Require(remove, "Library delete popup is missing");
 	ImGui::ActivateItemByID(remove->GetID("Delete"));
 	pump(1);
-	Eventually([&]
-	{
-		pump(1);
-		return !std::filesystem::exists(renamed) &&
-			std::holds_alternative<DeviceSel>(test.workspace.State().selection);
-	}, "Library deletion did not retire the file and return to the device page");
+	Eventually(
+		[&] {
+			pump(1);
+			return !std::filesystem::exists(renamed) &&
+				   std::holds_alternative<DeviceSel>(test.workspace.State().selection);
+		},
+		"Library deletion did not retire the file and return to the device page");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in the Library flow");
 	std::cout << "PASS Library script run, pause, step, resume, report, Unicode rename and delete\n";
@@ -1376,21 +1457,18 @@ void CheckInputPad(Interaction& test)
 	const auto target = test.runtime.Snapshot();
 	ManualInputController observer;
 	observer.SetTarget({target.endpoint, target.session, target.generation});
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto observed = [&]
-	{
+	const auto observed = [&] {
 		const auto before = observer.Snapshot().observation;
 		observer.Refresh();
 		Eventually(
-			[&]
-			{
+			[&] {
 				pump(1);
 				return observer.Snapshot().observation > before;
 			},
@@ -1398,8 +1476,7 @@ void CheckInputPad(Interaction& test)
 		return ReadObservedSetup(observer.Snapshot().state).values.input.controllers[1];
 	};
 	ImVec2 pointerPosition;
-	const auto settle = [&](const auto& ready, const char* failure)
-	{
+	const auto settle = [&](const auto& ready, const char* failure) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 		for (;;)
 		{
@@ -1411,16 +1488,15 @@ void CheckInputPad(Interaction& test)
 				const auto& g = *ImGui::GetCurrentContext();
 				const auto& io = ImGui::GetIO();
 				std::cout << "Input pad failure: " << failure << " focus=" << test.window.Focused()
-					<< " keyboardFocus=" << (SDL_GetKeyboardFocus() == test.window.Native())
-					<< " mouseFocus=" << (SDL_GetMouseFocus() == test.window.Native())
-					<< " appFocusLost=" << io.AppFocusLost
-					<< " requested=" << pointerPosition.x << ',' << pointerPosition.y
-					<< " mouse=" << io.MousePos.x << ',' << io.MousePos.y
-					<< " leftDown=" << io.MouseDown[ImGuiMouseButton_Left]
-					<< " rightDown=" << io.MouseDown[ImGuiMouseButton_Right]
-					<< " active=" << g.ActiveId << " activeButton=" << g.ActiveIdMouseButton
-					<< " hovered=" << (g.HoveredWindow ? g.HoveredWindow->Name : "none")
-					<< " trigger=" << controls.trigger << " grip=" << controls.grip << '\n';
+						  << " keyboardFocus=" << (SDL_GetKeyboardFocus() == test.window.Native())
+						  << " mouseFocus=" << (SDL_GetMouseFocus() == test.window.Native())
+						  << " appFocusLost=" << io.AppFocusLost << " requested=" << pointerPosition.x << ','
+						  << pointerPosition.y << " mouse=" << io.MousePos.x << ',' << io.MousePos.y
+						  << " leftDown=" << io.MouseDown[ImGuiMouseButton_Left]
+						  << " rightDown=" << io.MouseDown[ImGuiMouseButton_Right] << " active=" << g.ActiveId
+						  << " activeButton=" << g.ActiveIdMouseButton
+						  << " hovered=" << (g.HoveredWindow ? g.HoveredWindow->Name : "none")
+						  << " trigger=" << controls.trigger << " grip=" << controls.grip << '\n';
 				if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 				{
 					test.renderer.RequestScreenshot(std::filesystem::path(qa) / "input-pad-failure.bmp");
@@ -1432,8 +1508,7 @@ void CheckInputPad(Interaction& test)
 		}
 	};
 	const auto window = SDL_GetWindowID(test.window.Native());
-	const auto move = [&](ImVec2 at)
-	{
+	const auto move = [&](ImVec2 at) {
 		pointerPosition = at;
 		SDL_WarpMouseInWindow(test.window.Native(), at.x, at.y);
 		SDL_Event event{};
@@ -1445,8 +1520,7 @@ void CheckInputPad(Interaction& test)
 		Require(SDL_PushEvent(&event), "Push pad motion");
 		pump(1);
 	};
-	const auto button = [&](unsigned code, bool down)
-	{
+	const auto button = [&](unsigned code, bool down) {
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.windowID = window;
@@ -1458,8 +1532,7 @@ void CheckInputPad(Interaction& test)
 		Require(SDL_PushEvent(&event), "Push pad button");
 		pump(2);
 	};
-	const auto rect = [&](const char* name)
-	{
+	const auto rect = [&](const char* name) {
 		auto& g = *ImGui::GetCurrentContext();
 		for (auto* candidate : g.Windows)
 			if (std::string_view(candidate->Name).find("Inspector") != std::string_view::npos && candidate->Active)
@@ -1489,10 +1562,15 @@ void CheckInputPad(Interaction& test)
 	Require(SDL_GetWindowSize(test.window.Native(), &width, &height), "Read pad window size");
 	SDL_WarpMouseInWindow(test.window.Native(), width / 2.0f, height / 2.0f);
 	test.workspace.Select(DeviceSel{DevicePage::Right});
-	Eventually([&] { pump(1); return test.window.Focused(); }, "Pad window did not receive native focus");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.window.Focused();
+		},
+		"Pad window did not receive native focus");
 	pump(4);
-	const auto trigger = rect("Trigger"), grip = rect("Grip"), primary = rect("Primary"),
-			   secondary = rect("Secondary"), menu = rect("Menu"), stick = rect("Stick");
+	const auto trigger = rect("Trigger"), grip = rect("Grip"), primary = rect("Primary"), secondary = rect("Secondary"),
+			   menu = rect("Menu"), stick = rect("Stick");
 
 	move(trigger.GetCenter());
 	button(SDL_BUTTON_LEFT, true);
@@ -1515,19 +1593,9 @@ void CheckInputPad(Interaction& test)
 	std::cout << "PASS pad trigger hold, drag, latch\n";
 	move(trigger.GetCenter());
 	button(SDL_BUTTON_LEFT, true);
-	settle(
-		[](const auto& c)
-		{
-			return c.trigger > .99f;
-		},
-		"Hidden-pad fixture did not hold the trigger");
+	settle([](const auto& c) { return c.trigger > .99f; }, "Hidden-pad fixture did not hold the trigger");
 	test.workspace.SetPreviewExpanded(true);
-	settle(
-		[](const auto& c)
-		{
-			return c.trigger == 0;
-		},
-		"Hiding the input pad left a momentary trigger held");
+	settle([](const auto& c) { return c.trigger == 0; }, "Hiding the input pad left a momentary trigger held");
 	button(SDL_BUTTON_LEFT, false);
 	test.workspace.SetPreviewExpanded(false);
 	pump(3);
@@ -1606,21 +1674,18 @@ void CheckInputPad(Interaction& test)
 
 void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 {
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto screenshot = [&](const char* name)
-	{
+	const auto screenshot = [&](const char* name) {
 		test.renderer.RequestScreenshot(qa / name);
 		pump(2);
 	};
-	const auto activate = [&](const char* window, const char* label)
-	{
+	const auto activate = [&](const char* window, const char* label) {
 		auto* target = FindPanel(window);
 		Require(target != nullptr, (std::string("Window missing: ") + window).c_str());
 		ImGui::ActivateItemByID(target->GetID(label));
@@ -1643,8 +1708,7 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	pump(2);
 	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
 	pump(2);
-	const auto rotationForm = [&](const char* field, const char* label)
-	{
+	const auto rotationForm = [&](const char* field, const char* label) {
 		const auto id = inspector->GetID(field);
 		ImGui::SetFocusID(id, inspector);
 		pump(1);
@@ -1671,7 +1735,12 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	rotationForm("##Qx", "Euler angles");
 	const auto before = test.runtime.Changes().size();
 	ImGui::ActivateItemByID(ImHashStr("Forward", 0, inspector->GetID("Hand presets")));
-	Eventually([&] { pump(1); return test.runtime.Changes().size() == before + 1; }, "Hand preset left no history");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Changes().size() == before + 1;
+		},
+		"Hand preset left no history");
 	Require(test.runtime.Changes().back().label == "Right hand: Forward",
 			("History named the hand preset " + test.runtime.Changes().back().label).c_str());
 	activate("Top bar", "History");
@@ -1680,7 +1749,12 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	screenshot("polish-history.bmp");
 	ImGui::ActivateItemByID(ImHashStr(test.runtime.Changes().back().label.c_str(), 0,
 									  popups.back().Window->GetID(static_cast<int>(before))));
-	Eventually([&] { pump(1); return test.runtime.Changes().size() == before; }, "History did not undo the change");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Changes().size() == before;
+		},
+		"History did not undo the change");
 	test.workspace.Select(DeviceSel{DevicePage::Player});
 	pump(2);
 	ImGui::SetScrollY(FindPanel("Inspector"), 0);
@@ -1693,11 +1767,21 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	screenshot("polish-hud-folded.bmp");
 	activate("HUD strip", "Show HUD");
 	activate("Timeline", "Rec");
-	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Snapshot().recording;
+		},
+		"Rec did not start recording");
 	pump(90);
 	screenshot("polish-recording.bmp");
 	activate("Timeline", "Pause");
-	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Pause did not pause");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.Snapshot().manual;
+		},
+		"Pause did not pause");
 	screenshot("polish-paused.bmp");
 	activate("Inspector divider tab", "##Edge");
 	activate("Timeline divider tab", "##Edge");
@@ -1711,7 +1795,12 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	screenshot("polish-focus-recording.bmp");
 	activate("Top bar", "Focus");
 	activate("Timeline", "Stop recording");
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().recording; }, "Stop recording did not stop");
+	Eventually(
+		[&] {
+			pump(1);
+			return !test.runtime.Snapshot().recording;
+		},
+		"Stop recording did not stop");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors during the polish capture");
 	std::cout << "PASS polish capture\n";
@@ -1733,7 +1822,7 @@ void CheckMeasuredTiming(Interaction& test)
 		fast += frame.cpuMilliseconds >= 0 && frame.cpuMilliseconds < 20;
 	}
 	Require(cpu > 50 && gpu > 20 && slow > 2 && fast > 20,
-		"Measured CPU/GPU timing did not distinguish the deliberately slow probe frames");
+			"Measured CPU/GPU timing did not distinguish the deliberately slow probe frames");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "measured-timing.bmp");
@@ -1741,8 +1830,8 @@ void CheckMeasuredTiming(Interaction& test)
 	}
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "GPU timing introduced validation errors");
-	std::cout << "PASS measured timing: CPU " << cpu << ", compositor GPU " << gpu
-		<< ", slow " << slow << ", fast " << fast << '\n';
+	std::cout << "PASS measured timing: CPU " << cpu << ", compositor GPU " << gpu << ", slow " << slow << ", fast "
+			  << fast << '\n';
 }
 
 #endif

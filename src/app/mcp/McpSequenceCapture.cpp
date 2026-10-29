@@ -25,55 +25,72 @@ static std::set<std::pair<const McpDebug*, std::string>> s_sequenceCaptures;
 
 class SequenceCapturePermit
 {
-  public:
+public:
 	SequenceCapturePermit(const McpDebug& debug, std::string connection) : m_key(&debug, std::move(connection))
 	{
 		std::lock_guard lock(s_sequenceCaptureMutex);
 		if (s_sequenceCaptures.size() >= 2 || !s_sequenceCaptures.insert(m_key).second)
 			throw std::runtime_error("Sequence capture capacity or connection is busy; retry explicitly");
 	}
+
 	~SequenceCapturePermit()
 	{
 		std::lock_guard lock(s_sequenceCaptureMutex);
 		s_sequenceCaptures.erase(m_key);
 	}
+
 	SequenceCapturePermit(const SequenceCapturePermit&) = delete;
 	SequenceCapturePermit& operator=(const SequenceCapturePermit&) = delete;
-  private:
+
+private:
 	std::pair<const McpDebug*, std::string> m_key;
 };
 
 Json SequenceCaptureDefinition()
 {
 	const Json id = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}},
-		{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
-	return {{"name", "capture_pose_sequence"},
-		{"description", "Run a pose sequence and automatically save its captured stereo frames and manifest in a new directory. Waits for completion; bounded to 32 captures and 128 MiB. Cancel or timeout closes the debugger connection."},
-		{"inputSchema", {{"type", "object"}, {"properties", {
-			{"connection", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
-			{"session", id}, {"generation", id}, {"program_id", id},
-			{"program", {{"type", "string"}, {"description", "Optional JSONL program; omit for an already uploaded program."}}},
-			{"loop", {{"type", "boolean"}}}, {"directory", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
+											{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
+	return {
+		{"name", "capture_pose_sequence"},
+		{"description",
+		 "Run a pose sequence and automatically save its captured stereo frames and manifest in a new directory. Waits "
+		 "for completion; bounded to 32 captures and 128 MiB. Cancel or timeout closes the debugger connection."},
+		{"inputSchema",
+		 {{"type", "object"},
+		  {"properties",
+		   {{"connection", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
+			{"session", id},
+			{"generation", id},
+			{"program_id", id},
+			{"program",
+			 {{"type", "string"}, {"description", "Optional JSONL program; omit for an already uploaded program."}}},
+			{"loop", {{"type", "boolean"}}},
+			{"directory", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
 			{"max_captures", {{"type", "integer"}, {"minimum", 1}, {"maximum", 32}}},
 			{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 600}}}}},
-			{"required", Json::array({"connection", "program_id", "directory"})}, {"additionalProperties", false}}}};
+		  {"required", Json::array({"connection", "program_id", "directory"})},
+		  {"additionalProperties", false}}}};
 }
+
 static Json Result(const Json& data, bool error = false)
 {
 	return {{"content", Json::array({{{"type", "text"}, {"text", data.dump()}}})}, {"isError", error}};
 }
+
 static void WriteManifest(const std::filesystem::path& directory, Json& manifest)
 {
 	DecimalSequenceIdentities(manifest);
 	const auto content = manifest.dump(2);
 	SaveExportFile(directory / "manifest.json", std::as_bytes(std::span(content.data(), content.size())), true);
 }
+
 struct StereoEncoded
 {
 	std::vector<std::byte> bytes;
 	std::uint32_t width = 0, height = 0;
 	bool lossy = false;
 };
+
 static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std::uint64_t frame)
 {
 	ImageEncodingPermit permit;
@@ -82,8 +99,9 @@ static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std
 	bool lossy = false;
 	for (unsigned eye = 0; eye < 2; ++eye)
 	{
-		const auto started = calls.Request(wire::OpCode::StartExport,
-			{wire::Field::U64(tag::ImageReaderId, reader, true), wire::Field::U32(tag::Layer, eye)});
+		const auto started =
+			calls.Request(wire::OpCode::StartExport,
+						  {wire::Field::U64(tag::ImageReaderId, reader, true), wire::Field::U32(tag::Layer, eye)});
 		const auto ticket = panel::U64(started, tag::ExportId);
 		if (!ticket)
 			throw std::runtime_error("Runtime omitted the sequence export identity");
@@ -109,9 +127,9 @@ static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std
 			const auto description = wire::DecodeImageDescription(*descriptor);
 			const auto w = description.width, h = description.height, format = description.format;
 			lossy |= format != static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm) &&
-				format != static_cast<std::uint32_t>(ColorFormat::Rgba8Srgb) &&
-				format != static_cast<std::uint32_t>(ColorFormat::Bgra8Unorm) &&
-				format != static_cast<std::uint32_t>(ColorFormat::Bgra8Srgb);
+					 format != static_cast<std::uint32_t>(ColorFormat::Rgba8Srgb) &&
+					 format != static_cast<std::uint32_t>(ColorFormat::Bgra8Unorm) &&
+					 format != static_cast<std::uint32_t>(ColorFormat::Bgra8Srgb);
 			const auto pixelBytes = ColorPixelBytes(format);
 			const auto total = panel::U64(info, tag::TotalBytes);
 			if (!pixelBytes || !w || !h || w > 2048 || h > 4096 || description.arrayLayers != 1 ||
@@ -128,11 +146,9 @@ static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std
 			}
 			std::vector<std::byte> raw;
 			raw.reserve(static_cast<std::size_t>(total));
-			control::ExportReader::Read([&](auto opcode, auto fields) { return calls.Request(opcode, std::move(fields)); },
-				ticket, total, [&](std::span<const std::byte> bytes)
-			{
-				raw.insert(raw.end(), bytes.begin(), bytes.end());
-			});
+			control::ExportReader::Read(
+				[&](auto opcode, auto fields) { return calls.Request(opcode, std::move(fields)); }, ticket, total,
+				[&](std::span<const std::byte> bytes) { raw.insert(raw.end(), bytes.begin(), bytes.end()); });
 			for (std::size_t i = 0; i < std::size_t{width} * height; ++i)
 			{
 				const auto color = DecodeColorPixel(format, std::span(raw).subspan(i * pixelBytes, pixelBytes));
@@ -147,8 +163,12 @@ static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std
 		}
 		catch (...)
 		{
-			try { calls.Request(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, ticket, true)}); }
-			catch (...) {}
+			try
+			{
+				calls.Request(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, ticket, true)});
+			}
+			catch (...)
+			{}
 			throw;
 		}
 	}
@@ -156,6 +176,7 @@ static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std
 	auto encoded = EncodeImage(sheet, static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), width * 2, height, true, 85);
 	return {std::move(encoded.bytes), width * 2, height, lossy};
 }
+
 void ValidateSequenceCapture(const Json& arguments)
 {
 	if (!arguments.is_object())
@@ -169,8 +190,8 @@ void ValidateSequenceCapture(const Json& arguments)
 		throw std::invalid_argument("Supply both session and generation, or omit both");
 	const auto connection = arguments.at("connection").get<std::string>();
 	const auto text = arguments.at("directory").get<std::string>();
-	if (connection.empty() || connection.size() > 256 || connection.find('\0') != std::string::npos ||
-		text.empty() || text.size() > 4096 || text.find('\0') != std::string::npos)
+	if (connection.empty() || connection.size() > 256 || connection.find('\0') != std::string::npos || text.empty() ||
+		text.size() > 4096 || text.find('\0') != std::string::npos)
 		throw std::invalid_argument("Invalid connection or directory");
 	const auto root = Utf8Path(text);
 	if (!root.is_absolute() || !std::filesystem::is_directory(root))
@@ -189,11 +210,15 @@ void ValidateSequenceCapture(const Json& arguments)
 }
 
 std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const Json& arguments,
-	const std::shared_ptr<McpCancellation>& cancellation, const std::function<void(const Json&)>& progress)
+									const std::shared_ptr<McpCancellation>& cancellation,
+									const std::function<void(const Json&)>& progress)
 {
 	std::filesystem::path output;
-	Json manifest = {{"ok", false}, {"phase", "preparing"}, {"captures", Json::array()},
-		{"incomplete", false}, {"history_gap", false}};
+	Json manifest = {{"ok", false},
+					 {"phase", "preparing"},
+					 {"captures", Json::array()},
+					 {"incomplete", false},
+					 {"history_gap", false}};
 	try
 	{
 		ValidateSequenceCapture(arguments);
@@ -216,7 +241,8 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 		manifest["directory"] = PathText(output);
 		manifest["program_id"] = arguments.at("program_id");
 		WriteManifest(output, manifest);
-		if (progress) progress(manifest);
+		if (progress)
+			progress(manifest);
 		ArtifactCalls calls(app, debug, connection, cancellation, timeout, "Sequence capture");
 		std::uint64_t sequence = 0;
 		std::map<std::uint64_t, std::uint64_t> pending;
@@ -224,25 +250,33 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 		try
 		{
 			auto request = PrepareSequence("run_pose_sequence", start,
-				arguments.contains("session") ? ImageId(arguments, "session") : 0,
-				arguments.contains("generation") ? ImageId(arguments, "generation") : 0);
+										   arguments.contains("session") ? ImageId(arguments, "session") : 0,
+										   arguments.contains("generation") ? ImageId(arguments, "generation") : 0);
 			if (!arguments.contains("session"))
-				std::erase_if(request.fields, [](const auto& field) { return field.tag == tag::Session || field.tag == tag::Generation; });
-			const auto started = calls.Sequence(request.opcode, std::move(request.fields),
-				arguments.contains("program") ? std::optional<std::string_view>{arguments.at("program").get_ref<const std::string&>()} : std::nullopt);
+				std::erase_if(request.fields, [](const auto& field) {
+					return field.tag == tag::Session || field.tag == tag::Generation;
+				});
+			const auto started = calls.Sequence(
+				request.opcode, std::move(request.fields),
+				arguments.contains("program")
+					? std::optional<std::string_view>{arguments.at("program").get_ref<const std::string&>()}
+					: std::nullopt);
 			sequence = SequenceInteger(started, "sequence_id");
 			if (!started.at("document").at("active").get<bool>())
 				throw std::runtime_error("Sequence is already complete; use a new program ID");
 			manifest["sequence_id"] = sequence;
 			manifest["phase"] = "running";
 			WriteManifest(output, manifest);
-			if (progress) progress(manifest);
+			if (progress)
+				progress(manifest);
 			std::uint64_t cursor = 0, bytes = 0;
 			for (;;)
 			{
 				calls.Check();
-				const auto result = calls.Sequence(wire::OpCode::ReadSequence, {wire::Field::U64(tag::SequenceId, sequence, true),
-					wire::Field::U64(tag::Offset, cursor), wire::Field::U64(tag::Length, 64)});
+				const auto result =
+					calls.Sequence(wire::OpCode::ReadSequence,
+								   {wire::Field::U64(tag::SequenceId, sequence, true),
+									wire::Field::U64(tag::Offset, cursor), wire::Field::U64(tag::Length, 64)});
 				const auto& page = result.at("document");
 				if (page.at("status").is_null())
 					throw std::runtime_error("Sequence was replaced while saving captures");
@@ -261,7 +295,8 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 					if (!capture)
 					{
 						manifest["incomplete"] = true;
-						throw std::runtime_error("A sequence capture could not be admitted: " + receipt.value("admission", "unknown"));
+						throw std::runtime_error("A sequence capture could not be admitted: " +
+												 receipt.value("admission", "unknown"));
 					}
 					if (!seen.contains(capture))
 						pending.emplace(capture, frame);
@@ -280,13 +315,15 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 					if (manifest["captures"].size() >= static_cast<std::size_t>(limit))
 					{
 						if (status.at("active").get<bool>())
-							calls.Sequence(wire::OpCode::StopSequence, {wire::Field::U64(tag::SequenceId, sequence, true)});
+							calls.Sequence(wire::OpCode::StopSequence,
+										   {wire::Field::U64(tag::SequenceId, sequence, true)});
 						manifest["phase"] = "capture_limit";
 						manifest["incomplete"] = true;
 						break;
 					}
 					const auto capture = item->first;
-					const auto current = calls.Request(wire::OpCode::Capture, {wire::Field::U64(tag::CaptureId, capture, true)});
+					const auto current =
+						calls.Request(wire::OpCode::Capture, {wire::Field::U64(tag::CaptureId, capture, true)});
 					const auto phase = panel::Text(current, tag::Phase);
 					if (phase == "reserved" || phase == "issued" || phase == "begun")
 					{
@@ -298,7 +335,8 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 					wire::Message retained;
 					try
 					{
-						retained = calls.Request(wire::OpCode::RetainImage, {wire::Field::U64(tag::CaptureId, capture, true)});
+						retained =
+							calls.Request(wire::OpCode::RetainImage, {wire::Field::U64(tag::CaptureId, capture, true)});
 					}
 					catch (const ArtifactError& error)
 					{
@@ -312,7 +350,8 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 						throw std::runtime_error("Runtime omitted the sequence image reader identity");
 					try
 					{
-						const auto info = calls.Request(wire::OpCode::ImageInfo, {wire::Field::U64(tag::ImageReaderId, reader, true)});
+						const auto info = calls.Request(wire::OpCode::ImageInfo,
+														{wire::Field::U64(tag::ImageReaderId, reader, true)});
 						const auto generation = panel::U64(panel::Nested(info.Find(tag::Frame)), tag::Generation);
 						if (panel::Frame(info) != item->second || !generation ||
 							generation != panel::U64(panel::Nested(current.Find(tag::Frame)), tag::Generation))
@@ -324,23 +363,36 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 						const auto path = output / ("frame-" + std::to_string(item->second) + ".png");
 						SaveExportFile(path, encoded.bytes, false);
 						bytes += encoded.bytes.size();
-						manifest["captures"].push_back({{"frame", item->second}, {"capture_id", capture},
-							{"path", PathText(path)}, {"bytes", std::to_string(encoded.bytes.size())}, {"frame_key", ImageDocument(current).at("frame")},
-							{"width", encoded.width}, {"height", encoded.height}, {"lossy", encoded.lossy}});
+						manifest["captures"].push_back({{"frame", item->second},
+														{"capture_id", capture},
+														{"path", PathText(path)},
+														{"bytes", std::to_string(encoded.bytes.size())},
+														{"frame_key", ImageDocument(current).at("frame")},
+														{"width", encoded.width},
+														{"height", encoded.height},
+														{"lossy", encoded.lossy}});
 						WriteManifest(output, manifest);
-						if (progress) progress(manifest);
+						if (progress)
+							progress(manifest);
 						calls.Request(wire::OpCode::ReleaseImage, {wire::Field::U64(tag::ImageReaderId, reader, true)});
-						calls.Sequence(wire::OpCode::ReleaseSequenceCapture, {wire::Field::U64(tag::CaptureId, capture, true)});
+						calls.Sequence(wire::OpCode::ReleaseSequenceCapture,
+									   {wire::Field::U64(tag::CaptureId, capture, true)});
 					}
 					catch (...)
 					{
-						try { calls.Request(wire::OpCode::ReleaseImage, {wire::Field::U64(tag::ImageReaderId, reader, true)}); }
-						catch (...) {}
+						try
+						{
+							calls.Request(wire::OpCode::ReleaseImage,
+										  {wire::Field::U64(tag::ImageReaderId, reader, true)});
+						}
+						catch (...)
+						{}
 						throw;
 					}
 					seen.insert(item->first);
 					item = pending.erase(item);
-					if (manifest["captures"].size() >= static_cast<std::size_t>(limit) && status.at("active").get<bool>())
+					if (manifest["captures"].size() >= static_cast<std::size_t>(limit) &&
+						status.at("active").get<bool>())
 					{
 						calls.Sequence(wire::OpCode::StopSequence, {wire::Field::U64(tag::SequenceId, sequence, true)});
 						manifest["phase"] = "capture_limit";
@@ -350,12 +402,14 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 				}
 				if (manifest["phase"] == "capture_limit")
 				{
-					const auto final = calls.Sequence(wire::OpCode::ReadSequence, {wire::Field::U64(tag::SequenceId, sequence, true)});
+					const auto final =
+						calls.Sequence(wire::OpCode::ReadSequence, {wire::Field::U64(tag::SequenceId, sequence, true)});
 					if (!final.at("document").at("status").is_null())
 						manifest["status"] = final.at("document").at("status");
 					manifest["unsaved_captures"] = final.at("document").at("held_captures");
 					for (const auto& held : manifest["unsaved_captures"])
-						calls.Sequence(wire::OpCode::ReleaseSequenceCapture, {wire::Field::U64(tag::CaptureId, SequenceInteger(held, "capture_id"), true)});
+						calls.Sequence(wire::OpCode::ReleaseSequenceCapture,
+									   {wire::Field::U64(tag::CaptureId, SequenceInteger(held, "capture_id"), true)});
 					break;
 				}
 				if (!status.at("active").get<bool>() && !page.at("more").get<bool>() && pending.empty() &&
@@ -370,21 +424,28 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 			}
 			manifest["ok"] = !manifest["incomplete"].get<bool>();
 			WriteManifest(output, manifest);
-			if (progress) progress(manifest);
+			if (progress)
+				progress(manifest);
 			return Result(manifest, !manifest["ok"].get<bool>());
 		}
 		catch (...)
 		{
 			if (sequence)
 			{
-				try { calls.Sequence(wire::OpCode::StopSequence, {wire::Field::U64(tag::SequenceId, sequence, true)}); }
-				catch (...) {}
 				try
 				{
-					const auto final = calls.Sequence(wire::OpCode::ReadSequence, {wire::Field::U64(tag::SequenceId, sequence, true)});
+					calls.Sequence(wire::OpCode::StopSequence, {wire::Field::U64(tag::SequenceId, sequence, true)});
+				}
+				catch (...)
+				{}
+				try
+				{
+					const auto final =
+						calls.Sequence(wire::OpCode::ReadSequence, {wire::Field::U64(tag::SequenceId, sequence, true)});
 					manifest["unsaved_captures"] = final.at("document").at("held_captures");
 					for (const auto& held : manifest["unsaved_captures"])
-						calls.Sequence(wire::OpCode::ReleaseSequenceCapture, {wire::Field::U64(tag::CaptureId, SequenceInteger(held, "capture_id"), true)});
+						calls.Sequence(wire::OpCode::ReleaseSequenceCapture,
+									   {wire::Field::U64(tag::CaptureId, SequenceInteger(held, "capture_id"), true)});
 				}
 				catch (...)
 				{
@@ -403,8 +464,16 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 		std::error_code directoryError;
 		if (!output.empty() && std::filesystem::is_directory(output, directoryError))
 		{
-			try { WriteManifest(output, manifest); if (progress) progress(manifest); }
-			catch (const std::exception& failure) { manifest["manifest_error"] = failure.what(); }
+			try
+			{
+				WriteManifest(output, manifest);
+				if (progress)
+					progress(manifest);
+			}
+			catch (const std::exception& failure)
+			{
+				manifest["manifest_error"] = failure.what();
+			}
 		}
 		if (cancellation->Requested())
 			return {};

@@ -25,15 +25,15 @@ static std::vector<SurfaceFeatures> Features(std::span<const std::uint8_t> rgb, 
 	{
 		const auto variance = std::max(0.0f, meanSquared[i] - mean[i] * mean[i]);
 		const auto total = (rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2]) / 255.0f + .06f;
-		features[i] = {(luminance[i] - mean[i]) / (std::sqrt(variance) + .02f) * .35f,
-					   rgb[i * 3] / 255.0f / total * 4, rgb[i * 3 + 2] / 255.0f / total * 4};
+		features[i] = {(luminance[i] - mean[i]) / (std::sqrt(variance) + .02f) * .35f, rgb[i * 3] / 255.0f / total * 4,
+					   rgb[i * 3 + 2] / 255.0f / total * 4};
 	}
 	return features;
 }
 
 static std::vector<float> CostVolume(const std::vector<SurfaceFeatures>& left,
-									 const std::vector<SurfaceFeatures>& right, int width, int height,
-									 int minimum, int maximum, bool coarse, const std::function<void()>& check)
+									 const std::vector<SurfaceFeatures>& right, int width, int height, int minimum,
+									 int maximum, bool coarse, const std::function<void()>& check)
 {
 	const int disparities = maximum - minimum + 1;
 	const auto count = std::size_t(width) * height;
@@ -52,8 +52,8 @@ static std::vector<float> CostVolume(const std::vector<SurfaceFeatures>& left,
 				{
 					const auto& a = left[i];
 					const auto& b = right[std::size_t(y) * width + rightX];
-					difference[i] = std::min(2.5f, std::abs(a.texture - b.texture) +
-						std::abs(a.red - b.red) + std::abs(a.blue - b.blue));
+					difference[i] = std::min(2.5f, std::abs(a.texture - b.texture) + std::abs(a.red - b.red) +
+													   std::abs(a.blue - b.blue));
 				}
 			}
 		if (coarse)
@@ -64,16 +64,16 @@ static std::vector<float> CostVolume(const std::vector<SurfaceFeatures>& left,
 				for (int x = 0; x < width; ++x)
 				{
 					const auto i = std::size_t(y) * width + x;
-					rows[i] = difference[i] + (y ? difference[i - width] : 0) +
-						(y + 1 < height ? difference[i + width] : 0);
+					rows[i] =
+						difference[i] + (y ? difference[i - width] : 0) + (y + 1 < height ? difference[i + width] : 0);
 				}
 		}
 		for (int y = 0; y < height; ++y)
 			for (int x = 0; x < width; ++x)
 			{
 				const auto i = std::size_t(y) * width + x;
-				const auto score = coarse ? rows[i] : (rows[i] + (x ? rows[i - 1] : 0) +
-					(x + 1 < width ? rows[i + 1] : 0)) / 9;
+				const auto score =
+					coarse ? rows[i] : (rows[i] + (x ? rows[i - 1] : 0) + (x + 1 < width ? rows[i + 1] : 0)) / 9;
 				volume[i * disparities + (d - minimum)] = score;
 			}
 	}
@@ -81,7 +81,7 @@ static std::vector<float> CostVolume(const std::vector<SurfaceFeatures>& left,
 }
 
 static std::vector<float> Aggregate(const std::vector<float>& costs, int width, int height, int disparities,
-									 const std::function<void()>& check)
+									const std::function<void()>& check)
 {
 	std::vector<float> result(costs.size(), 0), previous(disparities), current(disparities);
 	for (int axis = 0; axis < 2; ++axis)
@@ -148,15 +148,16 @@ static MatchPlanes Select(const std::vector<float>& volume, int width, int heigh
 			const auto subpixel = denominator > 1e-6f ? std::clamp(.5f * (low - high) / denominator, -.5f, .5f) : 0;
 			result.disparity[i] = minimum + selected + subpixel;
 			const auto away = std::min(volume[base + std::max(0, selected - 4)],
-				volume[base + std::min(disparities - 1, selected + 4)]);
+									   volume[base + std::min(disparities - 1, selected + 4)]);
 			result.uniqueness[i] = selected == 0 || selected == disparities - 1 ? 0 : (away - best) / (away + .001f);
 			float bestRight = std::numeric_limits<float>::infinity();
 			int rightDisparity = 0;
 			for (int d = minimum; d <= maximum; ++d)
 			{
 				const auto leftX = x + d;
-				const auto cost = leftX < 0 || leftX >= width ? 99.0f :
-					volume[(std::size_t(y) * width + leftX) * disparities + d - minimum];
+				const auto cost = leftX < 0 || leftX >= width
+									  ? 99.0f
+									  : volume[(std::size_t(y) * width + leftX) * disparities + d - minimum];
 				if (cost < bestRight)
 				{
 					bestRight = cost;
@@ -187,8 +188,8 @@ static float Percentile(std::vector<float> values, double fraction)
 	return values[index] * (1 - weight) + values[std::min(index + 1, values.size() - 1)] * weight;
 }
 
-static std::pair<int, int> Bounds(std::span<const std::uint8_t> left, std::span<const std::uint8_t> right,
-								  int width, int height, const std::function<void()>& check)
+static std::pair<int, int> Bounds(std::span<const std::uint8_t> left, std::span<const std::uint8_t> right, int width,
+								  int height, const std::function<void()>& check)
 {
 	const int scale = std::max(1, width / 120);
 	const int smallWidth = (width + scale - 1) / scale, smallHeight = (height + scale - 1) / scale;
@@ -223,11 +224,11 @@ static std::pair<int, int> Bounds(std::span<const std::uint8_t> left, std::span<
 }
 
 StereoSurface MatchStereoSurface(std::span<const std::uint8_t> left, std::span<const std::uint8_t> right,
-	std::uint32_t width, std::uint32_t height, std::optional<float> infinity, const std::function<void()>& check)
+								 std::uint32_t width, std::uint32_t height, std::optional<float> infinity,
+								 const std::function<void()>& check)
 {
-	if (width < 16 || height < 16 || width > 480 || height > 480 ||
-		left.size() != std::size_t(width) * height * 3 || right.size() != left.size() ||
-		(infinity && (!std::isfinite(*infinity) || std::abs(*infinity) > 4)))
+	if (width < 16 || height < 16 || width > 480 || height > 480 || left.size() != std::size_t(width) * height * 3 ||
+		right.size() != left.size() || (infinity && (!std::isfinite(*infinity) || std::abs(*infinity) > 4)))
 		throw std::invalid_argument("Stereo surface inputs exceed the analysis bounds");
 	check();
 	const auto [lowest, highest] = Bounds(left, right, width, height, check);
@@ -235,20 +236,26 @@ StereoSurface MatchStereoSurface(std::span<const std::uint8_t> left, std::span<c
 	if (infinity)
 		minimum = std::min(minimum, static_cast<int>(*infinity * width) - 5);
 	const int maximum = std::min(std::max(highest + static_cast<int>(std::nearbyint(width * .04)),
-		minimum + static_cast<int>(std::nearbyint(width * .30))), minimum + static_cast<int>(std::nearbyint(width * .45)));
+										  minimum + static_cast<int>(std::nearbyint(width * .30))),
+								 minimum + static_cast<int>(std::nearbyint(width * .45)));
 	const auto featuresA = Features(left, width, height), featuresB = Features(right, width, height);
 	const auto costs = CostVolume(featuresA, featuresB, width, height, minimum, maximum, false, check);
 	const auto aggregate = Aggregate(costs, width, height, maximum - minimum + 1, check);
 	auto matches = Select(aggregate, width, height, minimum, maximum, check);
-	StereoSurface result{width, height, minimum, maximum, std::move(matches.disparity),
-		std::move(matches.uniqueness), std::vector<std::uint8_t>(std::size_t(width) * height)};
+	StereoSurface result{width,
+						 height,
+						 minimum,
+						 maximum,
+						 std::move(matches.disparity),
+						 std::move(matches.uniqueness),
+						 std::vector<std::uint8_t>(std::size_t(width) * height)};
 	for (std::uint32_t y = 0; y < height; ++y)
 		for (std::uint32_t x = 0; x < width; ++x)
 		{
 			const auto i = std::size_t(y) * width + x;
 			const auto target = x - result.disparity[i];
 			result.trusted[i] = result.uniqueness[i] > .04f && target >= 1 && target <= width - 2 &&
-				std::abs(SampleRow(matches.right, width, y, target) - result.disparity[i]) <= 1.5f;
+								std::abs(SampleRow(matches.right, width, y, target) - result.disparity[i]) <= 1.5f;
 		}
 	return result;
 }

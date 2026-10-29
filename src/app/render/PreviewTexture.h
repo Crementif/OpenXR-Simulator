@@ -18,7 +18,7 @@ float PreviewAspect(const control::ImageDescription& image, std::optional<std::s
 // UI-thread owner of one private native copy and its sampled descriptors.
 class PreviewTexture
 {
-  public:
+public:
 	PreviewTexture(const VulkanDeviceAccess& device, control::ImageDescription description);
 	~PreviewTexture();
 	PreviewTexture(const PreviewTexture&) = delete;
@@ -52,7 +52,7 @@ class PreviewTexture
 	static std::uint64_t TotalSnapshotChargeBytes();
 	static bool CanReserveSnapshot(std::uint64_t imageBytes);
 
-  private:
+private:
 	struct State;
 	std::unique_ptr<State> m_state;
 };

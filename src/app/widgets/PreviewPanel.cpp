@@ -15,6 +15,7 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 static std::string ImageLabel(const PreviewImageSummary& image)
 {
 	// Composited and display output are the normal case and need no label.
@@ -24,19 +25,22 @@ static std::string ImageLabel(const PreviewImageSummary& image)
 		return "";
 	return "Captured image";
 }
+
 static std::string ZoomLabel(bool fit, bool cropped, float zoom)
 {
 	return fit && !cropped ? std::string{"Fit"} : std::to_string(static_cast<int>(zoom * 100 + .5f)) + "%";
 }
+
 static bool SameRect(ImVec4 first, ImVec4 second)
 {
 	return first.x == second.x && first.y == second.y && first.z == second.z && first.w == second.w;
 }
+
 PreviewPanel::PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial, FramePage& frame,
 						   DeviceControlPanel& devices, Window* window)
 	: m_session(session), m_pilot(pilot), m_spatial(spatial), m_frame(frame), m_devices(devices), m_window(window)
-{
-}
+{}
+
 bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad)
 {
 	const int frame = ImGui::GetFrameCount();
@@ -92,6 +96,7 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view, bool inputAv
 	ImGui::EndChild();
 	return pilotArea;
 }
+
 void PreviewPanel::CancelInteraction()
 {
 	m_panning = false;
@@ -99,6 +104,7 @@ void PreviewPanel::CancelInteraction()
 	m_pickStart.reset();
 	m_gestureImage.reset();
 }
+
 bool PreviewPanel::SameGestureTarget(const PreviewImageSummary& image) const
 {
 	return m_gestureImage && m_gestureImage->scope == image.scope && m_gestureImage->live == image.live &&
@@ -108,6 +114,7 @@ bool PreviewPanel::SameGestureTarget(const PreviewImageSummary& image) const
 		   m_gestureImage->description.height == image.description.height && m_gestureSlice == m_slice &&
 		   SameRect(m_gestureCrop, m_crop.value_or(ImVec4{0, 0, 1, 1}));
 }
+
 bool PreviewPanel::DrawKept(const RuntimeView& view)
 {
 	if (view.time.following || !view.connected || m_slice != 0 || (!m_fit && !m_crop))
@@ -127,6 +134,7 @@ bool PreviewPanel::DrawKept(const RuntimeView& view)
 	ImGui::GetWindowDrawList()->AddText({origin.x + 8, origin.y + 8}, theme::TextDim, "Preview");
 	return true;
 }
+
 void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 {
 	const auto available = ImGui::GetContentRegionAvail();
@@ -134,8 +142,7 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	const float unit = ImGui::GetFontSize() / 17;
 	const ImVec2 center{origin.x + available.x / 2, origin.y + available.y / 2};
 	auto* draw = ImGui::GetWindowDrawList();
-	const auto line = [&](const char* text, float y, ImU32 color)
-	{
+	const auto line = [&](const char* text, float y, ImU32 color) {
 		const auto size = ImGui::CalcTextSize(text);
 		draw->AddText({center.x - size.x / 2, y}, color, text);
 	};
@@ -176,6 +183,7 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026", center.y,
 		 theme::TextDim);
 }
+
 bool PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live, bool imageVisible)
 {
 	const float scale = ImGui::GetFontSize() / 17, margin = 8 * scale;
@@ -245,6 +253,7 @@ bool PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live, bool 
 	ImGui::PopStyleColor();
 	return hovered;
 }
+
 std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view,
 															   bool inputAvailable)
 {
@@ -367,6 +376,7 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 	ImGui::EndChild();
 	return area;
 }
+
 void PreviewPanel::UpdateImage(const ImageArea& area, const PreviewImageSummary& image, bool cornerHovered,
 							   bool pilotArea, bool automaticGamepad)
 {
@@ -398,6 +408,7 @@ void PreviewPanel::UpdateImage(const ImageArea& area, const PreviewImageSummary&
 		m_pilotError = m_pilot.Error();
 	}
 }
+
 void PreviewPanel::DrawViewButton(const PreviewImageSummary& image, bool imageVisible, bool compact)
 {
 	const auto zoom = ZoomLabel(m_fit, m_crop.has_value(), m_zoom);
@@ -406,8 +417,7 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image, bool imageVi
 		ImGui::OpenPopup("Image view");
 	if (!ImGui::BeginPopup("Image view"))
 		return;
-	const auto choice = [&](const char* label, bool chosen)
-	{
+	const auto choice = [&](const char* label, bool chosen) {
 		if (chosen)
 			ImGui::PushStyleColor(ImGuiCol_Button, theme::Mix(theme::SurfaceRaised, theme::Accent, .45f));
 		const bool pressed = ImGui::Button(label);
@@ -481,6 +491,7 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image, bool imageVi
 	}
 	ImGui::EndPopup();
 }
+
 void PreviewPanel::PickCrop(const ImageArea& area, bool hovered)
 {
 	const auto imageMin = area.minimum, imageMax = area.maximum;
@@ -535,8 +546,7 @@ void PreviewPanel::PickCrop(const ImageArea& area, bool hovered)
 		CancelInteraction();
 		return;
 	}
-	const auto normalized = [&](ImVec2 point)
-	{
+	const auto normalized = [&](ImVec2 point) {
 		return ImVec2{std::clamp((point.x - left) / eyeWidth, 0.0f, 1.0f),
 					  std::clamp((point.y - imageMin.y) / height, 0.0f, 1.0f)};
 	};

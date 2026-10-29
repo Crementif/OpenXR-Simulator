@@ -15,7 +15,9 @@ ApplicationCatalog::ApplicationCatalog()
 		throw std::runtime_error("Configured monitoring requires Luau automation support");
 #endif
 }
+
 ApplicationCatalog::~ApplicationCatalog() = default;
+
 void ApplicationCatalog::StartMonitor(std::uint64_t id, MonitorOptions options)
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -34,6 +36,7 @@ void ApplicationCatalog::StartMonitor(std::uint64_t id, MonitorOptions options)
 	throw std::runtime_error("Automatic monitoring requires Luau automation support");
 #endif
 }
+
 MonitorStatus ApplicationCatalog::ReadMonitor(std::uint64_t id) const
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -42,10 +45,12 @@ MonitorStatus ApplicationCatalog::ReadMonitor(std::uint64_t id) const
 #endif
 	return {};
 }
+
 void ApplicationCatalog::StopMonitor(std::uint64_t id, const std::string& monitor)
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
-	if (const auto found = m_monitors.find(id); found != m_monitors.end() && found->second->Status().options.id == monitor)
+	if (const auto found = m_monitors.find(id);
+		found != m_monitors.end() && found->second->Status().options.id == monitor)
 	{
 		found->second->Stop();
 		return;
@@ -53,6 +58,7 @@ void ApplicationCatalog::StopMonitor(std::uint64_t id, const std::string& monito
 #endif
 	throw std::invalid_argument("Unknown monitor_id for this application");
 }
+
 void ApplicationCatalog::PollMonitors()
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -81,9 +87,11 @@ void ApplicationCatalog::PollMonitors()
 			continue;
 		if (std::ranges::count_if(m_monitors, [](const auto& item) { return item.second->Active(); }) >= 4)
 			continue;
-		StartMonitor(application.id, {"configured-" + std::to_string(application.runtimeProcess) + "-" +
-			std::to_string(application.runtimeEpoch) + "-" + std::to_string(application.session) + "-" +
-			std::to_string(application.generation), m_monitorTarget});
+		StartMonitor(application.id,
+					 {"configured-" + std::to_string(application.runtimeProcess) + "-" +
+						  std::to_string(application.runtimeEpoch) + "-" + std::to_string(application.session) + "-" +
+						  std::to_string(application.generation),
+					  m_monitorTarget});
 	}
 #endif
 }

@@ -12,12 +12,12 @@ namespace simxr
 // One internal binary signal/wait pair, shared by its producer and inspection work.
 class VulkanFrameSync
 {
-  public:
+public:
 	VkSemaphore Signal() const noexcept;
 	// The frame's single-consumer preparation claim serializes imports.
 	std::shared_ptr<VulkanExternalSemaphore> Import(const VulkanExternalDevice& consumer);
 
-  private:
+private:
 	friend class VulkanFrameSyncPool;
 	friend class VulkanInspectionWork;
 	// Only confirmed completion of the imported wait permits reuse.
@@ -31,13 +31,13 @@ class VulkanFrameSync
 
 class VulkanFrameSyncPool final : public std::enable_shared_from_this<VulkanFrameSyncPool>
 {
-  public:
+public:
 	explicit VulkanFrameSyncPool(std::shared_ptr<VulkanExternalDevice> producer);
 	std::shared_ptr<VulkanFrameSync> Acquire();
 	// Clear idle native objects before the borrowed producer device is destroyed.
 	void Close();
 
-  private:
+private:
 	void Recycle(std::unique_ptr<VulkanFrameSync> sync);
 	const std::shared_ptr<VulkanExternalDevice> m_producer;
 	std::mutex m_mutex;

@@ -33,7 +33,9 @@ static void ReadEntry(LibraryEntry& entry, const std::filesystem::path& path)
 		entry.error = error.what();
 	}
 }
+
 LibraryCatalog::LibraryCatalog(std::filesystem::path root) : m_root(std::move(root)) {}
+
 LibraryCatalog::~LibraryCatalog()
 {
 	m_worker.request_stop();
@@ -41,25 +43,20 @@ LibraryCatalog::~LibraryCatalog()
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 bool LibraryCatalog::ValidName(const std::string& name)
 {
 	return !name.empty() && name != "." && name != ".." && name.back() != '.' && name.back() != ' ' &&
 		   name.find_first_of("/\\:<>\"|?*") == std::string::npos &&
-		   std::none_of(name.begin(), name.end(),
-						[](unsigned char character)
-						{
-							return character < 32;
-						});
+		   std::none_of(name.begin(), name.end(), [](unsigned char character) { return character < 32; });
 }
+
 void LibraryCatalog::StartWorker()
 {
 	if (!m_worker.joinable())
-		m_worker = std::jthread(
-			[this](std::stop_token stop)
-			{
-				Run(stop);
-			});
+		m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
 }
+
 void LibraryCatalog::Refresh()
 {
 	std::lock_guard lock(m_mutex);
@@ -67,6 +64,7 @@ void LibraryCatalog::Refresh()
 	m_refresh = true;
 	m_changed.notify_all();
 }
+
 bool LibraryCatalog::Submit(Job job)
 {
 	std::lock_guard lock(m_mutex);
@@ -77,27 +75,33 @@ bool LibraryCatalog::Submit(Job job)
 	m_changed.notify_all();
 	return true;
 }
+
 bool LibraryCatalog::Rename(std::string path, std::string name)
 {
 	return Submit({LibraryAction::Rename, std::move(path), std::move(name)});
 }
+
 bool LibraryCatalog::Delete(std::string path)
 {
 	return Submit({LibraryAction::Delete, std::move(path), {}});
 }
+
 bool LibraryCatalog::ExportRange(std::string path, std::string name, std::uint64_t first, std::uint64_t last)
 {
 	return Submit({LibraryAction::ExportRange, std::move(path), std::move(name), first, last});
 }
+
 bool LibraryCatalog::ReadEvidence(std::string path, std::uint64_t cursor)
 {
 	return Submit({LibraryAction::Evidence, std::move(path), {}, cursor});
 }
+
 bool LibraryCatalog::Busy() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_busy || m_refresh || m_job.has_value() || m_result.has_value();
 }
+
 std::optional<LibraryResult> LibraryCatalog::TakeResult()
 {
 	std::lock_guard lock(m_mutex);
@@ -105,6 +109,7 @@ std::optional<LibraryResult> LibraryCatalog::TakeResult()
 	m_changed.notify_all();
 	return result;
 }
+
 void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop)
 {
 	std::vector<LibraryEntry> entries;
@@ -139,13 +144,10 @@ void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop)
 					const auto input = file.path() / "input.simxr";
 					entry.modified = std::filesystem::last_write_time(input);
 					entry.bytes = std::filesystem::file_size(input);
-					const auto cached = std::ranges::find_if(m_archiveCache,
-															 [&](const auto& previous)
-															 {
-																 return previous.path == entry.path &&
-																		previous.bytes == entry.bytes &&
-																		previous.modified == entry.modified;
-															 });
+					const auto cached = std::ranges::find_if(m_archiveCache, [&](const auto& previous) {
+						return previous.path == entry.path && previous.bytes == entry.bytes &&
+							   previous.modified == entry.modified;
+					});
 					if (cached != m_archiveCache.end())
 					{
 						entries.push_back(*cached);
@@ -181,17 +183,16 @@ void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop)
 		if (result.limited)
 			break;
 	}
-	std::ranges::sort(entries,
-					  [](const auto& a, const auto& b)
-					  {
-						  return a.modified == b.modified ? a.path < b.path : a.modified > b.modified;
-					  });
+	std::ranges::sort(entries, [](const auto& a, const auto& b) {
+		return a.modified == b.modified ? a.path < b.path : a.modified > b.modified;
+	});
 	m_archiveCache.clear();
 	for (const auto& entry : entries)
 		if (entry.archive && entry.error.empty())
 			m_archiveCache.push_back(entry);
 	result.entries = std::move(entries);
 }
+
 void LibraryCatalog::Run(std::stop_token stop)
 {
 	for (;;)
@@ -199,11 +200,7 @@ void LibraryCatalog::Run(std::stop_token stop)
 		Job job{LibraryAction::Scan, {}, {}};
 		{
 			std::unique_lock lock(m_mutex);
-			if (!m_changed.wait(lock, stop,
-								[this]
-								{
-									return !m_result && (m_job || m_refresh);
-								}))
+			if (!m_changed.wait(lock, stop, [this] { return !m_result && (m_job || m_refresh); }))
 				return;
 			if (m_job)
 				job = std::move(*m_job);

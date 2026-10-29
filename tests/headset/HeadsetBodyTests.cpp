@@ -15,6 +15,7 @@ static std::uint32_t s_revision = 0;
 static bool s_active = true, s_preserved = false;
 static int s_badSkeleton = 0, s_badMetadata = 0;
 static XrResult s_locateResult = XR_SUCCESS;
+
 static XrResult XRAPI_CALL CreateFB(XrSession session, const XrBodyTrackerCreateInfoFB* info, XrBodyTrackerFB* handle)
 {
 	Require(session != XR_NULL_HANDLE, "Body session");
@@ -23,6 +24,7 @@ static XrResult XRAPI_CALL CreateFB(XrSession session, const XrBodyTrackerCreate
 	*handle = reinterpret_cast<XrBodyTrackerFB>(2);
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_CALL CreateBD(XrSession session, const XrBodyTrackerCreateInfoBD* info, XrBodyTrackerBD* handle)
 {
 	Require(session != XR_NULL_HANDLE, "Body session");
@@ -31,20 +33,24 @@ static XrResult XRAPI_CALL CreateBD(XrSession session, const XrBodyTrackerCreate
 	*handle = reinterpret_cast<XrBodyTrackerBD>(3);
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_CALL DestroyFB(XrBodyTrackerFB)
 {
 	++s_destroyed;
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_CALL DestroyBD(XrBodyTrackerBD)
 {
 	++s_destroyed;
 	return XR_SUCCESS;
 }
+
 static XrPosef Pose(std::size_t index)
 {
 	return {{0, 0, 0, 1}, {static_cast<float>(index), 1, 2}};
 }
+
 static XrResult XRAPI_CALL LocateFB(XrBodyTrackerFB, const XrBodyJointsLocateInfoFB* info,
 									XrBodyJointLocationsFB* output)
 {
@@ -66,6 +72,7 @@ static XrResult XRAPI_CALL LocateFB(XrBodyTrackerFB, const XrBodyJointsLocateInf
 		output->time = 0;
 	return s_locateResult;
 }
+
 static XrResult XRAPI_CALL LocateBD(XrBodyTrackerBD, const XrBodyJointsLocateInfoBD* info,
 									XrBodyJointLocationsBD* output)
 {
@@ -78,6 +85,7 @@ static XrResult XRAPI_CALL LocateBD(XrBodyTrackerBD, const XrBodyJointsLocateInf
 		++output->jointLocationCount;
 	return s_locateResult;
 }
+
 static XrResult XRAPI_CALL Skeleton(XrBodyTrackerFB, XrBodySkeletonFB* output)
 {
 	++s_skeletonReads;
@@ -99,7 +107,9 @@ static XrResult XRAPI_CALL Skeleton(XrBodyTrackerFB, XrBodySkeletonFB* output)
 		output->joints[0].pose.orientation = {};
 	return XR_SUCCESS;
 }
-template <class Function> static void Reject(Function function)
+
+template<class Function>
+static void Reject(Function function)
 {
 	bool rejected = false;
 	try
@@ -113,18 +123,23 @@ template <class Function> static void Reject(Function function)
 	Require(rejected, "Invalid provider operation must reject");
 }
 } // namespace simxr::headset::test
+
 using namespace simxr::headset::test;
+
 namespace simxr::headset
 {
 OpenXrRuntime::~OpenXrRuntime() = default;
+
 bool OpenXrRuntime::ResourcesPreserved() const
 {
 	return s_preserved;
 }
+
 const HeadsetBodyCapabilities& OpenXrRuntime::BodyCapabilities() const
 {
 	return s_capabilities;
 }
+
 PFN_xrVoidFunction OpenXrRuntime::Procedure(const char* name) const
 {
 	const std::string_view value{name};
@@ -144,12 +159,14 @@ PFN_xrVoidFunction OpenXrRuntime::Procedure(const char* name) const
 		return reinterpret_cast<PFN_xrVoidFunction>(LocateBD);
 	throw std::runtime_error("Unexpected body procedure");
 }
+
 void CheckXr(XrResult result, const char* operation)
 {
 	if (XR_FAILED(result))
 		throw std::runtime_error(operation);
 }
 } // namespace simxr::headset
+
 int main()
 {
 	try
@@ -163,18 +180,10 @@ int main()
 							   BodyJointSet::FullBodyBD})
 		{
 			HeadsetBody body(runtime);
-			Reject(
-				[&]
-				{
-					body.Sample(100, space);
-				});
+			Reject([&] { body.Sample(100, space); });
 			body.Open(session, set);
 			Require(s_set == set, "Requested native joint set survives creation");
-			Reject(
-				[&]
-				{
-					body.Open(session, set);
-				});
+			Reject([&] { body.Open(session, set); });
 			s_locateResult = XR_ERROR_RUNTIME_FAILURE;
 			const auto suppressed = body.Sample(100, space, false);
 			Require(!suppressed.located && !suppressed.returnedTime && !suppressed.active && !suppressed.confidence &&
@@ -188,10 +197,8 @@ int main()
 			const auto map = BodyModel::JointMap(set);
 			Require(sample.jointSet == set && sample.requestedTime == 100, "Provider/time identity");
 			Require(std::count_if(sample.joints.begin(), sample.joints.end(),
-								  [](const auto& joint)
-								  {
-									  return joint.has_value();
-								  }) == static_cast<std::ptrdiff_t>(map.size()),
+								  [](const auto& joint) { return joint.has_value(); }) ==
+						static_cast<std::ptrdiff_t>(map.size()),
 					"No fabricated joints outside native schema");
 			for (std::size_t index = 1; index < map.size(); ++index)
 				Require(sample.joints[static_cast<std::size_t>(map[index])]->pose.position.x == index,
@@ -227,11 +234,7 @@ int main()
 				for (s_badSkeleton = 1; s_badSkeleton <= 5; ++s_badSkeleton)
 				{
 					++s_revision;
-					Reject(
-						[&]
-						{
-							body.Sample(100, space);
-						});
+					Reject([&] { body.Sample(100, space); });
 				}
 				s_badSkeleton = 0;
 				Require(body.Sample(100, space).skeletonRevision == s_revision,
@@ -243,18 +246,10 @@ int main()
 							sample.joints[static_cast<std::size_t>(map[1])]->flags == TrackedPoseFlags,
 						"BD partial tracking retained without fabricated FB metadata");
 			for (s_badMetadata = 1; s_badMetadata <= (fb ? 3 : 1); ++s_badMetadata)
-				Reject(
-					[&]
-					{
-						body.Sample(100, space);
-					});
+				Reject([&] { body.Sample(100, space); });
 			s_badMetadata = 0;
 			s_locateResult = XR_ERROR_RUNTIME_FAILURE;
-			Reject(
-				[&]
-				{
-					body.Sample(100, space);
-				});
+			Reject([&] { body.Sample(100, space); });
 			s_locateResult = XR_SUCCESS;
 			const auto destroyed = s_destroyed;
 			body.Close();
@@ -269,32 +264,16 @@ int main()
 		Require(s_destroyed == beforeScope + 1, "RAII releases the session-owned body handle");
 		s_capabilities = {};
 		HeadsetBody body(runtime);
-		Reject(
-			[&]
-			{
-				body.Open(session, BodyJointSet::UpperBodyFB);
-			});
-		Reject(
-			[&]
-			{
-				body.Open(session, BodyJointSet::FullBodyBD);
-			});
+		Reject([&] { body.Open(session, BodyJointSet::UpperBodyFB); });
+		Reject([&] { body.Open(session, BodyJointSet::FullBodyBD); });
 		s_capabilities.fb = true;
-		Reject(
-			[&]
-			{
-				body.Open(session, BodyJointSet::FullBodyMETA);
-			});
+		Reject([&] { body.Open(session, BodyJointSet::FullBodyMETA); });
 		body.Open(session, BodyJointSet::UpperBodyFB);
 		s_preserved = true;
 		const auto destroyed = s_destroyed;
 		body.Close();
 		Require(s_destroyed == destroyed, "Uncertain native lifetime preserves body resources");
-		Reject(
-			[&]
-			{
-				body.Open(session, BodyJointSet::UpperBodyFB);
-			});
+		Reject([&] { body.Open(session, BodyJointSet::UpperBodyFB); });
 		s_preserved = false;
 		body.Close();
 		std::cout << "Headset body providers passed\n";

@@ -19,16 +19,14 @@ HeadsetInputBridge::HeadsetInputBridge(HeadsetInputTarget target) : m_target(std
 		 (m_target.alignment->localEyeHeight &&
 		  (!std::isfinite(*m_target.alignment->localEyeHeight) || *m_target.alignment->localEyeHeight <= 0))))
 		throw std::invalid_argument("Invalid player alignment or eye height");
-	m_worker = std::jthread(
-		[this](std::stop_token stop)
-		{
-			Run(stop);
-		});
+	m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
 }
+
 HeadsetInputBridge::~HeadsetInputBridge()
 {
 	Stop();
 }
+
 void HeadsetInputBridge::Stop()
 {
 	m_worker.request_stop();
@@ -48,6 +46,7 @@ void HeadsetInputBridge::Stop()
 	if (m_status.phase != HeadsetInputPhase::Failed)
 		m_status.phase = HeadsetInputPhase::Stopped;
 }
+
 void HeadsetInputBridge::Fail(const char* error) noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -59,10 +58,10 @@ void HeadsetInputBridge::Fail(const char* error) noexcept
 		m_status.error = error;
 	}
 	catch (...)
-	{
-	}
+	{}
 	m_changed.notify_all();
 }
+
 bool HeadsetInputBridge::Publish(const HeadsetInputSample& input, NativeClockDomain domain, std::int64_t observed,
 								 std::int64_t predicted, std::optional<std::int64_t> bodyReturned)
 {
@@ -88,8 +87,7 @@ bool HeadsetInputBridge::Publish(const HeadsetInputSample& input, NativeClockDom
 			m_status.error = "Native input queue overflow; reconnect to resume";
 		}
 		catch (...)
-		{
-		}
+		{}
 		m_status.discardedSamples += m_count;
 		m_count = 0;
 		m_changed.notify_all();
@@ -102,6 +100,7 @@ bool HeadsetInputBridge::Publish(const HeadsetInputSample& input, NativeClockDom
 	m_changed.notify_one();
 	return true;
 }
+
 HeadsetInputStatus HeadsetInputBridge::Status() const
 {
 	std::lock_guard lock(m_mutex);
@@ -109,12 +108,14 @@ HeadsetInputStatus HeadsetInputBridge::Status() const
 	status.queueDepth = m_count;
 	return status;
 }
+
 std::array<std::optional<HeadsetVibration>, 2> HeadsetInputBridge::ConsumeHaptics(bool enabled)
 {
 	std::lock_guard lock(m_mutex);
 	const auto now = HeadsetHaptics::Clock::now();
 	return m_haptics.Consume(now, enabled && m_status.phase == HeadsetInputPhase::Ready && now < m_inputDeadline);
 }
+
 void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 {
 	namespace wire = control;
@@ -126,8 +127,7 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 			std::lock_guard lock(m_mutex);
 			m_client = client;
 		}
-		const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields = {}, bool bound = true)
-		{
+		const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields = {}, bool bound = true) {
 			if (stop.stop_requested())
 				throw std::runtime_error("Native input stopped");
 			if (bound)
@@ -151,8 +151,7 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 				throw std::runtime_error("Native input session identity changed");
 			return response;
 		};
-		const auto phase = [](const wire::Message& response)
-		{
+		const auto phase = [](const wire::Message& response) {
 			const auto field = response.Find(wire::tag::Phase);
 			if (!field || !field->AsText())
 				throw std::runtime_error("Native input response omitted phase");
@@ -175,8 +174,7 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 		if (!clock)
 			throw std::runtime_error("Native input requires a running real-time clock mapping");
 		std::uint64_t transaction = 0;
-		const auto claim = [&](bool takeOver)
-		{
+		const auto claim = [&](bool takeOver) {
 			++transaction;
 			std::vector<wire::Field> commands;
 			for (const auto channel :
@@ -215,8 +213,7 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 				"Native input ownership unavailable; resume the game or release conflicting channels");
 		bool suspended = false;
 		bool requireNeutral = m_target.requireNeutral;
-		const auto pollHaptics = [&]
-		{
+		const auto pollHaptics = [&] {
 			const auto requested = HeadsetHaptics::Clock::now();
 			const auto observation = wire::DecodeHaptics(call(wire::OpCode::ReadHaptics));
 			const auto received = HeadsetHaptics::Clock::now();
@@ -231,8 +228,7 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 			m_status.phase = HeadsetInputPhase::Ready;
 		}
 		bool resumeAllowed = true;
-		const auto clockChanged = [&]
-		{
+		const auto clockChanged = [&] {
 			const auto current = wire::DecodeLiveClock(
 				call(wire::OpCode::ReadLiveClock, {wire::Field::U64(wire::tag::AttachmentId, attachment)}));
 			if (current && current->revision == clock->revision && current->domain == clock->domain)
@@ -260,12 +256,9 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 			std::optional<Observation> observation;
 			{
 				std::unique_lock lock(m_mutex);
-				m_changed.wait_until(lock, nextHaptics,
-									 [&]
-									 {
-										 return stop.stop_requested() || m_count ||
-												m_status.phase == HeadsetInputPhase::Failed;
-									 });
+				m_changed.wait_until(lock, nextHaptics, [&] {
+					return stop.stop_requested() || m_count || m_status.phase == HeadsetInputPhase::Failed;
+				});
 				if (stop.stop_requested() || m_status.phase == HeadsetInputPhase::Failed)
 					break;
 				if (m_count)

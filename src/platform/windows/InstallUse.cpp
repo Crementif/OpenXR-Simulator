@@ -49,14 +49,14 @@ bool AcquireInstallationUse(HMODULE module, HANDLE& handle) noexcept
 	return true;
 }
 
-InstallUse::InstallUse() noexcept : m_ready(AcquireInstallationUse(nullptr, m_handle))
-{
-}
+InstallUse::InstallUse() noexcept : m_ready(AcquireInstallationUse(nullptr, m_handle)) {}
+
 InstallUse::~InstallUse()
 {
 	if (m_handle != INVALID_HANDLE_VALUE)
 		CloseHandle(m_handle);
 }
+
 bool InstallUse::Ready() const noexcept
 {
 	return m_ready;

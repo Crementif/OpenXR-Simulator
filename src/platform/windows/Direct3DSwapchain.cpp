@@ -72,8 +72,7 @@ static DXGI_FORMAT Typeless(DXGI_FORMAT format) noexcept
 
 Direct3DSwapchain::Direct3DSwapchain(DXGI_FORMAT format, const wchar_t* runtimeLibrary)
 	: m_runtimeLibrary(runtimeLibrary), m_format(format)
-{
-}
+{}
 
 XrResult Direct3DSwapchain::Create(ID3D11Device* device, const XrSwapchainCreateInfo& description,
 								   std::unique_ptr<Direct3DSwapchain>& output)

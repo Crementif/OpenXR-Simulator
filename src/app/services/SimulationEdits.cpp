@@ -19,6 +19,7 @@ static wire::Message DecodeNode(std::span<const std::byte> bytes)
 	result.fields = std::move(decoded.fields);
 	return result;
 }
+
 static const wire::Field& NodeData(const wire::Message& node, wire::InspectionType type)
 {
 	const auto kind = node.Find(2);
@@ -27,6 +28,7 @@ static const wire::Field& NodeData(const wire::Message& node, wire::InspectionTy
 		throw std::runtime_error("Runtime returned an invalid simulation state field");
 	return *data;
 }
+
 static std::optional<wire::Message> FindMember(const wire::Message& node, std::string_view name)
 {
 	for (const auto& field : DecodeNode(NodeData(node, wire::InspectionType::Object).value).fields)
@@ -37,12 +39,14 @@ static std::optional<wire::Message> FindMember(const wire::Message& node, std::s
 	}
 	return {};
 }
+
 static wire::Message Member(const wire::Message& node, std::string_view name)
 {
 	if (auto child = FindMember(node, name))
 		return *child;
 	throw std::runtime_error("Observed device state is not available yet");
 }
+
 static std::vector<wire::Message> Elements(const wire::Message& node)
 {
 	std::vector<wire::Message> elements;
@@ -51,6 +55,7 @@ static std::vector<wire::Message> Elements(const wire::Message& node)
 			elements.push_back(DecodeNode(field.value));
 	return elements;
 }
+
 static float Number(const wire::Message& node)
 {
 	const auto number = NodeData(node, wire::InspectionType::Float).AsF32();
@@ -58,6 +63,7 @@ static float Number(const wire::Message& node)
 		throw std::runtime_error("Observed device pose contains an invalid number");
 	return *number;
 }
+
 static std::uint64_t Unsigned(const wire::Message& node)
 {
 	const auto value = NodeData(node, wire::InspectionType::Unsigned).AsU64();
@@ -65,13 +71,16 @@ static std::uint64_t Unsigned(const wire::Message& node)
 		throw std::runtime_error("Invalid unsigned configuration value");
 	return *value;
 }
-template <typename T> static T ReadEnum(const wire::Message& node, T maximum)
+
+template<typename T>
+static T ReadEnum(const wire::Message& node, T maximum)
 {
 	const auto value = Unsigned(node);
 	if (value > static_cast<std::uint64_t>(maximum))
 		throw std::runtime_error("Unsupported simulation configuration value");
 	return static_cast<T>(value);
 }
+
 static bool Boolean(const wire::Message& node)
 {
 	const auto value = NodeData(node, wire::InspectionType::Boolean).AsBool();
@@ -79,11 +88,13 @@ static bool Boolean(const wire::Message& node)
 		throw std::runtime_error("Invalid boolean configuration value");
 	return *value;
 }
+
 static bool Null(const wire::Message& node)
 {
 	const auto type = node.Find(2);
 	return type && type->AsU32() == static_cast<std::uint32_t>(wire::InspectionType::Null);
 }
+
 static XrPosef ReadPose(const wire::Message& node)
 {
 	const auto p = Elements(Member(node, "position")), q = Elements(Member(node, "orientation"));
@@ -95,10 +106,12 @@ static XrPosef ReadPose(const wire::Message& node)
 		throw std::runtime_error("Invalid configuration orientation");
 	return *pose;
 }
+
 static PoseSample ReadSample(const wire::Message& node)
 {
 	return {ReadPose(node), Unsigned(Member(node, "flags"))};
 }
+
 static FrameId NextObservedFrame(const wire::Message& state)
 {
 	const auto document = state.Find(wire::tag::Document);
@@ -139,6 +152,7 @@ static FrameId NextObservedFrame(const wire::Message& state)
 		throw std::runtime_error("Simulation frame identity is exhausted");
 	return FrameId{previous + 1};
 }
+
 std::optional<CommandSource> SimulationEditSource(const control::Message& receipt)
 {
 	const auto document = receipt.Find(wire::tag::Document);
@@ -150,6 +164,7 @@ std::optional<CommandSource> SimulationEditSource(const control::Message& receip
 	return CommandSource{ReadEnum(Member(*source, "kind"), CommandSourceKind::Sequence),
 						 Unsigned(Member(*source, "id"))};
 }
+
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state)
 {
 	const auto document = state.Find(wire::tag::Document);
@@ -158,8 +173,7 @@ std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& s
 	const auto tracking = FindMember(DecodeNode(document->value), "tracking");
 	if (!tracking || Null(*tracking))
 		return {};
-	const auto sample = [](const wire::Message& node)
-	{
+	const auto sample = [](const wire::Message& node) {
 		const auto pose = Member(node, "pose"), position = Member(pose, "position"),
 				   orientation = Member(pose, "orientation");
 		const auto normalized = NormalizedPose(
@@ -219,6 +233,7 @@ std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& s
 		result.body.joints[joint] = sample(Member(joints[joint], "sample"));
 	return result;
 }
+
 ManualTransaction PrepareHeadsetRelease(const ObservedSetup& observed, std::optional<CommandSource> manualSource,
 										bool takeOver, bool trackers, bool body)
 {
@@ -291,8 +306,8 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 		result.appTrackersKnown = true;
 	}
 	if (const auto body = FindMember(root, "body_extensions"))
-		result.appBodyExtensions = std::array{Boolean(Member(*body, "fb")),
-			Boolean(Member(*body, "meta_full")), Boolean(Member(*body, "bd"))};
+		result.appBodyExtensions =
+			std::array{Boolean(Member(*body, "fb")), Boolean(Member(*body, "meta_full")), Boolean(Member(*body, "bd"))};
 	values.tracking.head = ReadSample(Member(config, "head"));
 	if (const auto eyes = FindMember(config, "eye_views"); eyes && !Null(*eyes))
 	{
@@ -518,14 +533,14 @@ std::string SimulationEditPhase(const control::Message& result)
 	const auto phase = Member(DecodeNode(document->value), "phase");
 	return std::string(NodeData(phase, wire::InspectionType::Text).AsText().value_or("invalid"));
 }
+
 std::optional<control::Message> ObservedEditResult(const control::Message& state, const control::Message& receipt)
 {
 	const auto document = state.Find(wire::tag::Document), received = receipt.Find(wire::tag::Document);
 	if (!document || !received)
 		return {};
 	const auto expected = DecodeNode(received->value);
-	const auto identity = [](const wire::Message& node, std::string_view key)
-	{
+	const auto identity = [](const wire::Message& node, std::string_view key) {
 		return NodeData(Member(node, key), wire::InspectionType::Unsigned).AsU64();
 	};
 	for (const auto& outcome : Elements(Member(DecodeNode(document->value), "transactions")))
@@ -538,6 +553,7 @@ std::optional<control::Message> ObservedEditResult(const control::Message& state
 		}
 	return {};
 }
+
 PoseSample ObservedDevicePose(const control::Message& state, ControlChannel channel)
 {
 	NextObservedFrame(state);
@@ -577,6 +593,7 @@ PoseSample ObservedDevicePose(const control::Message& state, ControlChannel chan
 		throw std::runtime_error("Restore valid tracking before piloting this device");
 	return pose;
 }
+
 PoseSample PilotPose(PoseSample pose, XrVector3f movement, float yaw, float pitch, float seconds, float speed)
 {
 	const auto forward = Rotate(pose.pose.orientation, {0, 0, -1});

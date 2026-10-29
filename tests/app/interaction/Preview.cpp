@@ -37,8 +37,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 	Require(notices.good(), "Open debugger notice log");
 	std::string lastNotice;
 	std::uint64_t composedCapture = 0;
-	const auto diagnose = [&](const RuntimeView& state, const char* failure)
-	{
+	const auto diagnose = [&](const RuntimeView& state, const char* failure) {
 		namespace wire = simxr::control;
 		namespace tag = wire::tag;
 		std::ofstream output(directory / "timeout.txt", std::ios::binary);
@@ -56,16 +55,14 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			observer.Connect(endpoint);
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 			Eventually(
-				[&]
-				{
+				[&] {
 					const auto connection = observer.Snapshot();
 					if (connection.state == RuntimeConnectionState::Failed)
 						throw std::runtime_error(connection.detail);
 					return connection.state == RuntimeConnectionState::Connected;
 				},
 				"Timeout observer connection failed");
-			const auto query = [&](const std::string& name, wire::OpCode opcode, std::vector<wire::Field> fields)
-			{
+			const auto query = [&](const std::string& name, wire::OpCode opcode, std::vector<wire::Field> fields) {
 				Require(std::chrono::steady_clock::now() < deadline, "Timeout diagnostic deadline exceeded");
 				wire::ControlPacket request;
 				request.message.opcode = static_cast<std::uint16_t>(opcode);
@@ -121,14 +118,12 @@ void CheckDebuggerWorkflow(const char* endpoint)
 					std::this_thread::sleep_for(std::chrono::milliseconds(5));
 				}
 			};
-			const auto sessionFields = [&]
-			{
+			const auto sessionFields = [&] {
 				return std::vector{wire::Field::U64(tag::Session, state.session, true),
 								   wire::Field::U64(tag::Generation, state.generation, true)};
 			};
 			std::vector<std::uint64_t> captures;
-			const auto addCapture = [&](std::uint64_t identity)
-			{
+			const auto addCapture = [&](std::uint64_t identity) {
 				if (identity && captures.size() < 4 &&
 					std::find(captures.begin(), captures.end(), identity) == captures.end())
 					captures.push_back(identity);
@@ -170,8 +165,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 		output.close();
 		Require(output.good(), "Close debugger timeout diagnostics");
 	};
-	const auto wait = [&](const auto& ready, const char* failure)
-	{
+	const auto wait = [&](const auto& ready, const char* failure) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 		do
 		{
@@ -198,26 +192,17 @@ void CheckDebuggerWorkflow(const char* endpoint)
 				throw std::runtime_error(std::string(failure) + ": " + state.phase + "/" + state.progress + " " +
 										 state.error);
 			}
-		} while (!ready(test.runtime.Snapshot()));
+		}
+		while (!ready(test.runtime.Snapshot()));
 	};
-	wait(
-		[](const auto& state)
-		{
-			return state.selectedReady;
-		},
-		"Debugger did not attach live output");
+	wait([](const auto& state) { return state.selectedReady; }, "Debugger did not attach live output");
 	test.SelectWorkspace(FrameSel{});
 	test.runtime.Command(simxr::control::CommandKind::Pause);
-	wait(
-		[](const auto& state)
-		{
-			return state.manual && !state.operationPending && state.phase == "complete";
-		},
-		"Pause failed");
+	wait([](const auto& state) { return state.manual && !state.operationPending && state.phase == "complete"; },
+		 "Pause failed");
 	test.runtime.Command(simxr::control::CommandKind::StrictAdmission);
 	wait(
-		[](const auto& state)
-		{
+		[](const auto& state) {
 			return !state.operationPending && state.progress == "issued" && state.selectedReady &&
 				   state.selectedImageCapture == state.selectedCapture;
 		},
@@ -225,27 +210,17 @@ void CheckDebuggerWorkflow(const char* endpoint)
 	const auto exact = test.runtime.Snapshot();
 	composedCapture = exact.selectedCapture;
 	test.runtime.InspectSelected();
-	wait(
-		[&](const auto& state)
-		{
-			return state.inspectedFrame == exact.selectedFrame;
-		},
-		"Exact state inspection failed");
+	wait([&](const auto& state) { return state.inspectedFrame == exact.selectedFrame; },
+		 "Exact state inspection failed");
 	Require(test.runtime.RequestExport(PathText(directory / "composed.png")), "Composed export was not accepted");
-	wait(
-		[&](const auto&)
-		{
-			return !test.runtime.ImageExport().Busy();
-		},
-		"Composed export failed");
+	wait([&](const auto&) { return !test.runtime.ImageExport().Busy(); }, "Composed export failed");
 	Require(test.runtime.ImageExport().Succeeded(), test.runtime.ImageExport().Detail().c_str());
 	Require(std::filesystem::file_size(directory / "composed.png") > 100, "Composed export is empty");
 	test.renderer.RequestScreenshot(directory / "inspected.bmp");
 	test.Frame();
 	test.runtime.Command(simxr::control::CommandKind::StrictAdmission, 0, true, 0, 0);
 	wait(
-		[&](const auto& state)
-		{
+		[&](const auto& state) {
 			return !state.operationPending && state.selectedFrame > exact.selectedFrame && state.selectedReady &&
 				   state.selectedLayers == 1 && state.selectedImageCapture == state.selectedCapture;
 		},
@@ -253,39 +228,27 @@ void CheckDebuggerWorkflow(const char* endpoint)
 	const auto raw = test.runtime.Snapshot();
 	Require(raw.selectedFrame == exact.selectedFrame + 1, "Strict step admitted more than one frame");
 	Require(test.runtime.RequestExport(PathText(directory / "layer.png")), "Layer export was not accepted");
-	wait(
-		[&](const auto&)
-		{
-			return !test.runtime.ImageExport().Busy();
-		},
-		"Layer export failed");
+	wait([&](const auto&) { return !test.runtime.ImageExport().Busy(); }, "Layer export failed");
 	Require(test.runtime.ImageExport().Succeeded(), test.runtime.ImageExport().Detail().c_str());
 	Require(std::filesystem::file_size(directory / "layer.png") > 100, "Layer export is empty");
 	test.workspace.Select(DeviceSel{DevicePage::Head});
 	test.Frame();
 	test.runtime.Step();
 	wait(
-		[&](const auto& state)
-		{
+		[&](const auto& state) {
 			const auto* selected = std::get_if<FrameSel>(&test.workspace.State().selection);
-			return !state.operationPending && state.selectedReady && state.selectedFrame &&
-				selected && selected->identity == state.selectedIdentity && selected->epoch == state.selectedEpoch;
+			return !state.operationPending && state.selectedReady && state.selectedFrame && selected &&
+				   selected->identity == state.selectedIdentity && selected->epoch == state.selectedEpoch;
 		},
 		"Requested single-frame step did not open its Frame page");
 	std::cout << "PASS requested single-frame step opens the captured Frame page from a device page\n";
 	for (const auto capture : test.runtime.CaptureIds())
 		test.runtime.Command(simxr::control::CommandKind::Release, capture);
-	wait(
-		[](const auto& state)
-		{
-			return !state.operationPending;
-		},
-		"Capture release failed");
+	wait([](const auto& state) { return !state.operationPending; }, "Capture release failed");
 	test.runtime.Command(simxr::control::CommandKind::Resume);
 	test.runtime.SetLive(true);
 	wait(
-		[&](const auto& state)
-		{
+		[&](const auto& state) {
 			return !state.operationPending && !state.manual && state.selectedFrame > raw.selectedFrame;
 		},
 		"Resume did not restore advancing live output");
@@ -303,12 +266,11 @@ void CheckDebuggerWorkflow(const char* endpoint)
 	test.Frame();
 	const auto disconnected = test.runtime.Snapshot();
 	Require(!disconnected.selectedReady && disconnected.selectedFrame == 0 &&
-			disconnected.selectedIdentity.frame == 0 && disconnected.time.following,
+				disconnected.selectedIdentity.frame == 0 && disconnected.time.following,
 			"Disconnect left the old runtime's preview selected");
 	test.runtime.ConnectEndpoint(endpoint);
 	wait(
-		[&](const auto& state)
-		{
+		[&](const auto& state) {
 			return state.connected && state.epoch != previousEpoch && state.selectedReady && state.selectedFrame;
 		},
 		"Reconnect did not select a fresh runtime preview");
@@ -325,8 +287,7 @@ void CheckManualEdges(const RuntimeView& target)
 	recording.SetTarget({target.endpoint, target.session, target.generation});
 	Require(recording.Request(RecordingAction::Start), "Start edge recording");
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto s = recording.Snapshot();
 			Require(s.error.empty(), s.error.c_str());
 			return s.page && s.page->active && !s.busy;
@@ -334,12 +295,7 @@ void CheckManualEdges(const RuntimeView& target)
 		"Edge recording did not start");
 	ManualInputController input;
 	input.SetTarget({target.endpoint, target.session, target.generation});
-	Eventually(
-		[&]
-		{
-			return input.Snapshot().observation != 0;
-		},
-		"Edge worker did not connect");
+	Eventually([&] { return input.Snapshot().observation != 0; }, "Edge worker did not connect");
 	simxr::ControllerControls controls;
 	controls.primary = true;
 	ManualTransaction press;
@@ -354,8 +310,7 @@ void CheckManualEdges(const RuntimeView& target)
 						simxr::SetControllerControls{1, controls}};
 	Require(input.Submit(release), "Release was refused");
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto s = input.Snapshot();
 			Require(s.error.empty(), s.error.c_str());
 			return !s.editPending;
@@ -364,8 +319,7 @@ void CheckManualEdges(const RuntimeView& target)
 	Require(!ReadObservedSetup(input.Snapshot().state).values.input.controllers[1].primary, "Primary remained held");
 	Require(recording.Request(RecordingAction::Stop), "Stop edge recording");
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto s = recording.Snapshot();
 			Require(s.error.empty(), s.error.c_str());
 			return s.page && !s.page->active && !s.busy;
@@ -373,8 +327,7 @@ void CheckManualEdges(const RuntimeView& target)
 		"Edge recording did not stop");
 	Require(recording.Request(RecordingAction::Read), "Read recorded edges");
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto s = recording.Snapshot();
 			Require(s.error.empty(), s.error.c_str());
 			return s.page && !s.busy;
@@ -393,56 +346,22 @@ void CheckManualEdges(const RuntimeView& target)
 			}
 	Require(pressFrame && releaseFrame > pressFrame, "30 ms tap was not applied at distinct frames");
 	Require(input.Submit(ReleaseManualInputs{}), "Final release refused");
-	Eventually(
-		[&]
-		{
-			return !input.Snapshot().editPending;
-		},
-		"Final release did not complete");
+	Eventually([&] { return !input.Snapshot().editPending; }, "Final release did not complete");
 	ManualInputController rival;
 	rival.SetTarget({target.endpoint, target.session, target.generation});
-	Eventually(
-		[&]
-		{
-			return rival.Snapshot().observation != 0;
-		},
-		"Rival worker did not connect");
+	Eventually([&] { return rival.Snapshot().observation != 0; }, "Rival worker did not connect");
 	ManualTransaction headClaim;
 	headClaim.commands = {simxr::TakeControl{simxr::ControlChannel::Head, false}};
 	Require(rival.Submit(headClaim), "Rival claim refused");
-	Eventually(
-		[&]
-		{
-			return !rival.Snapshot().editPending;
-		},
-		"Rival claim did not apply");
+	Eventually([&] { return !rival.Snapshot().editPending; }, "Rival claim did not apply");
 	Require(input.Submit(press), "Held press refused");
-	Eventually(
-		[&]
-		{
-			return !input.Snapshot().editPending;
-		},
-		"Held press did not apply");
+	Eventually([&] { return !input.Snapshot().editPending; }, "Held press did not apply");
 	Require(input.Submit(headClaim), "Conflict submission refused");
-	Eventually(
-		[&]
-		{
-			return !input.Snapshot().error.empty();
-		},
-		"Conflict did not reject");
-	Eventually(
-		[&]
-		{
-			return !ReadObservedSetup(input.Snapshot().state).values.input.controllers[1].primary;
-		},
-		"Rejected transaction stranded a held primary button");
+	Eventually([&] { return !input.Snapshot().error.empty(); }, "Conflict did not reject");
+	Eventually([&] { return !ReadObservedSetup(input.Snapshot().state).values.input.controllers[1].primary; },
+			   "Rejected transaction stranded a held primary button");
 	Require(rival.Submit(ReleaseManualInputs{}), "Rival release refused");
-	Eventually(
-		[&]
-		{
-			return !rival.Snapshot().editPending;
-		},
-		"Rival release did not complete");
+	Eventually([&] { return !rival.Snapshot().editPending; }, "Rival release did not complete");
 	std::cout << "PASS native rejection retires held inputs\n";
 	std::cout << "PASS native 30 ms tap: press frame " << pressFrame << ", release frame " << releaseFrame << "\n";
 }
@@ -451,21 +370,14 @@ void CheckNativePlayerRig(const RuntimeView& target)
 {
 	ManualInputController input;
 	input.SetTarget({target.endpoint, target.session, target.generation});
-	Eventually(
-		[&]
-		{
-			return input.Snapshot().observation != 0;
-		},
-		"Rig worker did not connect");
+	Eventually([&] { return input.Snapshot().observation != 0; }, "Rig worker did not connect");
 	PlayerRig rig;
 	rig.Reset(ReadObservedSetup(input.Snapshot().state));
-	const auto submit = [&]
-	{
+	const auto submit = [&] {
 		const auto before = input.Snapshot();
 		Require(input.Submit(rig.Transaction(ReadObservedSetup(before.state), before.source)), "Rig edit refused");
 		Eventually(
-			[&]
-			{
+			[&] {
 				const auto state = input.Snapshot();
 				Require(state.error.empty(), state.error.c_str());
 				return !state.editPending;
@@ -473,8 +385,7 @@ void CheckNativePlayerRig(const RuntimeView& target)
 			"Rig edit did not apply");
 		return ReadObservedSetup(input.Snapshot().state);
 	};
-	const auto close = [](XrPosef a, XrPosef b)
-	{
+	const auto close = [](XrPosef a, XrPosef b) {
 		return std::abs(a.position.x - b.position.x) + std::abs(a.position.y - b.position.y) +
 				   std::abs(a.position.z - b.position.z) <
 			   .0001f;
@@ -502,12 +413,7 @@ void CheckNativePlayerRig(const RuntimeView& target)
 		Require(close(observed.values.tracking.head.pose, rig.Head()), "Player stopped walking with a World anchor");
 	}
 	Require(input.Submit(ReleaseManualInputs{}), "Rig release refused");
-	Eventually(
-		[&]
-		{
-			return !input.Snapshot().editPending;
-		},
-		"Rig release did not complete");
+	Eventually([&] { return !input.Snapshot().editPending; }, "Rig release did not complete");
 	std::cout << "PASS native Player rig: 8 atomic walk/turn frames, 4 World-anchor frames\n";
 }
 
@@ -520,29 +426,25 @@ void CheckPreviewPilot(Interaction& test)
 	const auto target = test.runtime.Snapshot();
 	ManualInputController observer;
 	observer.SetTarget({target.endpoint, target.session, target.generation});
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto observed = [&]
-	{
+	const auto observed = [&] {
 		const auto before = observer.Snapshot().observation;
 		observer.Refresh();
 		Eventually(
-			[&]
-			{
+			[&] {
 				pump(1);
 				return observer.Snapshot().observation > before;
 			},
 			"Pilot observation stalled");
 		return ReadObservedSetup(observer.Snapshot().state);
 	};
-	const auto key = [&](SDL_Scancode code, bool down, SDL_Keymod modifiers = SDL_KMOD_NONE)
-	{
+	const auto key = [&](SDL_Scancode code, bool down, SDL_Keymod modifiers = SDL_KMOD_NONE) {
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
 		event.key.windowID = SDL_GetWindowID(test.window.Native());
@@ -553,8 +455,7 @@ void CheckPreviewPilot(Interaction& test)
 		Require(SDL_PushEvent(&event), "Push pilot key");
 		pump(1);
 	};
-	const auto button = [&](unsigned code, bool down)
-	{
+	const auto button = [&](unsigned code, bool down) {
 		if (code == SDL_BUTTON_RIGHT && down)
 		{
 			const auto center = FindPanel("Image area")->InnerRect.GetCenter();
@@ -575,10 +476,9 @@ void CheckPreviewPilot(Interaction& test)
 		Require(SDL_PushEvent(&event), "Push pilot button");
 		pump(1);
 	};
-	const auto motion = [&](float x, float y)
-	{
+	const auto motion = [&](float x, float y) {
 		Require(test.window.Focused() && SDL_GetWindowRelativeMouseMode(test.window.Native()) == !remote,
-			"Pilot motion lost focus or selected the wrong pointer mode");
+				"Pilot motion lost focus or selected the wrong pointer mode");
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -595,7 +495,7 @@ void CheckPreviewPilot(Interaction& test)
 	{
 		DWORD session = ~DWORD{0};
 		Require(ProcessIdToSessionId(GetCurrentProcessId(), &session) && session == 0,
-			"Synthetic focus is restricted to isolated Windows session 0");
+				"Synthetic focus is restricted to isolated Windows session 0");
 		pump(3);
 		Require(SDL_SetKeyboardFocus(test.window.Native()), "Inject isolated SDL keyboard focus");
 		SDL_SetMouseFocus(test.window.Native());
@@ -603,8 +503,7 @@ void CheckPreviewPilot(Interaction& test)
 	}
 #endif
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(1);
 			return test.window.Focused();
 		},
@@ -622,16 +521,23 @@ void CheckPreviewPilot(Interaction& test)
 		stale.position.x += 5;
 		PilotController idle(stale);
 		idle.Stop(nullptr, observer, false, true);
-		Eventually([&] { pump(1); return !observer.Snapshot().editPending; }, "Idle release did not settle");
+		Eventually(
+			[&] {
+				pump(1);
+				return !observer.Snapshot().editPending;
+			},
+			"Idle release did not settle");
 		const auto after = observed();
-		Require(std::abs(after.values.tracking.head.pose.position.x - before.values.tracking.head.pose.position.x) < .001f,
-			"Releasing buttons without a pose gesture submitted the stale rig pose");
+		Require(std::abs(after.values.tracking.head.pose.position.x - before.values.tracking.head.pose.position.x) <
+					.001f,
+				"Releasing buttons without a pose gesture submitted the stale rig pose");
 	}
 	if (remote)
 	{
-		const auto orientation = [&] { return observed().values.tracking.head.pose.orientation; };
-		const auto different = [](XrQuaternionf a, XrQuaternionf b)
-		{
+		const auto orientation = [&] {
+			return observed().values.tracking.head.pose.orientation;
+		};
+		const auto different = [](XrQuaternionf a, XrQuaternionf b) {
 			return std::abs(a.x - b.x) + std::abs(a.y - b.y) + std::abs(a.z - b.z) > .01f;
 		};
 		const auto start = orientation();
@@ -674,8 +580,8 @@ void CheckPreviewPilot(Interaction& test)
 			pump(10);
 			const auto after = observed().values.tracking.head.pose;
 			Require(!different(stopped.orientation, after.orientation) &&
-				std::abs(stopped.position.z - after.position.z) < .001f,
-				"Remote drag cancellation retained motion or held keys");
+						std::abs(stopped.position.z - after.position.z) < .001f,
+					"Remote drag cancellation retained motion or held keys");
 			key(SDL_SCANCODE_W, false);
 			key(SDL_SCANCODE_ESCAPE, false);
 			button(SDL_BUTTON_RIGHT, false);
@@ -683,16 +589,22 @@ void CheckPreviewPilot(Interaction& test)
 		}
 		test.renderer.WaitIdle();
 		Require(test.validation->errors.load() == 0, "Remote drag validation errors");
-		std::cout << "PASS remote drag: visible unlocked pointer, runtime head rotation, mouse-up, Escape and boundary release\n";
+		std::cout << "PASS remote drag: visible unlocked pointer, runtime head rotation, mouse-up, Escape and boundary "
+					 "release\n";
 		return;
 	}
 	ManualTransaction bodyClaim;
 	bodyClaim.commands = {simxr::TakeControl{simxr::ControlChannel::Body, true}};
 	Require(observer.Submit(bodyClaim), "Rival body claim refused");
-	Eventually([&] { pump(1); return !observer.Snapshot().editPending; }, "Rival body claim did not settle");
+	Eventually(
+		[&] {
+			pump(1);
+			return !observer.Snapshot().editPending;
+		},
+		"Rival body claim did not settle");
 	const auto rivalSource = observer.Snapshot().source;
 	Require(rivalSource && observed().owners[static_cast<std::size_t>(simxr::ControlChannel::Body)] == rivalSource,
-		"Rival did not acquire body ownership");
+			"Rival did not acquire body ownership");
 	pump(60);
 	auto* handHud = FindPanel("HUD hand");
 	Require(handHud && handHud->Active, "Pilot ownership HUD missing");
@@ -704,8 +616,7 @@ void CheckPreviewPilot(Interaction& test)
 	ImGui::ActivateItemByID(handHud->GetID("Take over"));
 	pump(2);
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto owner = observed().owners[static_cast<std::size_t>(simxr::ControlChannel::Body)];
 			return owner && owner != rivalSource;
 		},
@@ -713,8 +624,7 @@ void CheckPreviewPilot(Interaction& test)
 	std::cout << "PASS Player HUD body ownership takeover\n";
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(1);
 			return SDL_GetWindowRelativeMouseMode(test.window.Native());
 		},
@@ -731,8 +641,8 @@ void CheckPreviewPilot(Interaction& test)
 			"Preview walk did not move player");
 	const auto lookedBefore = simxr::Rotate(before.values.tracking.head.pose.orientation, {0, 0, -1});
 	const auto lookedAfter = simxr::Rotate(walked.values.tracking.head.pose.orientation, {0, 0, -1});
-	const auto lookChange = std::hypot(lookedAfter.x - lookedBefore.x, lookedAfter.y - lookedBefore.y,
-		lookedAfter.z - lookedBefore.z);
+	const auto lookChange =
+		std::hypot(lookedAfter.x - lookedBefore.x, lookedAfter.y - lookedBefore.y, lookedAfter.z - lookedBefore.z);
 	std::cout << "Preview head-look direction change: " << lookChange << '\n';
 	Require(lookChange > .05f, "Preview relative mouse look did not rotate the head");
 	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -756,7 +666,7 @@ void CheckPreviewPilot(Interaction& test)
 	motion(50, -25);
 	pump(5);
 	Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) && ImGui::IsKeyDown(ImGuiKey_X),
-		"Pilot reach lost capture or its held key");
+			"Pilot reach lost capture or its held key");
 	key(SDL_SCANCODE_X, false);
 	const auto handAfter = observed().values.tracking.controllers[1].pose.pose;
 	const auto viewBefore = simxr::RelativePose(handBefore, reachBefore.values.tracking.head.pose).position;
@@ -764,7 +674,7 @@ void CheckPreviewPilot(Interaction& test)
 	const XrVector3f reach{viewAfter.x - viewBefore.x, viewAfter.y - viewBefore.y, viewAfter.z - viewBefore.z};
 	std::cout << "Preview reach in head view: " << reach.x << ", " << reach.y << ", " << reach.z << " m\n";
 	Require(std::abs(reach.x - .1f) < .01f && std::abs(reach.y - .05f) < .01f && std::abs(reach.z) < .01f,
-		"Preview reach did not move right hand right/up in the head view plane");
+			"Preview reach did not move right hand right/up in the head view plane");
 	key(SDL_SCANCODE_X, true);
 	key(SDL_SCANCODE_LALT, true, SDL_KMOD_ALT);
 	motion(35, 15);
@@ -781,9 +691,9 @@ void CheckPreviewPilot(Interaction& test)
 	const auto turned = observed().values.tracking.controllers[1].pose.pose;
 	Require(std::hypot(turned.position.x - rotated.position.x, turned.position.y - rotated.position.y,
 					   turned.position.z - rotated.position.z) < .001f,
-		"Target piloting reverted the hand reach");
+			"Target piloting reverted the hand reach");
 	Require(std::abs(turned.orientation.y - rotated.orientation.y) > .01f,
-		"Target piloting did not rotate the reached hand");
+			"Target piloting did not rotate the reached hand");
 	key(SDL_SCANCODE_0, true);
 	key(SDL_SCANCODE_0, false);
 	std::cout << "PASS hand target motion preserves reach and rotation edits\n";
@@ -817,8 +727,7 @@ void CheckPreviewPilot(Interaction& test)
 	key(SDL_SCANCODE_LCTRL, true, SDL_KMOD_CTRL);
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(1);
 			return SDL_GetWindowRelativeMouseMode(test.window.Native());
 		},
@@ -874,19 +783,26 @@ void CheckPreviewPilot(Interaction& test)
 			"Gamepad button, trigger or thumbstick did not reach runtime");
 	test.runtime.PrepareReplay();
 	Require(!test.runtime.ReplayReady(), "Replay accepted held gamepad ownership before releasing it");
-	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Held gamepad prevented replay input release");
+	Eventually(
+		[&] {
+			pump(1);
+			return test.runtime.ReplayReady();
+		},
+		"Held gamepad prevented replay input release");
 	pump(4);
 	const auto releasedForReplay = observed();
 	std::cout << "Replay preparation ready=" << test.runtime.ReplayReady()
-		<< " operationPending=" << test.runtime.Snapshot().operationPending
-		<< " error=" << test.runtime.Snapshot().error << " owners:";
+			  << " operationPending=" << test.runtime.Snapshot().operationPending
+			  << " error=" << test.runtime.Snapshot().error << " owners:";
 	for (std::size_t channel = 0; channel < releasedForReplay.owners.size(); ++channel)
 		if (const auto& owner = releasedForReplay.owners[channel])
 			std::cout << " " << channel << "=" << static_cast<unsigned>(owner->kind) << ":" << owner->id;
 	std::cout << '\n';
-	Require(test.runtime.ReplayReady() && std::none_of(releasedForReplay.owners.begin(), releasedForReplay.owners.end(),
-		[](const auto& owner) { return owner && owner->kind == simxr::CommandSourceKind::Manual; }),
-			"Held gamepad reclaimed inputs during replay preparation");
+	Require(
+		test.runtime.ReplayReady() &&
+			std::none_of(releasedForReplay.owners.begin(), releasedForReplay.owners.end(),
+						 [](const auto& owner) { return owner && owner->kind == simxr::CommandSourceKind::Manual; }),
+		"Held gamepad reclaimed inputs during replay preparation");
 	test.runtime.FinishReplayPreparation();
 	pump(10);
 	Require(observed().values.input.controllers[1].primary,
@@ -895,8 +811,7 @@ void CheckPreviewPilot(Interaction& test)
 	key(SDL_SCANCODE_LCTRL, true, SDL_KMOD_CTRL);
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(1);
 			return SDL_GetWindowRelativeMouseMode(test.window.Native());
 		},
@@ -920,14 +835,13 @@ void CheckPreviewPilot(Interaction& test)
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Recenter view"));
 	pump(2);
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto state = observed();
 			const auto& local = state.values.referenceSpaces.local;
 			const auto& head = state.values.tracking.head.pose;
 			Require(std::abs(head.position.x - headBeforeRecenter.position.x) < .001f &&
-					std::abs(head.position.y - headBeforeRecenter.position.y) < .001f &&
-					std::abs(head.position.z - headBeforeRecenter.position.z) < .001f,
+						std::abs(head.position.y - headBeforeRecenter.position.y) < .001f &&
+						std::abs(head.position.z - headBeforeRecenter.position.z) < .001f,
 					"Recenter moved the head");
 			return std::abs(local.position.x - head.position.x) < .001f &&
 				   std::abs(local.position.y - head.position.y) < .001f &&
@@ -952,8 +866,7 @@ static void CheckReturnToImage(Interaction& test)
 		{
 			test.runtime.Pause();
 			Eventually(
-				[&]
-				{
+				[&] {
 					test.Frame();
 					const auto state = test.runtime.Snapshot();
 					return state.manual && !state.operationPending;
@@ -961,8 +874,7 @@ static void CheckReturnToImage(Interaction& test)
 				"Return image fixture did not pause");
 			test.runtime.Step();
 			Eventually(
-				[&]
-				{
+				[&] {
 					test.Frame();
 					const auto state = test.runtime.Snapshot();
 					return !state.operationPending && state.selectedReady && state.selectedCapture &&
@@ -975,8 +887,7 @@ static void CheckReturnToImage(Interaction& test)
 		}
 		auto* inspector = FindPanel(recorded ? "Frame details" : "Inspector");
 		Require(inspector, "Rig inspector missing");
-		ImGui::ActivateItemByID(
-			ImHashStr("Expand", 0, inspector->GetID(recorded ? "Recorded rig" : "Rig view")));
+		ImGui::ActivateItemByID(ImHashStr("Expand", 0, inspector->GetID(recorded ? "Recorded rig" : "Rig view")));
 		for (int i = 0; i < 3; ++i)
 			test.Frame();
 		const auto state = test.runtime.Snapshot();
@@ -985,19 +896,16 @@ static void CheckReturnToImage(Interaction& test)
 		Require(controls, "Return controls missing");
 		const float buttonHeight = ImGui::GetFrameHeight();
 		const float x = controls->Pos.x + controls->Size.x / 2;
-		const float y =
-			controls->Pos.y +
-			(thumbnail ? buttonHeight + 8 + (controls->Size.y - buttonHeight - 8) / 2 : buttonHeight / 2);
+		const float y = controls->Pos.y +
+						(thumbnail ? buttonHeight + 8 + (controls->Size.y - buttonHeight - 8) / 2 : buttonHeight / 2);
 		test.Click({x, y});
 		test.Frame();
-		Require(!test.runtime.Snapshot().rigExpanded, thumbnail
-														  ? "Thumbnail click did not restore image"
-														  : "Back to image click did not restore image");
+		Require(!test.runtime.Snapshot().rigExpanded,
+				thumbnail ? "Thumbnail click did not restore image" : "Back to image click did not restore image");
 	}
 	test.runtime.ResumeLive();
 	Eventually(
-		[&]
-		{
+		[&] {
 			test.Frame();
 			return !test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
 		},
@@ -1051,8 +959,7 @@ void CheckConnectedPreview(const char* endpoint)
 	test.live = true;
 	test.runtime.ConnectEndpoint(endpoint);
 	Eventually(
-		[&]
-		{
+		[&] {
 			test.Frame();
 			return test.runtime.Snapshot().selectedReady;
 		},
@@ -1066,7 +973,7 @@ void CheckConnectedPreview(const char* endpoint)
 	}
 	else
 #endif
-	if (std::getenv("SIMXR_RETURN_IMAGE_QA"))
+		if (std::getenv("SIMXR_RETURN_IMAGE_QA"))
 		CheckReturnToImage(test);
 	else if (std::getenv("SIMXR_CROP_QA"))
 		CheckCrop(test);

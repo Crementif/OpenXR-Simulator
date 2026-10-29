@@ -73,7 +73,7 @@ struct InputSnapshot
 
 class InputState
 {
-  public:
+public:
 	static XrResult Validate(const InputSnapshot& snapshot);
 	XrResult Publish(InputSnapshot snapshot);
 	InputSnapshot Snapshot() const;
@@ -83,7 +83,7 @@ class InputState
 	// connection and sample time remain observable.
 	void ReleaseControls(std::array<bool, 2> hands = {true, true});
 
-  private:
+private:
 	mutable std::mutex m_mutex;
 	InputSnapshot m_snapshot;
 };

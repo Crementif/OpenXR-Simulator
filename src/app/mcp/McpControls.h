@@ -12,6 +12,6 @@ bool ControlsHandles(const std::string& name);
 nlohmann::json ControlsDefinitions();
 nlohmann::json HeadsetProfilesDocument();
 std::vector<SimulationCommand> ControlsCommands(const std::string& name, const nlohmann::json& arguments,
-	const nlohmann::json& configuration);
+												const nlohmann::json& configuration);
 std::vector<SimulationCommand> ControlsExpectedInputs(const std::string& name, const nlohmann::json& configuration);
 } // namespace simxr::app::mcp

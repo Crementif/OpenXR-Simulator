@@ -20,12 +20,20 @@ static constexpr int s_childLockDescriptor = 197;
 
 class McpDescriptor
 {
-  public:
+public:
 	explicit McpDescriptor(int descriptor = -1) : m_descriptor(descriptor) {}
-	~McpDescriptor() { if (m_descriptor >= 0) ::close(m_descriptor); }
+
+	~McpDescriptor()
+	{
+		if (m_descriptor >= 0)
+			::close(m_descriptor);
+	}
+
 	McpDescriptor(const McpDescriptor&) = delete;
 	McpDescriptor& operator=(const McpDescriptor&) = delete;
+
 	McpDescriptor(McpDescriptor&& other) noexcept : m_descriptor(other.Release()) {}
+
 	McpDescriptor& operator=(McpDescriptor&& other) noexcept
 	{
 		if (this != &other)
@@ -36,10 +44,18 @@ class McpDescriptor
 		}
 		return *this;
 	}
-	int Get() const { return m_descriptor; }
-	int Release() { return std::exchange(m_descriptor, -1); }
 
-  private:
+	int Get() const
+	{
+		return m_descriptor;
+	}
+
+	int Release()
+	{
+		return std::exchange(m_descriptor, -1);
+	}
+
+private:
 	int m_descriptor;
 };
 
@@ -104,8 +120,8 @@ static McpDescriptor OpenLock(const std::filesystem::path& directory, const std:
 	if (parent.Get() < 0)
 		throw SystemError("Cannot open MCP instance directory");
 	struct stat parentInfo{};
-	if (::fstat(parent.Get(), &parentInfo) != 0 || parentInfo.st_uid != ::geteuid() ||
-		!S_ISDIR(parentInfo.st_mode) || (parentInfo.st_mode & 0077))
+	if (::fstat(parent.Get(), &parentInfo) != 0 || parentInfo.st_uid != ::geteuid() || !S_ISDIR(parentInfo.st_mode) ||
+		(parentInfo.st_mode & 0077))
 		throw std::runtime_error("MCP instance directory is not private");
 	const auto name = key + ".lock";
 	const int descriptor = ::openat(parent.Get(), name.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -129,8 +145,8 @@ std::filesystem::path McpOwnExecutable()
 }
 
 McpInstanceDiscovery::McpInstanceDiscovery(std::filesystem::path executable, bool windowless)
-	: m_executable(std::filesystem::weakly_canonical(std::move(executable))),
-	  m_directory(PrivateDirectory()), m_key(InstanceKey(m_executable)), m_windowless(windowless)
+	: m_executable(std::filesystem::weakly_canonical(std::move(executable))), m_directory(PrivateDirectory()),
+	  m_key(InstanceKey(m_executable)), m_windowless(windowless)
 {
 	if (!m_executable.is_absolute())
 		throw std::invalid_argument("MCP app path must be absolute");
@@ -177,7 +193,7 @@ void McpInstanceDiscovery::StartIfNeeded()
 	std::string option = "--mcp-bootstrap-fd", number = std::to_string(s_childLockDescriptor);
 	std::string mode = "--windowless";
 	std::array<char*, 5> arguments{executable.data(), option.data(), number.data(),
-									   m_windowless ? mode.data() : nullptr, nullptr};
+								   m_windowless ? mode.data() : nullptr, nullptr};
 	posix_spawn_file_actions_t actions;
 	int error = ::posix_spawn_file_actions_init(&actions);
 	if (error)
@@ -258,17 +274,17 @@ std::optional<McpEndpoint> McpInstanceDiscovery::Read()
 	if (value.is_discarded() || !value.is_object())
 		return {};
 	const auto protocol = value.find("connector_protocol");
-	if (protocol != value.end() && (!protocol->is_number_unsigned() ||
-		protocol->get<std::uint64_t>() != McpConnectorProtocolVersion))
+	if (protocol != value.end() &&
+		(!protocol->is_number_unsigned() || protocol->get<std::uint64_t>() != McpConnectorProtocolVersion))
 	{
 		m_startupError = "The selected app uses an unsupported MCP connector protocol; "
-			"install a compatible connector and reconnect this MCP entry";
+						 "install a compatible connector and reconnect this MCP entry";
 		return {};
 	}
-	if (value.value("executable", std::string{}) != PathText(m_executable) ||
-		!value.contains("port") || !value["port"].is_number_unsigned() || !value.contains("token") ||
-		!value["token"].is_string() || !value.contains("device") || !value["device"].is_string() ||
-		!value.contains("inode") || !value["inode"].is_string())
+	if (value.value("executable", std::string{}) != PathText(m_executable) || !value.contains("port") ||
+		!value["port"].is_number_unsigned() || !value.contains("token") || !value["token"].is_string() ||
+		!value.contains("device") || !value["device"].is_string() || !value.contains("inode") ||
+		!value["inode"].is_string())
 		return {};
 	struct stat selected{};
 	if (::stat(m_executable.c_str(), &selected) != 0 ||
@@ -276,13 +292,14 @@ std::optional<McpEndpoint> McpInstanceDiscovery::Read()
 		value["inode"] != std::to_string(static_cast<std::uintmax_t>(selected.st_ino)))
 	{
 		m_startupError = "The selected app executable changed while an older simulator instance is running; "
-			"close that instance and start the rebuilt app";
+						 "close that instance and start the rebuilt app";
 		return {};
 	}
 	const auto port = value["port"].get<std::uint64_t>();
 	const auto token = value["token"].get<std::string>();
-	if (!port || port > 65535 || token.size() != 64 || !std::ranges::all_of(token, [](unsigned char byte)
-		{ return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f'); }))
+	if (!port || port > 65535 || token.size() != 64 || !std::ranges::all_of(token, [](unsigned char byte) {
+			return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f');
+		}))
 		return {};
 	m_observed = true;
 	m_startupError.clear();
@@ -306,8 +323,8 @@ McpInstanceRegistration::McpInstanceRegistration(std::intptr_t inheritedHandle)
 	if (inheritedDescriptor >= 0)
 	{
 		struct stat actual{}, target{};
-		if (::fstat(inherited.Get(), &actual) || ::fstat(expected.Get(), &target) ||
-			actual.st_dev != target.st_dev || actual.st_ino != target.st_ino)
+		if (::fstat(inherited.Get(), &actual) || ::fstat(expected.Get(), &target) || actual.st_dev != target.st_dev ||
+			actual.st_ino != target.st_ino)
 			throw std::runtime_error("Invalid MCP bootstrap lock");
 	}
 	if (::flock(descriptor, LOCK_EX | LOCK_NB) != 0)
@@ -340,10 +357,13 @@ void McpInstanceRegistration::Publish(const McpEndpoint& endpoint)
 		if (!stream)
 			throw std::runtime_error("Cannot open MCP discovery record");
 		stream << Json({{"connector_protocol", McpConnectorProtocolVersion},
-						{"executable", PathText(m_executable)}, {"port", endpoint.port},
-						{"token", endpoint.token}, {"process_id", ::getpid()},
+						{"executable", PathText(m_executable)},
+						{"port", endpoint.port},
+						{"token", endpoint.token},
+						{"process_id", ::getpid()},
 						{"device", std::to_string(static_cast<std::uintmax_t>(executable.st_dev))},
-						{"inode", std::to_string(static_cast<std::uintmax_t>(executable.st_ino))}}).dump();
+						{"inode", std::to_string(static_cast<std::uintmax_t>(executable.st_ino))}})
+					  .dump();
 		stream.close();
 		if (!stream)
 			throw std::runtime_error("Cannot write MCP discovery record");

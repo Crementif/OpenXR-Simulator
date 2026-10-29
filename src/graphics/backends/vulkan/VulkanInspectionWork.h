@@ -14,7 +14,7 @@ namespace simxr
 // construct or submit it. Completion observation never submits additional work.
 class VulkanInspectionWork final : public GpuCompletion
 {
-  public:
+public:
 	~VulkanInspectionWork() override;
 	CompletionStatus PollCompletion() const noexcept override;
 	bool NativeIdle() const noexcept;
@@ -31,7 +31,7 @@ class VulkanInspectionWork final : public GpuCompletion
 	const std::shared_ptr<VulkanExternalImage>& ExternalOutput() const noexcept;
 	const std::shared_ptr<VulkanExternalSemaphore>& Signal() const noexcept;
 
-  private:
+private:
 	friend class VulkanInspectionQueue;
 	struct Native;
 	explicit VulkanInspectionWork(std::shared_ptr<VulkanDevice> device, std::shared_ptr<FrameReservation> admission);

@@ -10,28 +10,35 @@
 namespace
 {
 using namespace simxr;
+
 void Near(float actual, float expected, const char* message)
 {
 	Require(std::abs(actual - expected) < 0.0001f, message);
 }
+
 XrFovf Fov(float left = -1, float right = 1, float up = 1, float down = -1)
 {
 	return {std::atan(left), std::atan(right), std::atan(up), std::atan(down)};
 }
+
 PoseSample Pose(XrVector3f position = {})
 {
 	return {{{0, 0, 0, 1}, position}, TrackedPoseFlags, {Duration{1000}}};
 }
+
 struct Fixture
 {
 	XrSwapchain source = reinterpret_cast<XrSwapchain>(1);
 	CompositionTarget target{640, 480, {{{Pose(), Fov()}, {Pose(), Fov()}}}};
-	CompositionExtentResolver extent = [this](XrSwapchain handle) -> std::optional<XrExtent2Di>
-	{ return handle == source ? std::optional{XrExtent2Di{128, 64}} : std::nullopt; };
+	CompositionExtentResolver extent = [this](XrSwapchain handle) -> std::optional<XrExtent2Di> {
+		return handle == source ? std::optional{XrExtent2Di{128, 64}} : std::nullopt;
+	};
+
 	LayerImageDescription Image(std::uint32_t slice = 0)
 	{
 		return {source, {{0, 0}, {128, 64}}, slice};
 	}
+
 	ProjectionLayerDescription Projection(std::size_t views = 2)
 	{
 		ProjectionLayerDescription layer;
@@ -39,15 +46,18 @@ struct Fixture
 			layer.views.push_back({IdentityPose(), Pose(), Fov(), Image(static_cast<std::uint32_t>(i)), {}});
 		return layer;
 	}
+
 	QuadLayerDescription Quad()
 	{
 		return {{}, XR_EYE_VISIBILITY_BOTH, IdentityPose(), Pose({0, 0, -2}), {2, 2}, Image()};
 	}
+
 	FrameLayers Frame(std::vector<LayerDescription> layers)
 	{
 		return {{Duration{1000}}, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, std::move(layers)};
 	}
 };
+
 void Projection()
 {
 	Fixture f;
@@ -84,6 +94,7 @@ void Projection()
 				plan.draws[0].eye == 1,
 			"Invalid orientation fabricated projection");
 }
+
 void Quad()
 {
 	Fixture f;
@@ -115,6 +126,7 @@ void Quad()
 	Require(PrepareComposition(f.Frame({quad}), f.target, f.extent, plan) == XR_SUCCESS && plan.draws.empty(),
 			"Quad without valid position rendered");
 }
+
 void OrderingAndAlpha()
 {
 	Fixture f;
@@ -153,6 +165,7 @@ void OrderingAndAlpha()
 	const auto linear = CompositeReferenceColor({decodedHalf, decodedHalf, decodedHalf, 0.5f}, {0, 0, 0, 1}, 3);
 	Near(linear.r, 0.10702057f, "sRGB view must decode before linear alpha composition");
 }
+
 void QuadCropBounds()
 {
 	Fixture fixture;
@@ -200,6 +213,7 @@ void QuadCropBounds()
 			Require(rectangle.extent.width == 0, "Behind-eye or back-facing quad produced a visible UI rectangle");
 	}
 }
+
 void Rejection()
 {
 	Fixture f;
@@ -259,6 +273,7 @@ void Rejection()
 			"Empty composition requires no source resolver");
 }
 } // namespace
+
 int main()
 {
 	Projection();

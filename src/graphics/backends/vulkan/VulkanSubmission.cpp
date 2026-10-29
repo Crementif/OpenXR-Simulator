@@ -49,12 +49,14 @@ void VulkanSubmission::BeginTiming()
 	vkCmdWriteTimestamp(m_resources->commands->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 						m_resources->commands->timestamps, 0);
 }
+
 void VulkanSubmission::EndTiming()
 {
 	if (m_resources->commands->timestamps)
 		vkCmdWriteTimestamp(m_resources->commands->command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 							m_resources->commands->timestamps, 1);
 }
+
 void VulkanSubmission::ObserveTiming() const noexcept
 {
 	const auto& resources = *m_resources;
@@ -171,8 +173,7 @@ std::shared_ptr<VulkanImage> VulkanFrame::RetainImage() const
 
 VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views)
 	: FrameOutput(views), m_submission(std::move(submission))
-{
-}
+{}
 
 CompletionStatus VulkanFrame::PollCompletion() const noexcept
 {

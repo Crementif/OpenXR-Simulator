@@ -29,12 +29,14 @@ static VulkanExternalIdentity AdapterIdentity(LUID adapter)
 	struct Instance
 	{
 		VkInstance handle = VK_NULL_HANDLE;
+
 		~Instance()
 		{
 			if (handle)
 				vkDestroyInstance(handle, nullptr);
 		}
 	} instance;
+
 	VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
 	application.apiVersion = VK_API_VERSION_1_1;
 	VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -72,17 +74,20 @@ static VulkanExternalIdentity AdapterIdentity(LUID adapter)
 	throw VulkanError(VK_ERROR_INCOMPATIBLE_DRIVER, "No Vulkan adapter matches the Direct3D application");
 }
 
-template <typename Backend> class WindowsFrameSubmission final : public FrameSubmissionBackend
+template<typename Backend>
+class WindowsFrameSubmission final : public FrameSubmissionBackend
 {
-  private:
+private:
 	using Frame = typename Backend::Frame;
 	using Source = typename Backend::Source;
+
 	Source Resolve(XrSwapchain swapchain) const
 	{
 		const auto source = m_resolve(swapchain);
 		const auto* native = std::get_if<Source>(&source);
 		return native ? *native : Source{};
 	}
+
 	static auto Describe(Source source)
 	{
 		struct Description
@@ -90,6 +95,7 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 			std::int32_t width, height;
 			bool multisampled;
 		};
+
 		if constexpr (std::is_same_v<Backend, D3D11Backend>)
 		{
 			D3D11_TEXTURE2D_DESC description{};
@@ -107,6 +113,7 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 							   static_cast<std::int32_t>(description.Height), description.SampleDesc.Count > 1};
 		}
 	}
+
 	auto Import(const std::shared_ptr<Frame>& frame)
 	{
 		if constexpr (std::is_same_v<Backend, D3D11Backend>)
@@ -130,14 +137,13 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 		return FAILED(result) ? XR_ERROR_RUNTIME_FAILURE : XR_SUCCESS;
 	}
 
-  public:
+public:
 	WindowsFrameSubmission(Backend& native, VulkanBackend& delivery, VulkanInspection& inspection,
 						   const WindowsSessionGraphics::ImageResolver& resolve,
 						   const WindowsSessionGraphics::SourceUse& sourceUsed, bool retainLayers)
 		: m_native(native), m_delivery(delivery), m_inspection(inspection), m_resolve(resolve),
 		  m_sourceUsed(sourceUsed), m_retainLayers(retainLayers)
-	{
-	}
+	{}
 
 	FramePool LiveReservations() const override
 	{
@@ -165,11 +171,8 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 	{
 		try
 		{
-			const auto required = std::count_if(captures.begin(), captures.end(),
-												[](const auto& request)
-												{
-													return !request.history;
-												});
+			const auto required =
+				std::count_if(captures.begin(), captures.end(), [](const auto& request) { return !request.history; });
 			m_frames.reserve(required + 1);
 			m_batch.reserve(required + 1);
 			auto result = PrepareComposition(composition.plan, std::move(reservation));
@@ -255,7 +258,7 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 		return !m_batch.empty() && m_batch.front()->Submitted();
 	}
 
-  private:
+private:
 	void MarkSourcesUsed(const std::shared_ptr<Frame>& frame, std::span<const XrSwapchain> sources) const
 	{
 		if (m_sourceUsed && frame->SourcesUsed())
@@ -287,16 +290,14 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 			m_batch.reserve(64);
 			output.status = VulkanReprojectionPreparation::Prepare(
 				m_inspection, *composition.layers, composition.target, composition.head,
-				[this](XrSwapchain swapchain) -> std::optional<XrExtent2Di>
-				{
+				[this](XrSwapchain swapchain) -> std::optional<XrExtent2Di> {
 					const auto source = Resolve(swapchain);
 					if (!source.texture)
 						return {};
 					const auto description = Describe(source);
 					return XrExtent2Di{description.width, description.height};
 				},
-				[this](const LayerImageDescription& image, std::shared_ptr<VulkanFrame>& output)
-				{
+				[this](const LayerImageDescription& image, std::shared_ptr<VulkanFrame>& output) {
 					auto reservation = m_delivery.ReprojectionReservations().Reserve();
 					if (!reservation)
 						return XR_ERROR_LIMIT_REACHED;
@@ -412,12 +413,8 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 		if (XR_FAILED(result))
 			return result;
 		auto transfer = m_inspection.Prepare(
-			copied,
-			[producers = m_delivery.LiveReservations()](CompletionStatus)
-			{
-				producers.Collect();
-			},
-			{}, history ? VulkanInspectionKind::History : VulkanInspectionKind::Required);
+			copied, [producers = m_delivery.LiveReservations()](CompletionStatus) { producers.Collect(); }, {},
+			history ? VulkanInspectionKind::History : VulkanInspectionKind::Required);
 		if (history && history->preview && transfer->Output()->Image().allocationSize > FramePreviewHistory::SlotBytes)
 			throw std::runtime_error("Preview allocation exceeds its history reservation");
 		if (history && !transfer->Output()->PromoteCaptureBudget(*history->historyPool, history->historyReservation))
@@ -433,11 +430,13 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 		std::unique_ptr<VulkanInspectionTransfer> transfer;
 		std::vector<XrSwapchain> sources;
 	};
+
 	struct RetainedFrame
 	{
 		std::shared_ptr<Frame> native;
 		XrSwapchain source;
 	};
+
 	Backend& m_native;
 	VulkanBackend& m_delivery;
 	VulkanInspection& m_inspection;
@@ -480,8 +479,7 @@ void WindowsSessionGraphics::Configure(const VulkanExternalIdentity& identity)
 	const auto configured = m_session->ConfigureCapturePool(
 		m_delivery->Reservations(), true,
 		[](const std::shared_ptr<const FrameOutput>& output, const FramePool& pool,
-		   std::shared_ptr<FrameReservation> reservation)
-		{
+		   std::shared_ptr<FrameReservation> reservation) {
 			const auto image = std::dynamic_pointer_cast<const VulkanInspectionFrame>(output);
 			if (!image)
 				return SnapshotAdmission::Unsupported;
@@ -507,8 +505,7 @@ XrResult WindowsSessionGraphics::EndFrame(const XrFrameEndInfo& info, const Swap
 	if (m_closing)
 		return XR_ERROR_SESSION_LOST;
 	return std::visit(
-		[&](auto& native)
-		{
+		[&](auto& native) {
 			WindowsFrameSubmission backend(*native, *m_delivery, *m_inspection, resolve, sourceUsed,
 										   m_session->Display().Policy() == PresentationPolicy::Rotational);
 			FrameSubmission submission(*m_session, backend);

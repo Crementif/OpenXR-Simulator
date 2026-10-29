@@ -34,13 +34,16 @@ struct PreviewHistory::Resources
 	VkDescriptorSet descriptor = VK_NULL_HANDLE;
 	VkDescriptorPool thumbnailPool = VK_NULL_HANDLE;
 	VkDescriptorSetLayout thumbnailLayout = VK_NULL_HANDLE;
+
 	struct Thumbnail
 	{
 		VkImageView view = VK_NULL_HANDLE;
 		VkDescriptorSet descriptor = VK_NULL_HANDLE;
 	};
+
 	std::vector<Thumbnail> thumbnails;
 	std::uint64_t lastUse = 0;
+
 	~Resources()
 	{
 		if (thumbnailPool)
@@ -57,6 +60,7 @@ struct PreviewHistory::Resources
 		if (sampler)
 			vkDestroySampler(device->binding.device, sampler, nullptr);
 	}
+
 	std::uint64_t Bytes() const
 	{
 		std::uint64_t bytes = display ? display->allocationSize : 0;
@@ -69,6 +73,7 @@ struct PreviewHistory::Resources
 		return bytes;
 	}
 };
+
 // Unknown GPU completion never justifies destruction: such rings stay for the
 // process lifetime and count against later budgets.
 struct PreviewHistory::Resources::Preserved
@@ -77,6 +82,7 @@ struct PreviewHistory::Resources::Preserved
 	std::unique_ptr<PreviewHistory::Resources> rings;
 	std::uint64_t bytes = 0;
 };
+
 PreviewHistory::Resources::Preserved& PreviewHistory::Resources::PreservedRings()
 {
 	static auto* preserved = new Preserved;
@@ -86,6 +92,7 @@ PreviewHistory::Resources::Preserved& PreviewHistory::Resources::PreservedRings(
 struct PreviewHistory::Resources
 {
 	std::unique_ptr<Resources> next;
+
 	std::uint64_t Bytes() const
 	{
 		return 0;
@@ -99,6 +106,7 @@ PreviewHistory::PreviewHistory(UiRenderer& renderer, std::uint64_t budget) : m_r
 	(void)Resources::PreservedRings();
 #endif
 }
+
 PreviewHistory::~PreviewHistory()
 {
 	Retire();
@@ -125,6 +133,7 @@ PreviewHistory::~PreviewHistory()
 	}
 #endif
 }
+
 void PreviewHistory::Retire()
 {
 	if (m_resources)
@@ -133,6 +142,7 @@ void PreviewHistory::Retire()
 		m_retired = std::move(m_resources);
 	}
 }
+
 void PreviewHistory::CollectRetired()
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -151,6 +161,7 @@ void PreviewHistory::CollectRetired()
 	}
 #endif
 }
+
 bool PreviewHistory::Prepare(const control::ImageDescription& description)
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -257,6 +268,7 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 	return false;
 #endif
 }
+
 void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch)
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -279,11 +291,9 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 				m_display == candidate || std::find(m_sampled.begin(), m_sampled.end(), candidate) != m_sampled.end())
 				continue;
 			const auto& kept = m_shots[candidate];
-			if (std::any_of(m_wanted.begin(), m_wanted.end(),
-							[&](const PreviewShot& wanted)
-							{
-								return kept.frame == wanted.frame && kept.epoch == wanted.epoch;
-							}))
+			if (std::any_of(m_wanted.begin(), m_wanted.end(), [&](const PreviewShot& wanted) {
+					return kept.frame == wanted.frame && kept.epoch == wanted.epoch;
+				}))
 				continue;
 			slot = candidate;
 			break;
@@ -338,6 +348,7 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 	(void)epoch;
 #endif
 }
+
 std::optional<PreviewShot> PreviewHistory::Nearest(FrameIdentity frame, std::uint64_t epoch) const
 {
 	std::optional<PreviewShot> best;
@@ -348,20 +359,22 @@ std::optional<PreviewShot> PreviewHistory::Nearest(FrameIdentity frame, std::uin
 			best = shot;
 	return best;
 }
+
 void PreviewHistory::BeginThumbnails()
 {
 	m_wanted.clear();
 }
+
 void PreviewHistory::RequestThumbnail(FrameIdentity frame, std::uint64_t epoch)
 {
 	m_wanted.push_back({0, frame, epoch});
 }
+
 std::optional<PreviewShot> PreviewHistory::MissingThumbnail() const
 {
 	for (const auto& wanted : m_wanted)
 	{
-		const auto matches = [&](const PreviewShot& shot)
-		{
+		const auto matches = [&](const PreviewShot& shot) {
 			return shot.frame == wanted.frame && shot.epoch == wanted.epoch;
 		};
 		if (std::none_of(m_shots.begin(), m_shots.end(), matches) &&
@@ -370,16 +383,19 @@ std::optional<PreviewShot> PreviewHistory::MissingThumbnail() const
 	}
 	return {};
 }
+
 void PreviewHistory::UnavailableThumbnail(FrameIdentity frame, std::uint64_t epoch)
 {
 	if (m_unavailable.size() == 256)
 		m_unavailable.erase(m_unavailable.begin());
 	m_unavailable.push_back({0, frame, epoch});
 }
+
 float PreviewHistory::Aspect() const noexcept
 {
 	return m_aspect;
 }
+
 void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -396,6 +412,7 @@ void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 	(void)crop;
 #endif
 }
+
 void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop)
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -439,6 +456,7 @@ void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVe
 	(void)crop;
 #endif
 }
+
 void PreviewHistory::Record(VkCommandBuffer command)
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -500,6 +518,7 @@ void PreviewHistory::Record(VkCommandBuffer command)
 	(void)command;
 #endif
 }
+
 void PreviewHistory::Submitted(std::uint64_t serial)
 {
 	if (!m_resources)
@@ -535,10 +554,12 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 	m_recorded = false;
 #endif
 }
+
 void PreviewHistory::Poll()
 {
 	CollectRetired();
 }
+
 void PreviewHistory::BeginRetirement()
 {
 	if (m_copy)
@@ -550,10 +571,12 @@ void PreviewHistory::BeginRetirement()
 	m_pendingDescription.reset();
 	Retire();
 }
+
 bool PreviewHistory::RetirementComplete() const noexcept
 {
 	return !m_resources && !m_retired;
 }
+
 void PreviewHistory::PreserveRetired() noexcept
 {
 	Retire();
@@ -573,6 +596,7 @@ void PreviewHistory::PreserveRetired() noexcept
 	}
 #endif
 }
+
 void PreviewHistory::BeginFrame()
 {
 	CollectRetired();
@@ -597,6 +621,7 @@ void PreviewHistory::BeginFrame()
 		}
 	}
 }
+
 std::uint64_t PreviewHistory::Bytes() const noexcept
 {
 	std::uint64_t bytes = m_resources ? m_resources->Bytes() : 0;

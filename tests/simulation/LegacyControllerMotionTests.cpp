@@ -15,18 +15,21 @@ void Near(float actual, float expected, const char* message, float tolerance = 0
 {
 	Require(std::abs(actual - expected) <= tolerance, message);
 }
+
 void Position(XrVector3f actual, XrVector3f expected, const char* message)
 {
 	Near(actual.x, expected.x, message);
 	Near(actual.y, expected.y, message);
 	Near(actual.z, expected.z, message);
 }
+
 ControllerMotionFrame Frame(double seconds)
 {
 	ControllerMotionFrame frame;
 	frame.glideSeconds = seconds;
 	return frame;
 }
+
 void FiniteGlideEndpoints()
 {
 	LegacyControllerMotion motion;
@@ -44,6 +47,7 @@ void FiniteGlideEndpoints()
 	Require(motion.Update(Frame(1)).snapshot.hands[1].local.position.x == -largest,
 			"Finite glide endpoint was not preserved");
 }
+
 void FiniteMotionIntermediates()
 {
 	LegacyControllerMotion motion;
@@ -75,6 +79,7 @@ void FiniteMotionIntermediates()
 	Near(orientation.w, expectedOrientation.w, "Wide yaw changed orientation");
 	Require(finitePosition && finiteOrientation, "Finite motion input overflowed a representable result");
 }
+
 void HeadSpaceAndTimedMoves()
 {
 	LegacyControllerMotion motion;
@@ -131,6 +136,7 @@ void HeadSpaceAndTimedMoves()
 	motion.Update(frame);
 	Position(motion.Update(Frame(6)).snapshot.hands[1].local.position, {9, 8, 7}, "Jump did not cancel an older glide");
 }
+
 void KeyboardFileAndHoldPrecedence()
 {
 	LegacyControllerMotion motion;
@@ -203,6 +209,7 @@ void KeyboardFileAndHoldPrecedence()
 	Require(result.snapshot.hands[0].controls.thumbClick && !result.snapshot.hands[1].controls.thumbClick,
 			"A missing keyboard channel invented a release unlike the legacy path");
 }
+
 void AnimationEdgesAndReset()
 {
 	LegacyControllerMotion motion;
@@ -234,6 +241,7 @@ void AnimationEdgesAndReset()
 	Position(result.snapshot.hands[1].local.position, {0.2f, -0.3f, -0.4f},
 			 "Numpad reset did not restore the right pose");
 }
+
 void AtomicPublicationAndInvalidHand()
 {
 	LegacyControllerMotion motion;
@@ -256,16 +264,15 @@ void AtomicPublicationAndInvalidHand()
 	frame = Frame(1);
 	frame.keyboard.active = true;
 	std::atomic<bool> finished = false, inconsistent = false;
-	std::thread reader(
-		[&]
+	std::thread reader([&] {
+		do
 		{
-			do
-			{
-				const auto sample = motion.Snapshot();
-				if (sample.hands[0].controls.primary != sample.hands[1].controls.primary)
-					inconsistent = true;
-			} while (!finished.load());
-		});
+			const auto sample = motion.Snapshot();
+			if (sample.hands[0].controls.primary != sample.hands[1].controls.primary)
+				inconsistent = true;
+		}
+		while (!finished.load());
+	});
 	for (unsigned index = 0; index < 1000; ++index)
 	{
 		frame.keyboard.hands[0].primary = frame.keyboard.hands[1].primary = index % 2 != 0;
@@ -276,6 +283,7 @@ void AtomicPublicationAndInvalidHand()
 	Require(!inconsistent, "An input reader observed only one side of a controller update");
 }
 } // namespace simxr::legacy::tests
+
 int main()
 {
 	using namespace simxr::legacy::tests;

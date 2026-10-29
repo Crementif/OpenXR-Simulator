@@ -34,8 +34,7 @@ static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(bool input
 	// An inactive window still supplies releases for its keyboard-owned controls.
 	if (!inputActive)
 		return input;
-	const auto down = [](int key)
-	{
+	const auto down = [](int key) {
 		return (GetAsyncKeyState(key) & 0x8000) != 0;
 	};
 	input.frameSeconds = frameSeconds;
@@ -114,8 +113,7 @@ RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked() const
 	if (m_renderHeight)
 		output.views.outerHeight = *m_renderHeight;
 	output.views.ipd = std::clamp(configuration.ipdMeters, 0.0f, .2f);
-	if (configuration.useAsymmetricFov &&
-		configuration.headsetProfile != settings::HeadsetProfile::GenericSymmetric)
+	if (configuration.useAsymmetricFov && configuration.headsetProfile != settings::HeadsetProfile::GenericSymmetric)
 	{
 		const auto& profile = settings::GetHeadsetSpec(configuration.headsetProfile);
 		for (std::size_t eye = 0; eye < output.views.outerFov.size(); ++eye)
@@ -162,8 +160,7 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 	controllerFrame.glideSeconds = counterSeconds;
 	if (inputActive)
 	{
-		const auto down = [](int key)
-		{
+		const auto down = [](int key) {
 			return (GetAsyncKeyState(key) & 0x8000) != 0;
 		};
 		const float moveSpeed = settings::GetMoveSpeed(down(VK_SHIFT));

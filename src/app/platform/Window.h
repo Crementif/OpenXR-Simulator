@@ -22,9 +22,10 @@ struct GamepadSample
 	std::array<float, 3> gyro{};
 	std::array<bool, 4> dpad{};
 };
+
 class Window
 {
-  public:
+public:
 	explicit Window(bool hidden);
 	~Window();
 	Window(const Window&) = delete;
@@ -44,7 +45,7 @@ class Window
 	bool CapturePointer(bool enabled, bool relative = true);
 	std::pair<float, float> TakePointerMotion();
 
-  private:
+private:
 	SDL_Window* m_window = nullptr;
 	SDL_Gamepad* m_gamepad = nullptr;
 	GamepadFeedback m_feedback;

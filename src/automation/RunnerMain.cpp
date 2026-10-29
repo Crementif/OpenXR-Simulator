@@ -14,10 +14,12 @@
 #include <csignal>
 
 static volatile std::sig_atomic_t s_interrupted = 0;
+
 static void Interrupt(int)
 {
 	s_interrupted = 1;
 }
+
 static std::uint64_t Integer(std::string_view text)
 {
 	std::uint64_t value = 0;
@@ -26,6 +28,7 @@ static std::uint64_t Integer(std::string_view text)
 		throw std::invalid_argument("Expected unsigned integer");
 	return value;
 }
+
 static std::filesystem::path Utf8Path(std::string_view path)
 {
 	return std::filesystem::path{std::u8string{path.begin(), path.end()}};
@@ -133,8 +136,7 @@ int simxr::automation::RunRunner(int argc, char** argv)
 		namespace wire = simxr::control;
 		wire::LocalControlClient client(socket, std::chrono::milliseconds{50});
 		std::uint64_t nextRequest = 1;
-		const auto exchange = [&](wire::OpCode opcode, std::vector<wire::Field> fields)
-		{
+		const auto exchange = [&](wire::OpCode opcode, std::vector<wire::Field> fields) {
 			wire::ControlPacket request;
 			request.message.opcode = static_cast<std::uint16_t>(opcode);
 			request.message.requestId = wire::RequestId{nextRequest++};
@@ -188,8 +190,7 @@ int simxr::automation::RunRunner(int argc, char** argv)
 		for (;;)
 		{
 			const auto phase = runner.Phase();
-			if (phase != simxr::automation::RigPhase::Running &&
-				phase != simxr::automation::RigPhase::Paused)
+			if (phase != simxr::automation::RigPhase::Running && phase != simxr::automation::RigPhase::Paused)
 				break;
 			if (s_interrupted)
 				runner.Cancel();

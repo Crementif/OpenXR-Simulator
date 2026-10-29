@@ -10,7 +10,7 @@ namespace simxr
 {
 class CommandRecorder
 {
-  public:
+public:
 	explicit CommandRecorder(std::size_t capacity = 1024);
 	void Start(const CommandRecordingOrigin& origin, bool drain = false);
 	// Retire the exclusive prefix only after the consumer has persisted it.
@@ -27,7 +27,7 @@ class CommandRecorder
 	// throws, neither the recorder nor its overflow state is published.
 	bool ObservePrepared(std::span<const CommandOutcome> outcomes, const std::function<void(bool)>& commit);
 
-  private:
+private:
 	const std::size_t m_capacity;
 	// Serialize mutations across external reservation; snapshots use only m_mutex.
 	std::mutex m_mutationMutex;

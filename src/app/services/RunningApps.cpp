@@ -25,6 +25,7 @@ std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout, s
 	}
 	return apps;
 }
+
 std::optional<LaunchProfile> DescribeProcess(std::uint64_t process)
 {
 	auto profile = ReadProcessLaunch(process);

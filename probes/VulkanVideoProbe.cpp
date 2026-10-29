@@ -16,6 +16,7 @@ namespace simxr::probe
 static bool s_failVideoView = false;
 static unsigned s_failVideoWait = 0;
 } // namespace simxr::probe
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device, const VkImageViewCreateInfo* info,
 															const VkAllocationCallbacks* allocator, VkImageView* view)
 {
@@ -24,6 +25,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device, con
 	const auto create = reinterpret_cast<PFN_vkCreateImageView>(vkGetDeviceProcAddr(device, "vkCreateImageView"));
 	return create(device, info, allocator, view);
 }
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, std::uint32_t count, const VkFence* fences,
 														  VkBool32 all, std::uint64_t timeout)
 {

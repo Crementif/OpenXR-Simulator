@@ -13,7 +13,7 @@ namespace simxr
 // Scratch storage is leased exclusively and reset only after its prior GPU use finishes.
 class VulkanCommands
 {
-  public:
+public:
 	explicit VulkanCommands(VkDevice device, std::uint32_t queueFamily);
 	~VulkanCommands();
 	VulkanCommands(const VulkanCommands&) = delete;
@@ -25,14 +25,14 @@ class VulkanCommands
 	VkQueryPool timestamps = VK_NULL_HANDLE;
 	VkDescriptorPool descriptors = VK_NULL_HANDLE;
 
-  private:
+private:
 	void Destroy() noexcept;
 	const VkDevice m_device;
 };
 
 class VulkanImage
 {
-  public:
+public:
 	static std::shared_ptr<VulkanImage>
 	Create(std::shared_ptr<VulkanDevice> device, VkFormat format, VkExtent2D extent, std::uint32_t layers,
 		   VkImageUsageFlags usage, std::uint32_t mipLevels = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
@@ -59,7 +59,7 @@ class VulkanImage
 	VkImageView View(std::uint32_t slice, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT) const;
 	VkFramebuffer Framebuffer(VkRenderPass pass, std::uint32_t slice) const;
 
-  private:
+private:
 	friend class VulkanExternalDevice;
 	friend class WindowsVulkanImport;
 	friend class VulkanImagePool;
@@ -69,18 +69,21 @@ class VulkanImage
 	explicit VulkanImage(std::shared_ptr<VulkanDevice> device);
 	const VulkanImage& Owner() const noexcept;
 	std::shared_ptr<VulkanImage> m_allocation;
+
 	struct CachedView
 	{
 		std::uint32_t slice;
 		VkImageAspectFlags aspect;
 		VkImageView view;
 	};
+
 	struct CachedFramebuffer
 	{
 		VkRenderPass pass;
 		std::uint32_t slice;
 		VkFramebuffer framebuffer;
 	};
+
 	mutable std::mutex m_cacheMutex;
 	mutable std::vector<CachedView> m_views;
 	mutable std::vector<CachedFramebuffer> m_framebuffers;

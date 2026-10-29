@@ -10,9 +10,10 @@
 
 namespace simxr
 {
-template <typename Handle, typename Core, typename Native> class NativeBindings
+template<typename Handle, typename Core, typename Native>
+class NativeBindings
 {
-  public:
+public:
 	using CoreRef = HandleRef<Handle, Core>;
 	using NativeRef = HandleRef<Handle, Native>;
 
@@ -72,12 +73,13 @@ template <typename Handle, typename Core, typename Native> class NativeBindings
 		return true;
 	}
 
-  private:
+private:
 	struct Binding
 	{
 		CoreRef core;
 		std::unique_ptr<Native> native;
 	};
+
 	mutable std::mutex m_mutex;
 	using Bindings = std::unordered_map<Handle, std::shared_ptr<Binding>>;
 	std::unique_ptr<Bindings> m_bindings;

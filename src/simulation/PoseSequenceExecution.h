@@ -18,6 +18,7 @@ struct PoseSequenceStatus
 	FrameId origin, lastFrame;
 	bool active = true, loop = false;
 };
+
 struct PoseSequenceFrame
 {
 	std::vector<SimulationCommand> commands;
@@ -28,7 +29,7 @@ struct PoseSequenceFrame
 // cursor and pose state publish only after the frame's reservation succeeds.
 class PoseSequenceExecution
 {
-  public:
+public:
 	PoseSequenceExecution(std::uint64_t id, CommandSource owner, std::shared_ptr<const PoseSequence> program,
 						  std::array<bool, ControlChannelCount> inherited = {});
 	PoseSequenceFrame Prepare(FrameId frame, const CommandConfiguration& initial);
@@ -40,7 +41,7 @@ class PoseSequenceExecution
 	CommandSource Source() const noexcept;
 	std::shared_ptr<const PoseSequence> Program() const noexcept;
 
-  private:
+private:
 	void Initialize(FrameId frame, const CommandConfiguration& initial);
 	std::vector<SimulationCommand> Commands() const;
 	std::shared_ptr<const PoseSequence> m_program;

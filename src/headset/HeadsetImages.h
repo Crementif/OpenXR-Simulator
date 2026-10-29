@@ -10,23 +10,26 @@
 namespace simxr::headset
 {
 class HeadsetGraphics;
+
 struct HeadsetImageTiming
 {
 	std::uint64_t requests = 0, copies = 0, unchanged = 0, clears = 0, capacityWaits = 0;
 	std::size_t retained = 0, maximumRetained = 0;
 	std::chrono::nanoseconds maximumDelivery{}, maximumCopyObservation{};
 };
+
 struct HeadsetImageFrame
 {
 	std::unique_ptr<control::VulkanImageConsumer> pixels;
 	HeadsetImagePacket metadata;
 };
+
 // All methods, including destruction, run on the physical frame thread.
 // Presenters retain Current() through their own GPU completion. Copies are
 // complete before publication; SampleReady must not be waited on each repeat.
 class HeadsetImages
 {
-  public:
+public:
 	HeadsetImages(HeadsetGraphics& graphics, HeadsetImageSource source, std::shared_ptr<VulkanDevice> device = {});
 	~HeadsetImages();
 	void Tick();
@@ -34,6 +37,7 @@ class HeadsetImages
 	bool Fresh(std::chrono::nanoseconds period) const;
 	std::optional<std::chrono::nanoseconds> Age(std::chrono::steady_clock::time_point now) const;
 	bool Close();
+
 	HeadsetImageTiming Timing() const
 	{
 		auto timing = m_timing;
@@ -41,7 +45,7 @@ class HeadsetImages
 		return timing;
 	}
 
-  private:
+private:
 	void RetireUnused();
 	HeadsetGraphics& m_graphics;
 	std::shared_ptr<VulkanDevice> m_device;

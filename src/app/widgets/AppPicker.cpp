@@ -22,6 +22,7 @@ static std::string Clock(std::chrono::system_clock::time_point time)
 		return "unknown";
 	return text;
 }
+
 static std::string Age(std::int64_t lastUsed)
 {
 	const auto now =
@@ -36,6 +37,7 @@ static std::string Age(std::int64_t lastUsed)
 		return std::to_string(seconds / 3600) + " h ago";
 	return std::to_string(seconds / 86400) + " d ago";
 }
+
 static std::string CommandLine(const LaunchProfile& launch)
 {
 	std::string text = launch.executable;
@@ -45,6 +47,7 @@ static std::string CommandLine(const LaunchProfile& launch)
 		text += "\nin " + launch.workingDirectory;
 	return text;
 }
+
 static void ClippedText(const char* text, float width, ImU32 color)
 {
 	const auto position = ImGui::GetCursorScreenPos();
@@ -55,6 +58,7 @@ static void ClippedText(const char* text, float width, ImU32 color)
 	draw->PopClipRect();
 	ImGui::Dummy({width, height});
 }
+
 // Keeps the detail beside the actions when both fit, otherwise above them.
 static void AppDetail(const std::string& detail, std::initializer_list<const char*> labels)
 {
@@ -69,12 +73,14 @@ static void AppDetail(const std::string& detail, std::initializer_list<const cha
 	if (sameLine)
 		ImGui::SameLine();
 }
+
 AppPicker::~AppPicker()
 {
 	StopDiscovery();
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 void AppPicker::StopDiscovery() noexcept
 {
 	if (!m_worker.joinable())
@@ -82,10 +88,12 @@ void AppPicker::StopDiscovery() noexcept
 	m_worker.request_stop();
 	m_changed.notify_all();
 }
+
 bool AppPicker::DiscoveryStopped() const noexcept
 {
 	return m_workerExited.load();
 }
+
 std::string AppPicker::Refresh()
 {
 	try
@@ -97,11 +105,7 @@ std::string AppPicker::Refresh()
 			m_workerExited.store(false);
 			try
 			{
-				m_worker = std::jthread(
-					[this](std::stop_token stop)
-					{
-						Run(stop);
-					});
+				m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
 			}
 			catch (...)
 			{
@@ -126,13 +130,19 @@ std::string AppPicker::Refresh()
 		return error.what();
 	}
 }
+
 void AppPicker::Run(std::stop_token stop) noexcept
 {
 	struct ExitSignal
 	{
 		std::atomic<bool>& exited;
-		~ExitSignal() { exited.store(true); }
+
+		~ExitSignal()
+		{
+			exited.store(true);
+		}
 	} exitSignal{m_workerExited};
+
 	try
 	{
 		std::uint64_t observed = 0;
@@ -141,11 +151,7 @@ void AppPicker::Run(std::stop_token stop) noexcept
 			std::uint64_t request = 0;
 			{
 				std::unique_lock lock(m_mutex);
-				m_changed.wait(lock, stop,
-							   [&]
-							   {
-								   return m_requested != observed;
-							   });
+				m_changed.wait(lock, stop, [&] { return m_requested != observed; });
 				if (stop.stop_requested())
 					return;
 				request = observed = m_requested;
@@ -175,6 +181,7 @@ void AppPicker::Run(std::stop_token stop) noexcept
 		m_workerFailed.store(true);
 	}
 }
+
 AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
 								ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session,
 								float maximumWidth, bool compact)

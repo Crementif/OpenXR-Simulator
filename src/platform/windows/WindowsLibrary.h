@@ -10,14 +10,14 @@ namespace simxr::windows
 // Declare before native objects and resolved entry points that depend on this library.
 class WindowsLibrary final
 {
-  public:
+public:
 	explicit WindowsLibrary(const wchar_t* name);
 	~WindowsLibrary() noexcept;
 	WindowsLibrary(const WindowsLibrary&) = delete;
 	WindowsLibrary& operator=(const WindowsLibrary&) = delete;
 	FARPROC Procedure(const char* name) const;
 
-  private:
+private:
 	HMODULE m_module = nullptr;
 };
 } // namespace simxr::windows

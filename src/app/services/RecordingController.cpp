@@ -10,12 +10,14 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 static std::vector<wire::Field> SessionFields(const RecordingTarget& target)
 {
 	return {wire::Field::U64(wire::tag::Session, target.session, true),
 			wire::Field::U64(wire::tag::Generation, target.generation, true),
 			wire::Field::U32(wire::tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Manual))};
 }
+
 static void CheckRecordingResponse(const wire::Message& response)
 {
 	const auto error = response.Find(wire::tag::Error);
@@ -28,6 +30,7 @@ static void CheckRecordingResponse(const wire::Message& response)
 															: "Recording request failed");
 	}
 }
+
 wire::Message RecordingController::Read(WorkerConnection& connection, const Job& job, std::uint64_t offset)
 {
 	auto fields = SessionFields(job.target);
@@ -37,6 +40,7 @@ wire::Message RecordingController::Read(WorkerConnection& connection, const Job&
 	CheckRecordingResponse(response);
 	return response;
 }
+
 void SaveRecording(const std::filesystem::path& destination, const automation::InputRecording& recording, bool replace)
 {
 	const auto script = automation::EditableRig(recording);
@@ -72,6 +76,7 @@ RecordingSnapshot RecordingController::Execute(WorkerConnection& connection, con
 	result.page = std::make_shared<const automation::InputRecording>(std::move(page.recording));
 	return result;
 }
+
 void RecordingController::Run()
 {
 	std::uint64_t bound = 0;
@@ -82,11 +87,7 @@ void RecordingController::Run()
 		bool rebind = false;
 		{
 			std::unique_lock lock(m_mutex);
-			m_changed.wait(lock,
-						   [&]
-						   {
-							   return m_stopping || m_pending || bound != m_revision;
-						   });
+			m_changed.wait(lock, [&] { return m_stopping || m_pending || bound != m_revision; });
 			if (m_stopping)
 			{
 				m_current.reset();
@@ -157,6 +158,7 @@ void RecordingController::Run()
 		}
 	}
 }
+
 RecordingController::~RecordingController()
 {
 	{
@@ -169,6 +171,7 @@ RecordingController::~RecordingController()
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 void RecordingController::SetTarget(RecordingTarget target)
 {
 	{
@@ -185,6 +188,7 @@ void RecordingController::SetTarget(RecordingTarget target)
 	}
 	m_changed.notify_all();
 }
+
 bool RecordingController::Request(RecordingAction action, std::uint64_t offset, std::string path)
 {
 	{
@@ -196,11 +200,7 @@ bool RecordingController::Request(RecordingAction action, std::uint64_t offset, 
 			throw std::invalid_argument("Invalid recording page or destination");
 		Job job{action, m_target, m_revision, offset, std::move(path)};
 		if (!m_worker.joinable())
-			m_worker = std::thread(
-				[this]
-				{
-					Run();
-				});
+			m_worker = std::thread([this] { Run(); });
 		m_pending = std::move(job);
 		m_snapshot.busy = true;
 		m_snapshot.error.clear();
@@ -208,11 +208,13 @@ bool RecordingController::Request(RecordingAction action, std::uint64_t offset, 
 	m_changed.notify_all();
 	return true;
 }
+
 RecordingSnapshot RecordingController::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_snapshot;
 }
+
 automation::SavedRecording OpenSavedRecording(const std::string& path)
 {
 	if (path.empty() || path.find('\0') != std::string::npos)
@@ -260,5 +262,6 @@ automation::SavedRecording OpenSavedRecording(const std::string& path)
 		throw std::runtime_error("The recording's seed is invalid");
 	return {path, seed};
 }
+
 RecordingController::RecordingController() = default;
 } // namespace simxr::app

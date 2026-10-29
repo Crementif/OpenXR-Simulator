@@ -9,6 +9,7 @@ static bool ReadbackFormat(VkFormat format)
 	return format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB ||
 		   format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
 }
+
 static std::size_t ValidateRegion(const VulkanReadbackRegion& region, const std::shared_ptr<VulkanDevice>& device)
 {
 	const auto& image = region.image;
@@ -24,25 +25,29 @@ static std::size_t ValidateRegion(const VulkanReadbackRegion& region, const std:
 		throw std::length_error("Vulkan readback region exceeds addressable storage");
 	return static_cast<std::size_t>(pixels * 4);
 }
+
 class ReadbackMapping
 {
-  public:
+public:
 	ReadbackMapping(VkDevice device, VkDeviceMemory memory, VkDeviceSize bytes) : m_device(device), m_memory(memory)
 	{
 		CheckVulkan(vkMapMemory(device, memory, 0, bytes, 0, &m_data), "Map explicit Vulkan readback");
 	}
+
 	~ReadbackMapping()
 	{
 		vkUnmapMemory(m_device, m_memory);
 	}
+
 	const void* Data() const noexcept
 	{
 		return m_data;
 	}
+
 	ReadbackMapping(const ReadbackMapping&) = delete;
 	ReadbackMapping& operator=(const ReadbackMapping&) = delete;
 
-  private:
+private:
 	VkDevice m_device;
 	VkDeviceMemory m_memory;
 	void* m_data = nullptr;
@@ -58,6 +63,7 @@ struct VulkanReadbackBatch::Native
 		std::size_t bytes = 0;
 		std::shared_ptr<VulkanImage> resolved;
 	};
+
 	VulkanNativePreservation<Native, 4>::Reservation preservation{
 		"Four explicit readback batches are retained across all application devices"};
 	std::shared_ptr<VulkanDevice> device;
@@ -65,7 +71,9 @@ struct VulkanReadbackBatch::Native
 	VkCommandPool pool = VK_NULL_HANDLE;
 	VkCommandBuffer command = VK_NULL_HANDLE;
 	VkFence fence = VK_NULL_HANDLE;
+
 	explicit Native(std::shared_ptr<VulkanDevice> owner) : device(std::move(owner)) {}
+
 	~Native()
 	{
 		const auto native = device->binding.device;
@@ -85,8 +93,8 @@ struct VulkanReadbackBatch::Native
 
 VulkanReadbackBatch::VulkanReadbackBatch(std::shared_ptr<VulkanDevice> device)
 	: m_native(std::make_unique<Native>(std::move(device)))
-{
-}
+{}
+
 std::shared_ptr<VulkanReadbackBatch> VulkanReadbackBatch::Prepare(std::shared_ptr<VulkanDevice> device,
 																  std::span<const VulkanReadbackRegion> regions)
 {
@@ -96,6 +104,7 @@ std::shared_ptr<VulkanReadbackBatch> VulkanReadbackBatch::Prepare(std::shared_pt
 	batch->Record(regions);
 	return batch;
 }
+
 VulkanReadbackBatch::~VulkanReadbackBatch()
 {
 	if (!NativeIdle())
@@ -104,6 +113,7 @@ VulkanReadbackBatch::~VulkanReadbackBatch()
 		m_native->preservation.Preserve(std::move(m_native));
 	}
 }
+
 void VulkanReadbackBatch::Record(std::span<const VulkanReadbackRegion> regions)
 {
 	const auto& device = m_native->device;
@@ -181,6 +191,7 @@ void VulkanReadbackBatch::Record(std::span<const VulkanReadbackRegion> regions)
 	}
 	CheckVulkan(vkEndCommandBuffer(m_native->command), "End explicit readback commands");
 }
+
 VkResult VulkanReadbackBatch::Submit() noexcept
 {
 	auto expected = Phase::Prepared;
@@ -203,6 +214,7 @@ VkResult VulkanReadbackBatch::Submit() noexcept
 	}
 	return result;
 }
+
 CompletionStatus VulkanReadbackBatch::PollCompletion() const noexcept
 {
 	const auto phase = m_phase.load();
@@ -219,6 +231,7 @@ CompletionStatus VulkanReadbackBatch::PollCompletion() const noexcept
 	}
 	return m_status.load();
 }
+
 bool VulkanReadbackBatch::NativeIdle() const noexcept
 {
 	const auto phase = m_phase.load();
@@ -229,6 +242,7 @@ bool VulkanReadbackBatch::NativeIdle() const noexcept
 	return m_native->device->lost.load() ||
 		   vkGetFenceStatus(m_native->device->binding.device, m_native->fence) == VK_SUCCESS;
 }
+
 VkResult VulkanReadbackBatch::Wait(std::uint64_t timeout) const noexcept
 {
 	const auto phase = m_phase.load();
@@ -250,6 +264,7 @@ VkResult VulkanReadbackBatch::Wait(std::uint64_t timeout) const noexcept
 	}
 	return result;
 }
+
 std::vector<std::vector<std::uint8_t>> VulkanReadbackBatch::ReadPixels() const
 {
 	std::lock_guard lock(m_readMutex);

@@ -30,11 +30,13 @@ SettingsFileLock::SettingsFileLock(const std::filesystem::path& path)
 	}
 	m_handle = descriptor;
 }
+
 SettingsFileLock::~SettingsFileLock()
 {
 	if (m_handle >= 0)
 		::close(static_cast<int>(m_handle));
 }
+
 static std::filesystem::path Absolute(const char* value)
 {
 	std::filesystem::path path(value);
@@ -42,6 +44,7 @@ static std::filesystem::path Absolute(const char* value)
 		throw std::runtime_error("Companion configuration path must be absolute");
 	return path;
 }
+
 std::filesystem::path CompanionSettingsPath()
 {
 	if (const auto path = std::getenv("SIMXR_COMPANION_SETTINGS"); path && *path)
@@ -52,6 +55,7 @@ std::filesystem::path CompanionSettingsPath()
 		return Absolute(path) / ".config/OpenXR-Simulator/companion.settings";
 	throw std::runtime_error("No absolute companion configuration directory is available");
 }
+
 std::filesystem::path CreatePrivateTemporaryFile(const std::filesystem::path& destination)
 {
 	auto pattern = destination.native() + ".XXXXXX";
@@ -72,14 +76,17 @@ std::filesystem::path CreatePrivateTemporaryFile(const std::filesystem::path& de
 		throw;
 	}
 }
+
 void CommitTemporaryFile(const std::filesystem::path& temporary, const std::filesystem::path& destination)
 {
 	std::filesystem::rename(temporary, destination);
 }
+
 bool CanExecuteFile(const std::filesystem::path& path)
 {
 	return ::access(path.c_str(), X_OK) == 0;
 }
+
 void RenameFileWithoutReplacing(const std::filesystem::path& source, const std::filesystem::path& destination)
 {
 	if (::syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) != 0)

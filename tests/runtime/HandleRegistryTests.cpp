@@ -24,11 +24,13 @@ void ReentrantRetirement()
 	struct ReentrantObject
 	{
 		std::function<void()> destroy;
+
 		~ReentrantObject()
 		{
 			destroy();
 		}
 	};
+
 	using Registry = simxr::HandleRegistry<XrSession, ReentrantObject, XrInstance>;
 	const auto parent = reinterpret_cast<XrInstance>(1);
 	for (const bool explicitRetirement : {false, true})
@@ -39,29 +41,22 @@ void ReentrantRetirement()
 			Registry registry;
 			for (std::size_t index = 0; index < 3; ++index)
 			{
-				registry.Create(parent,
-								[&](XrSession handle)
-								{
-									auto object = std::make_unique<ReentrantObject>();
-									object->destroy = [&, handle]
-									{
-										emptyDuringDestruction &= registry.Children(parent).empty() &&
-																  !registry.Find(handle) && !registry.Erase(handle);
-										++destroyed;
-									};
-									return object;
-								});
+				registry.Create(parent, [&](XrSession handle) {
+					auto object = std::make_unique<ReentrantObject>();
+					object->destroy = [&, handle] {
+						emptyDuringDestruction &=
+							registry.Children(parent).empty() && !registry.Find(handle) && !registry.Erase(handle);
+						++destroyed;
+					};
+					return object;
+				});
 			}
 			if (explicitRetirement)
 			{
 				auto retired = registry.RetireAll();
 				Require(destroyed == 0 && registry.Children(parent).empty(), "Retirement released its owners early");
 				std::size_t retained = 0;
-				retired.ForEach(
-					[&](const auto& object)
-					{
-						retained += static_cast<bool>(object);
-					});
+				retired.ForEach([&](const auto& object) { retained += static_cast<bool>(object); });
 				Require(retained == 3, "Retirement lost detached owners");
 			}
 		}
@@ -93,8 +88,7 @@ int main()
 	bool failed = false;
 	try
 	{
-		sessions.Create(instance, [&](XrSession handle) -> std::unique_ptr<Object>
-		{
+		sessions.Create(instance, [&](XrSession handle) -> std::unique_ptr<Object> {
 			unpublished = handle;
 			if (sessions.Find(handle))
 				throw std::logic_error("Factory published incomplete object");
@@ -106,8 +100,7 @@ int main()
 		failed = true;
 	}
 	Require(failed && unpublished && !sessions.Find(unpublished), "Failed factory leaked handle");
-	auto constructed = sessions.Create(instance, [&](XrSession handle)
-	{
+	auto constructed = sessions.Create(instance, [&](XrSession handle) {
 		Require(handle != unpublished, "Failed identity reused");
 		return std::make_unique<Object>(Object{42});
 	});

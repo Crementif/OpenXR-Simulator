@@ -3,14 +3,8 @@
 
 namespace simxr::app
 {
-GamepadFeedback::GamepadFeedback()
-	: m_worker(
-		  [this]
-		  {
-			  Run();
-		  })
-{
-}
+GamepadFeedback::GamepadFeedback() : m_worker([this] { Run(); }) {}
+
 GamepadFeedback::~GamepadFeedback()
 {
 	Attach(nullptr);
@@ -21,6 +15,7 @@ GamepadFeedback::~GamepadFeedback()
 	m_changed.notify_all();
 	m_worker.join();
 }
+
 void GamepadFeedback::Attach(SDL_Gamepad* gamepad)
 {
 	std::lock_guard lock(m_mutex);
@@ -31,6 +26,7 @@ void GamepadFeedback::Attach(SDL_Gamepad* gamepad)
 	m_outputFailed = false;
 	m_changed.notify_all();
 }
+
 bool GamepadFeedback::Rumble(std::array<std::uint16_t, 2> motors, std::chrono::steady_clock::time_point deadline)
 {
 	std::lock_guard lock(m_mutex);
@@ -53,6 +49,7 @@ bool GamepadFeedback::Rumble(std::array<std::uint16_t, 2> motors, std::chrono::s
 	m_changed.notify_all();
 	return accepted;
 }
+
 void GamepadFeedback::Run() noexcept
 {
 	try
@@ -61,11 +58,7 @@ void GamepadFeedback::Run() noexcept
 		while (!m_stopping)
 		{
 			if (!m_active)
-				m_changed.wait(lock,
-							   [this]
-							   {
-								   return m_stopping || m_active;
-							   });
+				m_changed.wait(lock, [this] { return m_stopping || m_active; });
 			else if (std::chrono::steady_clock::now() < m_deadline)
 				m_changed.wait_until(lock, m_deadline);
 			else

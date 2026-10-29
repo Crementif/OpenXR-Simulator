@@ -23,6 +23,7 @@ using namespace simxr;
 using namespace std::chrono_literals;
 namespace app = simxr::app;
 namespace wire = simxr::control;
+
 wire::ControlPacket Packet(wire::OpCode opcode, std::vector<wire::Field> fields = {})
 {
 	wire::ControlPacket result;
@@ -34,43 +35,40 @@ wire::ControlPacket Packet(wire::OpCode opcode, std::vector<wire::Field> fields 
 struct Directory
 {
 	std::filesystem::path path;
+
 	Directory()
 	{
 		char name[] = "/tmp/simxr-async-connection-XXXXXX";
 		Require(::mkdtemp(name) != nullptr, "Create async endpoint directory");
 		path = name;
 	}
+
 	~Directory()
 	{
 		std::filesystem::remove_all(path);
 	}
 };
+
 struct Gate
 {
 	std::mutex mutex;
 	std::condition_variable changed;
 	bool entered = false, released = false;
+
 	void Wait()
 	{
 		std::unique_lock lock(mutex);
 		entered = true;
 		changed.notify_all();
-		changed.wait(lock,
-					 [&]
-					 {
-						 return released;
-					 });
+		changed.wait(lock, [&] { return released; });
 	}
+
 	void Await()
 	{
 		std::unique_lock lock(mutex);
-		Require(changed.wait_for(lock, 3s,
-								 [&]
-								 {
-									 return entered;
-								 }),
-				"Blocked provider was not entered");
+		Require(changed.wait_for(lock, 3s, [&] { return entered; }), "Blocked provider was not entered");
 	}
+
 	void Release()
 	{
 		std::lock_guard lock(mutex);
@@ -78,91 +76,101 @@ struct Gate
 		changed.notify_all();
 	}
 };
+
 struct ReleaseGate
 {
 	std::shared_ptr<Gate> gate;
+
 	~ReleaseGate()
 	{
 		gate->Release();
 	}
 };
+
 class BlockingReader final : public wire::ImageReader
 {
-  public:
+public:
 	BlockingReader(std::shared_ptr<wire::ImageReader> reader, std::shared_ptr<Gate> gate)
 		: reader(std::move(reader)), gate(std::move(gate))
-	{
-	}
+	{}
+
 	wire::ImageDescription Description() const override
 	{
 		gate->Wait();
 		return reader->Description();
 	}
+
 	wire::ImageCapabilities Capabilities() const noexcept override
 	{
 		return reader->Capabilities();
 	}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return reader->PollCompletion();
 	}
+
 	std::shared_ptr<wire::ImageDelivery> Share(const wire::ImageDeviceIdentity& identity,
 											   const std::shared_ptr<wire::TransferHandle>& consumer) const override
 	{
 		return reader->Share(identity, consumer);
 	}
+
 	std::shared_ptr<wire::ImageExport> Export(std::optional<std::uint32_t> layer) const override
 	{
 		return reader->Export(layer);
 	}
 
-  private:
+private:
 	std::shared_ptr<wire::ImageReader> reader;
 	std::shared_ptr<Gate> gate;
 };
+
 class BlockingProvider final : public wire::ImageInspectionProvider
 {
-  public:
+public:
 	BlockingProvider(std::shared_ptr<wire::test::State> state, std::shared_ptr<Gate> gate)
 		: provider(std::make_shared<wire::test::Provider>(std::move(state))), gate(std::move(gate))
-	{
-	}
+	{}
+
 	wire::ImageCapabilities Capabilities(XrSession session) const noexcept override
 	{
 		return provider->Capabilities(session);
 	}
+
 	std::shared_ptr<wire::ImageReader> Retain(std::shared_ptr<const FrameOutput> output) const override
 	{
 		return std::make_shared<BlockingReader>(provider->Retain(std::move(output)), gate);
 	}
 
-  private:
+private:
 	std::shared_ptr<wire::ImageInspectionProvider> provider;
 	std::shared_ptr<Gate> gate;
 };
+
 std::uint64_t Id(const wire::Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
 	Require(field && field->AsU64(), "Missing async response identity");
 	return *field->AsU64();
 }
+
 void Connected(app::RuntimeConnection& connection, std::uint64_t epoch)
 {
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto state = connection.Snapshot();
 			return state.epoch == epoch && state.state == app::RuntimeConnectionState::Connected;
 		},
 		"Asynchronous Hello did not connect");
 	Require(connection.Snapshot().hello.message.Find(wire::tag::Error)->AsU32() == 0, "Hello reply was not preserved");
 }
+
 app::RuntimeReply Reply(app::RuntimeConnection& connection, std::uint64_t ticket)
 {
 	std::vector<app::RuntimeReply> replies;
 	Eventually(
-		[&]
-		{
+		[&] {
 			replies = connection.Poll();
 			return !replies.empty();
 		},
@@ -170,10 +178,12 @@ app::RuntimeReply Reply(app::RuntimeConnection& connection, std::uint64_t ticket
 	Require(replies.size() == 1 && replies.front().ticket == ticket, "Reply ticket changed or unexpectedly batched");
 	return std::move(replies.front());
 }
+
 struct Source
 {
 	std::uint64_t session = 0, generation = 0;
 };
+
 Source Discover(app::RuntimeConnection& connection)
 {
 	auto reply = Reply(connection, connection.Submit(Packet(wire::OpCode::Sessions)));
@@ -184,26 +194,31 @@ Source Discover(app::RuntimeConnection& connection)
 	fields.fields = std::move(record.fields);
 	return {Id(fields, wire::tag::Session), Id(fields, wire::tag::Generation)};
 }
+
 wire::ControlPacket Retain(Source source, CaptureId capture)
 {
 	return Packet(wire::OpCode::RetainImage, {wire::Field::U64(wire::tag::Session, source.session),
 											  wire::Field::U64(wire::tag::Generation, source.generation),
 											  wire::Field::U64(wire::tag::CaptureId, capture.value)});
 }
+
 class StopExposure final : public wire::PacketExposure
 {
-  public:
+public:
 	explicit StopExposure(app::RuntimeConnection& connection) : connection(connection) {}
+
 	void MarkTransferred() noexcept override
 	{
 		connection.Close();
 		stopped.store(true);
 	}
+
 	std::atomic<bool> stopped{false};
 
-  private:
+private:
 	app::RuntimeConnection& connection;
 };
+
 void ConnectionAndHandles()
 {
 	Directory directory;
@@ -242,12 +257,7 @@ void ConnectionAndHandles()
 	last.handles.push_back(wire::OwnControlFd(::open("/dev/null", O_RDONLY | O_CLOEXEC)));
 	last.exposure = stop;
 	Require(connection.Submit(std::move(last)) != 0, "Submit worker callback stop fixture");
-	Eventually(
-		[&]
-		{
-			return stop->stopped.load();
-		},
-		"Worker-origin stop deadlocked on self join");
+	Eventually([&] { return stop->stopped.load(); }, "Worker-origin stop deadlocked on self join");
 	connection.Close(); // External owner still joins; no worker is detached.
 	std::array<std::byte, 96> bytes{};
 	Require(::pread(static_cast<int>(shared.packet.handles[0]->Value()), bytes.data(), bytes.size(), 0) == 96 &&
@@ -256,6 +266,7 @@ void ConnectionAndHandles()
 	Require(connection.Connect(server.Path()) == 0 && connection.Submit(Packet(wire::OpCode::Sessions)) == 0,
 			"Closed asynchronous connection reopened admission");
 }
+
 void ExpectedPeerIdentity()
 {
 	Directory directory;
@@ -270,6 +281,7 @@ void ExpectedPeerIdentity()
 	const auto epoch = connection.Connect(server.Path(), static_cast<std::uint64_t>(::getpid()));
 	Connected(connection, epoch);
 }
+
 void BoundedQueueAndExactRetry()
 {
 	Directory directory;
@@ -298,12 +310,7 @@ void BoundedQueueAndExactRetry()
 	std::this_thread::sleep_for(80ms); // Several Retry slices, one server dispatch.
 	Require(fixture.state->retains == 1, "Timeout retry admitted another RPC");
 	gate->Release();
-	Eventually(
-		[&]
-		{
-			return connection.Snapshot().ready == 1;
-		},
-		"Blocked response did not finish");
+	Eventually([&] { return connection.Snapshot().ready == 1; }, "Blocked response did not finish");
 	std::this_thread::sleep_for(30ms);
 	Require(connection.Snapshot().queued == 2 && !connection.Snapshot().inFlight &&
 				connection.Submit(Packet(wire::OpCode::Sessions)) == 0,
@@ -315,6 +322,7 @@ void BoundedQueueAndExactRetry()
 				Reply(connection, third).packet.message.requestId == wire::RequestId{5},
 			"Queued reply order changed");
 }
+
 void ReconnectRejectsStaleReplies()
 {
 	Directory directory;
@@ -348,30 +356,36 @@ void ReconnectRejectsStaleReplies()
 	Require(response.epoch == newEpoch && response.packet.message.requestId == wire::RequestId{2},
 			"New epoch reused old protocol IDs");
 }
+
 class ReentrantHandle final : public wire::TransferHandle
 {
-  public:
+public:
 	explicit ReentrantHandle(std::function<void()> release) : release(std::move(release)) {}
+
 	~ReentrantHandle() override
 	{
 		release();
 	}
+
 	wire::TransferHandleKind Kind() const noexcept override
 	{
 		return wire::TransferHandleKind::OpaqueFd;
 	}
+
 	std::intptr_t Value() const noexcept override
 	{
 		return -1;
 	}
+
 	std::shared_ptr<wire::TransferHandle> Duplicate() const override
 	{
 		throw std::logic_error("Queued handle must never be sent");
 	}
 
-  private:
+private:
 	std::function<void()> release;
 };
+
 void ResponsiveShutdownAndDeadline()
 {
 	for (bool deadline : {false, true})
@@ -394,12 +408,8 @@ void ResponsiveShutdownAndDeadline()
 		if (deadline)
 		{
 			const auto queued = connection.Submit(Packet(wire::OpCode::Sessions));
-			Eventually(
-				[&]
-				{
-					return connection.Snapshot().ready == 2;
-				},
-				"Overall exchange deadline did not terminate bounded work");
+			Eventually([&] { return connection.Snapshot().ready == 2; },
+					   "Overall exchange deadline did not terminate bounded work");
 			auto replies = connection.Poll();
 			Require(replies.size() == 2 && replies[0].ticket == ticket && replies[0].timedOut &&
 						!replies[0].error.empty() && replies[1].ticket == queued && !replies[1].error.empty() &&
@@ -417,13 +427,11 @@ void ResponsiveShutdownAndDeadline()
 		{
 			bool reentered = false;
 			auto request = Packet(wire::OpCode::Sessions);
-			request.handles.push_back(std::make_shared<ReentrantHandle>(
-				[&]
-				{
-					connection.Snapshot();
-					connection.Close();
-					reentered = true;
-				}));
+			request.handles.push_back(std::make_shared<ReentrantHandle>([&] {
+				connection.Snapshot();
+				connection.Close();
+				reentered = true;
+			}));
 			Require(connection.Submit(std::move(request)) != 0, "Queue destructor reentry fixture");
 			const auto start = std::chrono::steady_clock::now();
 			connection.Close();
@@ -434,6 +442,7 @@ void ResponsiveShutdownAndDeadline()
 		connection.Close();
 	}
 }
+
 void InvalidBounds()
 {
 	for (int invalid = 0; invalid < 6; ++invalid)
@@ -472,16 +481,13 @@ void InvalidBounds()
 		Require(rejected, "Invalid asynchronous connection bound accepted");
 	}
 }
+
 void ExplicitFailures()
 {
 	app::RuntimeConnection connection;
 	const auto epoch = connection.Connect("/tmp/nonexistent-simxr-async-endpoint/socket");
-	Eventually(
-		[&]
-		{
-			return connection.Snapshot().state == app::RuntimeConnectionState::Failed;
-		},
-		"Missing endpoint did not report connection failure");
+	Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Failed; },
+			   "Missing endpoint did not report connection failure");
 	Require(connection.Snapshot().epoch == epoch && !connection.Snapshot().detail.empty(),
 			"Connection failure lost its epoch/detail");
 	connection.Disconnect();
@@ -511,12 +517,8 @@ void BusyPipeAttachment()
 	blocker.Close();
 	occupied.Close();
 	wire::LocalControlServer server(service, path);
-	Eventually(
-		[&]
-		{
-			return connection.Snapshot().state == app::RuntimeConnectionState::Connected;
-		},
-		"Attachment did not recover when the pipe became available");
+	Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Connected; },
+			   "Attachment did not recover when the pipe became available");
 	Require(connection.Snapshot().epoch == epoch, "Pipe retry changed the requested attachment epoch");
 	connection.Close();
 
@@ -531,12 +533,8 @@ void BusyPipeAttachment()
 	app::RuntimeConnection expired(config);
 	const auto start = std::chrono::steady_clock::now();
 	expired.Connect(path);
-	Eventually(
-		[&]
-		{
-			return expired.Snapshot().state == app::RuntimeConnectionState::Failed;
-		},
-		"Busy pipe did not respect the connection deadline");
+	Eventually([&] { return expired.Snapshot().state == app::RuntimeConnectionState::Failed; },
+			   "Busy pipe did not respect the connection deadline");
 	const auto elapsed = std::chrono::steady_clock::now() - start;
 	Require(elapsed >= config.exchangeDeadline && elapsed < 1s && !expired.Snapshot().detail.empty(),
 			"Busy pipe deadline failed too early, too late, or without an error");
@@ -550,6 +548,7 @@ void BusyPipeAttachment()
 }
 #endif
 } // namespace simxr::test
+
 int main()
 {
 	using namespace simxr::test;
@@ -568,12 +567,8 @@ int main()
 #else
 		app::RuntimeConnection connection;
 		connection.Connect("unsupported");
-		Eventually(
-			[&]
-			{
-				return connection.Snapshot().state == app::RuntimeConnectionState::Failed;
-			},
-			"Unsupported transport did not fail explicitly");
+		Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Failed; },
+				   "Unsupported transport did not fail explicitly");
 #endif
 		std::cout << "PASS async runtime connection CPU transport, bounded ownership and epochs\n";
 		return 0;

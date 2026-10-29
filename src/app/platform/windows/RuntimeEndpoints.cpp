@@ -18,6 +18,7 @@ std::wstring LocalPipePath(const std::string& endpoint)
 			throw std::invalid_argument("Invalid local control pipe name");
 	return std::wstring(endpoint.begin(), endpoint.end());
 }
+
 bool RuntimeEndpointExists(const std::string& endpoint)
 {
 	const auto path = LocalPipePath(endpoint);
@@ -45,6 +46,7 @@ bool RuntimeEndpointExists(const std::string& endpoint)
 	const std::unique_ptr<void, decltype(&FindClose)> searchOwner(search, FindClose);
 	return true;
 }
+
 std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
 {
 	std::vector<std::string> result;
@@ -60,17 +62,15 @@ std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
 		do
 		{
 			const std::wstring_view name(found.cFileName);
-			if (name.starts_with(L"SimXR.Control.") && std::all_of(name.begin(), name.end(),
-																   [](wchar_t value)
-																   {
-																	   return value > 0 && value < 128;
-																   }))
+			if (name.starts_with(L"SimXR.Control.") &&
+				std::all_of(name.begin(), name.end(), [](wchar_t value) { return value > 0 && value < 128; }))
 				result.push_back(std::string(R"(\\.\pipe\)") + std::string(name.begin(), name.end()));
 			if (result.size() >= 4096)
 			{
 				throw std::runtime_error("Too many local runtime endpoints");
 			}
-		} while (FindNextFileW(search, &found));
+		}
+		while (FindNextFileW(search, &found));
 		if (GetLastError() != ERROR_NO_MORE_FILES)
 			throw windows::Error("Cannot enumerate runtime endpoints");
 	}
@@ -91,7 +91,8 @@ std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
 					result.push_back(endpoint);
 				if (result.size() >= 4096)
 					throw std::runtime_error("Too many local runtime endpoints");
-			} while (Process32NextW(processes.Get(), &process));
+			}
+			while (Process32NextW(processes.Get(), &process));
 		}
 		if (GetLastError() != ERROR_NO_MORE_FILES)
 			throw std::runtime_error("Cannot enumerate runtime processes");

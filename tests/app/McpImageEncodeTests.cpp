@@ -17,44 +17,54 @@ int main(int argc, char** argv)
 	using namespace simxr::app;
 	using namespace simxr::app::mcp;
 	Require(IncidentIdentifier("18446744073709551615", "frame") == UINT64_MAX,
-		"Incident frame identifiers retain full uint64 precision");
+			"Incident frame identifiers retain full uint64 precision");
 	for (const auto& invalid : {std::string("01"), std::string(100000, '0') + "1", std::string("18446744073709551616")})
 	{
 		bool rejected = false;
-		try { (void)IncidentIdentifier(invalid, "frame"); }
-		catch (const std::runtime_error&) { rejected = true; }
+		try
+		{
+			(void)IncidentIdentifier(invalid, "frame");
+		}
+		catch (const std::runtime_error&)
+		{
+			rejected = true;
+		}
 		Require(rejected, "Incident rejected an oversized, noncanonical or overflowing frame identifier");
 	}
 	{
-		const auto root = std::filesystem::temp_directory_path() /
+		const auto root =
+			std::filesystem::temp_directory_path() /
 			("simxr-incident-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 		Require(std::filesystem::create_directory(root), "Create isolated incident test directory");
-		nlohmann::json metadata = {{"window", {{"entries", nlohmann::json::array({
-			{{"frame_id", "1"}, {"phase", "ready"}}, {{"frame_id", "2"}, {"phase", "clear"}}})}}}};
+		nlohmann::json metadata = {{"window",
+									{{"entries", nlohmann::json::array({{{"frame_id", "1"}, {"phase", "ready"}},
+																		{{"frame_id", "2"}, {"phase", "clear"}}})}}}};
 		const std::vector<std::vector<std::byte>> frames(2, std::vector<std::byte>(320 * 104 * 4));
 		const std::vector<std::byte> jpeg(4);
 		unsigned checks = 0;
 		bool interrupted = false;
 		try
 		{
-			SaveIncident(root / "interrupted", metadata, jpeg, frames, 320, 104, [&]
-			{
+			SaveIncident(root / "interrupted", metadata, jpeg, frames, 320, 104, [&] {
 				if (++checks == 6)
 					throw std::runtime_error("cancelled");
 			});
 		}
-		catch (const std::runtime_error&) { interrupted = true; }
+		catch (const std::runtime_error&)
+		{
+			interrupted = true;
+		}
 		Require(interrupted && !std::filesystem::exists(root / "interrupted"),
-			"Interrupted incident save must remove its own partial output");
+				"Interrupted incident save must remove its own partial output");
 		std::filesystem::remove(root);
 	}
 	Require(CacheableImageSource(static_cast<unsigned>(control::TargetKind::LayerView), false, false),
-		"A captured layer without a display tick can be reused");
+			"A captured layer without a display tick can be reused");
 	Require(!CacheableImageSource(static_cast<unsigned>(control::TargetKind::VirtualDisplay), false, false) &&
-		CacheableImageSource(static_cast<unsigned>(control::TargetKind::VirtualDisplay), true, true),
-		"A virtual display needs its own image tick for cross-export reuse");
+				CacheableImageSource(static_cast<unsigned>(control::TargetKind::VirtualDisplay), true, true),
+			"A virtual display needs its own image tick for cross-export reuse");
 	Require(!CacheableImageSource(static_cast<unsigned>(control::TargetKind::ComposedEyes), true, false),
-		"An invalid image tick must not be cached");
+			"An invalid image tick must not be cached");
 	{
 		constexpr std::uint32_t width = 128, height = 96;
 		std::vector<std::uint8_t> left(width * height), right(width * height), flat(width * height, 20);
@@ -67,19 +77,20 @@ int main(int argc, char** argv)
 		for (std::uint32_t y = 0; y < height; ++y)
 			for (std::uint32_t x = 4; x < width; ++x)
 				right[y * width + x] = left[y * width + x - 4];
-		const auto check = [] {};
+		const auto check = [] {
+		};
 		const auto shifted = AnalyzeStereo(left, right, width, height, width, check);
 		Require(shifted.at("verdict") == "PASS" && shifted.at("horizontal_disparity_px") == 4,
-			"Stereo analysis did not recover the known eye shift");
+				"Stereo analysis did not recover the known eye shift");
 		Require(AnalyzeStereo(left, left, width, height, width, check).at("verdict") == "FAIL_NO_PARALLAX",
-			"Stereo analysis did not identify identical textured eyes");
+				"Stereo analysis did not identify identical textured eyes");
 		Require(AnalyzeStereo(flat, flat, width, height, width, check).at("verdict") == "INCONCLUSIVE_NO_FEATURES",
-			"Featureless images should not imply a stereo verdict");
+				"Featureless images should not imply a stereo verdict");
 		for (std::uint32_t y = 0; y < height; ++y)
 			for (std::uint32_t x = 0; x < width; ++x)
 				flat[y * width + x] = (x % 8 < 4) ? 0 : 255;
 		Require(AnalyzeStereo(flat, flat, width, height, width, check).at("verdict") == "INCONCLUSIVE_AMBIGUOUS",
-			"Repeated patterns should not imply a unique stereo match");
+				"Repeated patterns should not imply a unique stereo match");
 		bool interrupted = false;
 		try
 		{
@@ -93,8 +104,7 @@ int main(int argc, char** argv)
 	}
 	{
 		ImageCache cache(30, 2);
-		const auto makeImage = [](std::string data)
-		{
+		const auto makeImage = [](std::string data) {
 			auto image = std::make_shared<CachedImage>();
 			image->data = std::move(data);
 			image->mediaType = "png";
@@ -105,7 +115,8 @@ int main(int argc, char** argv)
 		const auto retained = cache.Find("first");
 		Require(retained && retained->data == "one", "Image cache did not preserve its content");
 		cache.Insert("third", makeImage("three"));
-		Require(!cache.Find("second") && cache.Find("first") && cache.Find("third"), "Image cache did not evict least recently used content");
+		Require(!cache.Find("second") && cache.Find("first") && cache.Find("third"),
+				"Image cache did not evict least recently used content");
 		cache.Insert("huge", makeImage(std::string(30, 'x')));
 		Require(!cache.Find("huge") && cache.Find("first"), "Oversized content displaced the bounded cache");
 		cache.Insert("fourth", makeImage("four"));
@@ -119,16 +130,13 @@ int main(int argc, char** argv)
 	{
 		ImageCache cache(1024, 1);
 		unsigned retired = 0;
-		const auto image = [&]
-		{
-			return std::shared_ptr<const CachedImage>(new CachedImage{"pixels", "png"},
-				[&](const CachedImage* value)
-				{
-					// Destruction must be able to reenter the cache after publication.
-					(void)cache.Find("replacement");
-					++retired;
-					delete value;
-				});
+		const auto image = [&] {
+			return std::shared_ptr<const CachedImage>(new CachedImage{"pixels", "png"}, [&](const CachedImage* value) {
+				// Destruction must be able to reenter the cache after publication.
+				(void)cache.Find("replacement");
+				++retired;
+				delete value;
+			});
 		};
 		cache.Insert("original", image());
 		cache.Insert("replacement", std::make_shared<CachedImage>());
@@ -157,8 +165,7 @@ int main(int argc, char** argv)
 	ImageEncodingPermit secondPermit;
 	std::exception_ptr firstError, secondError;
 	std::latch start(1);
-	std::jthread first([&]
-	{
+	std::jthread first([&] {
 		try
 		{
 			start.wait();
@@ -172,8 +179,7 @@ int main(int argc, char** argv)
 	std::jthread second;
 	try
 	{
-		second = std::jthread([&]
-		{
+		second = std::jthread([&] {
 			try
 			{
 				start.wait();
@@ -197,13 +203,21 @@ int main(int argc, char** argv)
 		std::rethrow_exception(firstError);
 	if (secondError)
 		std::rethrow_exception(secondError);
-	Require(png.mediaType == "image/png" && !png.lossy && png.bytes.size() > 8 &&
-			png.bytes[0] == std::byte{0x89} && png.bytes[1] == std::byte{0x50}, "Concurrent PNG encoding failed");
-	Require(jpeg.mediaType == "image/jpeg" && jpeg.lossy && jpeg.bytes.size() > 4 &&
-			jpeg.bytes[0] == std::byte{0xff} && jpeg.bytes[1] == std::byte{0xd8}, "Concurrent JPEG encoding failed");
+	Require(png.mediaType == "image/png" && !png.lossy && png.bytes.size() > 8 && png.bytes[0] == std::byte{0x89} &&
+				png.bytes[1] == std::byte{0x50},
+			"Concurrent PNG encoding failed");
+	Require(jpeg.mediaType == "image/jpeg" && jpeg.lossy && jpeg.bytes.size() > 4 && jpeg.bytes[0] == std::byte{0xff} &&
+				jpeg.bytes[1] == std::byte{0xd8},
+			"Concurrent JPEG encoding failed");
 	std::vector<std::byte> floating(8 * sizeof(float));
-	const std::array values{-1.0f, 0.5f, 2.0f, 1.0f, std::numeric_limits<float>::quiet_NaN(),
-		std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), 1.0f};
+	const std::array values{-1.0f,
+							0.5f,
+							2.0f,
+							1.0f,
+							std::numeric_limits<float>::quiet_NaN(),
+							std::numeric_limits<float>::infinity(),
+							-std::numeric_limits<float>::infinity(),
+							1.0f};
 	std::memcpy(floating.data(), values.data(), floating.size());
 	const auto hdr = EncodeImage(floating, static_cast<std::uint32_t>(ColorFormat::Rgba32Float), 2, 1, true, 85);
 	Require(hdr.lossy && !hdr.bytes.empty(), "HDR to PNG conversion did not report lost precision");
@@ -216,7 +230,7 @@ int main(int argc, char** argv)
 	const std::array bgra{std::byte{0x31}, std::byte{255}, std::byte{0}, std::byte{128}};
 	const auto swizzled = EncodeImage(bgra, static_cast<std::uint32_t>(ColorFormat::Bgra8Unorm), 1, 1, true, 85);
 	const std::array half{std::byte{0}, std::byte{0xb8}, std::byte{0}, std::byte{0x38},
-		std::byte{0}, std::byte{0x40}, std::byte{0}, std::byte{0x34}};
+						  std::byte{0}, std::byte{0x40}, std::byte{0}, std::byte{0x34}};
 	const auto hdr16 = EncodeImage(half, static_cast<std::uint32_t>(ColorFormat::Rgba16Float), 1, 1, true, 85);
 	if (argc == 2 && std::string_view(argv[1]) == "--fixtures")
 	{
@@ -231,8 +245,10 @@ int main(int argc, char** argv)
 		byteColors[index * 4 + 2] = std::byte((index * 73) & 255);
 		byteColors[index * 4 + 3] = std::byte((index * 31) & 255);
 	}
-	const auto reference = EncodeImage(byteColors, static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), 256, 1, false, 85);
-	for (const auto format : {ColorFormat::Rgba8Unorm, ColorFormat::Rgba8Srgb, ColorFormat::Bgra8Unorm, ColorFormat::Bgra8Srgb})
+	const auto reference =
+		EncodeImage(byteColors, static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), 256, 1, false, 85);
+	for (const auto format :
+		 {ColorFormat::Rgba8Unorm, ColorFormat::Rgba8Srgb, ColorFormat::Bgra8Unorm, ColorFormat::Bgra8Srgb})
 	{
 		auto input = byteColors;
 		if (format == ColorFormat::Bgra8Unorm || format == ColorFormat::Bgra8Srgb)
@@ -245,7 +261,7 @@ int main(int argc, char** argv)
 		for (unsigned index = 0; index < 256; ++index)
 			input[index * 4 + 3] = std::byte{255};
 		Require(EncodeImage(input, static_cast<std::uint32_t>(format), 256, 1, false, 85).bytes == reference.bytes,
-			"JPEG changed with byte channel layout, sRGB flag or alpha");
+				"JPEG changed with byte channel layout, sRGB flag or alpha");
 	}
 	bool rejected = false;
 	try

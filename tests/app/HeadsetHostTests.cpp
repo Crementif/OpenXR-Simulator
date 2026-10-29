@@ -34,6 +34,7 @@ static HeadsetHostSnapshot Wait(HeadsetHost& host, bool terminal)
 	}
 	throw std::runtime_error("Host service did not reach expected state");
 }
+
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
@@ -344,10 +345,7 @@ int main(int argc, char** argv)
 			const auto stopped = Wait(host, true);
 			Require(stopped.phase == HeadsetHostPhase::Exited &&
 						std::all_of(stopped.bodySupport.begin(), stopped.bodySupport.end(),
-									[](auto value)
-									{
-										return !value;
-									}),
+									[](auto value) { return !value; }),
 					"Body selection must reach the child and capability status must clear on disconnect");
 		}
 		HeadsetHostOptions unsupportedTrackers{executable, {}, "no-trackers", 1, 1};
@@ -477,8 +475,7 @@ int main(int argc, char** argv)
 			else
 			{
 				Eventually(
-					[&]
-					{
+					[&] {
 						host.ObserveTarget("connected-from-discovery", 8, 9, 0);
 						const auto state = host.Snapshot();
 						return !host.Restarting() && !state.discovering && state.phase == HeadsetHostPhase::Running &&
@@ -499,8 +496,7 @@ int main(int argc, char** argv)
 		Wait(host, false);
 		Require(host.Snapshot().input == HeadsetInputState::Waiting,
 				"An overlong line or incomplete marker cannot claim readiness");
-		const auto waitInput = [&](HeadsetInputState input)
-		{
+		const auto waitInput = [&](HeadsetInputState input) {
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 			while (host.Snapshot().input != input && std::chrono::steady_clock::now() < deadline)
 				std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -514,12 +510,8 @@ int main(int argc, char** argv)
 		waitInput(HeadsetInputState::Ready);
 		Require(host.Snapshot().output == HeadsetOutputState::Hidden,
 				"Physical render suppression is distinct from input readiness");
-		Eventually(
-			[&]
-			{
-				return host.Snapshot().output == HeadsetOutputState::Waiting;
-			},
-			"Missing output heartbeat expires independently");
+		Eventually([&] { return host.Snapshot().output == HeadsetOutputState::Waiting; },
+				   "Missing output heartbeat expires independently");
 		Require(host.Snapshot().input == HeadsetInputState::Ready,
 				"Fresh input cannot refresh or conceal an expired output heartbeat");
 		waitInput(HeadsetInputState::Waiting);

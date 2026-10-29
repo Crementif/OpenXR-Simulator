@@ -20,10 +20,12 @@ VulkanVideoConversion::VulkanVideoConversion(std::shared_ptr<VulkanDevice> devic
 		throw;
 	}
 }
+
 VulkanVideoConversion::~VulkanVideoConversion()
 {
 	Destroy();
 }
+
 void VulkanVideoConversion::Destroy() noexcept
 {
 	if (m_uncertain)
@@ -59,6 +61,7 @@ void VulkanVideoConversion::Destroy() noexcept
 	if (m_memory)
 		vkFreeMemory(device, m_memory, nullptr);
 }
+
 void VulkanVideoConversion::Initialize()
 {
 	const auto device = m_device->binding.device;
@@ -150,6 +153,7 @@ void VulkanVideoConversion::Initialize()
 		CheckVulkan(result, "Create history conversion pipeline");
 	}
 }
+
 void VulkanVideoConversion::Begin()
 {
 	if (m_uncertain)
@@ -159,6 +163,7 @@ void VulkanVideoConversion::Begin()
 	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	CheckVulkan(vkBeginCommandBuffer(m_command, &begin), "Begin video conversion command");
 }
+
 void VulkanVideoConversion::Submit(VkSemaphore wait, VkSemaphore signal)
 {
 	const auto device = m_device->binding.device;
@@ -179,12 +184,14 @@ void VulkanVideoConversion::Submit(VkSemaphore wait, VkSemaphore signal)
 		CheckVulkan(vkQueueSubmit(m_device->queue, 1, &submit, m_fence), "Submit GPU video conversion");
 	}
 }
+
 void VulkanVideoConversion::Wait()
 {
 	CheckVulkan(vkWaitForFences(m_device->binding.device, 1, &m_fence, VK_TRUE, 5000000000ULL),
 				"Wait for GPU video conversion");
 	m_uncertain = false;
 }
+
 void VulkanVideoConversion::UpdateView(VkImage image, VkFormat format, std::uint32_t layers, bool encode)
 {
 	const auto device = m_device->binding.device;
@@ -207,6 +214,7 @@ void VulkanVideoConversion::UpdateView(VkImage image, VkFormat format, std::uint
 	write.pImageInfo = &imageInfo;
 	vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 }
+
 void VulkanVideoConversion::Bind(bool encode, VkExtent2D extent, std::uint32_t layers, bool srgb)
 {
 	const auto coded = m_session->Extent();
@@ -218,6 +226,7 @@ void VulkanVideoConversion::Bind(bool encode, VkExtent2D extent, std::uint32_t l
 	vkCmdDispatch(m_command, encode ? (coded.width + 31) / 32 : (extent.width + 7) / 8,
 				  encode ? (coded.height + 7) / 8 : (extent.height + 7) / 8, encode ? 1 : layers);
 }
+
 static std::array<VkBufferImageCopy, 2> VideoPlanes(VkExtent2D extent)
 {
 	std::array<VkBufferImageCopy, 2> regions{};
@@ -228,6 +237,7 @@ static std::array<VkBufferImageCopy, 2> VideoPlanes(VkExtent2D extent)
 	regions[1].imageExtent = {extent.width / 2, extent.height / 2, 1};
 	return regions;
 }
+
 VulkanH264Picture VulkanVideoConversion::Encode(std::shared_ptr<const VulkanInspectionFrame> source)
 {
 	if (m_uncertain)
@@ -284,6 +294,7 @@ VulkanH264Picture VulkanVideoConversion::Encode(std::shared_ptr<const VulkanInsp
 	m_failedOwner->source.reset();
 	return encoded;
 }
+
 std::shared_ptr<VulkanImage> VulkanVideoConversion::Decode(const VulkanH264Picture& picture, VkExtent2D extent,
 														   std::uint32_t layers,
 														   std::shared_ptr<FrameReservation> reservation)

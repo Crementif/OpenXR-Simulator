@@ -8,11 +8,12 @@
 namespace simxr::windows
 {
 class OpenGLLibrary;
+
 // The dispatch owner must outlive this scope; neither WGL handle changes ownership.
 // A failed switch can unset the caller's context, so it also needs restoration.
 class OpenGLContextScope final
 {
-  public:
+public:
 	OpenGLContextScope(const OpenGLLibrary& gl, HDC device, HGLRC context) noexcept;
 	~OpenGLContextScope();
 	OpenGLContextScope(const OpenGLContextScope&) = delete;
@@ -22,9 +23,10 @@ class OpenGLContextScope final
 	{
 		return m_current;
 	}
+
 	bool Restore() noexcept;
 
-  private:
+private:
 	const OpenGLLibrary& m_gl;
 	const HDC m_previousDevice;
 	const HGLRC m_previousContext;

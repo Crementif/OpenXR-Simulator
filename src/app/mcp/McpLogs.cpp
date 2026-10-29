@@ -16,27 +16,41 @@ static Json Result(const Json& value, bool error = false)
 
 Json LogDefinition()
 {
-	return {{"name", "read_logs"}, {"description", "Read a bounded tail of the selected runtime process's text log. "
-		"A launch-derived directory is inferred when possible; log contents are not independently verified against the runtime epoch."},
-		{"inputSchema", {{"type", "object"}, {"properties", {
-			{"application_id", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
-			{"directory", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
-			{"lines", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}},
-			{"filter", {{"type", "string"}, {"maxLength", 256}, {"description", "Optional ASCII case-insensitive literal substring, not a regular expression."}}},
-			{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 30}}}}},
-			{"required", Json::array({"application_id"})}, {"additionalProperties", false}}}};
+	return {{"name", "read_logs"},
+			{"description", "Read a bounded tail of the selected runtime process's text log. "
+							"A launch-derived directory is inferred when possible; log contents are not independently "
+							"verified against the runtime epoch."},
+			{"inputSchema",
+			 {{"type", "object"},
+			  {"properties",
+			   {{"application_id", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
+				{"directory", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
+				{"lines", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}},
+				{"filter",
+				 {{"type", "string"},
+				  {"maxLength", 256},
+				  {"description", "Optional ASCII case-insensitive literal substring, not a regular expression."}}},
+				{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 30}}}}},
+			  {"required", Json::array({"application_id"})},
+			  {"additionalProperties", false}}}};
 }
 
 Json ClearLogDefinition()
 {
-	return {{"name", "clear_logs"}, {"description", "Truncate only the selected runtime process's log. "
-		"Concurrent writes can add new lines immediately. The PID-named file cannot be authenticated to a runtime epoch; "
-		"a cancelled or failed request may have already cleared it. Link checks are snapshots; concurrent links or renames can change the affected file."},
-		{"inputSchema", {{"type", "object"}, {"properties", {
-			{"application_id", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
-			{"directory", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
-			{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 30}}}}},
-			{"required", Json::array({"application_id"})}, {"additionalProperties", false}}}};
+	return {{"name", "clear_logs"},
+			{"description", "Truncate only the selected runtime process's log. "
+							"Concurrent writes can add new lines immediately. The PID-named file cannot be "
+							"authenticated to a runtime epoch; "
+							"a cancelled or failed request may have already cleared it. Link checks are snapshots; "
+							"concurrent links or renames can change the affected file."},
+			{"inputSchema",
+			 {{"type", "object"},
+			  {"properties",
+			   {{"application_id", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
+				{"directory", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
+				{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 30}}}}},
+			  {"required", Json::array({"application_id"})},
+			  {"additionalProperties", false}}}};
 }
 
 static std::string LowerAscii(std::string_view text)
@@ -49,7 +63,7 @@ static std::string LowerAscii(std::string_view text)
 }
 
 std::optional<Json> LogCall(McpApplication& application, const Json& arguments, bool clear,
-	const std::shared_ptr<McpCancellation>& cancellation)
+							const std::shared_ptr<McpCancellation>& cancellation)
 {
 	try
 	{
@@ -60,7 +74,8 @@ std::optional<Json> LogCall(McpApplication& application, const Json& arguments, 
 				(clear || (item.key() != "lines" && item.key() != "filter")))
 				throw std::invalid_argument("Unknown argument: " + item.key());
 		const auto& selected = arguments.at("application_id");
-		if (!selected.is_string() || selected.get_ref<const std::string&>().empty() || selected.get_ref<const std::string&>().size() > 256)
+		if (!selected.is_string() || selected.get_ref<const std::string&>().empty() ||
+			selected.get_ref<const std::string&>().size() > 256)
 			throw std::invalid_argument("application_id must identify a selected application");
 		const auto count = arguments.value("lines", Json(100));
 		if (!count.is_number_integer() || count < 1 || count > 1000)
@@ -68,7 +83,8 @@ std::optional<Json> LogCall(McpApplication& application, const Json& arguments, 
 		std::string filter;
 		if (arguments.contains("filter"))
 		{
-			if (!arguments.at("filter").is_string() || arguments.at("filter").get_ref<const std::string&>().size() > 256)
+			if (!arguments.at("filter").is_string() ||
+				arguments.at("filter").get_ref<const std::string&>().size() > 256)
 				throw std::invalid_argument("filter must be a string of at most 256 bytes");
 			filter = LowerAscii(arguments.at("filter").get_ref<const std::string&>());
 		}
@@ -126,11 +142,16 @@ std::optional<Json> LogCall(McpApplication& application, const Json& arguments, 
 			{
 				throw std::runtime_error(std::string("Log clear may have completed; ") + error.what());
 			}
-			return Result({{"ok", true}, {"application_id", selected}, {"runtime_process_id", process},
-				{"runtime_epoch", std::to_string(before.runtimeEpoch)}, {"path", PathText(path)},
-				{"directory_source", arguments.contains("directory") ? "explicit" : "inferred_from_launch"},
-				{"identity_verified", false}, {"cleared", cleared},
-				{"note", "The log is identified by process ID, not runtime epoch. Concurrent writes can add lines immediately; concurrent links or renames can change the affected file."}});
+			return Result({{"ok", true},
+						   {"application_id", selected},
+						   {"runtime_process_id", process},
+						   {"runtime_epoch", std::to_string(before.runtimeEpoch)},
+						   {"path", PathText(path)},
+						   {"directory_source", arguments.contains("directory") ? "explicit" : "inferred_from_launch"},
+						   {"identity_verified", false},
+						   {"cleared", cleared},
+						   {"note", "The log is identified by process ID, not runtime epoch. Concurrent writes can add "
+									"lines immediately; concurrent links or renames can change the affected file."}});
 		}
 		const auto snapshot = ReadLogFile(path);
 		calls.Check();
@@ -138,17 +159,24 @@ std::optional<Json> LogCall(McpApplication& application, const Json& arguments, 
 		if (!after.connected || after.runtimeProcess != before.runtimeProcess ||
 			after.runtimeEpoch != before.runtimeEpoch)
 			throw std::runtime_error("The selected runtime changed while reading logs; retry explicitly");
-		Json result = {{"ok", true}, {"application_id", selected}, {"runtime_process_id", process},
-			{"runtime_epoch", std::to_string(before.runtimeEpoch)}, {"path", PathText(path)},
-			{"directory_source", arguments.contains("directory") ? "explicit" : "inferred_from_launch"},
-			{"identity_verified", false}, {"identity_note", "The log is named by process ID and may contain older data from a reused process ID; its runtime epoch is not recorded."},
-			{"available", snapshot.has_value()}, {"lines", Json::array()}};
+		Json result = {{"ok", true},
+					   {"application_id", selected},
+					   {"runtime_process_id", process},
+					   {"runtime_epoch", std::to_string(before.runtimeEpoch)},
+					   {"path", PathText(path)},
+					   {"directory_source", arguments.contains("directory") ? "explicit" : "inferred_from_launch"},
+					   {"identity_verified", false},
+					   {"identity_note", "The log is named by process ID and may contain older data from a reused "
+										 "process ID; its runtime epoch is not recorded."},
+					   {"available", snapshot.has_value()},
+					   {"lines", Json::array()}};
 		if (snapshot)
 		{
 			std::string bytes;
 			if (!snapshot->bytes.empty())
 				bytes.assign(reinterpret_cast<const char*>(snapshot->bytes.data()), snapshot->bytes.size());
-			const auto text = Json::parse(Json(bytes).dump(-1, ' ', false, Json::error_handler_t::replace)).get<std::string>();
+			const auto text =
+				Json::parse(Json(bytes).dump(-1, ' ', false, Json::error_handler_t::replace)).get<std::string>();
 			std::deque<std::string> lines;
 			const auto maximum = count.get<std::size_t>();
 			bool omittedLines = false;

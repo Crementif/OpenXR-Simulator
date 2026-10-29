@@ -21,8 +21,7 @@ static size_t PathBytes(const std::filesystem::path& path)
 static ArtifactCharge Charge(const Artifact& artifact)
 {
 	return std::visit(
-		[](const auto& value) -> ArtifactCharge
-		{
+		[](const auto& value) -> ArtifactCharge {
 			using Value = std::decay_t<decltype(value)>;
 			ArtifactCharge charge;
 			if constexpr (std::is_same_v<Value, SampleArtifact>)
@@ -90,7 +89,7 @@ static std::string Utf8Path(const std::filesystem::path& path)
 
 class AtomicFile
 {
-  public:
+public:
 	explicit AtomicFile(const std::filesystem::path& path) : m_path(path)
 	{
 		if (!path.parent_path().empty())
@@ -108,6 +107,7 @@ class AtomicFile
 			throw;
 		}
 	}
+
 	~AtomicFile()
 	{
 		if (!m_committed)
@@ -119,12 +119,14 @@ class AtomicFile
 			std::filesystem::remove(m_temporary, ignored);
 		}
 	}
+
 	void Write(const void* bytes, size_t size)
 	{
 		if (size > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
 			throw std::length_error("Diagnostic write is too large");
 		m_output.write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
 	}
+
 	void Commit()
 	{
 		m_output.close();
@@ -132,7 +134,7 @@ class AtomicFile
 		m_committed = true;
 	}
 
-  private:
+private:
 	const std::filesystem::path m_path;
 	std::filesystem::path m_temporary;
 	std::ofstream m_output;
@@ -147,6 +149,7 @@ static void WriteText(const std::filesystem::path& path, const std::string& cont
 }
 
 #pragma pack(push, 1)
+
 struct BmpHeader
 {
 	uint16_t magic = 0x4D42;
@@ -166,6 +169,7 @@ struct BmpHeader
 	uint32_t colors = 0;
 	uint32_t importantColors = 0;
 };
+
 #pragma pack(pop)
 static_assert(sizeof(BmpHeader) == 54);
 
@@ -387,8 +391,7 @@ bool ArtifactQueue::TakeRenderDocRequest()
 void WriteArtifact(const Artifact& artifact)
 {
 	std::visit(
-		[](const auto& value)
-		{
+		[](const auto& value) {
 			using Value = std::decay_t<decltype(value)>;
 			if constexpr (std::is_same_v<Value, SampleArtifact>)
 				SaveSample(value);
@@ -438,10 +441,7 @@ void PruneArtifacts(const std::filesystem::path& directory, std::string_view act
 				sessions.emplace_back(entry.last_write_time(), entry.path());
 		}
 		std::sort(sessions.begin(), sessions.end(),
-				  [](const auto& first, const auto& second)
-				  {
-					  return first.first > second.first;
-				  });
+				  [](const auto& first, const auto& second) { return first.first > second.first; });
 		for (size_t index = s_keepRecentSessions; index < sessions.size(); ++index)
 			std::filesystem::remove_all(sessions[index].second);
 	}
@@ -458,10 +458,7 @@ void PruneArtifacts(const std::filesystem::path& directory, std::string_view act
 			logs.emplace_back(entry.last_write_time(), entry.path());
 	}
 	std::sort(logs.begin(), logs.end(),
-			  [](const auto& first, const auto& second)
-			  {
-				  return first.first > second.first;
-			  });
+			  [](const auto& first, const auto& second) { return first.first > second.first; });
 	for (size_t index = s_keepRecentLogs; index < logs.size(); ++index)
 		std::filesystem::remove(logs[index].second);
 }

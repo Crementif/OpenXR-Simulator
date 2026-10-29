@@ -14,6 +14,7 @@ struct SpatialEditResult
 	// A tracker dragged by its centre in the rig view: the joint it snaps to, or -1.
 	int joint = -1;
 };
+
 struct GizmoState
 {
 	int operation = 2, id = 0;
@@ -21,9 +22,11 @@ struct GizmoState
 	bool local = false, usingGizmo = false, screenMove = false;
 	XrPosef start{};
 };
+
 void CancelPoseGizmo(GizmoState& state);
 SpatialEditResult DrawPoseGizmo(const char* id, GizmoState& state, const FrameView& camera, ImVec2 minimum,
 								ImVec2 maximum, XrPosef& pose, bool enabled);
+
 struct ArcballState
 {
 	XrVector2f start{};
@@ -35,6 +38,7 @@ struct ArcballState
 	ImGuiID activeField = 0;
 	int drawnFrame = -1;
 };
+
 void CancelRotationOrb(ArcballState& state);
 // What the rotation orb shows inside the ball.
 enum class OrbModel
@@ -48,6 +52,7 @@ enum class OrbModel
 SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf& orientation, XrQuaternionf view,
 							  XrQuaternionf reference, bool enabled, OrbModel model, ImU32 color, float width,
 							  float size = 160);
+
 struct SpatialScene
 {
 	static SpatialScene FromTracking(const TrackingSnapshot& tracking);
@@ -62,6 +67,7 @@ struct SpatialScene
 	// Joints a dragged tracker may snap to.
 	std::span<const BodyJoint> attachable;
 };
+
 struct RigViewState
 {
 	int drawnFrame = -1;
@@ -77,6 +83,7 @@ struct RigViewState
 	ImVec2 minimum{}, size{};
 	std::array<ImVec2, MaxTrackerDevices + 3> points{};
 };
+
 // header: the fraction of the view height covered by the view buttons.
 FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float aspect, float header = 0);
 SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& scene, int& selected,

@@ -16,23 +16,25 @@ static void Write(const std::filesystem::path& path, const std::string& bytes)
 	file.close();
 	Require(bool(file), "Write library fixture");
 }
+
 static std::string Read(const std::filesystem::path& path)
 {
 	std::ifstream file(path, std::ios::binary);
 	return {std::istreambuf_iterator<char>(file), {}};
 }
+
 static app::LibraryResult Finished(app::LibraryCatalog& catalog)
 {
 	std::optional<app::LibraryResult> result;
 	Eventually(
-		[&]
-		{
+		[&] {
 			result = catalog.TakeResult();
 			return result.has_value();
 		},
 		"Library worker did not finish");
 	return std::move(*result);
 }
+
 static void CheckCatalog(const std::filesystem::path& root)
 {
 	std::filesystem::create_directories(root / "recordings");
@@ -109,19 +111,23 @@ static void CheckCatalog(const std::filesystem::path& root)
 	}
 	Require(!std::filesystem::exists(closing), "Worker shutdown abandoned an accepted file operation");
 }
+
 int main()
 {
 	const auto root = std::filesystem::temp_directory_path() /
 					  ("simxr-library-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
 	struct Cleanup
 	{
 		std::filesystem::path path;
+
 		~Cleanup()
 		{
 			std::error_code error;
 			std::filesystem::remove_all(path, error);
 		}
 	} cleanup{root};
+
 	try
 	{
 		CheckCatalog(root);

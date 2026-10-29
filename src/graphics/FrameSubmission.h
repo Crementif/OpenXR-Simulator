@@ -46,7 +46,7 @@ struct PreparedFrameSubmission
 // The adapter retains all native owners, including partially submitted failures.
 class FrameSubmissionBackend
 {
-  public:
+public:
 	virtual ~FrameSubmissionBackend() = default;
 	virtual FramePool LiveReservations() const = 0;
 	virtual FramePool HistoryReservations() const = 0;
@@ -59,7 +59,7 @@ class FrameSubmissionBackend
 
 class FrameSubmission final
 {
-  public:
+public:
 	FrameSubmission(Session& session, FrameSubmissionBackend& backend);
 	~FrameSubmission();
 	FrameSubmission(const FrameSubmission&) = delete;
@@ -67,7 +67,7 @@ class FrameSubmission final
 	XrResult Execute(const XrFrameEndInfo& info, const SwapchainDescriptionResolver& describe);
 	const CompositionPlan& Composition() const noexcept;
 
-  private:
+private:
 	XrResult PrepareCaptures();
 	void PrepareQuadHistory();
 	void PreparePreviewHistory();

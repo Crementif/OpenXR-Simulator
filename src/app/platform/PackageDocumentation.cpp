@@ -22,8 +22,8 @@ std::string OpenPackageDocument(PackageDocument document)
 		return "Cannot find an absolute application directory.";
 	const auto path = PackageDocumentPath(directory, document);
 	std::error_code error;
-	const bool exists = document == PackageDocument::Guide ? std::filesystem::is_regular_file(path, error) :
-		std::filesystem::is_directory(path, error);
+	const bool exists = document == PackageDocument::Guide ? std::filesystem::is_regular_file(path, error)
+														   : std::filesystem::is_directory(path, error);
 	if (!exists || error)
 		return "This build does not include the requested package documentation.";
 	return OpenLocalPath(path);

@@ -50,11 +50,13 @@ XrResult SessionCaptureCoordinator::EnableImageHistory()
 	m_imageHistory = true;
 	return XR_SUCCESS;
 }
+
 bool SessionCaptureCoordinator::SupportsImageHistory() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_imageHistory;
 }
+
 FrameImageHistory::Retired SessionCaptureCoordinator::Start(SessionGeneration generation)
 {
 	std::lock_guard lock(m_mutex);
@@ -180,6 +182,7 @@ SessionCaptureCoordinator::PrepareSequenceCapture(const std::optional<SequenceCa
 {
 	return SequenceCapture(*this, request);
 }
+
 SessionCaptureCoordinator::SequenceCapture::SequenceCapture(SessionCaptureCoordinator& owner,
 															const std::optional<SequenceCaptureIntent>& request)
 	: m_owner(owner)
@@ -189,15 +192,18 @@ SessionCaptureCoordinator::SequenceCapture::SequenceCapture(SessionCaptureCoordi
 	std::lock_guard lock(owner.m_mutex);
 	m_record = SequenceCaptureRecord{*request, owner.ReserveLocked({})};
 }
+
 SessionCaptureCoordinator::SequenceCapture::~SequenceCapture()
 {
 	if (!m_committed && m_record && m_record->reservation.result == SnapshotAdmission::Accepted)
 		m_owner.m_store.Release(m_record->reservation.id);
 }
+
 const std::optional<SequenceCaptureRecord>& SessionCaptureCoordinator::SequenceCapture::Record() const noexcept
 {
 	return m_record;
 }
+
 void SessionCaptureCoordinator::SequenceCapture::Bind(std::shared_ptr<const FrameRecord> issued,
 													  std::shared_ptr<const FrameRecord> cancelled)
 {
@@ -468,11 +474,9 @@ SessionCaptureCoordinator::Submission::Submission(SessionCaptureCoordinator& own
 	{
 		// Automatic quad history has its own budget. Confirm that it was not requested in Prepare.
 		if (captures.size() - capacity != 1 || !m_owner.SupportsImageHistory() ||
-			std::none_of(captures.begin(), captures.end(),
-						 [](const CaptureOutput& capture)
-						 {
-							 return capture.target == CaptureTarget{CaptureKind::QuadLayers};
-						 }))
+			std::none_of(captures.begin(), captures.end(), [](const CaptureOutput& capture) {
+				return capture.target == CaptureTarget{CaptureKind::QuadLayers};
+			}))
 		{
 			m_validation = XR_ERROR_VALIDATION_FAILURE;
 			return;
@@ -482,11 +486,9 @@ SessionCaptureCoordinator::Submission::Submission(SessionCaptureCoordinator& own
 	for (std::size_t index = 0; index < m_outputs.size(); ++index)
 	{
 		const auto& capture = m_outputs[index];
-		if (!capture.target.IsAdditionalImage() || std::any_of(m_outputs.begin(), m_outputs.begin() + index,
-															   [&](const auto& prior)
-															   {
-																   return prior.target == capture.target;
-															   }))
+		if (!capture.target.IsAdditionalImage() ||
+			std::any_of(m_outputs.begin(), m_outputs.begin() + index,
+						[&](const auto& prior) { return prior.target == capture.target; }))
 		{
 			m_validation = XR_ERROR_VALIDATION_FAILURE;
 			return;
@@ -526,10 +528,7 @@ XrResult SessionCaptureCoordinator::Submission::Prepare(FrameKey frame)
 	if (m_owner.SupportsImageHistory() &&
 		std::find(m_requested.begin(), m_requested.end(), quadHistory) == m_requested.end() &&
 		std::any_of(m_outputs.begin(), m_outputs.end(),
-					[quadHistory](const CaptureOutput& capture)
-					{
-						return capture.target == quadHistory;
-					}))
+					[quadHistory](const CaptureOutput& capture) { return capture.target == quadHistory; }))
 		--captureCount;
 	if (captureCount > m_owner.m_store.Capacity())
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -592,10 +591,7 @@ void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRe
 		if (metadata && metadata->submission && metadata->submission->layers)
 			image.quadVisible =
 				std::any_of(metadata->submission->layers->layers.begin(), metadata->submission->layers->layers.end(),
-							[](const auto& layer)
-							{
-								return std::holds_alternative<QuadLayerDescription>(layer);
-							});
+							[](const auto& layer) { return std::holds_alternative<QuadLayerDescription>(layer); });
 		for (const auto& captured : m_outputs)
 		{
 			if (captured.target.kind != CaptureKind::QuadLayers)
@@ -603,11 +599,10 @@ void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRe
 			if (captured.quadBounds)
 			{
 				image.quadBounds = *captured.quadBounds;
-				image.quadVisible = std::any_of(image.quadBounds.begin(), image.quadBounds.end(),
-												[](const auto& rectangle)
-												{
-													return rectangle.extent.width > 0 && rectangle.extent.height > 0;
-												});
+				image.quadVisible =
+					std::any_of(image.quadBounds.begin(), image.quadBounds.end(), [](const auto& rectangle) {
+						return rectangle.extent.width > 0 && rectangle.extent.height > 0;
+					});
 			}
 			if (includeOutputs &&
 				std::find(m_requested.begin(), m_requested.end(), captured.target) == m_requested.end())
@@ -672,10 +667,7 @@ CaptureBoundaryResult SessionCaptureCoordinator::Boundary::Capture(SessionGenera
 		if (after && key <= *after)
 			continue;
 		if (std::any_of(m_sources.begin(), m_sources.end(),
-						[&](const auto& source)
-						{
-							return source.metadata->key == key;
-						}))
+						[&](const auto& source) { return source.metadata->key == key; }))
 			continue;
 		auto metadata = m_owner.m_history.Find(key);
 		auto cancelled = m_owner.m_history.CancellationRecord(key);
@@ -687,10 +679,7 @@ CaptureBoundaryResult SessionCaptureCoordinator::Boundary::Capture(SessionGenera
 		m_sources.push_back({std::move(metadata), std::move(cancelled), {}});
 	}
 	std::sort(m_sources.begin(), m_sources.end(),
-			  [](const auto& left, const auto& right)
-			  {
-				  return left.metadata->key < right.metadata->key;
-			  });
+			  [](const auto& left, const auto& right) { return left.metadata->key < right.metadata->key; });
 	for (const auto& source : m_sources)
 	{
 		for (const auto id : m_owner.m_store.FindAll(source.metadata->key))

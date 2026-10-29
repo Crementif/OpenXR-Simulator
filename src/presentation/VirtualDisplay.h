@@ -18,7 +18,7 @@ namespace simxr
 {
 class VirtualDisplay
 {
-  public:
+public:
 	explicit VirtualDisplay(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>(), std::size_t capacity = 8,
 							FrameHistory* history = nullptr, PresentationController::CompletionObserver completed = {});
 	~VirtualDisplay();
@@ -56,7 +56,7 @@ class VirtualDisplay
 	bool Faulted() const noexcept;
 	std::size_t PollRetired();
 
-  private:
+private:
 	std::optional<PresentationTick> AdvanceTick(RuntimeTime time, std::optional<SessionGeneration> generation = {},
 												bool exact = false, const std::function<bool()>& current = {});
 	void StopLocked() noexcept;
@@ -75,12 +75,14 @@ class VirtualDisplay
 	ExecutionMode m_mode = ExecutionMode::RealTime;
 	std::optional<DisplayTimeline> m_timeline;
 	SessionGeneration m_generation;
+
 	struct ExternalPrediction
 	{
 		std::uint64_t attachment = 0, sequence = 0, consumed = 0;
 		RuntimeTime target;
 		HostTime expires, targetHost;
 	};
+
 	std::optional<ExternalPrediction> m_external;
 	HostTime m_hostEpoch;
 	DisplayTick m_hostTick;

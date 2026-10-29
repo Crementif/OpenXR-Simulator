@@ -25,6 +25,7 @@ static std::uint32_t DigitalState(const ControllerControls& controls)
 	state = (state << 1) | controls.triggerClick.value_or(controls.trigger > .5f);
 	return state;
 }
+
 static bool NormalizeLivePose(PoseSample& sample)
 {
 	const auto normalized = NormalizedPose(sample.pose);
@@ -54,16 +55,14 @@ bool LiveInputSlot::HasChannels(const Channels& owned)
 	return owned[static_cast<std::size_t>(ControlChannel::Body)] ||
 		   owned[static_cast<std::size_t>(ControlChannel::Trackers)] ||
 		   owned[static_cast<std::size_t>(ControlChannel::Views)] ||
-		   std::any_of(owned.begin(), owned.begin() + 5,
-					   [](bool value)
-					   {
-						   return value;
-					   });
+		   std::any_of(owned.begin(), owned.begin() + 5, [](bool value) { return value; });
 }
+
 void LiveInputSlot::Reset()
 {
 	*this = {};
 }
+
 void LiveInputSlot::AcknowledgeControls()
 {
 	for (auto& queue : m_transitions)
@@ -72,14 +71,17 @@ void LiveInputSlot::AcknowledgeControls()
 		m_dirty = true;
 	m_trackersAwaitingSync = false;
 }
+
 LiveInputStatus LiveInputSlot::Status() const
 {
 	return m_status;
 }
+
 bool LiveInputSlot::Expired(LiveInputClock::time_point now) const
 {
 	return m_status.owner && (m_status.phase != LiveInputPhase::Active || now - m_received >= m_latest.maxAge);
 }
+
 CommandResult LiveInputSlot::Write(CommandSource source, const LiveInputSample& sample, const Channels& owned,
 								   LiveInputClock::time_point now)
 {
@@ -216,6 +218,7 @@ CommandResult LiveInputSlot::Write(CommandSource source, const LiveInputSample& 
 	}
 	return CommandResult::Queued;
 }
+
 std::optional<CommandOutcome> LiveInputSlot::Prepare(FrameId frame, SimulationTime time, const Channels& owned,
 													 LiveInputClock::time_point now,
 													 std::optional<std::uint64_t> clockRevision)
@@ -304,12 +307,10 @@ std::optional<CommandOutcome> LiveInputSlot::Prepare(FrameId frame, SimulationTi
 		if (m_trackersAwaitingSync)
 			for (auto& tracker : command.value)
 			{
-				const auto current = std::find_if(m_latest.trackers->begin(), m_latest.trackers->end(),
-												  [&](const TrackerDevice& value)
-												  {
-													  return value.identity == tracker.identity &&
-															 value.sourcePath == tracker.sourcePath;
-												  });
+				const auto current =
+					std::find_if(m_latest.trackers->begin(), m_latest.trackers->end(), [&](const TrackerDevice& value) {
+						return value.identity == tracker.identity && value.sourcePath == tracker.sourcePath;
+					});
 				if (current == m_latest.trackers->end() || !current->connected)
 				{
 					tracker.poseFlags = 0;

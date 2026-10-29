@@ -10,9 +10,10 @@ namespace simxr::headset
 {
 class OpenXrRuntime;
 void CheckVk(VkResult result, const char* operation);
+
 class HeadsetGraphics
 {
-  public:
+public:
 	HeadsetGraphics() = default;
 	~HeadsetGraphics();
 	HeadsetGraphics(const HeadsetGraphics&) = delete;
@@ -33,11 +34,12 @@ class HeadsetGraphics
 	const VkPhysicalDeviceIDProperties& Identity() const;
 	const std::vector<const char*>& Extensions() const;
 
-  private:
+private:
 	struct ValidationState
 	{
 		std::atomic_uint32_t errors{0};
 	};
+
 	static VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 													 VkDebugUtilsMessageTypeFlagsEXT types,
 													 const VkDebugUtilsMessengerCallbackDataEXT* message, void* owner);

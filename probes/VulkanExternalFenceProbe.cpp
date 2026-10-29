@@ -19,6 +19,7 @@ static constexpr std::array s_sharingExtensions{VulkanExternalMemoryExtension, V
 static constexpr std::array s_fenceExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
 											  VulkanExternalFenceExtension};
 static constexpr std::uint64_t s_timeout = 5000000000ULL;
+
 static bool ValidNonInherited(VulkanNativeHandle handle)
 {
 #ifdef _WIN32
@@ -29,11 +30,13 @@ static bool ValidNonInherited(VulkanNativeHandle handle)
 	return flags >= 0 && (flags & FD_CLOEXEC);
 #endif
 }
+
 static void Require(bool value, const char* message)
 {
 	if (!value)
 		throw std::runtime_error(message);
 }
+
 static void CheckSubmission(VkResult result, const char* operation)
 {
 	if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
@@ -43,7 +46,9 @@ static void CheckSubmission(VkResult result, const char* operation)
 	}
 	Check(result, operation);
 }
-template <class Function> static void Rejected(Function operation, VkResult expected, const char* message)
+
+template<class Function>
+static void Rejected(Function operation, VkResult expected, const char* message)
 {
 	try
 	{
@@ -56,11 +61,13 @@ template <class Function> static void Rejected(Function operation, VkResult expe
 	}
 	throw std::runtime_error(message);
 }
+
 struct FenceDevice
 {
 	VkDevice m_native = VK_NULL_HANDLE;
 	bool m_timeline = false;
 	std::shared_ptr<VulkanDevice> m_device;
+
 	FenceDevice(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family,
 				std::span<const char* const> extensions, bool controlledGate = false, bool coreTimeline = false)
 	{
@@ -76,12 +83,9 @@ struct FenceDevice
 			std::vector<VkExtensionProperties> names(count);
 			Check(vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, names.data()),
 				  "query timeline gate extension");
-			if (coreTimeline || std::any_of(names.begin(), names.end(),
-											[](const auto& name)
-											{
-												return std::strcmp(name.extensionName,
-																   VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) == 0;
-											}))
+			if (coreTimeline || std::any_of(names.begin(), names.end(), [](const auto& name) {
+					return std::strcmp(name.extensionName, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) == 0;
+				}))
 			{
 				VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timelineFeatures};
 				vkGetPhysicalDeviceFeatures2(physical, &features);
@@ -111,14 +115,17 @@ struct FenceDevice
 			throw;
 		}
 	}
+
 	FenceDevice(const FenceDevice&) = delete;
 	FenceDevice& operator=(const FenceDevice&) = delete;
+
 	~FenceDevice()
 	{
 		m_device.reset();
 		vkDestroyDevice(m_native, nullptr);
 	}
 };
+
 // An optional host-signaled timeline gate holds consumer-only GPU work pending.
 // Neither the observer nor an application/inspection queue waits on the consumer.
 struct ConsumerFenceWork
@@ -133,6 +140,7 @@ struct ConsumerFenceWork
 	bool m_gateReleased = false;
 	bool m_retirementSubmitted = false;
 	bool m_submitted = false;
+
 	ConsumerFenceWork(std::shared_ptr<VulkanDevice> owner, std::shared_ptr<VulkanExternalFence> fence, bool timeline)
 		: m_device(std::move(owner)), m_completion(std::move(fence))
 	{
@@ -205,8 +213,10 @@ struct ConsumerFenceWork
 		m_gate = VK_NULL_HANDLE;
 		m_pool = VK_NULL_HANDLE;
 	}
+
 	ConsumerFenceWork(const ConsumerFenceWork&) = delete;
 	ConsumerFenceWork& operator=(const ConsumerFenceWork&) = delete;
+
 	~ConsumerFenceWork()
 	{
 		Cleanup();
@@ -238,6 +248,7 @@ struct ConsumerFenceWork
 						"submit internal retirement marker");
 		m_retirementSubmitted = true;
 	}
+
 	void Release()
 	{
 		if (!m_gate)
@@ -249,6 +260,7 @@ struct ConsumerFenceWork
 		m_gateReleased = true;
 	}
 };
+
 static void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExternalDevice& importer)
 {
 	VulkanExternalImageSpec spec;
@@ -258,33 +270,21 @@ static void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExt
 	Require(memory && ValidNonInherited(memory.Get()), "Export non-inherited image memory");
 	auto invalid = image->Descriptor();
 	invalid.identity.deviceUuid[0] ^= 1;
-	Rejected(
-		[&]
-		{
-			importer.ImportImage(invalid, memory);
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Reject another adapter's image handle");
+	Rejected([&] { importer.ImportImage(invalid, memory); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+			 "Reject another adapter's image handle");
 	Require(memory && ValidNonInherited(memory.Get()), "Rejected import retains caller memory handle");
 	auto importedImage = importer.ImportImage(image->Descriptor(), memory);
 	Require(!memory && importedImage->Descriptor().allocationSize == image->Descriptor().allocationSize,
 			"Import exact dedicated allocation and consume caller ownership on success");
 	auto oversized = spec;
 	oversized.extent.width = std::numeric_limits<std::uint32_t>::max();
-	Rejected(
-		[&]
-		{
-			exporter.CreateExportable(oversized);
-		},
-		VK_ERROR_FORMAT_NOT_SUPPORTED, "Reject oversized extent after successful format query");
+	Rejected([&] { exporter.CreateExportable(oversized); }, VK_ERROR_FORMAT_NOT_SUPPORTED,
+			 "Reject oversized extent after successful format query");
 	memory = image->ExportMemory();
 	invalid = image->Descriptor();
 	--invalid.allocationSize;
-	Rejected(
-		[&]
-		{
-			importer.ImportImage(invalid, memory);
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Cached image capability bypassed allocation validation");
+	Rejected([&] { importer.ImportImage(invalid, memory); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+			 "Cached image capability bypassed allocation validation");
 	Require(memory && ValidNonInherited(memory.Get()), "Rejected cached import consumed caller memory handle");
 	auto repeated = importer.ImportImage(image->Descriptor(), memory);
 	Require(!memory && repeated->Image()->extent.width == spec.extent.width,
@@ -326,19 +326,24 @@ static void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExt
 		std::_Exit(1);
 	std::puts("PASS dedicated image import and two-device binary semaphore signal/wait");
 }
+
 struct TimelineGate
 {
 	VkDevice m_device;
 	VkSemaphore m_handle = VK_NULL_HANDLE;
+
 	explicit TimelineGate(VkDevice device) : m_device(device) {}
+
 	TimelineGate(const TimelineGate&) = delete;
 	TimelineGate& operator=(const TimelineGate&) = delete;
+
 	~TimelineGate()
 	{
 		if (m_handle)
 			vkDestroySemaphore(m_device, m_handle, nullptr);
 	}
 };
+
 static bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family, std::uint32_t api)
 {
 	const auto caps = VulkanExternalDevice::QueryTimeline(physical, api);
@@ -354,29 +359,16 @@ static bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std
 	VulkanExternalDevice exporter(consumer.m_device, extensions, api, true);
 	VulkanExternalDevice importer(observer.m_device, extensions, api, true);
 	VulkanExternalDevice disabled(observer.m_device, extensions, api);
-	Rejected(
-		[&]
-		{
-			disabled.CreateExportableTimeline();
-		},
-		VK_ERROR_FEATURE_NOT_PRESENT, "Unconfirmed logical-device timeline feature allowed export");
+	Rejected([&] { disabled.CreateExportableTimeline(); }, VK_ERROR_FEATURE_NOT_PRESENT,
+			 "Unconfirmed logical-device timeline feature allowed export");
 	auto completion = exporter.CreateExportableTimeline();
 	auto handle = completion->ExportOnce();
 	Require(handle && ValidNonInherited(handle.Get()), "Timeline export must not be inheritable");
-	Rejected(
-		[&]
-		{
-			completion->ExportOnce();
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Timeline exported twice");
+	Rejected([&] { completion->ExportOnce(); }, VK_ERROR_INVALID_EXTERNAL_HANDLE, "Timeline exported twice");
 	auto wrong = exporter.Identity();
 	wrong.deviceUuid[0] ^= 1;
-	Rejected(
-		[&]
-		{
-			importer.ImportTimeline(wrong, handle);
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Timeline accepted mismatched adapter");
+	Rejected([&] { importer.ImportTimeline(wrong, handle); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+			 "Timeline accepted mismatched adapter");
 	Require(bool(handle), "Rejected timeline import consumed caller ownership");
 	auto imported = importer.ImportTimeline(exporter.Identity(), handle);
 	Require(!handle, "Successful timeline import retained caller handle");
@@ -404,14 +396,12 @@ static bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std
 	std::atomic<bool> stayedPending{true};
 	std::array<std::jthread, 4> readers;
 	for (auto& reader : readers)
-		reader = std::jthread(
-			[&]
-			{
-				for (int poll = 0; poll < 100; ++poll)
-					if (completion->PollCompletion() != CompletionStatus::Pending ||
-						imported->PollCompletion() != CompletionStatus::Pending)
-						stayedPending.store(false);
-			});
+		reader = std::jthread([&] {
+			for (int poll = 0; poll < 100; ++poll)
+				if (completion->PollCompletion() != CompletionStatus::Pending ||
+					imported->PollCompletion() != CompletionStatus::Pending)
+					stayedPending.store(false);
+		});
 	for (auto& reader : readers)
 		reader.join();
 	auto release = reinterpret_cast<PFN_vkSignalSemaphoreKHR>(
@@ -431,6 +421,7 @@ static bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std
 			  "failed-import ownership");
 	return true;
 }
+
 static void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family)
 {
 	FenceDevice consumer(instance, physical, family, s_fenceExtensions, true);
@@ -445,54 +436,29 @@ static void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32
 	Require(native->PollCompletion() == CompletionStatus::Pending, "Unsubmitted fence falsely complete");
 	auto fd = native->ExportOnce();
 	Require(fd && ValidNonInherited(fd.Get()), "Exported fence handle must be close-on-exec");
-	Rejected(
-		[&]
-		{
-			native->ExportOnce();
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Second fence export accepted");
+	Rejected([&] { native->ExportOnce(); }, VK_ERROR_INVALID_EXTERNAL_HANDLE, "Second fence export accepted");
 	auto mismatched = exporter.Identity();
 	mismatched.driverUuid[0] ^= 1;
 	const auto original = fd.Get();
-	Rejected(
-		[&]
-		{
-			importer.ImportFence(mismatched, fd);
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Wrong driver identity accepted");
+	Rejected([&] { importer.ImportFence(mismatched, fd); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+			 "Wrong driver identity accepted");
 	Require(fd.Get() == original && ValidNonInherited(original), "Rejected identity consumed caller handle");
 	mismatched = exporter.Identity();
 	mismatched.deviceUuid[0] ^= 1;
-	Rejected(
-		[&]
-		{
-			importer.ImportFence(mismatched, fd);
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Wrong device identity accepted");
-	Rejected(
-		[&]
-		{
-			unavailable.CreateExportableFence();
-		},
-		VK_ERROR_EXTENSION_NOT_PRESENT, "Disabled fence extension allowed export");
-	Rejected(
-		[&]
-		{
-			unavailable.ImportFence(exporter.Identity(), fd);
-		},
-		VK_ERROR_EXTENSION_NOT_PRESENT, "Disabled fence extension allowed import");
+	Rejected([&] { importer.ImportFence(mismatched, fd); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+			 "Wrong device identity accepted");
+	Rejected([&] { unavailable.CreateExportableFence(); }, VK_ERROR_EXTENSION_NOT_PRESENT,
+			 "Disabled fence extension allowed export");
+	Rejected([&] { unavailable.ImportFence(exporter.Identity(), fd); }, VK_ERROR_EXTENSION_NOT_PRESENT,
+			 "Disabled fence extension allowed import");
 	Require(fd.Get() == original && ValidNonInherited(original), "Disabled fence extension consumed caller handle");
 	auto semaphore = unavailable.CreateExportableSemaphore();
 	Require(semaphore->Get() != VK_NULL_HANDLE, "Optional fence requirement broke semaphore sharing");
 	auto imported = importer.ImportFence(exporter.Identity(), fd);
 	Require(!fd && imported->Device() == observer.m_device && imported->Identity() == native->Identity(),
 			"Successful fence import did not transfer handle ownership");
-	Rejected(
-		[&]
-		{
-			imported->ExportOnce();
-		},
-		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Imported fence unexpectedly re-exportable");
+	Rejected([&] { imported->ExportOnce(); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+			 "Imported fence unexpectedly re-exportable");
 	Require(imported->PollCompletion() == CompletionStatus::Pending, "Imported unsignaled fence falsely complete");
 	ConsumerFenceWork work(consumer.m_device, native, consumer.m_timeline);
 	std::printf("controlledConsumerGate=%s observerSubmissions=0\n",
@@ -507,13 +473,11 @@ static void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32
 		std::atomic<bool> pending{true};
 		std::array<std::jthread, 4> readers;
 		for (auto& reader : readers)
-			reader = std::jthread(
-				[&]
-				{
-					for (int poll = 0; poll != 100; ++poll)
-						if (imported->PollCompletion() != CompletionStatus::Pending)
-							pending.store(false);
-				});
+			reader = std::jthread([&] {
+				for (int poll = 0; poll != 100; ++poll)
+					if (imported->PollCompletion() != CompletionStatus::Pending)
+						pending.store(false);
+			});
 		for (auto& reader : readers)
 			reader.join();
 		Require(pending.load(), "Concurrent consumer observers falsely completed pending work");
@@ -536,6 +500,7 @@ static void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32
 		"optional disabled path; no pixels/readback, observer queue submissions=0\n");
 }
 } // namespace simxr::probe
+
 int main(int argc, char** argv)
 {
 	using namespace simxr;

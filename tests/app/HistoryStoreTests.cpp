@@ -13,6 +13,7 @@
 namespace
 {
 using namespace simxr::app;
+
 void RingAndBuckets()
 {
 	HistoryStore history(37);
@@ -105,12 +106,12 @@ void RingAndBuckets()
 	}
 	Require(rejected && history.Size() == 0, "Invalid time damaged history");
 }
+
 void RuntimeFeed()
 {
 	namespace wire = simxr::control;
 	namespace tag = wire::tag;
-	const auto page = [](std::uint64_t run, std::uint64_t id, std::int64_t time, std::uint64_t frameRun = 0)
-	{
+	const auto page = [](std::uint64_t run, std::uint64_t id, std::int64_t time, std::uint64_t frameRun = 0) {
 		wire::Message message;
 		const std::vector<wire::Field> prediction{wire::Field::I64(tag::Time, time),
 												  wire::Field::I64(tag::Period, 10000000)};
@@ -187,14 +188,14 @@ void RuntimeFeed()
 	Require(!feed.Accept(broken).empty() && !feed.CanRead() && feed.After() == 3,
 			"Undecodable record identity must stop polling without throwing from recovery");
 }
+
 void AppliedInputFeed()
 {
 	namespace wire = simxr::control;
 	namespace tag = wire::tag;
 	using namespace simxr;
 	const auto frame = [](std::uint64_t id, bool reported, std::size_t trackerCount = 4, bool collection = false,
-						  std::optional<BodyObservation> observation = {})
-	{
+						  std::optional<BodyObservation> observation = {}) {
 		TrackingState tracking;
 		tracking.body.preset = id < 100 ? BodyPreset::Standing : BodyPreset::TPose;
 		tracking.body.rootPose = XrPosef{{0, 0, 0, 1}, {0, 0, -0.01f * float(id)}};
@@ -255,8 +256,7 @@ void AppliedInputFeed()
 											  wire::Field::Bytes(tag::AppliedInput, wire::EncodeFields(applied))};
 		return wire::Field::Bytes(tag::Frame, wire::EncodeFields(fields));
 	};
-	const auto page = [&](std::uint64_t first, std::uint64_t count, bool reported)
-	{
+	const auto page = [&](std::uint64_t first, std::uint64_t count, bool reported) {
 		std::vector<wire::Field> frames;
 		for (auto id = first; id < first + count; ++id)
 		{
@@ -268,8 +268,8 @@ void AppliedInputFeed()
 						  wire::Field::Bytes(tag::Frames, wire::EncodeFields(frames)), wire::Field::I64(tag::Time, 0)};
 		return message;
 	};
-	for (const auto set : {BodyJointSet::UpperBodyFB, BodyJointSet::FullBodyMETA,
-						  BodyJointSet::WithoutArmsBD, BodyJointSet::FullBodyBD})
+	for (const auto set :
+		 {BodyJointSet::UpperBodyFB, BodyJointSet::FullBodyMETA, BodyJointSet::WithoutArmsBD, BodyJointSet::FullBodyBD})
 	{
 		BodyObservation observation;
 		observation.jointSet = set;
@@ -388,13 +388,13 @@ void AppliedInputFeed()
 			bodies.insert(sample->body.get());
 		}
 	Require(bodies.size() == 1 && retained < Frames && feed.RetainedBytes() <= 64 * 1024 * 1024,
-		"History failed to share body blocks or respect its combined CPU budget");
+			"History failed to share body blocks or respect its combined CPU budget");
 	std::cout << retained << " retained input samples within " << feed.RetainedBytes() << " CPU history bytes\n";
 	FrameHistoryFeed rangeFeed;
 	rangeFeed.SetScope({1, 9, 2});
 	for (std::uint64_t first = 1; first <= 260; first += 128)
 		Require(rangeFeed.Accept(page(first, std::min<std::uint64_t>(128, 261 - first), true)).empty(),
-			"Short take fixture rejected");
+				"Short take fixture rejected");
 	std::vector<const InputSample*> range;
 	for (std::size_t index = 50; index < 260; ++index)
 		range.push_back(rangeFeed.Input().Find(rangeFeed.History().At(index).input));
@@ -430,11 +430,9 @@ void AppliedInputFeed()
 			"Cut take preserves observed eyes, calibration changes and removal");
 	Require(initialViews && initialProfile && changedViews && changedProfile,
 			"Cut take lost its recorded view/profile context or changes");
-	const auto initialBody = std::find_if(take.initial.begin(), take.initial.end(),
-										  [](const auto& command)
-										  {
-											  return std::holds_alternative<SetBodyControls>(command);
-										  });
+	const auto initialBody = std::find_if(take.initial.begin(), take.initial.end(), [](const auto& command) {
+		return std::holds_alternative<SetBodyControls>(command);
+	});
 	Require(initialBody != take.initial.end() &&
 				std::get<SetBodyControls>(*initialBody).value.preset == BodyPreset::Standing &&
 				std::get<SetBodyControls>(*initialBody).value.rootPose,
@@ -479,8 +477,7 @@ void AppliedInputFeed()
 				collectionSamples[2]->trackers->size() == 5,
 			"Collection history lost topology transitions");
 	const auto collectionTake = TakeFromInput(collectionSamples);
-	const auto trackersOf = [](const auto& transaction) -> const TrackerDevices&
-	{
+	const auto trackersOf = [](const auto& transaction) -> const TrackerDevices& {
 		for (const auto& command : transaction.commands)
 			if (const auto* value = std::get_if<SetTrackers>(&command))
 				return value->value;
@@ -491,7 +488,6 @@ void AppliedInputFeed()
 				trackersOf(collectionTake.transactions[1]).size() == 5,
 			"Take omitted inventory removal or restoration");
 
-
 	std::vector<InputSample> edges(1026, *range.front());
 	std::vector<const InputSample*> edgeRange;
 	for (std::size_t index = 0; index < edges.size(); ++index)
@@ -500,8 +496,7 @@ void AppliedInputFeed()
 		edges[index].controls[0].primary = (index % 2) != 0;
 		edgeRange.push_back(&edges[index]);
 	}
-	const auto refuses = [](const std::vector<const InputSample*>& input)
-	{
+	const auto refuses = [](const std::vector<const InputSample*>& input) {
 		try
 		{
 			TakeFromInput(input);
@@ -642,11 +637,7 @@ void AppliedInputFeed()
 		if (field.tag == tag::AppliedInput)
 		{
 			auto input = wire::DecodeFields(field.value).fields;
-			std::erase_if(input,
-						  [](const auto& item)
-						  {
-							  return item.tag == 4;
-						  });
+			std::erase_if(input, [](const auto& item) { return item.tag == 4; });
 			field.value = wire::EncodeFields(input);
 		}
 	partialFrames.front().value = wire::EncodeFields(partialFrame);
@@ -674,6 +665,7 @@ void AppliedInputFeed()
 	}
 	Require(refused, "A take was cut from frames without body, gaze and trackers");
 }
+
 void InputByteBudget()
 {
 	using namespace simxr;
@@ -707,17 +699,19 @@ void InputByteBudget()
 	const auto retained = input.RetainedBytes();
 	const auto duplicate = input.Append(sample);
 	Require(input.Find(duplicate)->bodyObservation == input.Find(last)->bodyObservation &&
-		input.RetainedBytes() - retained < 128, "Shared provider block was charged twice");
+				input.RetainedBytes() - retained < 128,
+			"Shared provider block was charged twice");
 	InputSample tooLarge;
 	tooLarge.context = std::make_shared<const std::vector<std::byte>>(Budget * 2);
 	const auto skipped = input.Append(std::move(tooLarge));
 	Require(!input.Find(skipped) && !input.Find(last) && input.RetainedBytes() == baseline,
-		"Oversize input retained memory or resolved to another frame");
+			"Oversize input retained memory or resolved to another frame");
 	const auto recovered = input.Append(sample);
 	Require(input.Find(recovered) && !input.Find(skipped), "Input history failed to recover after oversized record");
 	input.Clear();
 	Require(input.RetainedBytes() == baseline && !input.Find(recovered), "Clear left charged provider blocks");
 }
+
 void ClearInput()
 {
 	InputHistory input(2);
@@ -734,6 +728,7 @@ void ClearInput()
 	input.Append({});
 	Require(!input.Find(second), "Wrapped input ring retained an overwritten sample");
 }
+
 void ThirtyMinutes()
 {
 	HistoryStore history;
@@ -758,6 +753,7 @@ void ThirtyMinutes()
 	std::cout << "162000 records, 1280 columns: " << seconds * 1000 / 300 << " ms per query pass\n";
 }
 } // namespace
+
 int main()
 {
 	try

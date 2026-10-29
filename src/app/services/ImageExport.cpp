@@ -22,6 +22,7 @@ ImageEncodingPermit::ImageEncodingPermit()
 			break;
 	}
 }
+
 ImageEncodingPermit::~ImageEncodingPermit()
 {
 	--s_imageWorkers;
@@ -33,6 +34,7 @@ struct ImageOutput
 	std::size_t limit;
 	bool overflow = false;
 };
+
 static void WriteImage(void* context, void* data, int size)
 {
 	auto& output = *static_cast<ImageOutput*>(context);
@@ -44,21 +46,21 @@ static void WriteImage(void* context, void* data, int size)
 	const auto* begin = static_cast<const std::byte*>(data);
 	output.bytes.insert(output.bytes.end(), begin, begin + size);
 }
+
 EncodedImage EncodeImage(std::span<const std::byte> pixels, std::uint32_t format, std::uint32_t width,
 						 std::uint32_t height, bool png, int quality, ImageEncodingLimits limits)
 {
 	const auto pixelSize = ColorPixelBytes(format);
-	if (!pixelSize || !width || !height || width > 16384 || height > 16384 ||
-		width > limits.dimension || height > limits.dimension ||
-		std::uint64_t{width} * height > limits.inputBytes / pixelSize ||
+	if (!pixelSize || !width || !height || width > 16384 || height > 16384 || width > limits.dimension ||
+		height > limits.dimension || std::uint64_t{width} * height > limits.inputBytes / pixelSize ||
 		pixels.size() != std::uint64_t{width} * height * pixelSize)
 		throw std::invalid_argument("Image shape, format or input size is unsupported");
 	if (quality < 1 || quality > 100)
 		throw std::invalid_argument("JPEG quality must be between 1 and 100");
 	const bool rgba8 = format == static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm) ||
-		format == static_cast<std::uint32_t>(ColorFormat::Rgba8Srgb);
+					   format == static_cast<std::uint32_t>(ColorFormat::Rgba8Srgb);
 	const bool bgra8 = format == static_cast<std::uint32_t>(ColorFormat::Bgra8Unorm) ||
-		format == static_cast<std::uint32_t>(ColorFormat::Bgra8Srgb);
+					   format == static_cast<std::uint32_t>(ColorFormat::Bgra8Srgb);
 	const auto count = static_cast<std::size_t>(width) * height;
 	std::vector<unsigned char> converted;
 	const void* rgba = pixels.data();
@@ -87,25 +89,29 @@ EncodedImage EncodeImage(std::span<const std::byte> pixels, std::uint32_t format
 		rgba = converted.data();
 	}
 	ImageOutput output{{}, limits.outputBytes};
-	const int ok = png ? stbi_write_png_to_func(WriteImage, &output, static_cast<int>(width),
-											static_cast<int>(height), 4, rgba, static_cast<int>(width * 4))
-					   : stbi_write_jpg_to_func(WriteImage, &output, static_cast<int>(width),
-											static_cast<int>(height), 4, rgba, quality);
+	const int ok = png ? stbi_write_png_to_func(WriteImage, &output, static_cast<int>(width), static_cast<int>(height),
+												4, rgba, static_cast<int>(width * 4))
+					   : stbi_write_jpg_to_func(WriteImage, &output, static_cast<int>(width), static_cast<int>(height),
+												4, rgba, quality);
 	if (!ok || output.overflow || output.bytes.empty())
 		throw std::runtime_error(output.overflow ? "Compressed image exceeds the output byte limit"
-												: "Image encoding failed");
+												 : "Image encoding failed");
 	return {std::move(output.bytes), png ? "image/png" : "image/jpeg", !png || !(rgba8 || bgra8)};
 }
-void SaveExportFile(const std::filesystem::path& destination, std::span<const std::byte> bytes,
-	bool overwrite, const std::function<void()>& beforeCommit)
+
+void SaveExportFile(const std::filesystem::path& destination, std::span<const std::byte> bytes, bool overwrite,
+					const std::function<void()>& beforeCommit)
 {
-	SaveExportFile(destination, [&](std::ostream& output)
-	{
-		output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-	}, overwrite, beforeCommit);
+	SaveExportFile(
+		destination,
+		[&](std::ostream& output) {
+			output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+		},
+		overwrite, beforeCommit);
 }
+
 void SaveExportFile(const std::filesystem::path& destination, const std::function<void(std::ostream&)>& write,
-	bool overwrite, const std::function<void()>& beforeCommit)
+					bool overwrite, const std::function<void()>& beforeCommit)
 {
 	const auto temporary = CreatePrivateTemporaryFile(destination);
 	try

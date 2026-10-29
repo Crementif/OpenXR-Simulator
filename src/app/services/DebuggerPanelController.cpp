@@ -8,63 +8,73 @@ namespace tag = wire::tag;
 using namespace panel;
 using Work = PanelWork;
 using Clock = PanelClock;
+
 DebuggerPanelController::DebuggerPanelController(RuntimePanelRequests& transport) : m_requests(transport)
 {
 	m_operations.reserve(128);
 	m_effects.reserve(32);
 }
+
 const PanelSession& DebuggerPanelController::Selected() const noexcept
 {
 	return m_selected;
 }
+
 std::span<const PanelSession> DebuggerPanelController::Sessions() const noexcept
 {
 	return m_sessions;
 }
+
 std::span<const DebuggerOperation> DebuggerPanelController::Operations() const noexcept
 {
 	return m_operations;
 }
+
 const wire::Message& DebuggerPanelController::Status() const noexcept
 {
 	return m_status;
 }
+
 bool DebuggerPanelController::Manual() const noexcept
 {
 	return m_manual;
 }
+
 bool DebuggerPanelController::HasLease() const noexcept
 {
 	return m_lease != 0;
 }
+
 PanelScope DebuggerPanelController::Scope() const noexcept
 {
 	return {m_requests.Epoch(), m_selected.id, m_selected.generation};
 }
+
 PanelFields DebuggerPanelController::SessionFields() const
 {
 	return {wire::Field::U64(tag::Session, m_selected.id, true),
 			wire::Field::U64(tag::Generation, m_selected.generation, true)};
 }
+
 std::string DebuggerPanelController::TakeError()
 {
 	return std::exchange(m_detail, {});
 }
+
 std::vector<DebuggerCaptureEvent> DebuggerPanelController::TakeCaptures()
 {
 	auto result = m_effects;
 	m_effects.clear();
 	return result;
 }
+
 bool DebuggerPanelController::Pending() const
 {
 	return m_deferred.has_value() || m_requests.Has(Work::Acquire) || m_requests.Has(Work::Command) ||
 		   std::any_of(m_operations.begin(), m_operations.end(),
-					   [](const auto& operation)
-					   {
-						   return !Terminal(operation.phase);
-					   });
+					   [](const auto& operation) { return !Terminal(operation.phase); });
 }
+
 void DebuggerPanelController::ResetEpoch()
 {
 	m_sessions.clear();
@@ -78,6 +88,7 @@ void DebuggerPanelController::ResetEpoch()
 	m_detail.clear();
 	m_nextSessions = m_nextStatus = m_nextOperations = m_nextRenew = {};
 }
+
 void DebuggerPanelController::Relinquish()
 {
 	if (m_lease)
@@ -86,10 +97,12 @@ void DebuggerPanelController::Relinquish()
 	m_manual = false;
 	m_deferred.reset();
 }
+
 bool DebuggerPanelController::Relinquishing() const
 {
 	return m_requests.Has(Work::Relinquish);
 }
+
 void DebuggerPanelController::ChooseSession(PanelSession session)
 {
 	Relinquish();
@@ -100,6 +113,7 @@ void DebuggerPanelController::ChooseSession(PanelSession session)
 	m_status = {};
 	m_nextStatus = {};
 }
+
 void DebuggerPanelController::Command(wire::CommandKind kind, std::uint64_t capture, bool raw, std::uint32_t layer,
 									  std::uint32_t view)
 {
@@ -164,26 +178,23 @@ void DebuggerPanelController::Command(wire::CommandKind kind, std::uint64_t capt
 		throw;
 	}
 }
+
 void DebuggerPanelController::CancelPending()
 {
-	const auto found = std::find_if(m_operations.rbegin(), m_operations.rend(),
-									[](const auto& operation)
-									{
-										return operation.id && !Terminal(operation.phase) &&
-											   operation.kind != wire::CommandKind::Cancel;
-									});
+	const auto found = std::find_if(m_operations.rbegin(), m_operations.rend(), [](const auto& operation) {
+		return operation.id && !Terminal(operation.phase) && operation.kind != wire::CommandKind::Cancel;
+	});
 	if (found != m_operations.rend())
 		Command(wire::CommandKind::Cancel, found->id);
 	else
 		m_detail = "No accepted pending operation to cancel";
 }
+
 void DebuggerPanelController::InterruptSession()
 {
-	std::erase_if(m_sessions,
-				  [&](const auto& session)
-				  {
-					  return session.id == m_selected.id && session.generation == m_selected.generation;
-				  });
+	std::erase_if(m_sessions, [&](const auto& session) {
+		return session.id == m_selected.id && session.generation == m_selected.generation;
+	});
 	m_selected = {};
 	m_status = {};
 	m_nextSessions = {};
@@ -198,6 +209,7 @@ void DebuggerPanelController::InterruptSession()
 			operation.polling = false;
 		}
 }
+
 void DebuggerPanelController::Failed(const PanelTask& task, wire::ErrorCode error, const std::string& errorDetail)
 {
 	if (task.kind == Work::Acquire)
@@ -220,6 +232,7 @@ void DebuggerPanelController::Failed(const PanelTask& task, wire::ErrorCode erro
 	if (error == wire::ErrorCode::LeaseRequired)
 		m_lease = 0;
 }
+
 bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message& message)
 {
 	switch (task.kind)
@@ -234,12 +247,9 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 				{U64(session, tag::Session), U64(session, tag::Generation), Boolean(session, tag::Running)});
 		}
 		m_sessions = std::move(prepared);
-		const auto selected =
-			std::find_if(m_sessions.begin(), m_sessions.end(),
-						 [&](const auto& session)
-						 {
-							 return session.id == m_selected.id && session.generation == m_selected.generation;
-						 });
+		const auto selected = std::find_if(m_sessions.begin(), m_sessions.end(), [&](const auto& session) {
+			return session.id == m_selected.id && session.generation == m_selected.generation;
+		});
 		if (selected == m_sessions.end())
 			ChooseSession(m_sessions.empty() ? PanelSession{} : m_sessions.front());
 		else
@@ -322,6 +332,7 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 	}
 	return true;
 }
+
 void DebuggerPanelController::Poll()
 {
 	const auto now = Clock::now();
@@ -359,11 +370,9 @@ void DebuggerPanelController::Poll()
 	if (m_lease && !m_requests.Has(Work::Acknowledge))
 	{
 		auto through = m_acknowledged;
-		while (std::any_of(m_operations.begin(), m_operations.end(),
-						   [&](const auto& operation)
-						   {
-							   return operation.command == through + 1 && Terminal(operation.phase);
-						   }))
+		while (std::any_of(m_operations.begin(), m_operations.end(), [&](const auto& operation) {
+			return operation.command == through + 1 && Terminal(operation.phase);
+		}))
 			++through;
 		if (through > m_acknowledged)
 		{
@@ -373,11 +382,9 @@ void DebuggerPanelController::Poll()
 			m_requests.Send(wire::OpCode::Acknowledge, Work::Acknowledge, std::move(fields), through);
 		}
 		if (m_operations.size() > 64)
-			std::erase_if(m_operations,
-						  [&](const auto& operation)
-						  {
-							  return operation.command <= m_acknowledged && operation.command + 64 < m_command;
-						  });
+			std::erase_if(m_operations, [&](const auto& operation) {
+				return operation.command <= m_acknowledged && operation.command + 64 < m_command;
+			});
 	}
 }
 } // namespace simxr::app

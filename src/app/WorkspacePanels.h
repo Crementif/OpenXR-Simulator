@@ -32,6 +32,7 @@ namespace simxr::app
 class RuntimePanels;
 class ProcessSupervisor;
 struct RuntimeView;
+
 struct SharedWorkspaceSettings
 {
 	bool enabled = false, dirty = false, styleCaptured = false;
@@ -44,9 +45,10 @@ struct SharedWorkspaceSettings
 	float appliedScale = 1;
 	ImGuiStyle originalStyle;
 };
+
 class WorkspacePanels
 {
-  public:
+public:
 	// Disabled for finite QA/proof runs, including both reading and writing config.
 	WorkspacePanels(ProcessSupervisor& processes, bool enabled, std::string endpoint);
 	// Each application keeps its own workspace state, while preferences are shared.
@@ -83,6 +85,7 @@ class WorkspacePanels
 	{
 		return m_rigs;
 	}
+
 	const RigController& Rigs() const noexcept
 	{
 		return m_rigs;
@@ -96,7 +99,7 @@ class WorkspacePanels
 	void SetScale(float scale);
 	void Finish();
 
-  private:
+private:
 	WorkspacePanels(ProcessSupervisor& processes, std::shared_ptr<SharedWorkspaceSettings> shared);
 	void Save();
 	void SaveLayout();
@@ -142,11 +145,13 @@ class WorkspacePanels
 	std::string m_workspaceProfile;
 	std::optional<std::string> m_cropProfile;
 	bool m_wasOverlay = false;
+
 	struct DividerDrag
 	{
 		ImGuiID id;
 		float request, travel;
 	};
+
 	std::optional<DividerDrag> m_dividerDrag;
 	std::filesystem::path& m_path;
 	std::filesystem::path& m_layoutPath;
@@ -156,6 +161,7 @@ class WorkspacePanels
 	RuntimeConnection m_launchDiscovery;
 	std::unique_ptr<LaunchAttachment> m_attachment;
 	std::optional<LaunchProfile> m_launchedProfile;
+
 	struct PendingRestart
 	{
 		LaunchRestartRequest request;
@@ -164,10 +170,12 @@ class WorkspacePanels
 		std::chrono::steady_clock::time_point deadline;
 		bool queued = false;
 	};
+
 	std::optional<PendingRestart> m_restart;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	RigController m_rigs;
 	Library m_library;
+
 	struct PendingReplay
 	{
 		automation::SavedRecording recording;
@@ -175,6 +183,7 @@ class WorkspacePanels
 		std::chrono::steady_clock::time_point deadline;
 		RuntimeFrameRun target;
 	};
+
 	std::optional<PendingReplay> m_replay;
 	bool m_replayFailed = false;
 #endif

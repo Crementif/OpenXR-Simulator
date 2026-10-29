@@ -38,9 +38,10 @@ class HistoryStore;
 class InputHistory;
 class UiRenderer;
 class Window;
+
 class RuntimePanels
 {
-  public:
+public:
 	RuntimePanels(UiRenderer& renderer, std::string endpoint = {}, Window* window = nullptr);
 	~RuntimePanels();
 	RuntimePanels(const RuntimePanels&) = delete;
@@ -131,7 +132,7 @@ class RuntimePanels
 	void FinishReplayPreparation();
 	bool ReplayReady() const;
 
-  private:
+private:
 	RuntimeView Build() const;
 	void PollRecording();
 	bool CanRecord() const;
@@ -146,13 +147,16 @@ class RuntimePanels
 		automation::SavedRecording saved;
 		PanelScope scope;
 	};
+
 	struct ReplayPreparation
 	{
 		PanelScope scope;
 		std::uint64_t observation = 0;
 		bool releaseQueued = false;
 	};
+
 	std::optional<ReplayPreparation> m_replayPreparation;
+
 	struct HeadsetPreparation
 	{
 		HeadsetHostOptions options;
@@ -161,6 +165,7 @@ class RuntimePanels
 		std::uint64_t observation;
 		std::chrono::steady_clock::time_point deadline;
 	};
+
 	std::optional<HeadsetPreparation> m_headsetPreparation;
 	RuntimeSession m_session;
 	HeadsetHost m_headset;

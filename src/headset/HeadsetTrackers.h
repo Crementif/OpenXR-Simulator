@@ -10,6 +10,7 @@
 namespace simxr::headset
 {
 class OpenXrRuntime;
+
 struct PhysicalTrackerSample
 {
 	std::string persistentPath;
@@ -21,7 +22,7 @@ struct PhysicalTrackerSample
 
 class HeadsetTrackers
 {
-  public:
+public:
 	explicit HeadsetTrackers(OpenXrRuntime& runtime);
 	~HeadsetTrackers();
 	HeadsetTrackers(const HeadsetTrackers&) = delete;
@@ -33,7 +34,7 @@ class HeadsetTrackers
 	bool Available() const;
 	void Close();
 
-  private:
+private:
 	struct RoleAction
 	{
 		XrPath path = XR_NULL_PATH;
@@ -41,6 +42,7 @@ class HeadsetTrackers
 		XrSpace space = XR_NULL_HANDLE;
 		TrackerRole role = TrackerRole::Unassigned;
 	};
+
 	std::string PathString(XrPath path) const;
 	std::vector<XrViveTrackerPathsHTCX> Enumerate() const;
 	OpenXrRuntime& m_runtime;

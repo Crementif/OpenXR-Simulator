@@ -15,7 +15,9 @@ static void Require(bool value, const char* message)
 	if (!value)
 		throw std::runtime_error(message);
 }
-template <class Function> static Function Command(XrInstance instance, const char* name)
+
+template<class Function>
+static Function Command(XrInstance instance, const char* name)
 {
 	PFN_xrVoidFunction function = nullptr;
 	Require(xrGetInstanceProcAddr(instance, name, &function) == XR_SUCCESS && function,
@@ -25,21 +27,24 @@ template <class Function> static Function Command(XrInstance instance, const cha
 
 class CreationChecks final
 {
-  public:
+public:
 	CreationChecks(XrInstance instance, XrSystemId system, VkInstance graphicsInstance, VkPhysicalDevice physicalDevice)
 		: m_instance(instance), m_system(system), m_graphicsInstance(graphicsInstance), m_physicalDevice(physicalDevice)
 	{
 		Require(!s_current, "Creation callback fixture is not nested");
 		s_current = this;
 	}
+
 	~CreationChecks()
 	{
 		if (m_secondaryInstance)
 			vkDestroyInstance(m_secondaryInstance, nullptr);
 		s_current = nullptr;
 	}
+
 	CreationChecks(const CreationChecks&) = delete;
 	CreationChecks& operator=(const CreationChecks&) = delete;
+
 	void Run()
 	{
 		const auto memoryProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2KHR>(
@@ -53,16 +58,19 @@ class CreationChecks final
 		CheckSessionAdmission();
 	}
 
-  private:
+private:
 	static VKAPI_ATTR void* VKAPI_CALL Allocate(void*, std::size_t, std::size_t, VkSystemAllocationScope)
 	{
 		return nullptr;
 	}
+
 	static VKAPI_ATTR void* VKAPI_CALL Reallocate(void*, void*, std::size_t, std::size_t, VkSystemAllocationScope)
 	{
 		return nullptr;
 	}
+
 	static VKAPI_ATTR void VKAPI_CALL Free(void*, void*) {}
+
 	static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL Resolve(VkInstance instance, const char* name)
 	{
 		++s_current->m_resolutions;
@@ -81,14 +89,16 @@ class CreationChecks final
 		}
 		return nullptr;
 	}
+
 	static VKAPI_ATTR VkResult VKAPI_CALL EnumerateInstanceExtensions(const char*, std::uint32_t* count,
-																	 VkExtensionProperties* properties)
+																	  VkExtensionProperties* properties)
 	{
 		if (properties && *count)
 			std::strcpy(properties[0].extensionName, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 		*count = 1;
 		return VK_SUCCESS;
 	}
+
 	static VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* info,
 														 const VkAllocationCallbacks* allocator, VkInstance* output)
 	{
@@ -97,14 +107,15 @@ class CreationChecks final
 					info->pNext == s_current->m_instanceInfo->pNext && allocator == &s_current->m_allocator,
 				"Preserve instance application, chain and allocator pointers");
 		const std::span names(info->ppEnabledExtensionNames, info->enabledExtensionCount);
-		Require(std::count_if(names.begin(), names.end(), [](const char* name)
-							  {
+		Require(std::count_if(names.begin(), names.end(),
+							  [](const char* name) {
 								  return std::strcmp(name, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0;
 							  }) == 1,
 				"Enable supported properties2 aliases without duplicating application extensions");
 		*output = reinterpret_cast<VkInstance>(s_current);
 		return s_current->m_nativeResult;
 	}
+
 	static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* info,
 													   const VkAllocationCallbacks* allocator, VkDevice* output)
 	{
@@ -118,14 +129,14 @@ class CreationChecks final
 				"Preserve native feature chain, features and queue configuration");
 		const std::span names(info->ppEnabledExtensionNames, info->enabledExtensionCount);
 		Require(std::count_if(names.begin(), names.end(),
-							  [](const char* name)
-							  {
+							  [](const char* name) {
 								  return std::strcmp(name, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0;
 							  }) == 1,
 				"Aggregate required extensions without duplicate application entries");
 		*output = reinterpret_cast<VkDevice>(s_current);
 		return s_current->m_nativeResult;
 	}
+
 	void CheckInstance()
 	{
 		const auto create = Command<PFN_xrCreateVulkanInstanceKHR>(m_instance, "xrCreateVulkanInstanceKHR");
@@ -165,6 +176,7 @@ class CreationChecks final
 		m_creations = 0;
 		m_resolutions = 0;
 	}
+
 	void CheckDevice()
 	{
 		const auto create = Command<PFN_xrCreateVulkanDeviceKHR>(m_instance, "xrCreateVulkanDeviceKHR");
@@ -213,6 +225,7 @@ class CreationChecks final
 		Require(!m_reenter && m_secondaryInstance,
 				"Resolver reentry can add another physical-device selection without invalidating dispatch");
 	}
+
 	void CheckSessionAdmission()
 	{
 		XrGraphicsBindingVulkanKHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
@@ -226,6 +239,7 @@ class CreationChecks final
 					untouched == XR_NULL_HANDLE,
 				"Require the graphics requirements query at session admission");
 	}
+
 	void SelectSecondaryDevice()
 	{
 		m_reenter = false;
@@ -260,6 +274,7 @@ class CreationChecks final
 	bool m_missingFunction = false;
 	bool m_reenter = false;
 };
+
 bool VerifyVulkanCreation(XrInstance instance, XrSystemId system, VkInstance graphicsInstance,
 						  VkPhysicalDevice physicalDevice)
 {

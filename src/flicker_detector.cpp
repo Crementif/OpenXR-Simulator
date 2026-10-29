@@ -16,15 +16,15 @@ static std::string RunName()
 Diagnostics::Diagnostics(std::filesystem::path directory)
 	: m_directory(std::move(directory)), m_runName(RunName()), m_preview(m_directory / "flicker_incidents" / m_runName),
 	  m_ui(m_directory / "ui_flicker_incidents" / m_runName), m_worker(&Diagnostics::Run, this)
-{
-}
+{}
 
 Diagnostics::~Diagnostics()
 {
 	Close();
 }
 
-template <typename Observation> void Diagnostics::ApplyObservation(Observation&& observation) noexcept
+template<typename Observation>
+void Diagnostics::ApplyObservation(Observation&& observation) noexcept
 {
 	try
 	{
@@ -46,12 +46,10 @@ template <typename Observation> void Diagnostics::ApplyObservation(Observation&&
 
 void Diagnostics::ObserveSubmission(uint64_t frame, uint32_t projectionLayers, uint32_t totalLayers) noexcept
 {
-	ApplyObservation(
-		[&]
-		{
-			auto update = m_preview.Submission(frame, projectionLayers, totalLayers);
-			m_artifacts.Add(std::move(update), m_preview);
-		});
+	ApplyObservation([&] {
+		auto update = m_preview.Submission(frame, projectionLayers, totalLayers);
+		m_artifacts.Add(std::move(update), m_preview);
+	});
 }
 
 void Diagnostics::ObservePreview(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes,
@@ -59,36 +57,30 @@ void Diagnostics::ObservePreview(const uint8_t* bgra, uint32_t width, uint32_t h
 {
 	if (!ValidPixels(bgra, width, height, pitchBytes) || generation == 0)
 		return;
-	ApplyObservation(
-		[&]
-		{
-			if (!m_preview.AcceptsGeneration(generation))
-				return;
-			auto sample = Downsample(bgra, width, height, pitchBytes ? pitchBytes : width * 4, frame);
-			auto update = m_preview.Preview(std::move(sample), generation);
-			m_artifacts.Add(std::move(update), m_preview);
-		});
+	ApplyObservation([&] {
+		if (!m_preview.AcceptsGeneration(generation))
+			return;
+		auto sample = Downsample(bgra, width, height, pitchBytes ? pitchBytes : width * 4, frame);
+		auto update = m_preview.Preview(std::move(sample), generation);
+		m_artifacts.Add(std::move(update), m_preview);
+	});
 }
 
 void Diagnostics::ObservePaint(uint64_t generation, bool paintedPreview) noexcept
 {
-	ApplyObservation(
-		[&]
-		{
-			auto update = m_preview.Paint(generation, paintedPreview);
-			m_artifacts.Add(std::move(update), m_preview);
-		});
+	ApplyObservation([&] {
+		auto update = m_preview.Paint(generation, paintedPreview);
+		m_artifacts.Add(std::move(update), m_preview);
+	});
 }
 
 void Diagnostics::ObserveUi(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes,
 							uint64_t generation, uint64_t frame, const UiFrameInfo& info) noexcept
 {
-	ApplyObservation(
-		[&]
-		{
-			auto update = m_ui.Observe(bgra, width, height, pitchBytes, generation, frame, info);
-			m_artifacts.Add(std::move(update), m_ui);
-		});
+	ApplyObservation([&] {
+		auto update = m_ui.Observe(bgra, width, height, pitchBytes, generation, frame, info);
+		m_artifacts.Add(std::move(update), m_ui);
+	});
 }
 
 DiagnosticsStatus Diagnostics::Snapshot() const
@@ -127,8 +119,7 @@ void Diagnostics::RecordError(const char* message, ErrorKind kind) noexcept
 		m_lastError.assign(message, std::min<size_t>(std::char_traits<char>::length(message), 2048));
 	}
 	catch (...)
-	{
-	}
+	{}
 }
 
 void Diagnostics::Run() noexcept
@@ -148,10 +139,7 @@ void Diagnostics::Run() noexcept
 			{
 				std::unique_lock lock(m_mutex);
 				m_wake.wait_for(lock, std::chrono::milliseconds(250),
-								[this]
-								{
-									return m_closed || !m_artifacts.Empty();
-								});
+								[this] { return m_closed || !m_artifacts.Empty(); });
 				finished = m_closed && m_artifacts.Empty();
 				if (finished || Clock::now() - lastStatus >= std::chrono::milliseconds(250))
 				{

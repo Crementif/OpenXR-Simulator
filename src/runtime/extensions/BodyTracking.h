@@ -30,7 +30,7 @@ struct BodyTrackerState
 
 class BodyTracking
 {
-  public:
+public:
 	BodyTracking(XrSession owner, const TrackingSystem& tracking, const SpaceSystem& spaces,
 				 const EnabledExtensions& enabled, const BodyTrackingCapabilities& capabilities = {});
 	XrResult CreateFB(const XrBodyTrackerCreateInfoFB* info, XrBodyTrackerFB* output);
@@ -49,13 +49,14 @@ class BodyTracking
 	BodyTrackingCapabilities Capabilities() const;
 	void Clear();
 
-  private:
+private:
 	struct Query
 	{
 		TrackingSnapshot snapshot;
 		PoseSample base;
 		RuntimeTime requestedTime;
 	};
+
 	struct TrackerFB
 	{
 		BodyJointSet jointSet = BodyJointSet::UpperBodyFB;
@@ -64,10 +65,12 @@ class BodyTracking
 		std::optional<BodyProportions> lastProportions;
 		std::optional<Query> lastQuery;
 	};
+
 	struct TrackerBD
 	{
 		BodyJointSet jointSet = BodyJointSet::FullBodyBD;
 	};
+
 	bool Enabled(std::string_view extension) const;
 	XrResult QueryAt(XrSpace base, XrTime time, std::optional<Query>& query) const;
 	static TrackingSnapshot Calibrated(TrackingSnapshot snapshot, const std::optional<float>& height);

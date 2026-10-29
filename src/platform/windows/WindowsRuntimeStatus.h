@@ -23,13 +23,14 @@ struct FrameStatus
 	float y = 1.7f;
 	float z = 0;
 };
+
 class WindowsRuntimeStatus
 {
-  public:
+public:
 	explicit WindowsRuntimeStatus(std::shared_ptr<WindowsRuntimeFiles> files);
 	void PublishStatus(FrameStatus status);
 
-  private:
+private:
 	std::shared_ptr<WindowsRuntimeFiles> m_files;
 	std::mutex m_mutex;
 	std::chrono::steady_clock::time_point m_lastStatus;

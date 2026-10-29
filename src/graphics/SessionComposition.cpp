@@ -3,7 +3,6 @@
 #include "runtime/Session.h"
 #include "runtime/validation/LayerValidation.h"
 
-
 namespace simxr
 {
 XrResult PrepareSessionComposition(Session& session, const XrFrameEndInfo& info,
@@ -12,16 +11,14 @@ XrResult PrepareSessionComposition(Session& session, const XrFrameEndInfo& info,
 	LayerValidationContext validation;
 	validation.viewCount = session.ActiveViewCount();
 	validation.depthEnabled = session.Extensions().Contains(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
-	validation.validSpace = [&session](XrSpace space)
-	{
+	validation.validSpace = [&session](XrSpace space) {
 		return session.Spaces().Owns(space);
 	};
 	validation.swapchain = describe;
 	SessionComposition prepared;
 	auto result = BuildLayers(
 		info, validation,
-		[&session](XrSpace space, RuntimeTime time, SpaceSample& pose)
-		{
+		[&session](XrSpace space, RuntimeTime time, SpaceSample& pose) {
 			return session.Spaces().Sample(space, time, pose);
 		},
 		prepared.layers);
@@ -38,8 +35,7 @@ XrResult PrepareSessionComposition(Session& session, const XrFrameEndInfo& info,
 						   {{{views.views[0].pose, views.views[0].fov}, {views.views[1].pose, views.views[1].fov}}}};
 		result = PrepareComposition(
 			*prepared.layers, prepared.target,
-			[&describe](XrSwapchain swapchain) -> std::optional<XrExtent2Di>
-			{
+			[&describe](XrSwapchain swapchain) -> std::optional<XrExtent2Di> {
 				const auto description = describe(swapchain);
 				if (!description)
 					return {};

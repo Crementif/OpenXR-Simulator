@@ -71,8 +71,8 @@ struct FrameLayers
 {
 	FrameLayers(RuntimeTime time, XrEnvironmentBlendMode blend, std::vector<LayerDescription> descriptions)
 		: displayTime(time), blendMode(blend), layers(std::move(descriptions))
-	{
-	}
+	{}
+
 	const RuntimeTime displayTime;
 	const XrEnvironmentBlendMode blendMode;
 	const std::vector<LayerDescription> layers;

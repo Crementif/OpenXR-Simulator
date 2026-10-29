@@ -17,36 +17,41 @@ constexpr VkImageSubresourceRange ColorRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0,
 
 class FileDescriptor
 {
-  public:
+public:
 	explicit FileDescriptor(int value) : m_value(value) {}
+
 	~FileDescriptor();
 	FileDescriptor(const FileDescriptor&) = delete;
 	FileDescriptor& operator=(const FileDescriptor&) = delete;
+
 	void Release()
 	{
 		m_value = -1;
 	}
 
-  private:
+private:
 	int m_value;
 };
 
 class Device
 {
-  public:
+public:
 	Device() = default;
 	Device(const Device&) = delete;
 	Device& operator=(const Device&) = delete;
 	~Device();
 
 	void Create(VkPhysicalDevice physicalDevice, std::uint32_t queueFamily, std::uint32_t queueIndex);
-	template <typename Function> Function Get(const char* name)
+
+	template<typename Function>
+	Function Get(const char* name)
 	{
 		auto function = reinterpret_cast<Function>(vkGetDeviceProcAddr(handle, name));
 		if (!function)
 			throw std::runtime_error(std::string("Enabled extension command missing: ") + name);
 		return function;
 	}
+
 	VkImage CreateImage(bool shared, VkImageUsageFlags usage = ImageUsage);
 	VkDeviceMemory Allocate(VkImage image, std::uint32_t memoryType, VkDeviceSize size, bool shared, int fd = -1);
 	VkSemaphore CreateSemaphore(bool shared);
@@ -60,7 +65,7 @@ class Device
 	VkCommandPool pool = VK_NULL_HANDLE;
 	std::uint32_t family = 0;
 
-  private:
+private:
 	std::vector<VkImage> m_images;
 	std::vector<VkBuffer> m_buffers;
 	std::vector<VkDeviceMemory> m_allocations;

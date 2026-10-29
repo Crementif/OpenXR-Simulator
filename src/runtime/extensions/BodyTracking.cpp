@@ -35,10 +35,11 @@ static bool SameObservedSkeleton(const std::optional<BodyObservation>& first,
 			return false;
 		if (!a)
 			continue;
-		if (a->joint != b->joint || a->parent != b->parent ||
-			a->bindPose.position.x != b->bindPose.position.x || a->bindPose.position.y != b->bindPose.position.y ||
-			a->bindPose.position.z != b->bindPose.position.z || a->bindPose.orientation.x != b->bindPose.orientation.x ||
-			a->bindPose.orientation.y != b->bindPose.orientation.y || a->bindPose.orientation.z != b->bindPose.orientation.z ||
+		if (a->joint != b->joint || a->parent != b->parent || a->bindPose.position.x != b->bindPose.position.x ||
+			a->bindPose.position.y != b->bindPose.position.y || a->bindPose.position.z != b->bindPose.position.z ||
+			a->bindPose.orientation.x != b->bindPose.orientation.x ||
+			a->bindPose.orientation.y != b->bindPose.orientation.y ||
+			a->bindPose.orientation.z != b->bindPose.orientation.z ||
 			a->bindPose.orientation.w != b->bindPose.orientation.w)
 			return false;
 	}
@@ -203,8 +204,8 @@ XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocate
 	{
 		query->snapshot = Calibrated(std::move(query->snapshot), tracker->state.heightOverride);
 		const auto& observed = query->snapshot.input.bodyObservation;
-		const bool sourceChanged = tracker->lastQuery &&
-			!SameObservedSkeleton(observed, tracker->lastQuery->snapshot.input.bodyObservation);
+		const bool sourceChanged =
+			tracker->lastQuery && !SameObservedSkeleton(observed, tracker->lastQuery->snapshot.input.bodyObservation);
 		if (!tracker->lastProportions || *tracker->lastProportions != query->snapshot.proportions || sourceChanged)
 		{
 			if (tracker->state.skeletonRevision == std::numeric_limits<std::uint32_t>::max())
@@ -303,7 +304,9 @@ XrResult BodyTracking::SkeletonFB(XrBodyTrackerFB handle, XrBodySkeletonFB* skel
 			auto parent = joint->parent;
 			while (parent && std::find(mapping.begin(), mapping.end(), *parent) == mapping.end())
 				parent = (*observed->skeleton)[Index(*parent)]->parent;
-			const auto parentIndex = parent ? static_cast<std::int32_t>(std::find(mapping.begin(), mapping.end(), *parent) - mapping.begin()) : -1;
+			const auto parentIndex =
+				parent ? static_cast<std::int32_t>(std::find(mapping.begin(), mapping.end(), *parent) - mapping.begin())
+					   : -1;
 			joints[index] = {static_cast<std::int32_t>(index), parentIndex, joint->bindPose};
 		}
 		std::copy_n(joints.begin(), mapping.size(), skeleton->joints);

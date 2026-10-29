@@ -32,10 +32,7 @@ bool OpenXrRuntime::ResourcesPreserved() const
 bool OpenXrRuntime::Supports(std::string_view extension) const
 {
 	return std::any_of(m_extensions.begin(), m_extensions.end(),
-					   [&](const auto& item)
-					   {
-						   return item.extensionName == extension;
-					   });
+					   [&](const auto& item) { return item.extensionName == extension; });
 }
 
 void OpenXrRuntime::Open()
@@ -115,30 +112,37 @@ PFN_xrVoidFunction OpenXrRuntime::Procedure(const char* name) const
 		throw std::runtime_error(std::string("Missing OpenXR procedure ") + name);
 	return procedure;
 }
+
 XrInstance OpenXrRuntime::Instance() const
 {
 	return m_instance;
 }
+
 XrSystemId OpenXrRuntime::System() const
 {
 	return m_system;
 }
+
 const HeadsetBodyCapabilities& OpenXrRuntime::BodyCapabilities() const
 {
 	return m_bodyCapabilities;
 }
+
 const XrInstanceProperties& OpenXrRuntime::Properties() const
 {
 	return m_properties;
 }
+
 const std::vector<XrViewConfigurationView>& OpenXrRuntime::Views() const
 {
 	return m_views;
 }
+
 const std::vector<XrExtensionProperties>& OpenXrRuntime::Extensions() const
 {
 	return m_extensions;
 }
+
 const std::vector<XrApiLayerProperties>& OpenXrRuntime::Layers() const
 {
 	return m_layers;

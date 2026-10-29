@@ -17,19 +17,22 @@ struct LaunchRestartRequest
 	LaunchProfile profile;
 	std::uint64_t process = 0;
 };
+
 class LaunchProfilesDialog
 {
-  public:
+public:
 	LaunchProfilesDialog();
 	LaunchProfilesDialog(const LaunchProfilesDialog&) = delete;
 	LaunchProfilesDialog& operator=(const LaunchProfilesDialog&) = delete;
 	void Edit(const CompanionSettings& settings, int index);
 	bool Create(CompanionSettings& settings, const LaunchProfile& launch);
 	LaunchProfile Profile() const;
+
 	int Selected() const noexcept
 	{
 		return m_selected;
 	}
+
 	// Returns true when Launch was pressed. Sets changed when settings must be saved.
 	bool Draw(CompanionSettings& settings, const LaunchSnapshot& process, bool& open, bool& changed,
 			  const std::optional<std::array<HeadsetEyeSize, 2>>& eyes = {}, bool canRestart = false);
@@ -37,7 +40,7 @@ class LaunchProfilesDialog
 	bool TakeRestartCancellation();
 	bool TakeCopyCommandRequest();
 
-  private:
+private:
 	struct Variable
 	{
 		std::vector<char> key = std::vector<char>(256);

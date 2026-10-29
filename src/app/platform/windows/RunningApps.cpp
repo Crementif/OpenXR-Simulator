@@ -16,8 +16,7 @@ static bool ProbePipe(const std::string& endpoint, std::chrono::milliseconds tim
 	{
 		return false;
 	}
-	const auto connect = [&]
-	{
+	const auto connect = [&] {
 		return CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
 						   nullptr);
 	};
@@ -36,6 +35,7 @@ static bool ProbePipe(const std::string& endpoint, std::chrono::milliseconds tim
 		process = server;
 	return true;
 }
+
 static void ProcessDetails(RunningApp& app)
 {
 	if (!app.process || app.process > MAXDWORD)
@@ -67,6 +67,7 @@ static void ProcessDetails(RunningApp& app)
 		}
 	}
 }
+
 std::optional<RunningApp> ProbeRunningApp(const std::string& endpoint, std::chrono::milliseconds timeout)
 {
 	RunningApp app;
@@ -75,6 +76,7 @@ std::optional<RunningApp> ProbeRunningApp(const std::string& endpoint, std::chro
 	ProcessDetails(app);
 	return app;
 }
+
 std::optional<LaunchProfile> ReadProcessLaunch(std::uint64_t)
 {
 	return {};

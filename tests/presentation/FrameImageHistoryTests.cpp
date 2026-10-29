@@ -8,17 +8,24 @@
 namespace
 {
 using namespace simxr;
+
 class Output final : public FrameOutput
 {
-  public:
+public:
 	std::function<void()> destroyed;
+
 	~Output() override
 	{
 		if (destroyed)
 			destroyed();
 	}
-	CompletionStatus PollCompletion() const noexcept override { return CompletionStatus::Complete; }
+
+	CompletionStatus PollCompletion() const noexcept override
+	{
+		return CompletionStatus::Complete;
+	}
 };
+
 HistoricalImage Image(std::uint64_t frame, const std::shared_ptr<const FrameOutput>& output, bool clear = false)
 {
 	auto record = std::make_shared<FrameRecord>();
@@ -28,6 +35,7 @@ HistoricalImage Image(std::uint64_t frame, const std::shared_ptr<const FrameOutp
 	record->submission->layerCount = clear ? 0 : 1;
 	return {record, output};
 }
+
 void BoundedOwnership()
 {
 	FrameImageHistory history;
@@ -37,8 +45,7 @@ void BoundedOwnership()
 	for (std::uint64_t frame = 1; frame <= 12; ++frame)
 	{
 		auto output = std::make_shared<Output>();
-		output->destroyed = [&]
-		{
+		output->destroyed = [&] {
 			Require(history.Snapshot().entries.size() <= 10, "Native retirement reentered corrupt history");
 			++retiredCount;
 		};
@@ -48,10 +55,10 @@ void BoundedOwnership()
 	}
 	auto snapshot = history.Snapshot(3);
 	Require(snapshot.entries.size() == 3 && snapshot.entries.front().metadata->key.frame.value == 10 &&
-		snapshot.entries.back().metadata->key.frame.value == 12 && snapshot.evicted == 2,
-		"History lost its bound or chronological order");
+				snapshot.entries.back().metadata->key.frame.value == 12 && snapshot.evicted == 2,
+			"History lost its bound or chronological order");
 	Require(!history.Find({{1}, {1}}).metadata && history.Find({{1}, {3}}).output,
-		"Evicted history remained discoverable or current image disappeared");
+			"Evicted history remained discoverable or current image disappeared");
 	Require(retiredCount == 1, "Eviction destroyed an independently retained image");
 	independent.reset();
 	Require(retiredCount == 2, "Independent image ownership leaked");
@@ -59,11 +66,12 @@ void BoundedOwnership()
 	{
 		auto retired = history.Start({2});
 		Require(history.Snapshot().entries.empty() && !history.Find({{1}, {3}}).metadata,
-			"Restart redirected old identities to the new run");
+				"Restart redirected old identities to the new run");
 		Require(retiredCount == 2, "Restart destroyed native owners before caller locks could release");
 	}
 	Require(retiredCount == 12, "Restart failed to release detached native owners");
 }
+
 void WindowOwnership()
 {
 	FrameImageHistory history;
@@ -77,20 +85,23 @@ void WindowOwnership()
 		history.Append(Image(frame, frame == 15 ? nullptr : std::make_shared<Output>()));
 	const auto snapshot = window->Snapshot();
 	Require(snapshot.trigger.value == 10 && snapshot.preCount == 10 && snapshot.postCount == 12 &&
-		!snapshot.interrupted && snapshot.entries.size() == 22, "Window changed trigger or collection bounds");
+				!snapshot.interrupted && snapshot.entries.size() == 22,
+			"Window changed trigger or collection bounds");
 	for (std::size_t index = 0; index < snapshot.entries.size(); ++index)
-		Require(snapshot.entries[index].metadata->key.frame.value == index + 1, "Window skipped or substituted a frame");
+		Require(snapshot.entries[index].metadata->key.frame.value == index + 1,
+				"Window skipped or substituted a frame");
 	Require(window->Find({15}).metadata && !window->Find({15}).output && !window->Find({23}).metadata,
-		"Missing window pixels or following frames were misrepresented");
+			"Missing window pixels or following frames were misrepresented");
 	auto next = history.BeginWindow().window;
 	Require(next && next->Snapshot().trigger.value == 40, "Completed window prevented subsequent capture");
 	history.Append(Image(41, std::make_shared<Output>()));
 	history.Start({2});
 	Require(next->Snapshot().interrupted && next->Snapshot().postCount == 1,
-		"Generation restart did not interrupt the collecting window");
+			"Generation restart did not interrupt the collecting window");
 	Require(window->Find({1}).output && !window->Snapshot().interrupted,
-		"Restart invalidated a completed independent window");
+			"Restart invalidated a completed independent window");
 }
+
 void IndependentWindowTargets()
 {
 	for (const auto view : {ImageHistoryView::Composed, ImageHistoryView::Quads})
@@ -100,8 +111,12 @@ void IndependentWindowTargets()
 		bool composedDestroyed = false, quadDestroyed = false;
 		auto composed = std::make_shared<Output>();
 		auto quad = std::make_shared<Output>();
-		composed->destroyed = [&] { composedDestroyed = true; };
-		quad->destroyed = [&] { quadDestroyed = true; };
+		composed->destroyed = [&] {
+			composedDestroyed = true;
+		};
+		quad->destroyed = [&] {
+			quadDestroyed = true;
+		};
 		auto image = Image(1, composed);
 		image.quadOutput = quad;
 		image.quadVisible = true;
@@ -113,13 +128,14 @@ void IndependentWindowTargets()
 		history.Clear();
 		const bool ui = view == ImageHistoryView::Quads;
 		Require(composedDestroyed == ui && quadDestroyed != ui,
-			"Window retained an image from the unselected history target");
+				"Window retained an image from the unselected history target");
 		Require(started.window->Find({1}).view == view && started.window->Find({1}).quadBounds[1].offset.x == 10,
-			"Window lost its target or accepted quad geometry");
+				"Window lost its target or accepted quad geometry");
 		started.window.reset();
 		Require(composedDestroyed && quadDestroyed, "Target-specific window leaked an image");
 	}
 }
+
 void WindowDestructionReentry()
 {
 	FrameImageHistory history;
@@ -129,10 +145,9 @@ void WindowDestructionReentry()
 	auto started = history.BeginWindow();
 	auto window = std::move(started.window);
 	bool reentered = false;
-	output->destroyed = [&, raw = window.get()]
-	{
+	output->destroyed = [&, raw = window.get()] {
 		Require(raw->Snapshot().entries.empty() && history.Snapshot().entries.empty(),
-			"Window retirement reentered partly destroyed ownership");
+				"Window retirement reentered partly destroyed ownership");
 		reentered = true;
 	};
 	output.reset();
@@ -141,6 +156,7 @@ void WindowDestructionReentry()
 	window.reset();
 	Require(reentered, "Released window leaked its final native output");
 }
+
 void MissingImagesAndDestruction()
 {
 	auto history = std::make_unique<FrameImageHistory>();
@@ -150,8 +166,7 @@ void MissingImagesAndDestruction()
 	Require(history->Snapshot().unavailable == 1, "Clear was counted as a missing image");
 	bool reentered = false;
 	auto output = std::make_shared<Output>();
-	output->destroyed = [raw = history.get(), &reentered]
-	{
+	output->destroyed = [raw = history.get(), &reentered] {
 		Require(raw->Snapshot().entries.empty(), "History destructor exposed partly destroyed native readers");
 		reentered = true;
 	};
@@ -161,6 +176,7 @@ void MissingImagesAndDestruction()
 	Require(reentered, "History destruction leaked its final image");
 }
 } // namespace
+
 int main()
 {
 	try

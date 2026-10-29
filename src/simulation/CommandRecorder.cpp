@@ -8,6 +8,7 @@ CommandRecorder::CommandRecorder(std::size_t capacity) : m_capacity(capacity)
 	if (!capacity || capacity > 4096)
 		throw std::invalid_argument("Invalid command recording capacity");
 }
+
 void CommandRecorder::Start(const CommandRecordingOrigin& origin, bool drain)
 {
 	std::lock_guard mutation(m_mutationMutex);
@@ -27,12 +28,14 @@ void CommandRecorder::Start(const CommandRecordingOrigin& origin, bool drain)
 	m_state = std::move(prepared);
 	m_slots.swap(slots);
 }
+
 void CommandRecorder::Stop()
 {
 	std::lock_guard mutation(m_mutationMutex);
 	std::lock_guard lock(m_mutex);
 	m_state.active = false;
 }
+
 void CommandRecorder::Fail()
 {
 	std::lock_guard mutation(m_mutationMutex);
@@ -43,6 +46,7 @@ void CommandRecorder::Fail()
 		m_state.overflow = true;
 	}
 }
+
 void CommandRecorder::Acknowledge(std::size_t through)
 {
 	std::lock_guard mutation(m_mutationMutex);
@@ -55,6 +59,7 @@ void CommandRecorder::Acknowledge(std::size_t through)
 		++m_state.floor;
 	}
 }
+
 CommandRecording CommandRecorder::Snapshot(std::optional<std::size_t> offset, std::size_t count) const
 {
 	if (count > 256)
@@ -71,19 +76,20 @@ CommandRecording CommandRecorder::Snapshot(std::optional<std::size_t> offset, st
 		result.transactions.push_back(*m_slots[index % m_slots.size()]);
 	return result;
 }
+
 bool CommandRecorder::Observe(const CommandOutcome& outcome)
 {
 	return Observe(std::span{&outcome, 1});
 }
+
 bool CommandRecorder::Observe(std::span<const CommandOutcome> outcomes, const std::function<void()>& commit)
 {
-	return ObservePrepared(outcomes,
-						   [&](bool)
-						   {
-							   if (commit)
-								   commit();
-						   });
+	return ObservePrepared(outcomes, [&](bool) {
+		if (commit)
+			commit();
+	});
 }
+
 bool CommandRecorder::ObservePrepared(std::span<const CommandOutcome> outcomes, const std::function<void(bool)>& commit)
 {
 	std::lock_guard mutation(m_mutationMutex);

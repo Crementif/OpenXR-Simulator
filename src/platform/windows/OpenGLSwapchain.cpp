@@ -11,7 +11,8 @@
 
 namespace simxr::windows
 {
-template <class Function> static Function FindProcedure(const OpenGLLibrary& gl, const char* name) noexcept
+template<class Function>
+static Function FindProcedure(const OpenGLLibrary& gl, const char* name) noexcept
 {
 	const auto procedure = gl.GetProcAddress(name);
 	const auto address = std::bit_cast<std::uintptr_t>(procedure);
@@ -198,8 +199,7 @@ std::span<const std::int64_t> OpenGLSwapchain::Formats() noexcept
 
 OpenGLSwapchain::OpenGLSwapchain(HDC device, HGLRC context, GLenum format)
 	: m_resources(std::make_unique<Resources>(device, context, format))
-{
-}
+{}
 
 XrResult OpenGLSwapchain::Create(HDC device, HGLRC context, const XrSwapchainCreateInfo& description,
 								 std::unique_ptr<OpenGLSwapchain>& output)

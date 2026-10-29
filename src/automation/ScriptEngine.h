@@ -14,13 +14,13 @@ struct RigOptions;
 
 class ScriptEngine
 {
-  public:
+public:
 	ScriptEngine(RigRuntime& runtime, RigProgress& progress, const RigOptions& options);
 	ScriptEngine(const ScriptEngine&) = delete;
 	ScriptEngine& operator=(const ScriptEngine&) = delete;
 	void Execute();
 
-  private:
+private:
 	RigRuntime& m_runtime;
 	RigProgress& m_progress;
 	const RigOptions& m_options;
@@ -29,7 +29,8 @@ class ScriptEngine
 	static ScriptEngine& Self(lua_State* state);
 	static void* Allocate(void* context, void* pointer, std::size_t oldSize, std::size_t newSize);
 	static void Interrupt(lua_State* state, int gc);
-	template <int (ScriptEngine::*Handler)(lua_State*)> static int Binding(lua_State* state);
+	template<int (ScriptEngine::*Handler)(lua_State*)>
+	static int Binding(lua_State* state);
 	int Wait(lua_State* state);
 	int MonitorCadence(lua_State* state);
 	int MonotonicTime(lua_State* state);

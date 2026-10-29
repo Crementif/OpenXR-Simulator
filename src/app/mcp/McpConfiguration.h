@@ -12,7 +12,6 @@ enum class McpConfigurationClient
 	Codex
 };
 
-std::string McpConfiguration(const std::filesystem::path& connector,
-	const std::optional<std::filesystem::path>& app, bool windowless,
-	McpConfigurationClient client = McpConfigurationClient::Generic);
+std::string McpConfiguration(const std::filesystem::path& connector, const std::optional<std::filesystem::path>& app,
+							 bool windowless, McpConfigurationClient client = McpConfigurationClient::Generic);
 }

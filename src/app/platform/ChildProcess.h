@@ -12,7 +12,7 @@ namespace simxr::app
 // exit, or releases observation during final application shutdown without killing.
 class ChildProcess
 {
-  public:
+public:
 	static std::unique_ptr<ChildProcess> Launch(const LaunchProfile& profile);
 	~ChildProcess();
 	ChildProcess(const ChildProcess&) = delete;
@@ -22,7 +22,7 @@ class ChildProcess
 	// Requests normal shutdown; callers must still observe actual process exit.
 	void RequestClose();
 
-  private:
+private:
 	ChildProcess();
 	struct State;
 	std::unique_ptr<State> m_state;

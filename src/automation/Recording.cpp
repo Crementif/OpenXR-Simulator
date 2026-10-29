@@ -5,13 +5,13 @@
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 
-
 namespace simxr::automation
 {
 namespace wire = control;
+
 class RecordingNode
 {
-  public:
+public:
 	explicit RecordingNode(std::span<const std::byte> bytes)
 	{
 		auto decoded = wire::DecodeFields(bytes);
@@ -19,6 +19,7 @@ class RecordingNode
 			throw std::runtime_error("Malformed recording inspection fields");
 		m_fields.fields = std::move(decoded.fields);
 	}
+
 	std::optional<RecordingNode> Find(std::string_view name) const
 	{
 		const auto members = Fields(Data(wire::InspectionType::Object).value);
@@ -33,6 +34,7 @@ class RecordingNode
 		}
 		return {};
 	}
+
 	RecordingNode Member(std::string_view name) const
 	{
 		const auto child = Find(name);
@@ -40,11 +42,13 @@ class RecordingNode
 			throw std::runtime_error("Missing recording field: " + std::string(name));
 		return *child;
 	}
+
 	bool IsNull() const
 	{
 		const auto kind = m_fields.Find(2);
 		return kind && kind->AsU32() == static_cast<std::uint32_t>(wire::InspectionType::Null);
 	}
+
 	std::vector<RecordingNode> Elements() const
 	{
 		std::vector<RecordingNode> result;
@@ -57,6 +61,7 @@ class RecordingNode
 			}
 		return result;
 	}
+
 	std::uint64_t Unsigned() const
 	{
 		const auto value = Data(wire::InspectionType::Unsigned).AsU64();
@@ -64,6 +69,7 @@ class RecordingNode
 			throw std::runtime_error("Invalid recording integer");
 		return *value;
 	}
+
 	std::int64_t Signed() const
 	{
 		const auto value = Data(wire::InspectionType::Signed).AsI64();
@@ -71,6 +77,7 @@ class RecordingNode
 			throw std::runtime_error("Invalid recording time");
 		return *value;
 	}
+
 	bool Boolean() const
 	{
 		const auto value = Data(wire::InspectionType::Boolean).AsBool();
@@ -78,6 +85,7 @@ class RecordingNode
 			throw std::runtime_error("Invalid recording boolean");
 		return *value;
 	}
+
 	std::string Text() const
 	{
 		const auto value = Data(wire::InspectionType::Text).AsText();
@@ -86,7 +94,7 @@ class RecordingNode
 		return std::string(*value);
 	}
 
-  private:
+private:
 	static std::vector<wire::Field> Fields(std::span<const std::byte> bytes)
 	{
 		auto decoded = wire::DecodeFields(bytes);
@@ -94,6 +102,7 @@ class RecordingNode
 			throw std::runtime_error("Malformed recording collection");
 		return std::move(decoded.fields);
 	}
+
 	const wire::Field& Data(wire::InspectionType expected) const
 	{
 		const auto kind = m_fields.Find(2), data = m_fields.Find(3);
@@ -101,8 +110,10 @@ class RecordingNode
 			throw std::runtime_error("Unexpected recording value type");
 		return *data;
 	}
+
 	wire::Message m_fields;
 };
+
 static std::vector<SimulationCommand> Commands(const RecordingNode& array, std::uint64_t version)
 {
 	std::vector<SimulationCommand> commands;
@@ -135,6 +146,7 @@ static std::vector<SimulationCommand> Commands(const RecordingNode& array, std::
 	}
 	return commands;
 }
+
 static std::vector<std::byte> CommandIdentity(std::span<const SimulationCommand> commands)
 {
 	std::vector<wire::Field> fields;
@@ -142,6 +154,7 @@ static std::vector<std::byte> CommandIdentity(std::span<const SimulationCommand>
 		fields.push_back(wire::EncodeSimulationCommand(command, static_cast<std::uint16_t>(fields.size() + 1)));
 	return wire::EncodeFields(fields);
 }
+
 static std::uint64_t Number(const wire::Message& response, std::uint16_t name, std::uint64_t fallback)
 {
 	const auto field = response.Find(name);
@@ -229,8 +242,7 @@ RecordedGamePage DecodeRecordedGamePage(const control::Message& response)
 						  response.Find(wire::tag::RuntimeTimeAfter) || response.Find(wire::tag::ClockResolution);
 	if (hasClock)
 	{
-		const auto signedValue = [&](std::uint16_t tag)
-		{
+		const auto signedValue = [&](std::uint16_t tag) {
 			const auto field = response.Find(tag);
 			if (!field || !field->AsI64() || *field->AsI64() <= 0)
 				throw std::runtime_error("Invalid SDK clock mapping");
@@ -253,6 +265,7 @@ RecordedGamePage DecodeRecordedGamePage(const control::Message& response)
 	}
 	return result;
 }
+
 RecordingPage DecodeRecordingPage(const control::Message& response)
 {
 	const auto document = response.Find(control::tag::Document);
@@ -302,11 +315,9 @@ RecordingPage DecodeRecordingPage(const control::Message& response)
 			if (released->Member("schema").Unsigned() != 1 ||
 				released->Member("frame").Unsigned() != transaction.frame.value ||
 				(transaction.phase != "applied" && transaction.phase != "released") ||
-				!std::ranges::any_of(transaction.commands,
-									 [](const auto& command)
-									 {
-										 return std::holds_alternative<ReleaseControl>(command);
-									 }))
+				!std::ranges::any_of(transaction.commands, [](const auto& command) {
+					return std::holds_alternative<ReleaseControl>(command);
+				}))
 				throw std::runtime_error("Invalid recorded release snapshot identity or phase");
 			RecordedReleaseState state;
 			state.runtimeTime = RuntimeTime{Duration{released->Member("runtime_time").Signed()}};
@@ -375,6 +386,7 @@ RecordingPage DecodeRecordingPage(const control::Message& response)
 		throw std::runtime_error("Recording page end flag differs from its transaction count");
 	return result;
 }
+
 void RecordingCollection::Append(RecordingPage page)
 {
 	if (page.drain)
@@ -395,8 +407,7 @@ void RecordingCollection::Append(RecordingPage page)
 			throw std::runtime_error("Recording changed while its pages were collected");
 	}
 	std::size_t bytes = 0;
-	const auto charge = [&](std::size_t size)
-	{
+	const auto charge = [&](std::size_t size) {
 		if (size > 64 * 1024 * 1024 - m_bytes - bytes)
 			throw std::runtime_error("Recording collection exceeds its byte bound");
 		bytes += size;
@@ -422,14 +433,17 @@ void RecordingCollection::Append(RecordingPage page)
 	m_bytes += bytes;
 	m_complete = page.end;
 }
+
 std::uint64_t RecordingCollection::Offset() const noexcept
 {
 	return m_recording ? m_recording->transactions.size() : 0;
 }
+
 bool RecordingCollection::Complete() const noexcept
 {
 	return m_complete;
 }
+
 const InputRecording& RecordingCollection::Recording() const
 {
 	if (!m_complete)

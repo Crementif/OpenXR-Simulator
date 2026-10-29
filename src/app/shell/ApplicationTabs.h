@@ -22,7 +22,7 @@ class WorkspacePanels;
 
 class ApplicationTabs : public ApplicationCatalog
 {
-  public:
+public:
 	ApplicationTabs(ProcessSupervisor& processes, UiRenderer& renderer, Window& window, bool enabled,
 					std::string endpoint, bool showTabs);
 	~ApplicationTabs();
@@ -35,8 +35,10 @@ class ApplicationTabs : public ApplicationCatalog
 	std::vector<ApplicationSnapshot> Applications() const override;
 	bool RequestShutdown() override;
 #ifdef SIMXR_COMPANION_AUTOMATION
-	std::uint64_t StartLuau(std::uint64_t id, LuauRunRequest request, const std::shared_ptr<AutomationOwner>& owner) override;
-	LuauRunStatus LuauStatus(std::uint64_t id, std::uint64_t run, const std::shared_ptr<AutomationOwner>& owner) const override;
+	std::uint64_t StartLuau(std::uint64_t id, LuauRunRequest request,
+							const std::shared_ptr<AutomationOwner>& owner) override;
+	LuauRunStatus LuauStatus(std::uint64_t id, std::uint64_t run,
+							 const std::shared_ptr<AutomationOwner>& owner) const override;
 	void ControlLuau(std::uint64_t id, std::uint64_t run, LuauControl action,
 					 const std::shared_ptr<AutomationOwner>& owner) override;
 #endif
@@ -49,7 +51,7 @@ class ApplicationTabs : public ApplicationCatalog
 	void Submitted(std::uint64_t serial);
 	void Finish();
 
-  private:
+private:
 	struct Tab;
 	using OpenRequest = std::variant<RunningApp, LaunchProfile>;
 	Tab& Add(std::string endpoint = {});

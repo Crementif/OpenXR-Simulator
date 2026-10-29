@@ -8,25 +8,30 @@
 namespace simxr
 {
 static constexpr std::size_t s_maxLogMessages = 64;
+
 class RuntimeFileDescriptor
 {
-  public:
+public:
 	explicit RuntimeFileDescriptor(int descriptor) : m_descriptor(descriptor)
 	{
 		if (descriptor < 0)
 			throw std::system_error(errno, std::generic_category(), "Open runtime file descriptor");
 	}
+
 	~RuntimeFileDescriptor()
 	{
 		if (m_descriptor >= 0)
 			close(m_descriptor);
 	}
+
 	RuntimeFileDescriptor(const RuntimeFileDescriptor&) = delete;
 	RuntimeFileDescriptor& operator=(const RuntimeFileDescriptor&) = delete;
+
 	int Get() const
 	{
 		return m_descriptor;
 	}
+
 	void Close()
 	{
 		const auto descriptor = std::exchange(m_descriptor, -1);
@@ -34,7 +39,7 @@ class RuntimeFileDescriptor
 			throw std::system_error(errno, std::generic_category(), "Close runtime file");
 	}
 
-  private:
+private:
 	int m_descriptor;
 };
 
@@ -89,16 +94,19 @@ std::shared_ptr<const PoseSequence> LoadStartupSequence(const std::filesystem::p
 		throw std::runtime_error("Startup sequence does not exist: " + path.string());
 	return std::make_shared<const PoseSequence>(PoseSequence::Parse(*text, false));
 }
+
 RuntimeLog::RuntimeLog(std::filesystem::path directory) : m_directory(std::move(directory))
 {
 	std::filesystem::create_directories(m_directory);
 	m_logs.reserve(s_maxLogMessages);
 	m_worker = std::thread([this] { Run(); });
 }
+
 RuntimeLog::~RuntimeLog()
 {
 	Close();
 }
+
 bool RuntimeLog::Log(std::string message)
 {
 	if (message.size() > 4096)
@@ -145,8 +153,7 @@ void RuntimeLog::RecordError(std::string_view detail) noexcept
 		m_status.detail.assign(detail);
 	}
 	catch (...)
-	{
-	}
+	{}
 }
 
 void RuntimeLog::AppendLog(const std::vector<std::string>& messages)

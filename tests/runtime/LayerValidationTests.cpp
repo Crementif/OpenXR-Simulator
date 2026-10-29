@@ -13,9 +13,10 @@ int main()
 	auto image = reinterpret_cast<XrSwapchain>(1);
 	auto space = reinterpret_cast<XrSpace>(2);
 	LayerValidationContext context;
-	context.validSpace = [&](XrSpace handle) { return handle == space; };
-	context.swapchain = [&](XrSwapchain handle) -> std::optional<SwapchainDescription>
-	{
+	context.validSpace = [&](XrSpace handle) {
+		return handle == space;
+	};
+	context.swapchain = [&](XrSwapchain handle) -> std::optional<SwapchainDescription> {
 		if (handle != image)
 			return {};
 		return SwapchainDescription{128, 64, 2, true};
@@ -29,7 +30,8 @@ int main()
 		view.subImage = {image, {{4, 8}, {64, 32}}, 1};
 	}
 	XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION, nullptr, 0, space, 2, views.data()};
-	std::array<const XrCompositionLayerBaseHeader*, 1> layers{reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection)};
+	std::array<const XrCompositionLayerBaseHeader*, 1> layers{
+		reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection)};
 	XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO, nullptr, 123, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1, layers.data()};
 	Require(ValidateLayers(info, context) == XR_SUCCESS, "Valid stereo layer");
 	views[0].fov = {0.7f, -0.8f, -0.6f, 0.9f};

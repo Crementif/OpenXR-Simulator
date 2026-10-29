@@ -13,30 +13,35 @@ namespace simxr::app
 {
 class RuntimePanels;
 struct RuntimeView;
+
 class TimelinePanel
 {
-  public:
+public:
 	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded);
+
 	static float FoldedHeight(float scale)
 	{
 		return 36 * scale;
 	}
+
 	ShellRect DrawerRect() const
 	{
 		return m_drawer;
 	}
+
 	void ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
 					bool matchesTarget);
 	void Observe(const RuntimeView& runtime);
 	void SavedRecording(std::string path, const RuntimeView& runtime);
 	void ReplayTake(const std::string& path, const RuntimeView& state, std::uint64_t scriptRun);
 
-  private:
+private:
 	struct Marker
 	{
 		HistoryFrame frame;
 		std::string name;
 	};
+
 	struct Ghost
 	{
 		TakeSource source;
@@ -44,6 +49,7 @@ class TimelinePanel
 		std::uint64_t afterFrame = 0, scriptRun = 0;
 		std::optional<HistoryFrame> anchor;
 	};
+
 	void Play(RuntimePanels& runtime, const std::string& path);
 	void DrawGhost(const HistoryStore& history);
 	void DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow);

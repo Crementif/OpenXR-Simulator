@@ -14,7 +14,7 @@ static constexpr std::size_t MaxWire = MaxBody + 1024 * 1024;
 
 class Socket
 {
-  public:
+public:
 	Socket()
 	{
 		WSADATA data{};
@@ -32,6 +32,7 @@ class Socket
 			}
 		}
 	}
+
 	~Socket()
 	{
 		if (m_socket != INVALID_SOCKET)
@@ -39,14 +40,20 @@ class Socket
 		if (m_started)
 			WSACleanup();
 	}
+
 	Socket(const Socket&) = delete;
 	Socket& operator=(const Socket&) = delete;
-	SOCKET Get() const noexcept { return m_socket; }
 
-  private:
+	SOCKET Get() const noexcept
+	{
+		return m_socket;
+	}
+
+private:
 	SOCKET m_socket = INVALID_SOCKET;
 	bool m_started = false;
 };
+
 static bool Ready(SOCKET socket, short events, const std::atomic<bool>& stopped,
 				  std::chrono::steady_clock::time_point deadline)
 {
@@ -61,12 +68,14 @@ static bool Ready(SOCKET socket, short events, const std::atomic<bool>& stopped,
 	}
 	return false;
 }
+
 static std::string Lower(std::string value)
 {
 	for (auto& byte : value)
 		byte = static_cast<char>(std::tolower(static_cast<unsigned char>(byte)));
 	return value;
 }
+
 static std::string_view Trim(std::string_view value)
 {
 	while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
@@ -75,6 +84,7 @@ static std::string_view Trim(std::string_view value)
 		value.remove_suffix(1);
 	return value;
 }
+
 struct ResponseState
 {
 	int status = 0;
@@ -83,6 +93,7 @@ struct ResponseState
 	std::size_t start = 0, cursor = 0;
 	std::string body;
 };
+
 static bool ParseHeaders(std::string_view wire, ResponseState& result)
 {
 	const auto end = wire.find("\r\n\r\n");
@@ -100,7 +111,8 @@ static bool ParseHeaders(std::string_view wire, ResponseState& result)
 		return false;
 	const auto code = statusLine.substr(9, 3);
 	const auto parsed = std::from_chars(code.data(), code.data() + code.size(), result.status);
-	if (parsed.ec != std::errc{} || parsed.ptr != code.data() + code.size() || result.status < 100 || result.status > 599)
+	if (parsed.ec != std::errc{} || parsed.ptr != code.data() + code.size() || result.status < 100 ||
+		result.status > 599)
 		return false;
 	for (auto offset = firstEnd + 2; offset < end;)
 	{
@@ -117,7 +129,8 @@ static bool ParseHeaders(std::string_view wire, ResponseState& result)
 		{
 			std::uint64_t length = 0;
 			const auto number = std::from_chars(value.data(), value.data() + value.size(), length);
-			if (value.empty() || number.ec != std::errc{} || number.ptr != value.data() + value.size() || length > MaxBody || result.length)
+			if (value.empty() || number.ec != std::errc{} || number.ptr != value.data() + value.size() ||
+				length > MaxBody || result.length)
 				return false;
 			result.length = static_cast<std::size_t>(length);
 		}
@@ -136,6 +149,7 @@ static bool ParseHeaders(std::string_view wire, ResponseState& result)
 	result.cursor = result.start;
 	return true;
 }
+
 static bool ParseBody(std::string_view wire, ResponseState& result, bool eof)
 {
 	if (!result.parsed)
@@ -170,7 +184,8 @@ static bool ParseBody(std::string_view wire, ResponseState& result, bool eof)
 		const auto number = line.substr(0, extension);
 		std::uint64_t length = 0;
 		const auto parsed = std::from_chars(number.data(), number.data() + number.size(), length, 16);
-		if (number.empty() || parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size() || length > MaxBody - result.body.size())
+		if (number.empty() || parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size() ||
+			length > MaxBody - result.body.size())
 			return false;
 		const auto content = lineEnd + 2;
 		if (!length)
@@ -198,10 +213,13 @@ static bool ParseBody(std::string_view wire, ResponseState& result, bool eof)
 	}
 	return !eof;
 }
+
 httplib::Result CancelablePost(std::uint16_t port, const httplib::Headers& headers, const std::string& body,
-								  const std::atomic<bool>& stopped, std::chrono::seconds timeout)
+							   const std::atomic<bool>& stopped, std::chrono::seconds timeout)
 {
-	const auto failed = [] { return httplib::Result(nullptr, httplib::Error::Read); };
+	const auto failed = [] {
+		return httplib::Result(nullptr, httplib::Error::Read);
+	};
 	if (stopped.load() || body.size() > 1024 * 1024)
 		return failed();
 	Socket socket;
@@ -219,14 +237,18 @@ httplib::Result CancelablePost(std::uint16_t port, const httplib::Headers& heade
 		if (!Ready(socket.Get(), POLLWRNORM, stopped, std::chrono::steady_clock::now() + 1s))
 			return failed();
 		int connected = 0, size = sizeof(connected);
-		if (getsockopt(socket.Get(), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&connected), &size) != 0 || connected)
+		if (getsockopt(socket.Get(), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&connected), &size) != 0 ||
+			connected)
 			return failed();
 	}
-	std::string request = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
-		"\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n";
+	std::string request =
+		"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
+		"\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) +
+		"\r\n";
 	for (const auto& [name, value] : headers)
 	{
-		if (name.empty() || name.find_first_of("\r\n:") != std::string::npos || value.find_first_of("\r\n") != std::string::npos)
+		if (name.empty() || name.find_first_of("\r\n:") != std::string::npos ||
+			value.find_first_of("\r\n") != std::string::npos)
 			return failed();
 		request += name + ": " + value + "\r\n";
 	}

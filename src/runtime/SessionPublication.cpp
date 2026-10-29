@@ -77,11 +77,7 @@ void SessionPublication::FrameBoundary::Reserve(
 		throw std::logic_error("Frame publication was already reserved");
 	const SimulationTime time{prediction.displayTime.value - m_epoch.value};
 	m_applied = m_owner.m_commands.Apply(
-		prediction.id, time, prediction.displayTime, m_baseline,
-		[&](const auto& applied)
-		{
-			reserveHistory(*applied);
-		},
+		prediction.id, time, prediction.displayTime, m_baseline, [&](const auto& applied) { reserveHistory(*applied); },
 		LiveInputClock::now(), prediction.clockRevision);
 }
 
@@ -95,8 +91,7 @@ const AppliedCommandSnapshot& SessionPublication::FrameBoundary::Applied() const
 std::optional<XrSessionState> SessionPublication::FrameBoundary::StateTransition(XrSessionState current)
 {
 	const auto& scenarios = Applied().scenarios;
-	const auto active = [&](FailureScenario scenario)
-	{
+	const auto active = [&](FailureScenario scenario) {
 		return scenarios[static_cast<std::size_t>(scenario)];
 	};
 	std::optional<XrSessionState> transition;
@@ -143,20 +138,18 @@ bool SessionPublication::ReleaseSource(CommandSource source, bool retire)
 {
 	return ReleaseChannels(m_commands.ReleaseSource(source, retire));
 }
+
 bool SessionPublication::ExpireLiveInput(LiveInputClock::time_point now)
 {
 	const auto channels = m_commands.ExpireLiveInput(now);
-	return std::any_of(channels.begin(), channels.end(),
-					   [](bool owned)
-					   {
-						   return owned;
-					   }) &&
-		   ReleaseChannels(channels);
+	return std::any_of(channels.begin(), channels.end(), [](bool owned) { return owned; }) && ReleaseChannels(channels);
 }
+
 void SessionPublication::StopPoseSequence(CommandSource source)
 {
 	ReleaseChannels(m_commands.StopPoseSequence(source));
 }
+
 bool SessionPublication::ReleaseChannels(const std::array<bool, ControlChannelCount>& channels)
 {
 	const std::array<bool, 2> released{channels[static_cast<std::size_t>(ControlChannel::LeftControls)],
@@ -267,11 +260,7 @@ void SessionPublication::PublishEffective(RuntimeTime time, const CommandConfigu
 
 void SessionPublication::RecordViewQuery(ViewQuerySnapshot query)
 {
-	std::erase_if(m_viewQueries,
-				  [&](const auto& previous)
-				  {
-					  return previous.displayTime == query.displayTime;
-				  });
+	std::erase_if(m_viewQueries, [&](const auto& previous) { return previous.displayTime == query.displayTime; });
 	m_viewQueries.push_back(std::move(query));
 	while (m_viewQueries.size() > 128)
 		m_viewQueries.pop_front();
@@ -312,18 +301,22 @@ bool SessionPublication::TakeProfileChange() noexcept
 {
 	return std::exchange(m_profileChanged, false);
 }
+
 CommandScheduler& SessionPublication::Commands()
 {
 	return m_commands;
 }
+
 InputState& SessionPublication::Input()
 {
 	return m_input;
 }
+
 TrackingSystem& SessionPublication::Tracking()
 {
 	return m_tracking;
 }
+
 ViewLayout SessionPublication::Layout() const noexcept
 {
 	return m_layout;

@@ -83,8 +83,9 @@ static bool Continuous(const TrackingSnapshot& a, const TrackingSnapshot& b)
 	{
 		const auto& first = a.trackers[index].device;
 		const auto& second = b.trackers[index].device;
-		if (first.identity != second.identity || first.sourcePath != second.sourcePath || first.role != second.role || first.connected != second.connected ||
-			first.tracked != second.tracked || first.poseFlags != second.poseFlags || first.anchor != second.anchor ||
+		if (first.identity != second.identity || first.sourcePath != second.sourcePath || first.role != second.role ||
+			first.connected != second.connected || first.tracked != second.tracked ||
+			first.poseFlags != second.poseFlags || first.anchor != second.anchor ||
 			first.poseOverride.has_value() != second.poseOverride.has_value() ||
 			first.jointOffset.has_value() != second.jointOffset.has_value())
 			return false;
@@ -134,11 +135,9 @@ std::optional<TrackingSnapshot> PoseHistory::Sample(RuntimeTime time) const
 	std::lock_guard lock(m_mutex);
 	if (m_samples.empty() || time < m_samples.front().time)
 		return {};
-	auto right = std::upper_bound(m_samples.begin(), m_samples.end(), time,
-								  [](RuntimeTime value, const TrackingSnapshot& sample)
-								  {
-									  return value < sample.time;
-								  });
+	auto right =
+		std::upper_bound(m_samples.begin(), m_samples.end(), time,
+						 [](RuntimeTime value, const TrackingSnapshot& sample) { return value < sample.time; });
 	auto left = std::prev(right);
 	if (right == m_samples.end() || left->time == time || !Continuous(*left, *right))
 		return *left;

@@ -39,8 +39,7 @@ bool RecenterReferenceSpaces(ReferenceSpaceState& state, const PoseSample& head)
 
 bool SameReferenceSpaces(const ReferenceSpaceState& left, const ReferenceSpaceState& right)
 {
-	const auto components = [](const XrPosef& pose)
-	{
+	const auto components = [](const XrPosef& pose) {
 		return std::array{pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w,
 						  pose.position.x,	  pose.position.y,	  pose.position.z};
 	};

@@ -32,11 +32,13 @@ struct SubmissionFault
 	void (*beforeReturn)(void*) noexcept = nullptr;
 	void* context = nullptr;
 };
+
 static thread_local SubmissionFault s_submissionFault;
 static thread_local bool s_failRecording = false;
 // GNU --wrap affects this probe and linked static-library call sites only.
 // Dynamic Vulkan loader/layer/driver calls keep their native symbol behavior.
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __real_vkQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence);
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkQueueSubmit(VkQueue queue, std::uint32_t count,
 															   const VkSubmitInfo* submits, VkFence fence)
 {
@@ -52,6 +54,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkQueueSubmit(VkQueue queue, st
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __real_vkEndCommandBuffer(VkCommandBuffer);
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkEndCommandBuffer(VkCommandBuffer command)
 {
 	if (std::exchange(s_failRecording, false))
@@ -66,11 +69,13 @@ static constexpr std::array s_extensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAM
 using Palette = std::array<std::array<std::uint8_t, 4>, 2>;
 static constexpr Palette s_original{{{{255, 0, 0, 255}}, {{0, 255, 0, 255}}}};
 static constexpr Palette s_resized{{{{255, 255, 0, 255}}, {{0, 255, 255, 255}}}};
+
 static void Require(bool value, const char* message)
 {
 	if (!value)
 		throw std::runtime_error(message);
 }
+
 static void CheckSubmission(VkResult result, const char* operation)
 {
 	if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
@@ -80,29 +85,34 @@ static void CheckSubmission(VkResult result, const char* operation)
 	}
 	Check(result, operation);
 }
+
 static void VerifyPreservationOwnership()
 {
 	struct Observations
 	{
 		unsigned destroyed = 0;
 	};
+
 	struct NativeOwner
 	{
 		VulkanNativePreservation<NativeOwner, 2>::Reservation preservation{"CPU preservation proof is full"};
 		std::shared_ptr<Observations> observations;
 		std::shared_ptr<FrameReservation> charge;
 		std::shared_ptr<const void> deviceDependency;
+
 		NativeOwner(std::shared_ptr<Observations> observations, const FramePool& budget,
 					std::shared_ptr<const void> dependency)
 			: observations(std::move(observations)), charge(budget.Reserve()), deviceDependency(std::move(dependency))
 		{
 			Require(charge && budget.Consume(charge), "Reserve CPU preservation proof charge");
 		}
+
 		~NativeOwner()
 		{
 			++observations->destroyed;
 		}
 	};
+
 	FramePool budget{2};
 	auto observations = std::make_shared<Observations>();
 	auto dependency = std::make_shared<int>(42);
@@ -148,7 +158,9 @@ static void Await(const std::function<CompletionStatus()>& poll, const char* mes
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
-template <class Exception, class Function> static void Rejected(Function operation, const char* message)
+
+template<class Exception, class Function>
+static void Rejected(Function operation, const char* message)
 {
 	try
 	{
@@ -160,25 +172,30 @@ template <class Exception, class Function> static void Rejected(Function operati
 	}
 	throw std::runtime_error(message);
 }
+
 class DeliverySubmissionFailure
 {
-  public:
+public:
 	DeliverySubmissionFailure(VkQueue queue, VkResult result, void (*beforeReturn)(void*) noexcept = nullptr,
 							  void* context = nullptr)
 	{
 		s_submissionFault = {queue, result, false, beforeReturn, context};
 	}
+
 	DeliverySubmissionFailure(const DeliverySubmissionFailure&) = delete;
 	DeliverySubmissionFailure& operator=(const DeliverySubmissionFailure&) = delete;
+
 	~DeliverySubmissionFailure()
 	{
 		s_submissionFault = {};
 	}
+
 	bool Fired() const noexcept
 	{
 		return s_submissionFault.fired;
 	}
 };
+
 static std::shared_ptr<VulkanImageDelivery> ShareEventually(const std::shared_ptr<VulkanInspectionFrame>& frame)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -197,6 +214,7 @@ static std::shared_ptr<VulkanImageDelivery> ShareEventually(const std::shared_pt
 		}
 	}
 }
+
 static void VerifyKnownSubmissionFailure(const std::shared_ptr<VulkanInspectionFrame>& source)
 {
 	FramePool sourceBudget{1}, retainedBudget{1};
@@ -283,12 +301,8 @@ static void VerifyBackendKnownSubmissionFailure(const std::shared_ptr<VulkanDevi
 			for (std::size_t index = 0; index < frames.size(); ++index)
 			{
 				Require(backend.Prepare(
-							plan,
-							[](XrSwapchain)
-							{
-								return std::shared_ptr<VulkanImage>{};
-							},
-							frames[index]) == XR_SUCCESS,
+							plan, [](XrSwapchain) { return std::shared_ptr<VulkanImage>{}; }, frames[index]) ==
+							XR_SUCCESS,
 						"Prepare empty-draw batch OOM output");
 				completions[index] = std::dynamic_pointer_cast<const VulkanSubmission>(frames[index]->Completion());
 				Require(completions[index] && !frames[index]->Submitted(), "Prepared batch already appeared submitted");
@@ -325,19 +339,16 @@ static void VerifySubmissionPublicationBoundary(const std::shared_ptr<VulkanDevi
 	plan.width = plan.height = 4;
 	std::shared_ptr<VulkanFrame> frame;
 	Require(backend.Prepare(
-				plan,
-				[](XrSwapchain)
-				{
-					return std::shared_ptr<VulkanImage>{};
-				},
-				frame) == XR_SUCCESS,
+				plan, [](XrSwapchain) { return std::shared_ptr<VulkanImage>{}; }, frame) == XR_SUCCESS,
 			"Prepare synthetic-loss publication boundary");
+
 	struct Observation
 	{
 		std::shared_ptr<VulkanDevice> device;
 		std::shared_ptr<const VulkanSubmission> completion;
 		bool idle = true, observed = false;
 		CompletionStatus status = CompletionStatus::Failed;
+
 		static void BeforeReturn(void* pointer) noexcept
 		{
 			auto& state = *static_cast<Observation*>(pointer);
@@ -349,6 +360,7 @@ static void VerifySubmissionPublicationBoundary(const std::shared_ptr<VulkanDevi
 			state.observed = true;
 		}
 	} state{backend.Device(), std::dynamic_pointer_cast<const VulkanSubmission>(frame->Completion())};
+
 	Require(state.completion != nullptr, "Missing native completion for publication boundary");
 	XrResult result;
 	bool fired;
@@ -379,12 +391,14 @@ struct DeliveryDevice
 	DeliveryDevice& operator=(const DeliveryDevice&) = delete;
 	std::shared_ptr<Instance> m_instance;
 	VkDevice m_native = VK_NULL_HANDLE;
+
 	~DeliveryDevice()
 	{
 		if (m_native)
 			vkDestroyDevice(m_native, nullptr);
 	}
 };
+
 static std::shared_ptr<VulkanDevice> ConsumerDevice(std::shared_ptr<Instance> instance,
 													const VulkanExternalIdentity& identity)
 {
@@ -429,6 +443,7 @@ static std::shared_ptr<VulkanDevice> ConsumerDevice(std::shared_ptr<Instance> in
 	}
 	throw std::runtime_error("No consumer adapter matches both delivery UUIDs");
 }
+
 // External fences may not let validation infer command retirement. An ordinary
 // same-queue marker proves actual retirement independently for local cleanup.
 static void SignalAndRetire(const std::shared_ptr<VulkanExternalFence>& external)
@@ -451,16 +466,12 @@ static void SignalAndRetire(const std::shared_ptr<VulkanExternalFence>& external
 		std::_Exit(1);
 	}
 	vkDestroyFence(device->binding.device, marker, nullptr);
-	Await(
-		[&]
-		{
-			return external->PollCompletion();
-		},
-		"External consumer fence failed to signal");
+	Await([&] { return external->PollCompletion(); }, "External consumer fence failed to signal");
 }
+
 class DeliveryConsumerCopy
 {
-  public:
+public:
 	DeliveryConsumerCopy(std::shared_ptr<VulkanDevice> owner, std::shared_ptr<VulkanImageDelivery> source,
 						 bool readback, bool testRegistration = false)
 		: m_device(std::move(owner)), m_delivery(std::move(source)),
@@ -472,32 +483,20 @@ class DeliveryConsumerCopy
 			auto fenceFd = m_completion->ExportOnce();
 			if (testRegistration)
 			{
-				Rejected<std::logic_error>(
-					[&]
-					{
-						m_delivery->ExportHandles();
-					},
-					"Delivery exposed handles before registration");
+				Rejected<std::logic_error>([&] { m_delivery->ExportHandles(); },
+										   "Delivery exposed handles before registration");
 				auto wrong = m_external.Identity();
 				wrong.deviceUuid[0] ^= 1;
 				const auto saved = fenceFd.Get();
-				Rejected<VulkanError>(
-					[&]
-					{
-						m_delivery->RegisterConsumer(wrong, fenceFd);
-					},
-					"Delivery accepted wrong consumer UUID");
+				Rejected<VulkanError>([&] { m_delivery->RegisterConsumer(wrong, fenceFd); },
+									  "Delivery accepted wrong consumer UUID");
 				Require(fenceFd.Get() == saved, "Wrong-identity registration consumed caller FD");
 			}
 			auto duplicate = fenceFd.Duplicate();
 			m_delivery->RegisterConsumer(m_external.Identity(), fenceFd);
 			Require(!fenceFd, "Successful consumer registration did not consume caller FD");
-			Rejected<std::logic_error>(
-				[&]
-				{
-					m_delivery->RegisterConsumer(m_external.Identity(), duplicate);
-				},
-				"Duplicate consumer registration accepted");
+			Rejected<std::logic_error>([&] { m_delivery->RegisterConsumer(m_external.Identity(), duplicate); },
+									   "Duplicate consumer registration accepted");
 			Require(static_cast<bool>(duplicate), "Duplicate registration consumed caller FD");
 			auto handles = m_delivery->ExportHandles();
 			{
@@ -514,6 +513,7 @@ class DeliveryConsumerCopy
 			throw;
 		}
 	}
+
 	DeliveryConsumerCopy(std::shared_ptr<VulkanDevice> owner, const VulkanExternalImageDescriptor& descriptor,
 						 VulkanDeliveryHandles handles, std::shared_ptr<VulkanExternalFence> fence, bool readback)
 		: m_device(std::move(owner)), m_external(m_device, s_extensions, VK_API_VERSION_1_1),
@@ -529,6 +529,7 @@ class DeliveryConsumerCopy
 			throw;
 		}
 	}
+
 	DeliveryConsumerCopy(std::shared_ptr<VulkanDevice> owner, const VulkanImage& image)
 		: m_privateImage(owner, &image), m_device(std::move(owner)),
 		  m_external(m_device, s_extensions, VK_API_VERSION_1_1)
@@ -564,10 +565,12 @@ class DeliveryConsumerCopy
 
 	DeliveryConsumerCopy(const DeliveryConsumerCopy&) = delete;
 	DeliveryConsumerCopy& operator=(const DeliveryConsumerCopy&) = delete;
+
 	~DeliveryConsumerCopy()
 	{
 		Cleanup();
 	}
+
 	void Submit()
 	{
 		if (m_submitted)
@@ -587,6 +590,7 @@ class DeliveryConsumerCopy
 		CheckSubmission(vkQueueSubmit(m_device->queue, 1, &marker, m_retirement), "submit consumer retirement marker");
 		m_markerSubmitted = true;
 	}
+
 	void Finish()
 	{
 		Require(m_submitted && m_markerSubmitted, "Consumer copy was not submitted");
@@ -596,30 +600,25 @@ class DeliveryConsumerCopy
 			std::_Exit(1);
 		}
 		m_complete = true;
-		Await(
-			[&]
-			{
-				return m_completion->PollCompletion();
-			},
-			"Consumer external fence did not match real copy completion");
+		Await([&] { return m_completion->PollCompletion(); },
+			  "Consumer external fence did not match real copy completion");
 		if (m_delivery)
-			Await(
-				[&]
-				{
-					return m_delivery->PollConsumerCompletion();
-				},
-				"Producer did not independently observe consumer completion");
+			Await([&] { return m_delivery->PollConsumerCompletion(); },
+				  "Producer did not independently observe consumer completion");
 	}
+
 	std::weak_ptr<VulkanImageDelivery> ReleaseDelivery()
 	{
 		std::weak_ptr<VulkanImageDelivery> released = m_delivery;
 		m_delivery.reset();
 		return released;
 	}
+
 	CompletionStatus ConsumerCompletion() const noexcept
 	{
 		return m_completion->PollCompletion();
 	}
+
 	void Verify(const Palette& palette)
 	{
 		Require(m_complete && m_buffer != VK_NULL_HANDLE, "Pixel verification requires explicit completed readback");
@@ -653,6 +652,7 @@ class DeliveryConsumerCopy
 		}
 		vkUnmapMemory(m_device->binding.device, m_memory);
 	}
+
 	void VerifyBytes(std::span<const std::byte> expected)
 	{
 		const auto size = static_cast<std::size_t>(m_privateImage->extent.width) * m_privateImage->extent.height *
@@ -687,7 +687,7 @@ class DeliveryConsumerCopy
 		return *m_privateImage;
 	}
 
-  private:
+private:
 	void Initialize(const VulkanExternalImageDescriptor& descriptor, VulkanDeliveryHandles& handles, bool readback)
 	{
 		m_imported = m_external.ImportImage(descriptor, handles.memory);
@@ -777,6 +777,7 @@ class DeliveryConsumerCopy
 		vkCmdPipelineBarrier(m_command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
 							 &host, 0, nullptr);
 	}
+
 	void Cleanup() noexcept
 	{
 		if (m_submitted && !m_complete)
@@ -801,6 +802,7 @@ class DeliveryConsumerCopy
 		m_buffer = VK_NULL_HANDLE;
 		m_memory = VK_NULL_HANDLE;
 	}
+
 	std::shared_ptr<const VulkanImage> m_privateImage;
 	const std::shared_ptr<VulkanDevice> m_device;
 	std::shared_ptr<VulkanImageDelivery> m_delivery;
@@ -815,6 +817,7 @@ class DeliveryConsumerCopy
 	VkDeviceMemory m_memory = VK_NULL_HANDLE;
 	bool m_coherent = false, m_submitted = false, m_markerSubmitted = false, m_complete = false;
 };
+
 void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, std::span<const std::byte> expected)
 {
 	auto provider = control::CreateVulkanImageInspectionProvider();
@@ -823,37 +826,22 @@ void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, s
 	const auto original = reader->Description();
 	VulkanExternalIdentity identity;
 	std::transform(original.identity.device.begin(), original.identity.device.end(), identity.deviceUuid.begin(),
-				   [](auto value)
-				   {
-					   return std::to_integer<std::uint8_t>(value);
-				   });
+				   [](auto value) { return std::to_integer<std::uint8_t>(value); });
 	std::transform(original.identity.driver.begin(), original.identity.driver.end(), identity.driverUuid.begin(),
-				   [](auto value)
-				   {
-					   return std::to_integer<std::uint8_t>(value);
-				   });
+				   [](auto value) { return std::to_integer<std::uint8_t>(value); });
 	auto instance = std::make_shared<Instance>();
 	instance->Create();
 	auto device = ConsumerDevice(instance, identity);
 	control::VulkanImageConsumer consumer(device, s_extensions, VK_API_VERSION_1_1);
 	auto delivery = reader->Share(consumer.Identity(), consumer.ConsumerFence());
-	Await(
-		[&]
-		{
-			return delivery->ProducerCompletion();
-		},
-		"Raw delivery producer did not complete");
+	Await([&] { return delivery->ProducerCompletion(); }, "Raw delivery producer did not complete");
 	const auto description = delivery->Description();
 	auto handles = delivery->PrepareHandles();
 	delivery->MarkTransferred();
 	auto malformed = description;
 	malformed.format = VK_FORMAT_D32_SFLOAT;
-	Rejected<std::invalid_argument>(
-		[&]
-		{
-			consumer.Import(malformed, handles);
-		},
-		"Native color consumer accepted a depth format");
+	Rejected<std::invalid_argument>([&] { consumer.Import(malformed, handles); },
+									"Native color consumer accepted a depth format");
 	for (const auto& handle : handles)
 		Require(fcntl(static_cast<int>(handle->Value()), F_GETFD) >= 0,
 				"Rejected raw format consumed caller descriptor");
@@ -869,19 +857,9 @@ void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, s
 	Require(delivery->ConsumerCompletion() == CompletionStatus::Pending,
 			"Releasing raw reader invented native consumer completion");
 	consumer.Submit();
-	Await(
-		[&]
-		{
-			return consumer.Poll();
-		},
-		"Production raw consumer copy failed");
+	Await([&] { return consumer.Poll(); }, "Production raw consumer copy failed");
 	Require(consumer.NativeIdle(), "Ready raw consumer copy lacks native retirement");
-	Await(
-		[&]
-		{
-			return delivery->ConsumerCompletion();
-		},
-		"Raw delivery did not observe actual consumer completion");
+	Await([&] { return delivery->ConsumerCompletion(); }, "Raw delivery did not observe actual consumer completion");
 	delivery.reset();
 	DeliveryConsumerCopy readback(device, consumer.Image());
 	readback.Submit();
@@ -891,6 +869,7 @@ void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, s
 				"channelsRangeAlpha=preserved viewsSampler=created deliveryReleased=yes PASS\n",
 				original.format, expected.size());
 }
+
 void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 						 std::shared_ptr<VulkanInspectionFrame> resized, bool verifyPixels,
 						 const std::function<bool(SharedImageKey)>& retired)
@@ -925,12 +904,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 	}
 	Require(full, "Delivery admission exceeded its independent eight-image capacity");
 	for (const auto& delivery : deliveries)
-		Await(
-			[&]
-			{
-				return delivery->PollCompletion();
-			},
-			"Delivery producer GPU copy failed");
+		Await([&] { return delivery->PollCompletion(); }, "Delivery producer GPU copy failed");
 	auto instance = std::make_shared<Instance>();
 	instance->Create();
 	auto first = ConsumerDevice(instance, deliveries[0]->Descriptor().identity);
@@ -952,12 +926,8 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 		std::vector<std::unique_ptr<control::VulkanImageConsumer>> consumers(SnapshotBudget::Capacity());
 		for (auto& consumer : consumers)
 			consumer = std::make_unique<control::VulkanImageConsumer>(first, s_extensions, VK_API_VERSION_1_1);
-		Rejected<VulkanError>(
-			[&]
-			{
-				control::VulkanImageConsumer excess(first, s_extensions, VK_API_VERSION_1_1);
-			},
-			"Native consumer admission exceeded the shared snapshot budget");
+		Rejected<VulkanError>([&] { control::VulkanImageConsumer excess(first, s_extensions, VK_API_VERSION_1_1); },
+							  "Native consumer admission exceeded the shared snapshot budget");
 	}
 	std::printf("case=consumer-acquisition-rollback rejected=12 usableCapacity=%zu PASS\n", SnapshotBudget::Capacity());
 	VerifyBackendKnownSubmissionFailure(first);
@@ -970,12 +940,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 	for (const auto expected : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY})
 	{
 		DeliverySubmissionFailure injection(first->queue, expected);
-		Rejected<std::runtime_error>(
-			[&]
-			{
-				one.Submit();
-			},
-			"Consumer copy accepted injected queue OOM");
+		Rejected<std::runtime_error>([&] { one.Submit(); }, "Consumer copy accepted injected queue OOM");
 		Require(injection.Fired() && one.ConsumerCompletion() == CompletionStatus::Pending,
 				"Rejected probe consumer copy invented GPU completion");
 	}
@@ -989,12 +954,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 			"One consumer completion changed another consumer or producer readiness");
 	one.Submit();
 	one.Finish();
-	Rejected<std::logic_error>(
-		[&]
-		{
-			one.Submit();
-		},
-		"Completed consumer copy accepted a second submission");
+	Rejected<std::logic_error>([&] { one.Submit(); }, "Completed consumer copy accepted a second submission");
 	DeliveryConsumerCopy newer(first, deliveries[2], verifyPixels);
 	newer.Submit();
 	newer.Finish();
@@ -1008,29 +968,16 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 		SignalAndRetire(completed);
 		auto fd = completed->ExportOnce();
 		const auto saved = fd.Get();
-		Rejected<std::invalid_argument>(
-			[&]
-			{
-				deliveries[3]->RegisterConsumer(consumer.Identity(), fd);
-			},
-			"Pre-signaled consumer fence accepted");
+		Rejected<std::invalid_argument>([&] { deliveries[3]->RegisterConsumer(consumer.Identity(), fd); },
+										"Pre-signaled consumer fence accepted");
 		Require(fd.Get() == saved, "Rejected completed consumer fence consumed FD");
 		auto pending = consumer.CreateExportableFence();
 		auto pendingFd = pending->ExportOnce();
 		deliveries[3]->RegisterConsumer(consumer.Identity(), pendingFd);
 		SignalAndRetire(pending);
-		Await(
-			[&]
-			{
-				return deliveries[3]->PollConsumerCompletion();
-			},
-			"Pending consumer fence completion was lost");
-		Rejected<std::logic_error>(
-			[&]
-			{
-				deliveries[3]->ExportHandles();
-			},
-			"Delivery exposed handles after consumer signaled before exposure");
+		Await([&] { return deliveries[3]->PollConsumerCompletion(); }, "Pending consumer fence completion was lost");
+		Rejected<std::logic_error>([&] { deliveries[3]->ExportHandles(); },
+								   "Delivery exposed handles after consumer signaled before exposure");
 	}
 	FramePool sourceBudget{1}, retainedBudget{1};
 	Require(original->PromoteCaptureBudget(sourceBudget), "Classify source for independent delivery retirement test");
@@ -1117,12 +1064,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 	}
 	Require(retired(abandonedKey), "Actual delivery destruction omitted its immutable image identity");
 	Require(recovered->Key() != abandonedKey, "Recovered delivery reused an old immutable allocation identity");
-	Await(
-		[&]
-		{
-			return recovered->PollCompletion();
-		},
-		"Released delivery did not return independent budget");
+	Await([&] { return recovered->PollCompletion(); }, "Released delivery did not return independent budget");
 	if (verifyPixels)
 	{
 		one.Verify(s_original);
@@ -1141,12 +1083,12 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 						std::uint64_t capture, const std::filesystem::path& gate, bool verifyPixels)
 {
 	namespace wire = simxr::control;
+
 	namespace tag = wire::tag;
 	{
 		wire::LocalControlClient client(socket, std::chrono::milliseconds{5000});
 		const auto call = [&](wire::OpCode code, std::vector<wire::Field> fields = {},
-							  std::vector<std::shared_ptr<wire::TransferHandle>> handles = {})
-		{
+							  std::vector<std::shared_ptr<wire::TransferHandle>> handles = {}) {
 			wire::ControlPacket packet;
 			packet.message.opcode = static_cast<std::uint16_t>(code);
 			packet.message.fields = std::move(fields);
@@ -1161,14 +1103,12 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 			}
 			return response;
 		};
-		const auto id = [](const wire::ControlPacket& packet, std::uint16_t field)
-		{
+		const auto id = [](const wire::ControlPacket& packet, std::uint16_t field) {
 			const auto value = packet.message.Find(field);
 			Require(value && value->AsU64(), "Missing control uint64 result");
 			return *value->AsU64();
 		};
-		const auto phase = [](const wire::ControlPacket& packet, std::uint16_t field)
-		{
+		const auto phase = [](const wire::ControlPacket& packet, std::uint16_t field) {
 			const auto value = packet.message.Find(field);
 			Require(value && value->AsText(), "Missing control phase result");
 			return std::string(*value->AsText());
@@ -1206,15 +1146,9 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 		const auto source = wire::DecodeImageDescription(*field);
 		VulkanExternalIdentity identity;
 		std::transform(source.identity.device.begin(), source.identity.device.end(), identity.deviceUuid.begin(),
-					   [](auto value)
-					   {
-						   return std::to_integer<std::uint8_t>(value);
-					   });
+					   [](auto value) { return std::to_integer<std::uint8_t>(value); });
 		std::transform(source.identity.driver.begin(), source.identity.driver.end(), identity.driverUuid.begin(),
-					   [](auto value)
-					   {
-						   return std::to_integer<std::uint8_t>(value);
-					   });
+					   [](auto value) { return std::to_integer<std::uint8_t>(value); });
 		auto instance = std::make_shared<Instance>();
 		instance->Create();
 		auto device = ConsumerDevice(instance, identity);
@@ -1261,20 +1195,12 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 			if (failure == ConsumerFailure::Recording)
 			{
 				s_failRecording = true;
-				Rejected<VulkanError>(
-					[&]
-					{
-						rejected.Import(description, offered.handles);
-					},
-					"Consumer import ignored command recording failure");
+				Rejected<VulkanError>([&] { rejected.Import(description, offered.handles); },
+									  "Consumer import ignored command recording failure");
 				Require(!s_failRecording, "Recording failure was not exercised");
 				DeliverySubmissionFailure injection(device->queue, expected);
-				Rejected<std::logic_error>(
-					[&]
-					{
-						rejected.Submit();
-					},
-					"Partially prepared consumer accepted submission");
+				Rejected<std::logic_error>([&] { rejected.Submit(); },
+										   "Partially prepared consumer accepted submission");
 				Require(!injection.Fired(), "Partially prepared consumer reached the native queue");
 			}
 			else
@@ -1343,12 +1269,8 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 				malformed.mipLevels = 2;
 			if (invalid == 4)
 				malformed.handleKind = 0;
-			Rejected<std::invalid_argument>(
-				[&]
-				{
-					consumer.Import(malformed, shared.handles);
-				},
-				"Malformed native image description was accepted");
+			Rejected<std::invalid_argument>([&] { consumer.Import(malformed, shared.handles); },
+											"Malformed native image description was accepted");
 			for (const auto& handle : shared.handles)
 				Require(fcntl(static_cast<int>(handle->Value()), F_GETFD) >= 0,
 						"Rejected native metadata consumed caller descriptor");
@@ -1363,12 +1285,7 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 					  tag::ConsumerPhase) == "pending",
 				"CPU release invented external consumer completion");
 		consumer.Submit();
-		Await(
-			[&]
-			{
-				return consumer.Poll();
-			},
-			"Production native consumer copy failed");
+		Await([&] { return consumer.Poll(); }, "Production native consumer copy failed");
 		Require(phase(call(wire::OpCode::DeliveryInfo, {wire::Field::U64(tag::DeliveryId, delivery)}),
 					  tag::ConsumerPhase) == "complete",
 				"Runtime failed to observe native consumer completion independently");
@@ -1384,7 +1301,8 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 						"Explicit delayed export failed");
 				if (phase(status, tag::Phase) == "pending")
 					std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			} while (phase(status, tag::Phase) == "pending");
+			}
+			while (phase(status, tag::Phase) == "pending");
 			const auto total = id(status, tag::TotalBytes);
 			Require(total == std::uint64_t{value.width} * value.height * value.arrayLayers * 4,
 					"Export description substituted another shape");
@@ -1411,6 +1329,7 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 			call(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, *exportId)});
 		}
 	}
+
 	Require(s_validationErrors.load() == 0, "Native control consumer validation failed through teardown");
 	std::printf("PASS production endpoint native GPU consumer originalSession=%llu generation=%llu capture=%llu "
 				"applicationDeviceDestroyed=yes mode=%s validationErrors=0\n",

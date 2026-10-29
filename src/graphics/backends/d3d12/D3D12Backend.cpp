@@ -11,11 +11,13 @@
 namespace simxr
 {
 using Microsoft::WRL::ComPtr;
+
 static void Check(HRESULT result, const char* operation)
 {
 	if (FAILED(result))
 		throw std::runtime_error(std::string(operation) + " (HRESULT " + std::to_string(result) + ")");
 }
+
 static ComPtr<ID3DBlob> Compile(decltype(&D3DCompile) compile, const char* entry, const char* target,
 								bool multisampledDepth = false)
 {
@@ -30,6 +32,7 @@ static ComPtr<ID3DBlob> Compile(decltype(&D3DCompile) compile, const char* entry
 	Check(result, "Compile shared compositor shader");
 	return code;
 }
+
 static void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
 					   D3D12_RESOURCE_STATES after, UINT subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
 {
@@ -40,10 +43,12 @@ static void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* reso
 	barrier.Transition = {resource, subresource, before, after};
 	commands->ResourceBarrier(1, &barrier);
 }
+
 struct D3D12DepthFormat
 {
 	DXGI_FORMAT resource, view;
 };
+
 static std::optional<D3D12DepthFormat> DepthFormats(DXGI_FORMAT format)
 {
 	switch (format)
@@ -70,6 +75,7 @@ static bool SameDevice(ID3D12DeviceChild* object, ID3D12Device* expected)
 	ComPtr<ID3D12Device> device;
 	return object && SUCCEEDED(object->GetDevice(IID_PPV_ARGS(&device))) && device.Get() == expected;
 }
+
 static bool ColorFormat(DXGI_FORMAT resource, DXGI_FORMAT view)
 {
 	const bool supported = view == DXGI_FORMAT_R8G8B8A8_UNORM || view == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
@@ -91,8 +97,8 @@ static bool ColorFormat(DXGI_FORMAT resource, DXGI_FORMAT view)
 D3D12Frame::D3D12Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
 					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
 	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
-{
-}
+{}
+
 D3D12Frame::~D3D12Frame()
 {
 	if (m_textureHandle)
@@ -100,6 +106,7 @@ D3D12Frame::~D3D12Frame()
 	if (m_fenceHandle)
 		CloseHandle(m_fenceHandle);
 }
+
 CompletionStatus D3D12Frame::PollCompletion() const noexcept
 {
 	const auto cached = m_completion.load();
@@ -112,14 +119,17 @@ CompletionStatus D3D12Frame::PollCompletion() const noexcept
 		m_completion.store(CompletionStatus::Complete);
 	return m_completion.load();
 }
+
 ID3D12Resource* D3D12Frame::Texture() const noexcept
 {
 	return m_texture.Get();
 }
+
 HANDLE D3D12Frame::TextureHandle() const noexcept
 {
 	return m_textureHandle;
 }
+
 HANDLE D3D12Frame::FenceHandle() const noexcept
 {
 	return m_fenceHandle;
@@ -130,6 +140,7 @@ struct D3D12Backend::PendingFrames
 	windows::ModuleReference m_module;
 	std::shared_ptr<FrameReservation> preservation;
 	std::vector<std::shared_ptr<D3D12Frame>> frames;
+
 	explicit PendingFrames(std::size_t capacity)
 	{
 		static const FramePool s_owners{64};
@@ -219,10 +230,7 @@ D3D12Backend::~D3D12Backend()
 	if (event)
 		CloseHandle(event);
 	if (std::any_of(m_pending->frames.begin(), m_pending->frames.end(),
-					[](const auto& frame)
-					{
-						return frame->PollCompletion() == CompletionStatus::Pending;
-					}))
+					[](const auto& frame) { return frame->PollCompletion() == CompletionStatus::Pending; }))
 		m_pending.release(); // Preserved frames keep their process-wide reservation charged.
 }
 
@@ -230,10 +238,7 @@ HRESULT D3D12Backend::Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RES
 							   std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output)
 {
 	std::erase_if(m_pending->frames,
-				  [](const auto& frame)
-				  {
-					  return frame->PollCompletion() != CompletionStatus::Pending;
-				  });
+				  [](const auto& frame) { return frame->PollCompletion() != CompletionStatus::Pending; });
 	auto& pool = retained ? m_retainedFrames : m_frames;
 	auto reservation = pool.Reserve();
 	if (!reservation)

@@ -7,30 +7,31 @@
 namespace simxr::control
 {
 ControlSessions::ControlSessions(Runtime& runtime) : m_runtime(runtime) {}
+
 std::span<const ControlSession> ControlSessions::Snapshot::Sessions() const
 {
 	if (m_phase != Phase::Ready)
 		throw std::logic_error("Session discovery did not complete");
 	return m_sessions;
 }
+
 std::span<const ControlSessionId> ControlSessions::Snapshot::Ids() const
 {
 	return {m_ids.data(), Sessions().size()};
 }
+
 const ControlSession& ControlSessions::Snapshot::Resolve(ControlSessionId session, SessionGeneration generation) const
 {
 	const auto sessions = Sessions();
-	const auto found = std::find_if(sessions.begin(), sessions.end(),
-									[&](const auto& entry)
-									{
-										return entry.id == session;
-									});
+	const auto found =
+		std::find_if(sessions.begin(), sessions.end(), [&](const auto& entry) { return entry.id == session; });
 	if (found == sessions.end())
 		throw ControlRequestError{ErrorCode::NotFound, "Unknown session identity"};
 	if (found->session->Snapshot().generation != generation)
 		throw ControlRequestError{ErrorCode::StaleGeneration, "Session generation changed"};
 	return *found;
 }
+
 void ControlSessions::Discover(Snapshot& snapshot)
 {
 	if (snapshot.m_phase != Snapshot::Phase::Empty)
@@ -52,26 +53,20 @@ void ControlSessions::Discover(Snapshot& snapshot)
 			}
 
 		prepared.reserve(Capacity);
-		const auto sameOwner = [](const Registration& registered, const ControlSession& discovered)
-		{
+		const auto sameOwner = [](const Registration& registered, const ControlSession& discovered) {
 			return registered.handle == discovered.handle && !registered.session.owner_before(discovered.session) &&
 				   !discovered.session.owner_before(registered.session);
 		};
 		for (const auto& registered : m_sessions)
 			if (std::any_of(snapshot.m_sessions.begin(), snapshot.m_sessions.end(),
-							[&](const auto& discovered)
-							{
-								return sameOwner(registered, discovered);
-							}))
+							[&](const auto& discovered) { return sameOwner(registered, discovered); }))
 				prepared.push_back(registered);
 		auto nextId = m_nextId;
 		for (auto& discovered : snapshot.m_sessions)
 		{
-			const auto existing = std::find_if(prepared.begin(), prepared.end(),
-											   [&](const auto& registered)
-											   {
-												   return sameOwner(registered, discovered);
-											   });
+			const auto existing = std::find_if(prepared.begin(), prepared.end(), [&](const auto& registered) {
+				return sameOwner(registered, discovered);
+			});
 			if (existing != prepared.end())
 				discovered.id = existing->id;
 			else

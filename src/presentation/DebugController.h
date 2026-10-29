@@ -18,16 +18,19 @@
 namespace simxr
 {
 class Session;
+
 struct DebugLeaseId
 {
 	std::uint64_t value = 0;
 	auto operator<=>(const DebugLeaseId&) const = default;
 };
+
 struct DebugCommandId
 {
 	std::uint64_t value = 0;
 	auto operator<=>(const DebugCommandId&) const = default;
 };
+
 struct DebugOperationId
 {
 	std::uint64_t value = 0;
@@ -48,6 +51,7 @@ enum class DebugCommand
 	UnpinSnapshot,
 	ConfigureSnapshots
 };
+
 struct DebugRequest
 {
 	DebugCommandId id;
@@ -111,6 +115,7 @@ enum class DebugProgress
 	RecordingStarted,
 	RecordingStopped
 };
+
 struct DebugOperation
 {
 	DebugOperationId id;
@@ -127,16 +132,19 @@ struct DebugOperation
 	std::vector<CaptureId> diagnostics;
 	std::vector<FrameKey> outstanding;
 };
+
 struct DebugSubmission
 {
 	DebugAdmission result;
 	DebugOperationId operation;
 };
+
 struct DebugLease
 {
 	DebugLeaseId id;
 	HostTime expires;
 };
+
 struct DebugControllerConfig
 {
 	std::size_t ledgerCapacity = 128;
@@ -145,6 +153,7 @@ struct DebugControllerConfig
 	Duration pollInterval{1000000};
 	bool startWorker = true;
 };
+
 struct DebugControllerSnapshot
 {
 	std::optional<DebugLease> lease;
@@ -169,7 +178,7 @@ struct DebugControllerSnapshot
 // for GPU work. Holders must release captures explicitly, including after resume.
 class DebugController
 {
-  public:
+public:
 	DebugController(std::shared_ptr<Session> session, std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>(),
 					DebugControllerConfig config = {});
 	~DebugController();
@@ -192,7 +201,7 @@ class DebugController
 	// Also exposed for deterministic tests; serialized with the polling worker.
 	void Poll() noexcept;
 
-  private:
+private:
 	void Run() noexcept;
 	void Process(DebugOperation& operation);
 	void Settle(DebugOperation& operation);
@@ -226,11 +235,13 @@ class DebugController
 	std::optional<FrameKey> m_publishedCursor;
 	CaptureTarget m_publishedTarget;
 	std::thread m_worker;
+
 	struct OwnedCapture
 	{
 		DebugLeaseId lease;
 		CaptureId capture;
 	};
+
 	std::vector<OwnedCapture> m_owned;
 	// Protected by execute, not state.
 	bool m_manual = false;
@@ -239,11 +250,13 @@ class DebugController
 	SessionGeneration m_generation;
 	std::optional<FrameKey> m_cursor;
 	CaptureTarget m_cursorTarget;
+
 	struct TargetCursor
 	{
 		CaptureTarget target;
 		FrameKey frame;
 	};
+
 	std::vector<TargetCursor> m_cursors;
 };
 } // namespace simxr

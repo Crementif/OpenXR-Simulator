@@ -60,7 +60,7 @@ struct HapticSnapshot
 
 class HapticState
 {
-  public:
+public:
 	explicit HapticState(std::size_t historyCapacity = 256);
 	XrResult Apply(std::span<const HapticDevice> devices, XrAction action, XrPath subactionPath,
 				   const XrHapticVibration& vibration, RuntimeTime time, bool focused);
@@ -73,7 +73,7 @@ class HapticState
 	void Reset();
 	std::vector<HapticOutput> Snapshot(RuntimeTime time) const;
 
-  private:
+private:
 	void Retire(std::size_t index, HapticStatus status, RuntimeTime time);
 	void Expire(RuntimeTime time);
 	mutable std::mutex m_mutex;

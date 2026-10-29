@@ -27,10 +27,12 @@
 #include <thread>
 #include <unistd.h>
 #include <vulkan/vulkan.h>
+
 namespace simxr::probe
 {
 static std::uint64_t s_checks = 0;
 static std::atomic<int> s_validationErrors{0};
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 													VkDebugUtilsMessageTypeFlagsEXT,
 													const VkDebugUtilsMessengerCallbackDataEXT* data, void*)
@@ -40,6 +42,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
 	std::fprintf(stderr, "Vulkan validation: %s\n", data->pMessage);
 	return VK_FALSE;
 }
+
 #define CHECK(c)                                                                                                       \
 	do                                                                                                                 \
 	{                                                                                                                  \
@@ -50,10 +53,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
 			std::fflush(stderr);                                                                                       \
 			std::_Exit(1);                                                                                             \
 		}                                                                                                              \
-	} while (0)
+	}                                                                                                                  \
+	while (0)
 #define XR(c) CHECK((c) == XR_SUCCESS)
 #define VK(c) CHECK((c) == VK_SUCCESS)
-template <typename T> static T Command(XrInstance i, const char* name)
+
+template<typename T>
+static T Command(XrInstance i, const char* name)
 {
 	PFN_xrVoidFunction p = nullptr;
 	if (xrGetInstanceProcAddr(i, name, &p) != XR_SUCCESS || !p)
@@ -63,12 +69,14 @@ template <typename T> static T Command(XrInstance i, const char* name)
 	}
 	return reinterpret_cast<T>(p);
 }
+
 [[noreturn]] static void Fail(const char* message)
 {
 	std::fprintf(stderr, "FAIL: %s\n", message);
 	std::fflush(stderr);
 	std::_Exit(1);
 }
+
 static void WriteText(const std::filesystem::path& path, std::string_view text)
 {
 	std::ofstream file(path, std::ios::binary);
@@ -77,6 +85,7 @@ static void WriteText(const std::filesystem::path& path, std::string_view text)
 	if (!file)
 		Fail("Cannot write or close probe output");
 }
+
 static int RunProbe()
 {
 	const int frames = std::max(4, EnvironmentCount("SIMXR_PROBE_FRAMES", 4, 0, std::numeric_limits<int>::max() - 3));
@@ -106,23 +115,16 @@ static int RunProbe()
 	CHECK(count >= 3);
 	std::vector<XrExtensionProperties> advertised(count, {XR_TYPE_EXTENSION_PROPERTIES});
 	XR(xrEnumerateInstanceExtensionProperties(nullptr, count, &count, advertised.data()));
-	const auto quadExtension =
-		std::find_if(advertised.begin(), advertised.end(),
-					 [](const auto& extension)
-					 {
-						 return std::strcmp(extension.extensionName, XR_VARJO_QUAD_VIEWS_EXTENSION_NAME) == 0;
-					 });
+	const auto quadExtension = std::find_if(advertised.begin(), advertised.end(), [](const auto& extension) {
+		return std::strcmp(extension.extensionName, XR_VARJO_QUAD_VIEWS_EXTENSION_NAME) == 0;
+	});
 	CHECK(quadExtension != advertised.end() && quadExtension->extensionVersion == XR_VARJO_quad_views_SPEC_VERSION);
-	CHECK(std::any_of(advertised.begin(), advertised.end(),
-					  [](const auto& extension)
-					  {
-						  return std::strcmp(extension.extensionName, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME) == 0;
-					  }));
-	CHECK(std::none_of(advertised.begin(), advertised.end(),
-					   [](const auto& extension)
-					   {
-						   return std::strcmp(extension.extensionName, XR_FB_FOVEATION_EXTENSION_NAME) == 0;
-					   }));
+	CHECK(std::any_of(advertised.begin(), advertised.end(), [](const auto& extension) {
+		return std::strcmp(extension.extensionName, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME) == 0;
+	}));
+	CHECK(std::none_of(advertised.begin(), advertised.end(), [](const auto& extension) {
+		return std::strcmp(extension.extensionName, XR_FB_FOVEATION_EXTENSION_NAME) == 0;
+	}));
 	std::vector<const char*> extensions = {
 		v1 ? XR_KHR_VULKAN_ENABLE_EXTENSION_NAME : XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME,
 		XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME};
@@ -327,8 +329,7 @@ static int RunProbe()
 		CHECK(enumerateTrackers(XR_NULL_HANDLE, 0, &count, nullptr) == XR_ERROR_HANDLE_INVALID);
 		CHECK(enumerateTrackers(instance, 0, nullptr, nullptr) == XR_ERROR_VALIDATION_FAILURE);
 		uint32_t trackerEvents = 0;
-		PollXrEvents(instance, [&](const XrEventDataBuffer& initialEvent)
-		{
+		PollXrEvents(instance, [&](const XrEventDataBuffer& initialEvent) {
 			CHECK(initialEvent.type == XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX);
 			const auto* connected = reinterpret_cast<const XrEventDataViveTrackerConnectedHTCX*>(&initialEvent);
 			const auto address = reinterpret_cast<std::uintptr_t>(connected->paths);
@@ -530,8 +531,7 @@ static int RunProbe()
 	XrSession session;
 	XR(xrCreateSession(instance, &sci, &session));
 	bool ready = false;
-	PollXrEvents(instance, [&](const XrEventDataBuffer& event)
-	{
+	PollXrEvents(instance, [&](const XrEventDataBuffer& event) {
 		if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 		{
 			const auto& changed = *reinterpret_cast<const XrEventDataSessionStateChanged*>(&event);
@@ -718,8 +718,7 @@ static int RunProbe()
 		XR(xrGetCurrentInteractionProfile(session, trackerPersistent, &current));
 		CHECK(current.interactionProfile == XR_NULL_PATH);
 		bool profileChanged = false;
-		PollXrEvents(instance, [&](const XrEventDataBuffer& event)
-		{
+		PollXrEvents(instance, [&](const XrEventDataBuffer& event) {
 			if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED)
 				profileChanged |=
 					reinterpret_cast<const XrEventDataInteractionProfileChanged*>(&event)->session == session;
@@ -951,8 +950,7 @@ static int RunProbe()
 	semaphoreInfo.pNext = &semaphoreType;
 	VkSemaphore deferredSemaphore;
 	VK(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &deferredSemaphore));
-	auto releaseDependency = [&]
-	{
+	auto releaseDependency = [&] {
 		VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
 		signal.semaphore = deferredSemaphore;
 		signal.value = 1;
@@ -961,14 +959,12 @@ static int RunProbe()
 	XrFrameState loadingState{XR_TYPE_FRAME_STATE};
 	XrFrameWaitInfo loadingWait{XR_TYPE_FRAME_WAIT_INFO};
 	XR(xrWaitFrame(session, &loadingWait, &loadingState));
-	auto overlappingWait = std::async(std::launch::async,
-									  [session]
-									  {
-										  XrFrameState state{XR_TYPE_FRAME_STATE};
-										  XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
-										  auto result = xrWaitFrame(session, &wait, &state);
-										  return std::make_pair(result, state);
-									  });
+	auto overlappingWait = std::async(std::launch::async, [session] {
+		XrFrameState state{XR_TYPE_FRAME_STATE};
+		XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
+		auto result = xrWaitFrame(session, &wait, &state);
+		return std::make_pair(result, state);
+	});
 	CHECK(overlappingWait.wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout);
 	XrFrameBeginInfo loadingBegin{XR_TYPE_FRAME_BEGIN_INFO};
 	XR(xrBeginFrame(session, &loadingBegin));
@@ -986,11 +982,11 @@ static int RunProbe()
 	namespace wire = control;
 	namespace tag = control::tag;
 	const auto* selectedEndpoint = std::getenv("SIMXR_CONTROL_SOCKET");
-	const auto endpoint = selectedEndpoint && *selectedEndpoint ? std::string(selectedEndpoint) :
-		(data / ("control." + std::to_string(getpid()) + ".sock")).string();
+	const auto endpoint = selectedEndpoint && *selectedEndpoint
+							  ? std::string(selectedEndpoint)
+							  : (data / ("control." + std::to_string(getpid()) + ".sock")).string();
 	wire::LocalControlClient controls(endpoint);
-	const auto exchange = [&](wire::OpCode operation, std::vector<wire::Field> fields = {})
-	{
+	const auto exchange = [&](wire::OpCode operation, std::vector<wire::Field> fields = {}) {
 		wire::ControlPacket request;
 		request.message.opcode = static_cast<std::uint16_t>(operation);
 		request.message.fields = std::move(fields);
@@ -1000,9 +996,9 @@ static int RunProbe()
 		return response;
 	};
 	exchange(wire::OpCode::Hello, {wire::Field::Text(tag::ClientName, "XR probe"),
-		wire::Field::U64(tag::RequiredCapabilities, static_cast<std::uint64_t>(wire::Capability::SimulationCommands))});
-	const auto sessionScope = [&]
-	{
+								   wire::Field::U64(tag::RequiredCapabilities,
+													static_cast<std::uint64_t>(wire::Capability::SimulationCommands))});
+	const auto sessionScope = [&] {
 		const auto sessions = exchange(wire::OpCode::Sessions);
 		CHECK(sessions.Find(tag::Sessions));
 		const auto entries = wire::DecodeFields(sessions.Find(tag::Sessions)->value);
@@ -1018,8 +1014,7 @@ static int RunProbe()
 		return std::pair{*session, *generation};
 	};
 	const auto [sessionId, generation] = sessionScope();
-	const auto readPreview = [&](std::uint64_t frame)
-	{
+	const auto readPreview = [&](std::uint64_t frame) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 		wire::Message retained;
 		for (;;)
@@ -1027,14 +1022,15 @@ static int RunProbe()
 			wire::ControlPacket request;
 			request.message.opcode = static_cast<std::uint16_t>(wire::OpCode::RetainPreview);
 			request.message.fields = {wire::Field::U64(tag::Session, sessionId),
-				wire::Field::U64(tag::Generation, generation), wire::Field::U64(tag::FrameId, frame)};
+									  wire::Field::U64(tag::Generation, generation),
+									  wire::Field::U64(tag::FrameId, frame)};
 			retained = controls.Request(std::move(request)).message;
 			CHECK(retained.Find(tag::Error));
 			const auto error = retained.Find(tag::Error)->AsU32();
 			if (error == 0)
 				break;
 			CHECK(error == static_cast<std::uint32_t>(wire::ErrorCode::Busy) ||
-				error == static_cast<std::uint32_t>(wire::ErrorCode::NotFound));
+				  error == static_cast<std::uint32_t>(wire::ErrorCode::NotFound));
 			CHECK(std::chrono::steady_clock::now() < deadline);
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
@@ -1049,13 +1045,15 @@ static int RunProbe()
 		CHECK(info.Find(tag::ImageDescriptor));
 		const auto image = wire::DecodeImageDescription(*info.Find(tag::ImageDescriptor));
 		CHECK(image.format == VK_FORMAT_R8G8B8A8_SRGB && image.arrayLayers == 2);
-		const auto region = wire::Field::Bytes(tag::ImageRegion, wire::EncodeFields(std::array{wire::Field::U32(1, 0), wire::Field::U32(2, 0),
-			wire::Field::U32(3, image.width), wire::Field::U32(4, image.height),
-			wire::Field::U32(5, 64), wire::Field::U32(6, 48)}));
+		const auto region = wire::Field::Bytes(
+			tag::ImageRegion,
+			wire::EncodeFields(std::array{wire::Field::U32(1, 0), wire::Field::U32(2, 0),
+										  wire::Field::U32(3, image.width), wire::Field::U32(4, image.height),
+										  wire::Field::U32(5, 64), wire::Field::U32(6, 48)}));
 		for (std::uint32_t eye = 0; eye < eyes.size(); ++eye)
 		{
-			const auto started = exchange(wire::OpCode::StartExport,
-				{wire::Field::U64(tag::ImageReaderId, *reader), wire::Field::U32(tag::Layer, eye), region});
+			const auto started = exchange(wire::OpCode::StartExport, {wire::Field::U64(tag::ImageReaderId, *reader),
+																	  wire::Field::U32(tag::Layer, eye), region});
 			CHECK(started.Find(tag::ExportId) && started.Find(tag::TotalBytes));
 			const auto ticket = started.Find(tag::ExportId)->AsU64();
 			CHECK(ticket && started.Find(tag::TotalBytes)->AsU64() == 64 * 48 * 4);
@@ -1069,8 +1067,9 @@ static int RunProbe()
 				CHECK(phase == "pending" && std::chrono::steady_clock::now() < deadline);
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			}
-			auto pixels = exchange(wire::OpCode::ReadExport, {wire::Field::U64(tag::ExportId, *ticket),
-				wire::Field::U64(tag::Offset, 0), wire::Field::U64(tag::Length, 64 * 48 * 4)});
+			auto pixels = exchange(wire::OpCode::ReadExport,
+								   {wire::Field::U64(tag::ExportId, *ticket), wire::Field::U64(tag::Offset, 0),
+									wire::Field::U64(tag::Length, 64 * 48 * 4)});
 			CHECK(pixels.Find(tag::Bytes) && pixels.Find(tag::Bytes)->value.size() == 64 * 48 * 4);
 			eyes[eye] = std::move(pixels.Find(tag::Bytes)->value);
 			exchange(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, *ticket)});
@@ -1079,10 +1078,10 @@ static int RunProbe()
 		return eyes;
 	};
 	CHECK(readPreview(2)[0].empty());
-	const auto emptyProjectionHistory = [&](std::uint64_t session, std::uint64_t generation)
-	{
-		const auto response = exchange(wire::OpCode::ReadProjectionHistory,
-			{wire::Field::U64(tag::Session, session), wire::Field::U64(tag::Generation, generation)});
+	const auto emptyProjectionHistory = [&](std::uint64_t session, std::uint64_t generation) {
+		const auto response =
+			exchange(wire::OpCode::ReadProjectionHistory,
+					 {wire::Field::U64(tag::Session, session), wire::Field::U64(tag::Generation, generation)});
 		CHECK(response.Find(tag::Document));
 		auto decoded = wire::DecodeFields(response.Find(tag::Document)->value);
 		CHECK(decoded.error == wire::DecodeError::None);
@@ -1097,8 +1096,7 @@ static int RunProbe()
 	for (std::uint64_t frame = 0; frame < (interactive ? 5u : 4u); ++frame)
 	{
 		std::vector<wire::Field> commands;
-		const auto add = [&](const SimulationCommand& command)
-		{
+		const auto add = [&](const SimulationCommand& command) {
 			commands.push_back(wire::EncodeSimulationCommand(command, static_cast<std::uint16_t>(commands.size() + 1)));
 		};
 		if (!frame)
@@ -1136,10 +1134,10 @@ static int RunProbe()
 		}
 		if (!commands.empty())
 			exchange(wire::OpCode::SubmitSimulation,
-				{wire::Field::U64(tag::Session, sessionId), wire::Field::U64(tag::Generation, generation),
-				 wire::Field::U64(tag::TransactionId, frame + 1), wire::Field::U64(tag::ApplyFrame, frame + 3),
-				 wire::Field::U32(tag::SourceKind, 0), wire::Field::U32(tag::LatePolicy, 0),
-				 wire::Field::Bytes(tag::Commands, wire::EncodeFields(commands))});
+					 {wire::Field::U64(tag::Session, sessionId), wire::Field::U64(tag::Generation, generation),
+					  wire::Field::U64(tag::TransactionId, frame + 1), wire::Field::U64(tag::ApplyFrame, frame + 3),
+					  wire::Field::U32(tag::SourceKind, 0), wire::Field::U32(tag::LatePolicy, 0),
+					  wire::Field::Bytes(tag::Commands, wire::EncodeFields(commands))});
 	}
 	XrTime firstTime = 0;
 	XrTime prior = 0;
@@ -1160,8 +1158,7 @@ static int RunProbe()
 	{
 		if (interactive)
 		{
-			PollXrEvents(instance, [&](const XrEventDataBuffer& event)
-			{
+			PollXrEvents(instance, [&](const XrEventDataBuffer& event) {
 				if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 					std::printf("Interactive session state: %d\n",
 								reinterpret_cast<const XrEventDataSessionStateChanged*>(&event)->state);
@@ -1258,8 +1255,7 @@ static int RunProbe()
 				XR(xrGetCurrentInteractionProfile(session, trackerPersistent, &current));
 				CHECK(current.interactionProfile == trackerProfile);
 				bool profileChanged = false;
-				PollXrEvents(instance, [&](const XrEventDataBuffer& event)
-				{
+				PollXrEvents(instance, [&](const XrEventDataBuffer& event) {
 					if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED)
 						profileChanged |=
 							reinterpret_cast<const XrEventDataInteractionProfileChanged*>(&event)->session == session;
@@ -1608,23 +1604,19 @@ static int RunProbe()
 		VkResult dependencyResult = VK_SUCCESS;
 		std::jthread watchdog;
 		if (frame == 2)
-			watchdog = std::jthread(
-				[&]
-				{
-					for (int i = 0; i < 1000 && !dependencyReleased.load(); ++i)
-						std::this_thread::sleep_for(std::chrono::milliseconds(1));
-					if (!dependencyReleased.exchange(true))
-						dependencyResult = releaseDependency();
-				});
+			watchdog = std::jthread([&] {
+				for (int i = 0; i < 1000 && !dependencyReleased.load(); ++i)
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				if (!dependencyReleased.exchange(true))
+					dependencyResult = releaseDependency();
+			});
 		if (threaded && frame >= 4 && frame + 1 < frames)
-			nextWait = std::async(std::launch::async,
-								  [session]
-								  {
-									  XrFrameState state{XR_TYPE_FRAME_STATE};
-									  XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
-									  auto result = xrWaitFrame(session, &wait, &state);
-									  return std::make_pair(result, state);
-								  });
+			nextWait = std::async(std::launch::async, [session] {
+				XrFrameState state{XR_TYPE_FRAME_STATE};
+				XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
+				auto result = xrWaitFrame(session, &wait, &state);
+				return std::make_pair(result, state);
+			});
 		if (quadMode && frame == 2)
 		{
 			projection.viewCount = 2;
@@ -1632,9 +1624,8 @@ static int RunProbe()
 			projection.viewCount = activeViewCount;
 		}
 		auto endStart = std::chrono::steady_clock::now();
-		auto ended = frame == 0 && EnvOn("SIMXR_PROBE_NATIVE_ADMISSION")
-						 ? CheckNativeAdmission(instance, session, end)
-						 : xrEndFrame(session, &end);
+		auto ended = frame == 0 && EnvOn("SIMXR_PROBE_NATIVE_ADMISSION") ? CheckNativeAdmission(instance, session, end)
+																		 : xrEndFrame(session, &end);
 		auto endElapsed = std::chrono::steady_clock::now() - endStart;
 		if (frame == 2)
 		{
@@ -1671,14 +1662,17 @@ static int RunProbe()
 		{
 			const auto pixel = (24 * 64 + 12) * 4;
 			CHECK(std::abs(int(eyes[0][pixel]) - 64) <= 1 && std::abs(int(eyes[0][pixel + 1]) - 128) <= 1 &&
-				std::abs(int(eyes[0][pixel + 2]) - 191) <= 1 && eyes[0][pixel + 3] == std::byte{255});
-			std::puts("PASS: mutable SRGB swapchain, alternate UNORM attachment clear, canonical SRGB composition pixels");
+				  std::abs(int(eyes[0][pixel + 2]) - 191) <= 1 && eyes[0][pixel + 3] == std::byte{255});
+			std::puts(
+				"PASS: mutable SRGB swapchain, alternate UNORM attachment clear, canonical SRGB composition pixels");
 		}
 		const auto center = (24 * 64 + 32) * 4;
 		if (quadMode)
 		{
-			CHECK(eyes[0][center] == std::byte{0} && eyes[0][center + 1] == std::byte{255} && eyes[0][center + 2] == std::byte{0});
-			CHECK(eyes[1][center] == std::byte{255} && eyes[1][center + 1] == std::byte{255} && eyes[1][center + 2] == std::byte{0});
+			CHECK(eyes[0][center] == std::byte{0} && eyes[0][center + 1] == std::byte{255} &&
+				  eyes[0][center + 2] == std::byte{0});
+			CHECK(eyes[1][center] == std::byte{255} && eyes[1][center + 1] == std::byte{255} &&
+				  eyes[1][center + 2] == std::byte{0});
 		}
 		else
 		{
@@ -1738,13 +1732,11 @@ static int RunProbe()
 		XR(xrAcquireSwapchainImage(cancelled, &acquire, &cancelledIndex));
 		XrSwapchainImageWaitInfo poll{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
 		CHECK(xrWaitSwapchainImage(cancelled, &poll) == XR_TIMEOUT_EXPIRED);
-		auto waiter = std::async(std::launch::async,
-								 [cancelled]
-								 {
-									 XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-									 wait.timeout = XR_INFINITE_DURATION;
-									 return xrWaitSwapchainImage(cancelled, &wait);
-								 });
+		auto waiter = std::async(std::launch::async, [cancelled] {
+			XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+			wait.timeout = XR_INFINITE_DURATION;
+			return xrWaitSwapchainImage(cancelled, &wait);
+		});
 		CHECK(waiter.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout);
 		const auto destroyed = xrDestroySwapchain(cancelled);
 		VkSemaphoreSignalInfo unblock{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
@@ -1897,7 +1889,8 @@ static int RunProbe()
 
 } // namespace simxr::probe
 
-int main(int argc, char** argv) try
+int main(int argc, char** argv)
+try
 {
 	if (!simxr::InstallationReady())
 	{

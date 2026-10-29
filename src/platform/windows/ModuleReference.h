@@ -5,7 +5,7 @@ namespace simxr::windows
 // The caller must keep an independent module reference until destruction returns.
 class ModuleReference final
 {
-  public:
+public:
 	ModuleReference();
 	~ModuleReference() noexcept;
 	ModuleReference(const ModuleReference&) = delete;
@@ -13,7 +13,7 @@ class ModuleReference final
 	ModuleReference(ModuleReference&& other) noexcept;
 	ModuleReference& operator=(ModuleReference&& other) noexcept;
 
-  private:
+private:
 	void Release() noexcept;
 	void* m_module = nullptr;
 };

@@ -37,6 +37,7 @@ std::wstring Wide(std::string_view value)
 		throw std::invalid_argument("Cannot convert launch text to Unicode");
 	return result;
 }
+
 std::string Utf8(std::wstring_view value)
 {
 	if (value.empty())
@@ -53,6 +54,7 @@ std::string Utf8(std::wstring_view value)
 		throw std::invalid_argument("Cannot convert launch text to UTF-8");
 	return result;
 }
+
 std::string Environment(const char* key)
 {
 	const auto name = Wide(key);
@@ -80,6 +82,7 @@ std::string Environment(const char* key)
 	value.resize(read);
 	return Utf8(value);
 }
+
 std::wstring Quote(std::wstring_view argument)
 {
 	// Microsoft CRT argv parsing: double trailing backslashes and escape embedded quotes.
@@ -100,6 +103,7 @@ std::wstring Quote(std::wstring_view argument)
 	result.push_back(L'"');
 	return result;
 }
+
 std::runtime_error Error(const char* operation, DWORD code)
 {
 	wchar_t* buffer = nullptr;
@@ -110,13 +114,17 @@ std::runtime_error Error(const char* operation, DWORD code)
 	const auto detail = size ? Utf8(std::wstring_view(message.get(), size)) : std::string{};
 	return std::runtime_error(std::string(operation) + " (Windows " + std::to_string(code) + "): " + detail);
 }
+
 Handle::Handle(HANDLE handle) : m_value(handle) {}
+
 Handle::~Handle()
 {
 	if (m_value && m_value != INVALID_HANDLE_VALUE)
 		CloseHandle(m_value);
 }
+
 Handle::Handle(Handle&& other) noexcept : m_value(std::exchange(other.m_value, nullptr)) {}
+
 Handle& Handle::operator=(Handle&& other) noexcept
 {
 	if (this != &other)

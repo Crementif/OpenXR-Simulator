@@ -6,8 +6,9 @@ namespace simxr::app::mcp
 {
 std::optional<LogFileSnapshot> ReadLogFile(const std::filesystem::path& path)
 {
-	const auto raw = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+	const auto raw =
+		CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+					OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
 	if (raw == INVALID_HANDLE_VALUE)
 	{
 		const auto error = GetLastError();
@@ -18,7 +19,8 @@ std::optional<LogFileSnapshot> ReadLogFile(const std::filesystem::path& path)
 	windows::Handle file(raw);
 	FILE_ATTRIBUTE_TAG_INFO attributes{};
 	LARGE_INTEGER size{};
-	if (GetFileType(raw) != FILE_TYPE_DISK || !GetFileInformationByHandleEx(raw, FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
+	if (GetFileType(raw) != FILE_TYPE_DISK ||
+		!GetFileInformationByHandleEx(raw, FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
 		(attributes.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)))
 		throw std::runtime_error("Runtime log must be a regular non-reparse file");
 	if (!GetFileSizeEx(raw, &size) || size.QuadPart < 0)
@@ -49,11 +51,12 @@ std::optional<LogFileSnapshot> ReadLogFile(const std::filesystem::path& path)
 	result.changed = read != count || size.QuadPart < 0 || static_cast<std::uint64_t>(size.QuadPart) != result.size;
 	return result;
 }
+
 bool ClearLogFile(const std::filesystem::path& path)
 {
 	const auto raw = CreateFileW(path.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-		FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+								 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+								 FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
 	if (raw == INVALID_HANDLE_VALUE)
 	{
 		const auto error = GetLastError();
@@ -61,14 +64,22 @@ bool ClearLogFile(const std::filesystem::path& path)
 			return false;
 		throw windows::Error("Cannot open runtime log for clearing", error);
 	}
+
 	struct File
 	{
 		HANDLE value;
-		~File() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+
+		~File()
+		{
+			if (value != INVALID_HANDLE_VALUE)
+				CloseHandle(value);
+		}
 	} file{raw};
+
 	FILE_ATTRIBUTE_TAG_INFO attributes{};
 	BY_HANDLE_FILE_INFORMATION info{};
-	if (GetFileType(raw) != FILE_TYPE_DISK || !GetFileInformationByHandleEx(raw, FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
+	if (GetFileType(raw) != FILE_TYPE_DISK ||
+		!GetFileInformationByHandleEx(raw, FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
 		(attributes.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) ||
 		!GetFileInformationByHandle(raw, &info) || info.nNumberOfLinks != 1)
 		throw std::runtime_error("Runtime log must be a regular non-reparse file with one link to clear it");

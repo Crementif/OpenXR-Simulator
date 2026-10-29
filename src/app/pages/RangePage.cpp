@@ -39,10 +39,7 @@ void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t l
 		m_last = automation::SavedRecording{PathText(path), take.seed};
 		shell.timeline.savedTake = TakeSource{m_last->path, range.first, range.last, range.epoch};
 		m_takeStatus = "Saved " + std::to_string(take.total) + " changes";
-		m_session.Notify({"Take saved", name, "Play", [this, saved = *m_last]
-						  {
-							  m_play = saved;
-						  }});
+		m_session.Notify({"Take saved", name, "Play", [this, saved = *m_last] { m_play = saved; }});
 	}
 	catch (const std::exception& error)
 	{
@@ -50,6 +47,7 @@ void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t l
 		m_takeStatus = error.what();
 	}
 }
+
 std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range, ShellState& shell)
 {
 	if (!m_range || m_range->first != range.first || m_range->last != range.last || m_range->epoch != range.epoch)

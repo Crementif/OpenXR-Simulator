@@ -2,7 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-
 namespace simxr
 {
 std::uint32_t ParseLaunchRenderExtent(std::string_view value)

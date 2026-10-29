@@ -19,7 +19,7 @@ void MonitorCoverage::Add(const std::vector<MonitorFrame>& frames)
 				m_recent.erase(m_recent.begin());
 		}
 		else if (const auto previous = m_recent.find(item.frame);
-			previous != m_recent.end() && !previous->second && !item.skipped)
+				 previous != m_recent.end() && !previous->second && !item.skipped)
 		{
 			previous->second = true;
 			--report.skipped;
@@ -27,8 +27,9 @@ void MonitorCoverage::Add(const std::vector<MonitorFrame>& frames)
 		}
 		if (item.skipped || item.reason.empty())
 			continue;
-		if (std::ranges::any_of(report.events, [&](const auto& event)
-			{ return event.frame == item.frame && event.reason == item.reason; }))
+		if (std::ranges::any_of(report.events, [&](const auto& event) {
+				return event.frame == item.frame && event.reason == item.reason;
+			}))
 			continue;
 		++report.eventsTotal;
 		report.events.push_back(item);

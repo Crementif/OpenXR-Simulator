@@ -12,16 +12,18 @@ using namespace simxr;
 
 class Completion final : public GpuCompletion
 {
-  public:
+public:
 	std::atomic<CompletionStatus> status{CompletionStatus::Pending};
 	mutable std::atomic<unsigned> polls{0};
 	std::function<void()> observe;
 	std::function<void()> retired;
+
 	~Completion() override
 	{
 		if (retired)
 			retired();
 	}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		++polls;
@@ -36,12 +38,7 @@ void FifoInitializationAndReuse()
 	SwapchainAccess access(1);
 	auto initialized = std::make_shared<Completion>();
 	std::uint32_t index = 99;
-	Require(access.Acquire(index,
-						   [&](auto)
-						   {
-							   return initialized;
-						   }) == XR_SUCCESS &&
-				index == 0,
+	Require(access.Acquire(index, [&](auto) { return initialized; }) == XR_SUCCESS && index == 0,
 			"Initialization publishes one acquired image");
 	Require(access.Wait(0) == XR_TIMEOUT_EXPIRED && access.Release() == XR_ERROR_CALL_ORDER_INVALID,
 			"Pending initialization does not make an image writable or releasable");
@@ -63,11 +60,9 @@ void FifoInitializationAndReuse()
 	bool failed = false;
 	try
 	{
-		rollback.Acquire(index,
-						 [](auto) -> std::shared_ptr<const GpuCompletion>
-						 {
-							 throw std::runtime_error("initialization failed");
-						 });
+		rollback.Acquire(index, [](auto) -> std::shared_ptr<const GpuCompletion> {
+			throw std::runtime_error("initialization failed");
+		});
 	}
 	catch (const std::runtime_error&)
 	{
@@ -83,17 +78,11 @@ void ReplacedCompletionCannotAuthorizeReuse()
 	auto previous = std::make_shared<Completion>();
 	auto replacement = std::make_shared<Completion>();
 	previous->status = CompletionStatus::Complete;
-	previous->observe = [&]
-	{
+	previous->observe = [&] {
 		access.MarkUsed(0, replacement);
 	};
 	std::uint32_t index;
-	Require(access.Acquire(index,
-						   [&](auto)
-						   {
-							   return previous;
-						   }) == XR_SUCCESS,
-			"Acquire replacement fixture");
+	Require(access.Acquire(index, [&](auto) { return previous; }) == XR_SUCCESS, "Acquire replacement fixture");
 	Require(access.Wait(0) == XR_TIMEOUT_EXPIRED, "An obsolete completion cannot authorize access after the deadline");
 	replacement->status = CompletionStatus::Complete;
 	Require(access.Wait(0) == XR_SUCCESS && access.Release() == XR_SUCCESS,
@@ -110,26 +99,16 @@ void ReplacedCompletionRespectsTimeout()
 		auto second = std::make_shared<Completion>();
 		first->status = CompletionStatus::Complete;
 		second->status = CompletionStatus::Complete;
-		first->observe = [&]
-		{
+		first->observe = [&] {
 			access.MarkUsed(0, second);
 		};
-		second->observe = [&]
-		{
+		second->observe = [&] {
 			access.MarkUsed(0, first);
 		};
 		std::uint32_t index;
-		Require(access.Acquire(index,
-							   [&](auto)
-							   {
-								   return first;
-							   }) == XR_SUCCESS,
+		Require(access.Acquire(index, [&](auto) { return first; }) == XR_SUCCESS,
 				"Acquire repeatedly replaced completion fixture");
-		auto waiting = std::async(std::launch::async,
-								  [&]
-								  {
-									  return access.Wait(timeout);
-								  });
+		auto waiting = std::async(std::launch::async, [&] { return access.Wait(timeout); });
 		const bool finished = waiting.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
 		if (!finished)
 			access.Close();
@@ -154,26 +133,14 @@ void CancellationDrainsBlockingReaders()
 	SwapchainWaits readers;
 	auto completion = std::make_shared<Completion>();
 	std::uint32_t index;
-	Require(access.Acquire(index,
-						   [&](auto)
-						   {
-							   return completion;
-						   }) == XR_SUCCESS,
-			"Acquire cancellation fixture");
-	auto waiting = std::async(std::launch::async,
-							  [&]
-							  {
-								  auto registered = readers.Enter();
-								  if (!registered)
-									  return XR_ERROR_SESSION_LOST;
-								  return access.Wait(XR_INFINITE_DURATION);
-							  });
-	Eventually(
-		[&]
-		{
-			return completion->polls != 0;
-		},
-		"Blocking image wait did not begin");
+	Require(access.Acquire(index, [&](auto) { return completion; }) == XR_SUCCESS, "Acquire cancellation fixture");
+	auto waiting = std::async(std::launch::async, [&] {
+		auto registered = readers.Enter();
+		if (!registered)
+			return XR_ERROR_SESSION_LOST;
+		return access.Wait(XR_INFINITE_DURATION);
+	});
+	Eventually([&] { return completion->polls != 0; }, "Blocking image wait did not begin");
 	Require(!readers.Drain(std::chrono::nanoseconds::zero()), "Native teardown cannot pass a live completion reader");
 	Require(access.Wait(0) == XR_ERROR_CALL_ORDER_INVALID, "Concurrent wait cannot consume the same FIFO entry");
 	readers.Close();
@@ -194,37 +161,25 @@ void CompletionCallbacksDoNotHoldOwnerLock()
 	SwapchainAccess access(1);
 	auto completion = std::make_shared<Completion>();
 	completion->status = CompletionStatus::Complete;
-	completion->observe = [&]
-	{
+	completion->observe = [&] {
 		completion.reset();
 	};
 	bool retired = false;
-	completion->retired = [&]
-	{
+	completion->retired = [&] {
 		access.Close();
 		retired = true;
 	};
 	std::uint32_t index;
-	Require(access.Acquire(index,
-						   [&](auto)
-						   {
-							   return completion;
-						   }) == XR_SUCCESS,
-			"Acquire retiring-reader fixture");
+	Require(access.Acquire(index, [&](auto) { return completion; }) == XR_SUCCESS, "Acquire retiring-reader fixture");
 	Require(access.Wait(0) == XR_SUCCESS && retired, "Last completion reader retires outside the swapchain mutex");
 	Require(access.Release() == XR_ERROR_SESSION_LOST, "Completion destructor can reenter closure");
 
 	SwapchainAccess cancelled(1);
 	auto reentrant = std::make_shared<Completion>();
-	reentrant->observe = [&]
-	{
+	reentrant->observe = [&] {
 		cancelled.Close();
 	};
-	Require(cancelled.Acquire(index,
-							  [&](auto)
-							  {
-								  return reentrant;
-							  }) == XR_SUCCESS &&
+	Require(cancelled.Acquire(index, [&](auto) { return reentrant; }) == XR_SUCCESS &&
 				cancelled.Wait(0) == XR_ERROR_SESSION_LOST,
 			"Completion observation itself can reenter closure");
 }
@@ -235,11 +190,7 @@ void FailureAndStaticImages()
 	auto failed = std::make_shared<Completion>();
 	failed->status = CompletionStatus::Failed;
 	std::uint32_t index;
-	Require(access.Acquire(index,
-						   [&](auto)
-						   {
-							   return failed;
-						   }) == XR_SUCCESS &&
+	Require(access.Acquire(index, [&](auto) { return failed; }) == XR_SUCCESS &&
 				access.Wait(0) == XR_ERROR_RUNTIME_FAILURE && access.Release() == XR_ERROR_CALL_ORDER_INVALID,
 			"Failure does not authorize image access");
 	Require(access.Acquire(index) == XR_ERROR_CALL_ORDER_INVALID, "Static image cannot be acquired twice");

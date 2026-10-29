@@ -4,8 +4,8 @@
 
 namespace simxr::app
 {
-std::string McpConfiguration(const std::filesystem::path& connector,
-	const std::optional<std::filesystem::path>& app, bool windowless, McpConfigurationClient client)
+std::string McpConfiguration(const std::filesystem::path& connector, const std::optional<std::filesystem::path>& app,
+							 bool windowless, McpConfigurationClient client)
 {
 	using Json = nlohmann::json;
 	if (!connector.is_absolute() || (app && !app->is_absolute()))
@@ -20,13 +20,14 @@ std::string McpConfiguration(const std::filesystem::path& connector,
 		args.push_back("--windowless");
 	if (client == McpConfigurationClient::Codex)
 	{
-		auto output = "[mcp_servers.openxr-simulator]\ncommand = " + Json(PathText(connector)).dump() +
-			"\nargs = " + args.dump();
+		auto output =
+			"[mcp_servers.openxr-simulator]\ncommand = " + Json(PathText(connector)).dump() + "\nargs = " + args.dump();
 		// JSON string escapes are valid TOML, which also requires escaping DEL.
 		for (auto offset = output.find('\x7f'); offset != std::string::npos; offset = output.find('\x7f', offset + 6))
 			output.replace(offset, 1, "\\u007f");
 		return output;
 	}
-	return Json({{"mcpServers", {{"openxr-simulator", {{"command", PathText(connector)}, {"args", std::move(args)}}}}}}).dump(2);
+	return Json({{"mcpServers", {{"openxr-simulator", {{"command", PathText(connector)}, {"args", std::move(args)}}}}}})
+		.dump(2);
 }
 }

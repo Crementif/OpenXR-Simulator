@@ -61,6 +61,7 @@ static void Changes()
 	Require(failed, "Late events cannot rewrite already sampled tracking");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

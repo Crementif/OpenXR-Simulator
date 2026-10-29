@@ -28,8 +28,7 @@ XrResult PrepareRotationalComposition(const FrameLayers& layers, const Compositi
 	for (auto& layer : descriptions)
 	{
 		const auto result = std::visit(
-			[&](auto& description) -> XrResult
-			{
+			[&](auto& description) -> XrResult {
 				auto& space = description.space;
 				if (space.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL ||
 					space.referenceType == XR_REFERENCE_SPACE_TYPE_STAGE)

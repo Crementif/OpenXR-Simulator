@@ -5,8 +5,7 @@ namespace simxr
 {
 FrameDiagnosticsJournal::FrameDiagnosticsJournal(std::size_t capacity, TimestampSource timestamp)
 	: m_timestamp(std::move(timestamp)), m_events(ValidateCapacity(capacity))
-{
-}
+{}
 
 FrameDiagnosticsJournal::~FrameDiagnosticsJournal()
 {

@@ -22,14 +22,17 @@ static const char* PhaseName(automation::RigPhase phase)
 	}
 	return "Unknown";
 }
+
 static TimelinePoint PointOf(const SessionView& state)
 {
 	return {{state.session, state.generation, state.latestFrame}, state.epoch, state.historySeconds};
 }
+
 RuntimeFrameRun TimelinePoint::Run() const
 {
 	return {epoch, identity.session, identity.run};
 }
+
 std::optional<std::pair<std::size_t, std::size_t>> TimelineSpan::Range(const HistoryStore& history) const
 {
 	if (first.Run() != last.Run())
@@ -39,6 +42,7 @@ std::optional<std::pair<std::size_t, std::size_t>> TimelineSpan::Range(const His
 		return {};
 	return std::pair{*begin, *end};
 }
+
 void TimelineHistory::Push(RuntimeFrameRun run, double seconds, std::string text, bool failed)
 {
 	m_events.push_back({run, std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
@@ -46,14 +50,17 @@ void TimelineHistory::Push(RuntimeFrameRun run, double seconds, std::string text
 	if (m_events.size() > 128)
 		m_events.erase(m_events.begin());
 }
+
 void TimelineHistory::Error(std::string text, double seconds)
 {
 	Push({}, seconds, std::move(text), true);
 }
+
 TimelineSpan TimelineHistory::Start(TimelinePoint point, bool replay)
 {
 	return {point, point, m_nextSpan++, replay};
 }
+
 void TimelineHistory::Close(std::optional<TimelineSpan>& span, std::vector<TimelineSpan>& destination)
 {
 	if (!span)
@@ -63,6 +70,7 @@ void TimelineHistory::Close(std::optional<TimelineSpan>& span, std::vector<Timel
 	if (destination.size() > 128)
 		destination.erase(destination.begin());
 }
+
 void TimelineHistory::Observe(const SessionView& state, bool recording)
 {
 	const auto point = PointOf(state);
@@ -117,6 +125,7 @@ void TimelineHistory::Observe(const SessionView& state, bool recording)
 	}
 	m_previous = Observation{point, state.connected, state.manual};
 }
+
 void TimelineHistory::ObserveScript(const SessionView& state, std::uint64_t run, const automation::RigSnapshot& script,
 									bool matchesTarget)
 {
@@ -137,8 +146,7 @@ void TimelineHistory::ObserveScript(const SessionView& state, std::uint64_t run,
 	if (!m_scriptTarget && state.connected && matchesTarget)
 		m_scriptTarget = point.Run();
 	const bool matches = state.connected && matchesTarget && m_scriptTarget == point.Run();
-	const auto append = [&](std::string text, bool failed = false)
-	{
+	const auto append = [&](std::string text, bool failed = false) {
 		Push(matches ? point.Run() : RuntimeFrameRun{}, point.seconds,
 			 "Script " + std::to_string(run) + ": " + std::move(text), failed);
 	};
@@ -177,10 +185,10 @@ void TimelineHistory::ObserveScript(const SessionView& state, std::uint64_t run,
 	while (m_output < script.output.size())
 		append(script.output[m_output++]);
 }
+
 void TimelineHistory::Resolve(const HistoryStore& history)
 {
-	const auto resolve = [&](TimelineSpan& span)
-	{
+	const auto resolve = [&](TimelineSpan& span) {
 		for (auto* point : {&span.first, &span.last})
 			if (const auto index = history.Find(point->identity, point->epoch))
 				point->seconds = history.At(*index).seconds;
@@ -193,6 +201,7 @@ void TimelineHistory::Resolve(const HistoryStore& history)
 	for (auto& span : m_pauses)
 		resolve(span);
 }
+
 void TimelineHistory::SavedRecording(std::string path, RuntimeFrameRun run)
 {
 	for (auto span = m_clips.rbegin(); span != m_clips.rend(); ++span)
@@ -203,12 +212,14 @@ void TimelineHistory::SavedRecording(std::string path, RuntimeFrameRun run)
 			break;
 		}
 }
+
 void TimelineHistory::ReplayTake(std::uint64_t run, std::string path, const SessionView& launch)
 {
 	m_takeRun = run;
 	m_takePath = std::move(path);
 	m_takeStart = PointOf(launch);
 }
+
 const TimelineSpan* TimelineHistory::FindScript(std::uint64_t run) const
 {
 	if (!run)

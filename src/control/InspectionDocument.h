@@ -29,6 +29,7 @@ enum class InspectionType : std::uint32_t
 	Array = 7,
 	Revision = 8
 };
+
 struct InspectionValue
 {
 	InspectionType type = InspectionType::Null;
@@ -44,16 +45,19 @@ struct InspectionValue
 	static InspectionValue Array(std::vector<InspectionValue> values);
 	std::vector<std::byte> Encode(std::string_view name = {}) const;
 };
+
 struct FeatureDocument
 {
 	std::string kind;
 	std::vector<std::byte> bytes;
 };
+
 struct FeatureRevision
 {
 	std::uint64_t id = 0;
 	FeatureDocument document;
 };
+
 struct InspectionRecord
 {
 	std::uint64_t id = 0;
@@ -62,11 +66,12 @@ struct InspectionRecord
 	std::vector<std::byte> document;
 	std::vector<std::shared_ptr<const FeatureRevision>> revisions;
 };
+
 // Connection-owned, single-flight catalog. Capacity includes readers retained
 // after Release. A failed publication changes neither IDs nor visible records.
 class InspectionStore
 {
-  public:
+public:
 	explicit InspectionStore(std::size_t frames = 32, std::size_t revisions = 64, std::size_t bytes = 8 * 1024 * 1024);
 	std::shared_ptr<const InspectionRecord> Find(ControlSessionId session, FrameKey frame) const;
 	std::shared_ptr<const InspectionRecord> Read(std::uint64_t id) const;
@@ -76,7 +81,7 @@ class InspectionStore
 		   const std::function<std::vector<std::byte>(std::span<const std::uint64_t>)>& serialize);
 	bool Release(std::uint64_t id) noexcept;
 
-  private:
+private:
 	std::size_t m_frameCapacity;
 	std::size_t m_revisionCapacity;
 	std::size_t m_byteCapacity;

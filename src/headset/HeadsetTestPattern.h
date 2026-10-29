@@ -10,9 +10,10 @@
 namespace simxr::headset
 {
 class HeadsetGraphics;
+
 class HeadsetTestPattern
 {
-  public:
+public:
 	explicit HeadsetTestPattern(HeadsetGraphics& graphics);
 	~HeadsetTestPattern();
 	HeadsetTestPattern(const HeadsetTestPattern&) = delete;
@@ -22,7 +23,7 @@ class HeadsetTestPattern
 	XrSwapchain Swapchain() const;
 	XrExtent2Di Extent() const;
 
-  private:
+private:
 	struct Image
 	{
 		std::array<VkImageView, 2> views{};
@@ -30,6 +31,7 @@ class HeadsetTestPattern
 		VkCommandBuffer command = VK_NULL_HANDLE;
 		VkFence fence = VK_NULL_HANDLE;
 	};
+
 	void Record(Image& image);
 	HeadsetGraphics& m_graphics;
 	XrSwapchain m_swapchain = XR_NULL_HANDLE;

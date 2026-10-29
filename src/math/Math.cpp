@@ -1,7 +1,6 @@
 #include "math/Math.h"
 #include "Pch.h"
 
-
 namespace simxr
 {
 struct Vector3d
@@ -21,8 +20,7 @@ static Vector3d RotateWide(XrQuaternionf orientation, Vector3d vector)
 
 static XrVector3f Narrow(Vector3d vector)
 {
-	const auto component = [](double value)
-	{
+	const auto component = [](double value) {
 		if (std::abs(value) > std::numeric_limits<float>::max())
 			return value < 0 ? -std::numeric_limits<float>::infinity() : std::numeric_limits<float>::infinity();
 		return static_cast<float>(value);

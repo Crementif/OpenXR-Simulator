@@ -14,7 +14,8 @@
 
 namespace simxr
 {
-template <typename Handle> Handle AllocateHandle()
+template<typename Handle>
+Handle AllocateHandle()
 {
 	const auto identity = AllocateProcessIdentity();
 	if constexpr (std::is_pointer_v<Handle>)
@@ -31,10 +32,12 @@ template <typename Handle> Handle AllocateHandle()
 	}
 }
 
-template <typename Handle, typename Object> class HandleRef
+template<typename Handle, typename Object>
+class HandleRef
 {
-  public:
+public:
 	HandleRef() = default;
+
 	HandleRef(Handle handle, std::shared_ptr<Object> object) : m_handle(handle), m_object(std::move(object)) {}
 
 	Object* operator->() const
@@ -62,29 +65,32 @@ template <typename Handle, typename Object> class HandleRef
 		return m_object;
 	}
 
-  private:
+private:
 	Handle m_handle{};
 	std::shared_ptr<Object> m_object;
 };
 
-template <typename Handle, typename Object, typename Parent> class HandleRegistry
+template<typename Handle, typename Object, typename Parent>
+class HandleRegistry
 {
 	struct Record
 	{
 		Parent parent;
 		std::shared_ptr<Object> object;
 	};
+
 	using Records = std::unordered_map<Handle, Record>;
 
-  public:
+public:
 	class Retired
 	{
-	  public:
+	public:
 		Retired() = default;
 		Retired(Retired&&) = default;
 		Retired& operator=(Retired&&) = default;
 
-		template <typename Visitor> void ForEach(Visitor visitor) const
+		template<typename Visitor>
+		void ForEach(Visitor visitor) const
 		{
 			if (!m_objects)
 				return;
@@ -92,7 +98,7 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 				visitor(HandleRef<Handle, Object>{handle, record.object});
 		}
 
-	  private:
+	private:
 		friend class HandleRegistry;
 		std::unique_ptr<Records> m_objects;
 	};
@@ -117,14 +123,11 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 	{
 		if (!object)
 			throw std::invalid_argument("Missing handle object");
-		return Create(parent,
-					  [&](Handle)
-					  {
-						  return std::move(object);
-					  });
+		return Create(parent, [&](Handle) { return std::move(object); });
 	}
 
-	template <typename Factory> HandleRef<Handle, Object> Create(Parent parent, Factory factory)
+	template<typename Factory>
+	HandleRef<Handle, Object> Create(Parent parent, Factory factory)
 	{
 		const auto handle = AllocateHandle<Handle>();
 		std::shared_ptr<Object> retained(factory(handle));
@@ -186,7 +189,7 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 		return children;
 	}
 
-  private:
+private:
 	mutable std::mutex m_mutex;
 	std::unique_ptr<Records> m_objects;
 };

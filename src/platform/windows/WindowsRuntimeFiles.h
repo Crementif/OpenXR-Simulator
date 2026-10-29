@@ -22,7 +22,7 @@ struct WindowsFileStatus
 
 class WindowsRuntimeFiles
 {
-  public:
+public:
 	explicit WindowsRuntimeFiles(std::filesystem::path directory);
 	~WindowsRuntimeFiles();
 	bool PublishStatus(std::string document);
@@ -30,7 +30,7 @@ class WindowsRuntimeFiles
 	WindowsFileStatus Status() const;
 	void Close();
 
-  private:
+private:
 	void Run() noexcept;
 	void RecordError(std::string_view error) noexcept;
 	std::filesystem::path m_directory;

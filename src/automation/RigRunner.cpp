@@ -32,8 +32,7 @@ void RigRunner::Run()
 		phase = RigPhase::Failed;
 		error = "Unknown rig failure";
 	}
-	const auto cleanup = [&](auto action)
-	{
+	const auto cleanup = [&](auto action) {
 		try
 		{
 			action();
@@ -55,15 +54,13 @@ void RigRunner::Run()
 			}
 		}
 	};
-	cleanup([&]
-	{
+	cleanup([&] {
 		const auto cleanupError = m_runtime.Cleanup();
 		if (!cleanupError.empty())
 			throw std::runtime_error(cleanupError);
 	});
 	// Terminal status is published only after the transport releases native ownership.
-	cleanup([&]
-	{
+	cleanup([&] {
 		if (m_releaseTransport)
 			m_releaseTransport();
 	});
@@ -71,24 +68,27 @@ void RigRunner::Run()
 }
 
 RigRunner::RigRunner(RigExchange exchange, std::function<void()> releaseTransport)
-	: m_runtime(std::move(exchange), m_progress), m_releaseTransport(std::move(releaseTransport)) {}
+	: m_runtime(std::move(exchange), m_progress), m_releaseTransport(std::move(releaseTransport))
+{}
+
 RigRunner::~RigRunner()
 {
 	Cancel();
 	Join();
 }
+
 void ValidateRigOptions(const RigOptions& options)
 {
 	if (options.name.size() > 1024 || options.name.find('\0') != std::string::npos)
 		throw std::invalid_argument("Rig name exceeds 1024 bytes or contains NUL");
-	if ((options.source.empty() == options.recordingArchive.empty()) ||
-		options.source.size() > MaxRigSourceBytes ||
+	if ((options.source.empty() == options.recordingArchive.empty()) || options.source.size() > MaxRigSourceBytes ||
 		options.recordingArchive.native().find(std::filesystem::path::value_type{}) !=
 			std::filesystem::path::string_type::npos ||
 		options.memoryLimit < 1024 * 1024 || options.memoryLimit > 512 * 1024 * 1024 || options.deadline.count() <= 0 ||
 		options.deadline > std::chrono::hours{1})
 		throw std::invalid_argument("Invalid bounded rig options");
 }
+
 void RigRunner::Start(RigOptions options)
 {
 	ValidateRigOptions(options);
@@ -101,11 +101,7 @@ void RigRunner::Start(RigOptions options)
 	m_progress.Start(m_options);
 	try
 	{
-		m_worker = std::thread(
-			[this]
-			{
-				Run();
-			});
+		m_worker = std::thread([this] { Run(); });
 	}
 	catch (...)
 	{
@@ -113,39 +109,48 @@ void RigRunner::Start(RigOptions options)
 		throw;
 	}
 }
+
 void RigRunner::Pause()
 {
 	m_progress.Pause();
 }
+
 void RigRunner::Resume()
 {
 	m_progress.Resume();
 }
+
 void RigRunner::Step()
 {
 	m_progress.Step();
 }
+
 void RigRunner::Cancel()
 {
 	m_progress.Cancel();
 }
+
 void RigRunner::Join()
 {
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 RigPhase RigRunner::Phase() const
 {
 	return m_progress.Phase();
 }
+
 RigSnapshot RigRunner::Snapshot() const
 {
 	return m_progress.Snapshot();
 }
+
 std::string RigRunner::JsonReport() const
 {
 	return SerializeRigJson(Snapshot());
 }
+
 std::string RigRunner::JunitReport() const
 {
 	return SerializeRigJunit(Snapshot());

@@ -11,12 +11,18 @@
 static void CheckTrackerSources()
 {
 	using namespace simxr;
-	for (const auto& invalid : {std::string("missing_namespace"), std::string("htcx:/"),
-		std::string("htcx:/bad space"), std::string("htcx:/bad\0path", 14), std::string("htcx:/") + std::string(282, 'a')})
+	for (const auto& invalid : {std::string("missing_namespace"), std::string("htcx:/"), std::string("htcx:/bad space"),
+								std::string("htcx:/bad\0path", 14), std::string("htcx:/") + std::string(282, 'a')})
 	{
 		bool rejected = false;
-		try { (void)TrackerSourcePath{invalid}; }
-		catch (const std::invalid_argument&) { rejected = true; }
+		try
+		{
+			(void)TrackerSourcePath{invalid};
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejected = true;
+		}
 		Require(rejected, "Malformed physical source path accepted");
 	}
 	TrackingState state;
@@ -25,16 +31,23 @@ static void CheckTrackerSources()
 	history.Publish({Duration{10}}, state);
 	state.trackers[1].sourcePath = state.trackers[0].sourcePath;
 	bool rejected = false;
-	try { history.Publish({Duration{20}}, state); }
-	catch (const std::invalid_argument&) { rejected = true; }
+	try
+	{
+		history.Publish({Duration{20}}, state);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
 	Require(rejected && history.Sample({Duration{20}})->time == RuntimeTime{Duration{10}},
-		"Duplicate physical source changed published history");
+			"Duplicate physical source changed published history");
 	state.trackers[1].sourcePath = {};
 	state.trackers[0].sourcePath = TrackerSourcePath{"htcx:/device/replacement"};
 	history.Publish({Duration{20}}, state);
 	Require(history.Sample({Duration{15}})->time == RuntimeTime{Duration{10}},
-		"Source replacement interpolated unrelated devices");
+			"Source replacement interpolated unrelated devices");
 }
+
 static void CheckTrackerValidity()
 {
 	using namespace simxr;
@@ -71,6 +84,7 @@ static void CheckTrackerValidity()
 	Require(history.Publish({Duration{50}}, state).trackers[0].pose.flags == 0,
 			"Disconnected tracker retained validity");
 }
+
 static void CheckAuthoredTrackers()
 {
 	using namespace simxr;
@@ -162,6 +176,7 @@ static void CheckAuthoredTrackers()
 	tracking.Publish({Duration{60}}, configuration.tracking);
 	Require(tracking.Sample({Duration{55}})->trackers.empty(), "Empty authored history reconstructed default devices");
 }
+
 int main()
 {
 	{
@@ -169,7 +184,7 @@ int main()
 		shared.trackers[1].role = shared.trackers[0].role;
 		const auto snapshot = simxr::TrackingSystem::Evaluate({simxr::Duration{1}}, shared, simxr::BodyModel{});
 		Require(snapshot.trackers.size() == 4 && snapshot.trackers[0].device.role == snapshot.trackers[1].device.role &&
-				snapshot.trackers[0].device.identity != snapshot.trackers[1].device.identity,
+					snapshot.trackers[0].device.identity != snapshot.trackers[1].device.identity,
 				"Shared tracker role collapsed or rejected independent identities");
 	}
 	CheckTrackerSources();
@@ -322,13 +337,11 @@ int main()
 	}
 	Require(rejectedInventory && inventories.Size() == 4, "Over-capacity inventory changed pose history");
 	std::atomic_bool failed = false;
-	std::thread reader(
-		[&]
-		{
-			for (int count = 0; count < 100; ++count)
-				if (!tracking.Sample({Duration{1000}}))
-					failed = true;
-		});
+	std::thread reader([&] {
+		for (int count = 0; count < 100; ++count)
+			if (!tracking.Sample({Duration{1000}}))
+				failed = true;
+	});
 	for (int count = 21; count < 121; ++count)
 		tracking.Publish({Duration{count}}, state);
 	reader.join();

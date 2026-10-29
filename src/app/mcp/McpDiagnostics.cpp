@@ -16,39 +16,65 @@ static Json Result(const Json& value, bool error = false)
 {
 	return {{"content", Json::array({{{"type", "text"}, {"text", value.dump()}}})}, {"isError", error}};
 }
+
 bool DiagnosticsHandles(const std::string& name)
 {
-	static const std::set<std::string> names{"get_projection_log", "get_frame_info", "get_diagnostics", "diagnose_issue", "get_session_state", "get_head_pose"};
+	static const std::set<std::string> names{"get_projection_log", "get_frame_info",	"get_diagnostics",
+											 "diagnose_issue",	   "get_session_state", "get_head_pose"};
 	return names.contains(name);
 }
+
 Json DiagnosticsDefinitions()
 {
 	const Json common = {{"application_id", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
-		{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 30}}}};
-	const auto tool = [](const char* name, const char* description, Json properties, Json required)
-	{
-		return Json{{"name", name}, {"description", description}, {"inputSchema", {{"type", "object"},
-			{"properties", std::move(properties)}, {"required", std::move(required)}, {"additionalProperties", false}}}};
+						 {"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 30}}}};
+	const auto tool = [](const char* name, const char* description, Json properties, Json required) {
+		return Json{{"name", name},
+					{"description", description},
+					{"inputSchema",
+					 {{"type", "object"},
+					  {"properties", std::move(properties)},
+					  {"required", std::move(required)},
+					  {"additionalProperties", false}}}};
 	};
 	auto projection = common;
 	projection["max_entries"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 64}};
 	auto issue = common;
 	issue["symptoms"] = {{"type", "string"}, {"minLength", 1}, {"maxLength", 2048}};
-	return Json::array({
-		tool("get_projection_log", "Read the selected application's bounded submitted projection geometry without image readback.", projection, Json::array({"application_id"})),
-		tool("get_frame_info", "Read the selected application's pipeline, recent projection and configured simulation state; samples can advance independently.", common, Json::array({"application_id"})),
-		tool("get_diagnostics", "Read the selected application's runtime status, bounded diagnostic events and recent projection data. Native driver validation and text logs are not included.", common, Json::array({"application_id"})),
-		tool("diagnose_issue", "Collect bounded runtime evidence and observed-state hints for the selected application. Hints are not proof of a cause.", issue, Json::array({"application_id", "symptoms"})),
-		tool("get_session_state", "Read the selected application's actual OpenXR session state.", common, Json::array({"application_id"})),
-		tool("get_head_pose", "Read the selected application's configured simulator head pose; this is not an application-located tracking sample.", common, Json::array({"application_id"}))});
+	return Json::array(
+		{tool("get_projection_log",
+			  "Read the selected application's bounded submitted projection geometry without image readback.",
+			  projection, Json::array({"application_id"})),
+		 tool("get_frame_info",
+			  "Read the selected application's pipeline, recent projection and configured simulation state; samples "
+			  "can advance independently.",
+			  common, Json::array({"application_id"})),
+		 tool("get_diagnostics",
+			  "Read the selected application's runtime status, bounded diagnostic events and recent projection data. "
+			  "Native driver validation and text logs are not included.",
+			  common, Json::array({"application_id"})),
+		 tool("diagnose_issue",
+			  "Collect bounded runtime evidence and observed-state hints for the selected application. Hints are not "
+			  "proof of a cause.",
+			  issue, Json::array({"application_id", "symptoms"})),
+		 tool("get_session_state", "Read the selected application's actual OpenXR session state.", common,
+			  Json::array({"application_id"})),
+		 tool("get_head_pose",
+			  "Read the selected application's configured simulator head pose; this is not an application-located "
+			  "tracking sample.",
+			  common, Json::array({"application_id"}))});
 }
+
 static const char* SessionState(std::int64_t state)
 {
-	static constexpr std::array names{"unknown", "idle", "ready", "synchronized", "visible", "focused", "stopping", "loss_pending", "exiting"};
-	return state >= 0 && static_cast<std::size_t>(state) < names.size() ? names[static_cast<std::size_t>(state)] : "unrecognized";
+	static constexpr std::array names{"unknown", "idle",	 "ready",		 "synchronized", "visible",
+									  "focused", "stopping", "loss_pending", "exiting"};
+	return state >= 0 && static_cast<std::size_t>(state) < names.size() ? names[static_cast<std::size_t>(state)]
+																		: "unrecognized";
 }
+
 std::optional<Json> RunDiagnostics(McpApplication& application, const std::string& name, const Json& arguments,
-	const std::shared_ptr<McpCancellation>& cancellation)
+								   const std::shared_ptr<McpCancellation>& cancellation)
 {
 	try
 	{
@@ -56,10 +82,12 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			throw std::invalid_argument("Arguments must be an object");
 		for (auto it = arguments.begin(); it != arguments.end(); ++it)
 			if (it.key() != "application_id" && it.key() != "timeout" &&
-				!(name == "get_projection_log" && it.key() == "max_entries") && !(name == "diagnose_issue" && it.key() == "symptoms"))
+				!(name == "get_projection_log" && it.key() == "max_entries") &&
+				!(name == "diagnose_issue" && it.key() == "symptoms"))
 				throw std::invalid_argument("Unknown argument: " + it.key());
 		const auto& selected = arguments.at("application_id");
-		if (!selected.is_string() || selected.get_ref<const std::string&>().empty() || selected.get_ref<const std::string&>().size() > 256)
+		if (!selected.is_string() || selected.get_ref<const std::string&>().empty() ||
+			selected.get_ref<const std::string&>().size() > 256)
 			throw std::invalid_argument("application_id must identify a selected application");
 		const auto timeout = arguments.value("timeout", 5.0);
 		if (!std::isfinite(timeout) || timeout <= 0 || timeout > 30)
@@ -76,7 +104,8 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 		if (name == "diagnose_issue")
 		{
 			const auto& value = arguments.at("symptoms");
-			if (!value.is_string() || value.get_ref<const std::string&>().empty() || value.get_ref<const std::string&>().size() > 2048)
+			if (!value.is_string() || value.get_ref<const std::string&>().empty() ||
+				value.get_ref<const std::string&>().size() > 2048)
 				throw std::invalid_argument("symptoms must be a nonempty string of at most 2048 bytes");
 			symptoms = value.get<std::string>();
 		}
@@ -84,15 +113,20 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			return {};
 		TransientDebug calls(application, cancellation, timeout, "Diagnostics");
 		const auto app = calls.Application(selected.get_ref<const std::string&>());
-		Json result = {{"ok", true}, {"application_id", selected}, {"application", application.ApplicationDocument(app)},
-			{"sampling", "Runtime, projection and simulation data are sampled separately and may advance between reads."}};
+		Json result = {
+			{"ok", true},
+			{"application_id", selected},
+			{"application", application.ApplicationDocument(app)},
+			{"sampling",
+			 "Runtime, projection and simulation data are sampled separately and may advance between reads."}};
 		if (name == "diagnose_issue")
 			result["symptoms"] = symptoms;
 		if (!app.connected || !app.running)
 		{
 			result["runtime_available"] = false;
 			result["unavailable"] = "No connected running XR session; runtime state was not sampled.";
-			if (name == "get_projection_log" || name == "get_head_pose" || name == "get_session_state" || name == "get_frame_info")
+			if (name == "get_projection_log" || name == "get_head_pose" || name == "get_session_state" ||
+				name == "get_frame_info")
 			{
 				result["ok"] = false;
 				return Result(result, true);
@@ -102,13 +136,15 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			return Result(result);
 		}
 		const auto opened = calls.Connect(selected.get_ref<const std::string&>());
-		if (app.runtimeProcess != opened.process ||
-			app.runtimeEpoch != opened.epoch ||
-			app.session != opened.session || app.generation != opened.generation)
-			throw std::runtime_error("Application runtime or session changed during diagnostic collection; retry explicitly");
+		if (app.runtimeProcess != opened.process || app.runtimeEpoch != opened.epoch || app.session != opened.session ||
+			app.generation != opened.generation)
+			throw std::runtime_error(
+				"Application runtime or session changed during diagnostic collection; retry explicitly");
 		const auto connection = opened.id;
 		const auto capabilities = opened.capabilities;
-		const auto supports = [&](wire::Capability value) { return (capabilities & static_cast<std::uint64_t>(value)) != 0; };
+		const auto supports = [&](wire::Capability value) {
+			return (capabilities & static_cast<std::uint64_t>(value)) != 0;
+		};
 		result["runtime_available"] = true;
 		result["session"] = std::to_string(opened.session);
 		result["generation"] = std::to_string(opened.generation);
@@ -120,22 +156,26 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			if (status.contains("state") && status.at("state").is_number_integer())
 				result["session_state"] = SessionState(status.at("state").get<std::int64_t>());
 		}
-		if (name == "get_projection_log" || name == "get_frame_info" || name == "get_diagnostics" || name == "diagnose_issue")
+		if (name == "get_projection_log" || name == "get_frame_info" || name == "get_diagnostics" ||
+			name == "diagnose_issue")
 		{
 			if (supports(wire::Capability::ProjectionHistory))
 			{
 				const auto length = name == "get_projection_log" ? count : 1;
-				const auto response = calls.Request(connection, wire::OpCode::ReadProjectionHistory, {wire::Field::U64(tag::Length, length)});
+				const auto response = calls.Request(connection, wire::OpCode::ReadProjectionHistory,
+													{wire::Field::U64(tag::Length, length)});
 				result["projection"] = ProjectionHistoryDocument(response, length, opened.generation);
 			}
 			else
 				result["projection_unavailable"] = "The connected runtime does not advertise projection history.";
 		}
-		if (name == "get_head_pose" || name == "get_frame_info" || name == "get_diagnostics" || name == "diagnose_issue")
+		if (name == "get_head_pose" || name == "get_frame_info" || name == "get_diagnostics" ||
+			name == "diagnose_issue")
 		{
 			if (supports(wire::Capability::SimulationCommands))
 			{
-				const auto simulation = SimulationDocument(calls.Request(connection, wire::OpCode::SimulationStatus, {})).at("document");
+				const auto simulation =
+					SimulationDocument(calls.Request(connection, wire::OpCode::SimulationStatus, {})).at("document");
 				if (name == "get_head_pose")
 					result["configured_head_pose"] = simulation.at("configuration").at("head");
 				else
@@ -149,7 +189,8 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			result["logs_unavailable"] = "Native driver validation and text logs are not included.";
 			if (supports(wire::Capability::FrameDiagnostics))
 			{
-				const auto response = calls.Request(connection, wire::OpCode::ReadDiagnostics, {wire::Field::U64(tag::Length, 0)});
+				const auto response =
+					calls.Request(connection, wire::OpCode::ReadDiagnostics, {wire::Field::U64(tag::Length, 0)});
 				const auto* document = response.Find(tag::Document);
 				if (!document)
 					throw std::runtime_error("Runtime omitted diagnostic bounds");
@@ -160,7 +201,9 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 				const auto next = cursor.get<std::uint64_t>();
 				const auto after = next > 65 ? next - 65 : 0;
 				result["diagnostics"] = SimulationDocument(calls.Request(connection, wire::OpCode::ReadDiagnostics,
-					{wire::Field::U64(tag::Offset, after), wire::Field::U64(tag::Length, 64)})).at("document");
+																		 {wire::Field::U64(tag::Offset, after),
+																		  wire::Field::U64(tag::Length, 64)}))
+											.at("document");
 				result["diagnostic_cursor_sample"] = std::to_string(next);
 			}
 			else
@@ -171,11 +214,14 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			Json observations = Json::array();
 			const auto& status = result.at("runtime");
 			if (status.contains("pipeline") && status.at("pipeline").value("paused", false))
-				observations.push_back("The frame pipeline is paused; frame advancement requires an explicit step or resume.");
-			if (result.contains("projection") && result.at("projection").contains("entries") && result.at("projection").at("entries").empty())
+				observations.push_back(
+					"The frame pipeline is paused; frame advancement requires an explicit step or resume.");
+			if (result.contains("projection") && result.at("projection").contains("entries") &&
+				result.at("projection").at("entries").empty())
 				observations.push_back("No projection entries are present in the sampled history.");
 			if (observations.empty())
-				observations.push_back("No specific cause is established by these samples; inspect the returned events and projection data.");
+				observations.push_back("No specific cause is established by these samples; inspect the returned events "
+									   "and projection data.");
 			result["observations"] = std::move(observations);
 		}
 		calls.Check();

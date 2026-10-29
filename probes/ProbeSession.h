@@ -10,7 +10,8 @@
 
 namespace simxr::probe
 {
-template <typename Visitor> void PollXrEvents(XrInstance instance, Visitor&& visit)
+template<typename Visitor>
+void PollXrEvents(XrInstance instance, Visitor&& visit)
 {
 	for (;;)
 	{
@@ -30,8 +31,7 @@ inline XrSessionState BeginProbeSession(XrInstance instance, XrSession session, 
 	bool began = false;
 	for (int attempt = 0; attempt < 200 && !began; ++attempt)
 	{
-		PollXrEvents(instance, [&](const XrEventDataBuffer& event)
-		{
+		PollXrEvents(instance, [&](const XrEventDataBuffer& event) {
 			if (event.type != XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 				return;
 			const auto& changed = reinterpret_cast<const XrEventDataSessionStateChanged&>(event);

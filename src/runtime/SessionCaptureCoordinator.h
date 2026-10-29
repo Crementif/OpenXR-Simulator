@@ -35,7 +35,7 @@ struct CaptureBoundaryResult
 // destroying the last native output reader.
 class SessionCaptureCoordinator
 {
-  public:
+public:
 	class Submission;
 	class Boundary;
 	class SequenceCapture;
@@ -46,10 +46,12 @@ class SessionCaptureCoordinator
 	FrameImageHistory::Retired Start(SessionGeneration generation);
 	XrResult EnableImageHistory();
 	bool SupportsImageHistory() const;
+
 	FrameImageHistory& Images()
 	{
 		return m_images;
 	}
+
 	void Stop() noexcept;
 	void Retire() noexcept;
 	SnapshotStore& Snapshots();
@@ -71,7 +73,7 @@ class SessionCaptureCoordinator
 	Submission PrepareSubmission(std::shared_ptr<const FrameOutput> output, std::span<const CaptureOutput> captures);
 	Boundary PrepareBoundary();
 
-  private:
+private:
 	bool SupportsLocked(CaptureTarget target) const;
 	CaptureReservation ReserveLocked(CaptureTarget target);
 	void StopImageRecordingLocked() noexcept;
@@ -102,7 +104,7 @@ class SessionCaptureCoordinator
 // Bind runs last in the issue callback, after every throwing admission step.
 class SessionCaptureCoordinator::SequenceCapture
 {
-  public:
+public:
 	SequenceCapture(SessionCaptureCoordinator& owner, const std::optional<SequenceCaptureIntent>& request);
 	~SequenceCapture();
 	SequenceCapture(const SequenceCapture&) = delete;
@@ -110,7 +112,7 @@ class SessionCaptureCoordinator::SequenceCapture
 	const std::optional<SequenceCaptureRecord>& Record() const noexcept;
 	void Bind(std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled);
 
-  private:
+private:
 	SessionCaptureCoordinator& m_owner;
 	std::optional<SequenceCaptureRecord> m_record;
 	bool m_committed = false;
@@ -120,7 +122,7 @@ class SessionCaptureCoordinator::SequenceCapture
 // token readers then outlive every protected frame-acceptance scope.
 class SessionCaptureCoordinator::Submission
 {
-  public:
+public:
 	Submission(SessionCaptureCoordinator& owner, std::shared_ptr<const FrameOutput> output,
 			   std::span<const CaptureOutput> captures);
 	~Submission();
@@ -132,7 +134,7 @@ class SessionCaptureCoordinator::Submission
 	bool Requested() const;
 	void Commit(std::shared_ptr<const FrameRecord> metadata, bool includeOutputs) noexcept;
 
-  private:
+private:
 	SessionCaptureCoordinator& m_owner;
 	std::shared_ptr<const FrameOutput> m_output;
 	std::vector<CaptureOutput> m_outputs;
@@ -148,7 +150,7 @@ class SessionCaptureCoordinator::Submission
 // Failed pinning rolls back only records created by this boundary.
 class SessionCaptureCoordinator::Boundary
 {
-  public:
+public:
 	explicit Boundary(SessionCaptureCoordinator& owner);
 	~Boundary();
 	Boundary(const Boundary&) = delete;
@@ -156,13 +158,14 @@ class SessionCaptureCoordinator::Boundary
 	CaptureBoundaryResult Capture(SessionGeneration generation, const FramePipelineState& pipeline,
 								  std::vector<PresentationSubmission> retained, std::optional<FrameKey> after);
 
-  private:
+private:
 	struct Source
 	{
 		std::shared_ptr<const FrameRecord> metadata;
 		std::shared_ptr<const FrameRecord> cancelled;
 		std::shared_ptr<const FrameOutput> output;
 	};
+
 	void Rollback() noexcept;
 	SessionCaptureCoordinator& m_owner;
 	FrameImageHistory::Retired m_retiredImages;

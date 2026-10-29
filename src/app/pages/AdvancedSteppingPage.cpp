@@ -14,6 +14,7 @@ using panel::Nested;
 using panel::Text;
 using panel::U32;
 using panel::U64;
+
 void AdvancedSteppingPage::Draw()
 {
 	auto& debugger = m_session.Debugger();

@@ -12,6 +12,7 @@ struct ButtonBinding
 	const char* index;
 	bool ControllerControls::* member;
 };
+
 static constexpr std::array s_buttons{
 	ButtonBinding{"primary", "/input/x/click", "/input/a/click", "/input/a/click", &ControllerControls::primary},
 	ButtonBinding{"secondary", "/input/y/click", "/input/b/click", "/input/b/click", &ControllerControls::secondary},
@@ -32,6 +33,7 @@ static constexpr std::array s_buttons{
 	ButtonBinding{"trackpad_click", nullptr, nullptr, nullptr, &ControllerControls::trackpadClick}};
 
 HeadsetActions::HeadsetActions(OpenXrRuntime& runtime) : m_runtime(runtime) {}
+
 HeadsetActions::~HeadsetActions()
 {
 	if (m_runtime.ResourcesPreserved())
@@ -322,10 +324,7 @@ HeadsetInputSample HeadsetActions::Sample(XrTime time, XrSpace baseSpace)
 	if (m_requireNeutral)
 	{
 		const bool observed = std::any_of(sample.hands.begin(), sample.hands.end(),
-										  [](const auto& hand)
-										  {
-											  return hand.controls.connected;
-										  });
+										  [](const auto& hand) { return hand.controls.connected; });
 		if (observed && std::all_of(sample.hands.begin(), sample.hands.end(), NeutralHeadsetControls))
 			m_requireNeutral = false;
 		// Publish a neutral boundary before allowing fresh presses after recovery.

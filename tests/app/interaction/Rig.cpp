@@ -32,35 +32,26 @@ void PilotLiveRuntime(const char* endpoint)
 	SDL_RaiseWindow(test.window.Native());
 	test.runtime.ConnectEndpoint(endpoint);
 	test.workspace.Select(DeviceSel{});
-	const auto frame = [&]
-	{
-		Eventually(
-			[&]
-			{
-				return test.PollEvents() && test.renderer.BeginFrame();
-			},
-			"Pilot UI stalled");
+	const auto frame = [&] {
+		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Pilot UI stalled");
 		if (test.window.TakeFocusLost())
 			test.runtime.FocusLost();
 		test.runtime.Poll();
 		test.workspace.BeginFrame(test.runtime);
 		test.workspace.Draw(test.runtime);
-		const auto transfers = [&](VkCommandBuffer command)
-		{
+		const auto transfers = [&](VkCommandBuffer command) {
 			test.runtime.RecordTransfers(command);
 		};
 		Require(test.renderer.Render(test.runtime.ReadyWaits(), transfers), "Pilot UI frame was not rendered");
 		test.runtime.Submitted(test.renderer.SubmittedFrames());
 	};
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return test.runtime.Snapshot().selectedReady && test.window.Focused();
 		},
 		"Application did not supply a focused live preview");
-	const auto activate = [&](const char* window, const char* label)
-	{
+	const auto activate = [&](const char* window, const char* label) {
 		auto* target = FindPanel(window);
 		Require(target != nullptr, "Control window is missing");
 		ImGui::SetWindowFocus(target->Name);
@@ -72,8 +63,7 @@ void PilotLiveRuntime(const char* endpoint)
 	for (int i = 0; i < 4; ++i)
 		frame();
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return !test.runtime.Snapshot().recordingBusy;
 		},
@@ -88,8 +78,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 	}
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return test.runtime.Snapshot().recording;
 		},
@@ -102,14 +91,12 @@ void PilotLiveRuntime(const char* endpoint)
 	RuntimeConnection observer;
 	observer.Connect(endpoint);
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return observer.Snapshot().state == RuntimeConnectionState::Connected;
 		},
 		"Observer connection failed");
-	const auto observe = [&](simxr::ControlChannel channel = simxr::ControlChannel::Head)
-	{
+	const auto observe = [&](simxr::ControlChannel channel = simxr::ControlChannel::Head) {
 		const auto target = test.runtime.Snapshot();
 		wire::ControlPacket request;
 		request.message.opcode = static_cast<std::uint16_t>(wire::OpCode::SimulationStatus);
@@ -119,8 +106,7 @@ void PilotLiveRuntime(const char* endpoint)
 		Require(ticket != 0, "Cannot observe pilot input");
 		std::optional<simxr::PoseSample> pose;
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				for (const auto& reply : observer.Poll())
 					if (reply.ticket == ticket)
@@ -152,8 +138,7 @@ void PilotLiveRuntime(const char* endpoint)
 	event.button.down = true;
 	SDL_PushEvent(&event);
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return SDL_GetWindowRelativeMouseMode(test.window.Native());
 		},
@@ -185,8 +170,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 	Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()), "Mouse-up retained the pointer");
 	const auto after = observe();
-	const auto distance = [](simxr::PoseSample a, simxr::PoseSample b)
-	{
+	const auto distance = [](simxr::PoseSample a, simxr::PoseSample b) {
 		const auto x = a.pose.position.x - b.pose.position.x, y = a.pose.position.y - b.pose.position.y,
 				   z = a.pose.position.z - b.pose.position.z;
 		return std::sqrt(x * x + y * y + z * z);
@@ -204,8 +188,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 		frame();
 	}
-	const auto click = [&](ImVec2 point, Uint8 button, bool down)
-	{
+	const auto click = [&](ImVec2 point, Uint8 button, bool down) {
 		SDL_Event pointer{};
 		pointer.type = SDL_EVENT_MOUSE_MOTION;
 		pointer.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -228,8 +211,7 @@ void PilotLiveRuntime(const char* endpoint)
 	const auto handBefore = observe(simxr::ControlChannel::LeftPose);
 	click(center, SDL_BUTTON_RIGHT, true);
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return SDL_GetWindowRelativeMouseMode(test.window.Native());
 		},
@@ -265,12 +247,7 @@ void PilotLiveRuntime(const char* endpoint)
 	ManualInputController input;
 	const auto target = test.runtime.Snapshot();
 	input.SetTarget({endpoint, target.session, target.generation});
-	Eventually(
-		[&]
-		{
-			return input.Snapshot().observation != 0;
-		},
-		"Input worker did not observe the session");
+	Eventually([&] { return input.Snapshot().observation != 0; }, "Input worker did not observe the session");
 	auto pose = ObservedDevicePose(input.Snapshot().state, simxr::ControlChannel::Head);
 	const auto start = std::chrono::steady_clock::now();
 	for (unsigned index = 0; index < 120; ++index)
@@ -282,8 +259,7 @@ void PilotLiveRuntime(const char* endpoint)
 		std::this_thread::sleep_for(std::chrono::milliseconds(8));
 	}
 	Eventually(
-		[&]
-		{
+		[&] {
 			const auto state = input.Snapshot();
 			Require(state.error.empty(), state.error.c_str());
 			return !state.posePending &&
@@ -294,21 +270,15 @@ void PilotLiveRuntime(const char* endpoint)
 	std::cout << "PASS input delivery with UI idle: " << input.Snapshot().appliedPoses << " applied poses in "
 			  << seconds << " seconds; final pose matches\n";
 	Require(input.Submit(ReleaseManualInputs{}), "Worker could not release manual controls");
+	Eventually([&] { return input.Snapshot().result.fields.empty(); },
+			   "Manual release did not complete with the UI idle");
 	Eventually(
-		[&]
-		{
-			return input.Snapshot().result.fields.empty();
-		},
-		"Manual release did not complete with the UI idle");
-	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return !test.runtime.Snapshot().recordingBusy;
 		},
 		"Recording refresh did not finish");
-	const auto captureContext = [&](const char* name)
-	{
+	const auto captureContext = [&](const char* name) {
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 		{
 			test.renderer.RequestScreenshot(std::filesystem::path(directory) / name);
@@ -324,8 +294,7 @@ void PilotLiveRuntime(const char* endpoint)
 	event.window.windowID = SDL_GetWindowID(test.window.Native());
 	Require(SDL_PushEvent(&event), "Restore pilot UI focus");
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return test.window.Focused() && !ImGui::GetIO().AppFocusLost;
 		},
@@ -336,8 +305,7 @@ void PilotLiveRuntime(const char* endpoint)
 	{
 		activate("Timeline", "Stop recording");
 		Eventually(
-			[&]
-			{
+			[&] {
 				frame();
 				const auto state = test.runtime.Snapshot();
 				return !state.recording && !state.recordingBusy &&
@@ -380,8 +348,7 @@ void PilotLiveRuntime(const char* endpoint)
 	}
 	captureContext("cemu-recording-saved.bmp");
 	Eventually(
-		[&]
-		{
+		[&] {
 			auto* inspector = FindPanel("Inspector");
 			Require(inspector, "Saved take inspector is missing");
 			const auto play = inspector->GetID("Play take");
@@ -393,8 +360,7 @@ void PilotLiveRuntime(const char* endpoint)
 		"Saved take did not become ready in the Library");
 	activate("Inspector", "Play take");
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return test.workspace.State().timeline.playing && test.runtime.Snapshot().manual;
 		},
@@ -402,8 +368,7 @@ void PilotLiveRuntime(const char* endpoint)
 	captureContext("cemu-recording-replay.bmp");
 	activate("Inspector", "Stop take");
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			const auto state = test.runtime.Snapshot();
 			return !test.workspace.State().timeline.playing && !state.manual && !state.operationPending;
@@ -412,18 +377,14 @@ void PilotLiveRuntime(const char* endpoint)
 	const auto observation = input.Snapshot().observation;
 	input.Refresh();
 	Eventually(
-		[&]
-		{
+		[&] {
 			frame();
 			return input.Snapshot().observation > observation;
 		},
 		"Stopped replay input observation did not arrive");
 	const auto released = ReadObservedSetup(input.Snapshot().state);
 	Require(std::none_of(released.owners.begin(), released.owners.end(),
-						 [](const auto& owner)
-						 {
-							 return owner && owner->kind == simxr::CommandSourceKind::Rig;
-						 }),
+						 [](const auto& owner) { return owner && owner->kind == simxr::CommandSourceKind::Rig; }),
 			"Cancelled replay retained input ownership");
 	std::cout << "PASS Cemu record while piloting, global stop, save, independent reopen, replay and cancel release\n";
 
@@ -444,38 +405,38 @@ void PilotLiveRuntime(const char* endpoint)
 	frame();
 	frame();
 	Require(std::abs(FindPanel("Timeline")->Size.y - timelineHeight) < 1,
-		"Live application timeline did not restore its height");
+			"Live application timeline did not restore its height");
 	const auto previewWidth = FindPanel("GPU preview")->Size.x;
 	activate("Inspector divider tab", "##Edge");
 	frame();
 	frame();
 	Require(!test.workspace.State().inspectorVisible && FindPanel("GPU preview")->Size.x > previewWidth + 100,
-		"Live application inspector did not fold");
+			"Live application inspector did not fold");
 	captureContext("cemu-inspector-folded.bmp");
 	activate("Inspector divider tab", "##Edge");
 	frame();
 	frame();
-	Require(test.workspace.State().inspectorVisible &&
-		std::abs(FindPanel("GPU preview")->Size.x - previewWidth) < 1,
-		"Live application inspector did not restore its width");
+	Require(test.workspace.State().inspectorVisible && std::abs(FindPanel("GPU preview")->Size.x - previewWidth) < 1,
+			"Live application inspector did not restore its width");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors during real application shell folding");
 	std::cout << "PASS live application timeline and inspector fold and restore\n";
 }
+
 void CheckDocumentTreeIdentity()
 {
 	using simxr::control::InspectionValue;
 	Interaction test;
 	RuntimeSession session{test.renderer, ""};
 	DocumentTree tree{session};
-	const auto document = InspectionValue::Object({
-		{"Earlier", InspectionValue::Object({{"One", InspectionValue::Unsigned(1)}})},
-		{"Later", InspectionValue::Object({{"Two", InspectionValue::Unsigned(2)},
-			{"Three", InspectionValue::Unsigned(3)}})}}).Encode("Root");
+	const auto document =
+		InspectionValue::Object({{"Earlier", InspectionValue::Object({{"One", InspectionValue::Unsigned(1)}})},
+								 {"Later", InspectionValue::Object({{"Two", InspectionValue::Unsigned(2)},
+																	{"Three", InspectionValue::Unsigned(3)}})}})
+			.Encode("Root");
 	ImVec2 origin;
 	float height = 0, row = 0;
-	const auto frame = [&]
-	{
+	const auto frame = [&] {
 		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Document tree fixture stalled");
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({440, 650}, ImGuiCond_Always);
@@ -494,8 +455,7 @@ void CheckDocumentTreeIdentity()
 	auto* window = FindPanel("Document identity");
 	Require(window, "Document tree fixture window missing");
 	ImGui::SetWindowFocus(window->Name);
-	const auto clickRow = [&](int index)
-	{
+	const auto clickRow = [&](int index) {
 		auto& io = ImGui::GetIO();
 		io.AddMousePosEvent(origin.x + ImGui::GetStyle().IndentSpacing + 5, origin.y + row * (index + .5f));
 		frame();
@@ -511,10 +471,10 @@ void CheckDocumentTreeIdentity()
 	Require(std::abs(laterOpen - collapsed - 2 * row) < 1, "Later inspection branch did not open");
 	clickRow(1);
 	Require(std::abs(height - laterOpen - row) < 1,
-		"Expanding an earlier inspection branch changed the later branch's fold state");
+			"Expanding an earlier inspection branch changed the later branch's fold state");
 	clickRow(1);
 	Require(std::abs(height - laterOpen) < 1,
-		"Collapsing an earlier inspection branch changed the later branch's fold state");
+			"Collapsing an earlier inspection branch changed the later branch's fold state");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Document tree validation errors");
 	std::cout << "PASS inspection tree sibling identity across expansion and collapse\n";
@@ -528,14 +488,8 @@ void CheckRigPointer()
 	auto scene = SpatialScene::FromTracking(simxr::TrackingSystem::Evaluate(
 		simxr::RuntimeTime{simxr::Duration{200}}, simxr::TrackingState{}, simxr::BodyModel{}));
 	int selected = -1;
-	const auto frame = [&]
-	{
-		Eventually(
-			[&]
-			{
-				return test.PollEvents() && test.renderer.BeginFrame();
-			},
-			"Rig pointer fixture stalled");
+	const auto frame = [&] {
+		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Rig pointer fixture stalled");
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({500, 500}, ImGuiCond_Always);
 		ImGui::Begin("Rig pointer");
@@ -546,8 +500,7 @@ void CheckRigPointer()
 	frame();
 	frame();
 	ImGui::SetWindowFocus("Rig pointer");
-	const auto move = [&](float x, float y)
-	{
+	const auto move = [&](float x, float y) {
 		SDL_WarpMouseInWindow(test.window.Native(), x, y);
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
@@ -557,8 +510,7 @@ void CheckRigPointer()
 		event.motion.y = y;
 		Require(SDL_PushEvent(&event), "Push absolute rig motion");
 	};
-	const auto press = [&](int button, bool down)
-	{
+	const auto press = [&](int button, bool down) {
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.windowID = SDL_GetWindowID(test.window.Native());
@@ -625,12 +577,12 @@ void CheckCapturedRig()
 	record.submission->tracking = TrackingSystem::Evaluate(RuntimeTime{Duration{200}}, TrackingState{}, BodyModel{});
 	control::InspectionStore store;
 	control::Message document;
-	document.fields = {control::Field::U64(control::tag::InspectionId, 1),
+	document.fields = {
+		control::Field::U64(control::tag::InspectionId, 1),
 		control::Field::Bytes(control::tag::Document, control::InspectFrame(store, {1}, record)->document)};
 	workspace.Handle({PanelWork::Inspect, 1}, document);
 	ImVec2 expandedSize;
-	const auto frame = [&]
-	{
+	const auto frame = [&] {
 		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Captured rig fixture stalled");
 		page.Prepare(shell.selection, view);
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
@@ -643,8 +595,7 @@ void CheckCapturedRig()
 		ImGui::End();
 		Require(test.renderer.Render(), "Captured rig fixture did not render");
 	};
-	const auto localRight = [&]
-	{
+	const auto localRight = [&] {
 		const auto point = page.RigDevicePoints()[2];
 		const auto area = page.RigViewRect();
 		return ImVec2{point.x - area.x, point.y - area.y};
@@ -654,22 +605,24 @@ void CheckCapturedRig()
 	const auto initialArea = page.RigViewRect();
 	const auto captured = localRight();
 	Require(initialArea.width > 0 && captured.x > 0 && captured.y > 0,
-		"Captured rig did not display recorded hand geometry while following live output");
+			"Captured rig did not display recorded hand geometry while following live output");
 	view.time.cursor.frame = 2;
 	frame();
 	Require(std::hypot(localRight().x - captured.x, localRight().y - captured.y) < .01f,
-		"The live cursor changed the selected frame's recorded pose");
+			"The live cursor changed the selected frame's recorded pose");
 	expandedSize = {initialArea.width, initialArea.height};
 	page.SetExpanded(true);
 	frame();
 	Require(std::hypot(localRight().x - captured.x, localRight().y - captured.y) < .01f,
-		"Expanding a captured rig changed its recorded pose source");
-	Require(std::holds_alternative<FrameSel>(shell.selection) && workspace.Selected()->document.Find(control::tag::Document)->value ==
-		document.Find(control::tag::Document)->value, "Viewing a recorded rig changed its capture");
+			"Expanding a captured rig changed its recorded pose source");
+	Require(std::holds_alternative<FrameSel>(shell.selection) &&
+				workspace.Selected()->document.Find(control::tag::Document)->value ==
+					document.Find(control::tag::Document)->value,
+			"Viewing a recorded rig changed its capture");
 	shell.selection = FrameSel{{1, 1, 2}, 1};
 	frame();
 	Require(page.Active() && page.RigViewRect().width == 0 && page.RigDevicePoints()[2].x == 0,
-		"Missing selected-frame metadata reused another capture's rig geometry");
+			"Missing selected-frame metadata reused another capture's rig geometry");
 	auto* window = FindPanel("Captured rig");
 	Require(window, "Captured rig fixture window missing");
 	ImGui::ActivateItemByID(window->GetID("Back to image##Recorded rig unavailable"));
@@ -695,8 +648,8 @@ void CheckSpatialWidgetLifecycle()
 	scheduler.Apply(FrameId{1}, SimulationTime{Duration{100}}, RuntimeTime{Duration{200}}, {});
 	ManualInputSnapshot snapshot;
 	snapshot.observation = 1;
-	snapshot.state.fields.push_back(control::Field::Bytes(control::tag::Document,
-		control::SimulationState(scheduler.Snapshot()).Encode()));
+	snapshot.state.fields.push_back(
+		control::Field::Bytes(control::tag::Document, control::SimulationState(scheduler.Snapshot()).Encode()));
 	editor.Observe(snapshot, false);
 	Selection selection = DeviceSel{DevicePage::Right};
 	bool placement = true, historical = false;
@@ -706,14 +659,13 @@ void CheckSpatialWidgetLifecycle()
 	record.key = {{1}, {1}};
 	record.stage = FrameStage::Submitted;
 	record.submission.emplace();
-	record.submission->tracking = TrackingSystem::Evaluate(RuntimeTime{Duration{200}},
-		ReadObservedSetup(snapshot.state).values.tracking, BodyModel{});
+	record.submission->tracking = TrackingSystem::Evaluate(
+		RuntimeTime{Duration{200}}, ReadObservedSetup(snapshot.state).values.tracking, BodyModel{});
 	control::InspectionStore store;
 	control::Message document;
-	document.fields.push_back(control::Field::Bytes(control::tag::Document,
-		control::InspectFrame(store, {1}, record)->document));
-	const auto frame = [&]
-	{
+	document.fields.push_back(
+		control::Field::Bytes(control::tag::Document, control::InspectFrame(store, {1}, record)->document));
+	const auto frame = [&] {
 		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Spatial fixture stalled");
 		editor.SetContext(!historical, historical, eyes, historical ? &document : nullptr, historyIdentity);
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
@@ -727,14 +679,16 @@ void CheckSpatialWidgetLifecycle()
 		editor.EndFrame();
 		Require(test.renderer.Render(), "Spatial fixture did not render");
 	};
-	const auto pump = [&](int count) { for (int index = 0; index < count; ++index) frame(); };
+	const auto pump = [&](int count) {
+		for (int index = 0; index < count; ++index)
+			frame();
+	};
 	pump(3);
 	auto* window = FindPanel("Spatial lifecycle");
 	Require(window, "Spatial fixture window missing");
 	ImGui::SetWindowFocus(window->Name);
 	const auto orb = ImHashStr("Rotation ball", 0, window->GetID(2));
-	const auto activateYaw = [&]
-	{
+	const auto activateYaw = [&] {
 		ImGui::ActivateItemByID(ImHashStr("##Yaw", 0, orb));
 		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
 		frame();
@@ -772,10 +726,11 @@ void CheckSpatialWidgetLifecycle()
 	pump(2);
 	const auto missing = editor.RigDevicePoints()[2];
 	Require(std::hypot(missing.x - back.x, missing.y - back.y) < .01f,
-		"Historical frame without eye metadata reused another frame's camera");
+			"Historical frame without eye metadata reused another frame's camera");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Spatial lifecycle validation errors");
-	std::cout << "PASS numeric gesture ownership, hidden widget retirement, rejected undo and historical camera isolation\n";
+	std::cout
+		<< "PASS numeric gesture ownership, hidden widget retirement, rejected undo and historical camera isolation\n";
 }
 
 void CheckExpandedTrackerUi()
@@ -798,12 +753,13 @@ void CheckExpandedTrackerUi()
 		scheduler.Start(0, config);
 		scheduler.Apply({1}, {Duration{100}}, {Duration{200}}, {});
 		control::Message state;
-		state.fields.push_back(control::Field::Bytes(control::tag::Document,
-			control::SimulationState(scheduler.Snapshot()).Encode()));
+		state.fields.push_back(
+			control::Field::Bytes(control::tag::Document, control::SimulationState(scheduler.Snapshot()).Encode()));
 		panel.ObserveState(state);
-		auto scene = SpatialScene::FromTracking(TrackingSystem::Evaluate({Duration{200}}, config.tracking, BodyModel{}));
+		auto scene =
+			SpatialScene::FromTracking(TrackingSystem::Evaluate({Duration{200}}, config.tracking, BodyModel{}));
 		Require(std::count(scene.available.begin() + 3, scene.available.end(), true) == count,
-			"Spatial scene omitted available trackers");
+				"Spatial scene omitted available trackers");
 		RigViewState view;
 		int selected = count ? static_cast<int>(count + 2) : -1;
 		for (unsigned frame = 0; frame < 3; ++frame)
@@ -822,7 +778,8 @@ void CheckExpandedTrackerUi()
 			ImGui::End();
 			if (frame == 2)
 				if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
-					test.renderer.RequestScreenshot(std::filesystem::path(directory) / ("trackers-" + std::to_string(count) + ".bmp"));
+					test.renderer.RequestScreenshot(std::filesystem::path(directory) /
+													("trackers-" + std::to_string(count) + ".bmp"));
 			Require(test.renderer.Render(), "Expanded tracker UI did not render");
 		}
 		if (count == 64)
@@ -832,6 +789,7 @@ void CheckExpandedTrackerUi()
 	Require(test.validation->errors.load() == 0, "Expanded tracker UI validation errors");
 	std::cout << "PASS expanded tracker controls, empty inventory and complete spatial display\n";
 }
+
 void ConfigureObservedDevices()
 {
 	Interaction test;
@@ -846,13 +804,13 @@ void ConfigureObservedDevices()
 	simxr::CommandScheduler scheduler;
 	std::optional<std::array<std::string, 2>> effectiveProfiles;
 	scheduler.Start(0, initial);
-	const auto observe = [&](std::uint64_t frame)
-	{
+	const auto observe = [&](std::uint64_t frame) {
 		scheduler.Apply(simxr::FrameId{frame}, simxr::SimulationTime{simxr::Duration{100}},
 						simxr::RuntimeTime{simxr::Duration{200}}, {});
 		simxr::control::Message state;
 		state.fields.push_back(simxr::control::Field::Bytes(
-			simxr::control::tag::Document, simxr::control::SimulationState(scheduler.Snapshot(), false, {}, {}, effectiveProfiles).Encode()));
+			simxr::control::tag::Document,
+			simxr::control::SimulationState(scheduler.Snapshot(), false, {}, {}, effectiveProfiles).Encode()));
 		panel.ObserveState(state);
 	};
 	observe(1);
@@ -861,14 +819,8 @@ void ConfigureObservedDevices()
 	bool supported = true;
 	bool advanced = false, showState = true, profileScreenshot = false;
 	ImVec2 panelSize{400, 650};
-	const auto frame = [&](bool headerOnly = false)
-	{
-		Eventually(
-			[&]
-			{
-				return test.PollEvents() && test.renderer.BeginFrame();
-			},
-			"Live field UI stalled");
+	const auto frame = [&](bool headerOnly = false) {
+		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Live field UI stalled");
 		test.workspace.BeginFrame(test.runtime);
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize(panelSize, ImGuiCond_Always);
@@ -885,7 +837,7 @@ void ConfigureObservedDevices()
 		if (profileScreenshot)
 		{
 			Require(ImGui::GetItemRectMax().x <= ImGui::GetCurrentWindow()->InnerRect.Max.x,
-				"Profile editor extends outside the visible inspector");
+					"Profile editor extends outside the visible inspector");
 			ImGui::SetScrollHereY(1.0f);
 		}
 		ImGui::End();
@@ -899,8 +851,7 @@ void ConfigureObservedDevices()
 	for (int i = 0; i < 3; ++i)
 		frame();
 	auto* window = FindPanel("Configuration workflow");
-	const auto activate = [&](const char* label)
-	{
+	const auto activate = [&](const char* label) {
 		ImGui::SetWindowFocus(window->Name);
 		ImGui::ActivateItemByID(window->GetID(label));
 		frame();
@@ -908,8 +859,7 @@ void ConfigureObservedDevices()
 				(std::string("Live field did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
 	};
-	const auto openTracking = [&]
-	{
+	const auto openTracking = [&] {
 		ImGui::SetWindowFocus(window->Name);
 		const auto page = static_cast<int>(std::get<DeviceSel>(selection).page);
 		const auto scope = ImHashData(&page, sizeof(page), window->GetID("Tracking"));
@@ -920,16 +870,14 @@ void ConfigureObservedDevices()
 		Require(!popups.empty() && popups.back().Window, "Device state menu did not open");
 		return popups.back().Window;
 	};
-	const auto tracking = [&](const char* label)
-	{
+	const auto tracking = [&](const char* label) {
 		ImGui::ActivateItemByID(openTracking()->GetID(label));
 		frame(true);
 		Require(edit && std::holds_alternative<ManualTransaction>(*edit),
 				(std::string("Tracking menu did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
 	};
-	const auto beginValue = [&](const char* label, const char* value)
-	{
+	const auto beginValue = [&](const char* label, const char* value) {
 		ImGui::SetWindowFocus(window->Name);
 		ImGui::ActivateItemByID(window->GetID(label));
 		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
@@ -946,8 +894,7 @@ void ConfigureObservedDevices()
 		Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Typing did not submit a live value");
 		return std::get<ManualTransaction>(*edit);
 	};
-	const auto typeValue = [&](const char* label, const char* value)
-	{
+	const auto typeValue = [&](const char* label, const char* value) {
 		const auto changed = beginValue(label, value);
 		auto& io = ImGui::GetIO();
 		io.AddKeyEvent(ImGuiKey_Enter, true);
@@ -993,7 +940,8 @@ void ConfigureObservedDevices()
 	command.source = {simxr::CommandSourceKind::Manual, 77};
 	command.target.frame = simxr::FrameId{2};
 	command.commands = transaction.commands;
-	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "Tracking failure fixture was not admitted");
+	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued,
+			"Tracking failure fixture was not admitted");
 	panel.SetManualSource(command.source);
 	observe(2);
 	panel.ObserveDelivery(false, {});
@@ -1005,22 +953,23 @@ void ConfigureObservedDevices()
 	command.id = 2;
 	command.target.frame = simxr::FrameId{3};
 	command.commands = transaction.commands;
-	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "Tracking recovery fixture was not admitted");
+	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued,
+			"Tracking recovery fixture was not admitted");
 	observe(3);
 	panel.ObserveDelivery(false, {});
 	frame();
 	showState = false;
 	frame(true);
 	const int headPage = static_cast<int>(DevicePage::Head);
-	ImGui::ActivateItemByID(ImHashStr("Device state", 0,
-		ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
+	ImGui::ActivateItemByID(
+		ImHashStr("Device state", 0, ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
 	frame(true);
 	Require(!edit, "Historical header exposed live state controls");
 	showState = true;
 	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
-		for (const auto page : {DevicePage::Head, DevicePage::Left, DevicePage::Body, DevicePage::Gaze,
-							   DevicePage::Trackers})
+		for (const auto page :
+			 {DevicePage::Head, DevicePage::Left, DevicePage::Body, DevicePage::Gaze, DevicePage::Trackers})
 		{
 			selection = DeviceSel{page};
 			frame();
@@ -1044,8 +993,8 @@ void ConfigureObservedDevices()
 	selection = DeviceSel{DevicePage::Head};
 	panel.ResetObservations();
 	frame();
-	ImGui::ActivateItemByID(ImHashStr("Device state", 0,
-		ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
+	ImGui::ActivateItemByID(
+		ImHashStr("Device state", 0, ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
 	frame();
 	Require(!edit, "Disconnected field submitted stale settings");
 	initial.views.ipd = .061f;
@@ -1060,8 +1009,7 @@ void ConfigureObservedDevices()
 	{
 		auto& g = *ImGui::GetCurrentContext();
 		auto& io = ImGui::GetIO();
-		const auto hover = [&](const char* label)
-		{
+		const auto hover = [&](const char* label) {
 			const auto id = window->GetID(label);
 			ImGui::SetFocusID(id, window);
 			frame();
@@ -1077,29 +1025,31 @@ void ConfigureObservedDevices()
 			Require(SDL_PushEvent(&event), "Push field pointer");
 			frame();
 		};
-		const auto rightClick = [&](bool shift)
-		{
+		const auto rightClick = [&](bool shift) {
 			io.AddKeyEvent(ImGuiMod_Shift, shift);
 			io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
 			frame();
 			io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
 			frame();
 		};
-		const auto menuItem = [&](const char* label)
-		{
+		const auto menuItem = [&](const char* label) {
 			frame();
 			Require(!g.OpenPopupStack.empty() && g.OpenPopupStack.back().Window, "Field context menu did not open");
 			ImGui::ActivateItemByID(g.OpenPopupStack.back().Window->GetID(label));
 			frame();
 		};
 		hover("##IPD");
+
 		struct WheelCase
 		{
 			bool shift, control;
 			float wheel, expected;
 		};
-		for (const auto& step : {WheelCase{false, false, -1, .062f}, {true, false, 1, .072f},
-								{false, true, -1, .0719f}, {true, true, -1, .0718f}})
+
+		for (const auto& step : {WheelCase{false, false, -1, .062f},
+								 {true, false, 1, .072f},
+								 {false, true, -1, .0719f},
+								 {true, true, -1, .0718f}})
 		{
 			io.AddKeyEvent(ImGuiMod_Shift, step.shift);
 			io.AddKeyEvent(ImGuiMod_Ctrl, step.control);
@@ -1211,7 +1161,8 @@ void ConfigureObservedDevices()
 	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "Pad owner fixture was not admitted");
 	observe(2);
 	Require(scheduler.Snapshot().applied->owners[static_cast<std::size_t>(simxr::ControlChannel::RightControls)] ==
-		command.source, "Pad owner fixture did not acquire the controls channel");
+				command.source,
+			"Pad owner fixture did not acquire the controls channel");
 	panel.SetManualSource(simxr::CommandSource{simxr::CommandSourceKind::Manual, 77});
 	frame();
 	Require(!edit, "Other-owned input pad submitted an unsolicited edit");
@@ -1226,7 +1177,8 @@ void ConfigureObservedDevices()
 			frame();
 			frame();
 			frame();
-			test.renderer.RequestScreenshot(directory / (scale == 1 ? "physical-profiles.bmp" : "physical-profiles-narrow.bmp"));
+			test.renderer.RequestScreenshot(directory /
+											(scale == 1 ? "physical-profiles.bmp" : "physical-profiles-narrow.bmp"));
 			frame();
 		}
 		test.workspace.SetScale(1);
@@ -1283,7 +1235,7 @@ void ConfigureObservedDevices()
 	command.source = {simxr::CommandSourceKind::Rig, 51};
 	command.target.frame = simxr::FrameId{2};
 	const simxr::ControlChannel ownedChannels[] = {simxr::ControlChannel::Head, simxr::ControlChannel::Gaze,
-													 simxr::ControlChannel::Trackers, simxr::ControlChannel::Views};
+												   simxr::ControlChannel::Trackers, simxr::ControlChannel::Views};
 	command.commands.clear();
 	for (const auto channel : ownedChannels)
 		command.commands.emplace_back(simxr::TakeControl{channel, true});
@@ -1302,8 +1254,7 @@ void ConfigureObservedDevices()
 			"Advanced replacement fixture did not enable explicit takeover");
 	advanced = false;
 	panel.ObserveDelivery(false, {});
-	const auto blockedAction = [&](const char* label, bool numeric = false)
-	{
+	const auto blockedAction = [&](const char* label, bool numeric = false) {
 		ImGui::ActivateItemByID(window->GetID(label));
 		if (numeric)
 			ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
@@ -1317,11 +1268,10 @@ void ConfigureObservedDevices()
 	blockedAction("Reset page");
 	selection = DeviceSel{DevicePage::Head};
 	frame();
-	ImGui::ActivateItemByID(ImHashStr("Device state", 0,
-		ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
+	ImGui::ActivateItemByID(
+		ImHashStr("Device state", 0, ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
 	frame();
-	Require(!edit && ImGui::GetCurrentContext()->OpenPopupStack.empty(),
-			"Other-owned device opened its state menu");
+	Require(!edit && ImGui::GetCurrentContext()->OpenPopupStack.empty(), "Other-owned device opened its state menu");
 	blockedAction("##X", true);
 	blockedAction("##IPD", true);
 	blockedAction("Reset page");
@@ -1345,7 +1295,8 @@ void ConfigureObservedDevices()
 	frame();
 	Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Head takeover did not submit");
 	transaction = std::get<ManualTransaction>(*edit);
-	Require(transaction.commands.size() == 1 && std::holds_alternative<simxr::TakeControl>(transaction.commands.front()) &&
+	Require(transaction.commands.size() == 1 &&
+				std::holds_alternative<simxr::TakeControl>(transaction.commands.front()) &&
 				std::get<simxr::TakeControl>(transaction.commands.front()).channel == simxr::ControlChannel::Head &&
 				std::get<simxr::TakeControl>(transaction.commands.front()).replace,
 			"Numeric field finalization replaced the explicit Head takeover");
@@ -1370,16 +1321,15 @@ void ConfigureObservedDevices()
 	Require(!edit && !panel.Active(), "Device selection transferred a numeric edit to the matching field ID");
 	frame();
 	Require(!edit, "Retired numeric field submitted a delayed final value");
-	auto limitedDocument = simxr::control::SimulationState(scheduler.Snapshot(), false, {}, {}, effectiveProfiles).Encode();
-	const auto omitExtensions = [&](auto&& self, std::vector<std::byte>& encoded) -> void
-	{
+	auto limitedDocument =
+		simxr::control::SimulationState(scheduler.Snapshot(), false, {}, {}, effectiveProfiles).Encode();
+	const auto omitExtensions = [&](auto&& self, std::vector<std::byte>& encoded) -> void {
 		auto node = simxr::control::DecodeFields(encoded).fields;
 		const auto type = static_cast<simxr::control::InspectionType>(*node[1].AsU32());
 		if (type == simxr::control::InspectionType::Object)
 		{
 			auto children = simxr::control::DecodeFields(node[2].value).fields;
-			std::erase_if(children, [](const auto& child)
-			{
+			std::erase_if(children, [](const auto& child) {
 				const auto fields = simxr::control::DecodeFields(child.value).fields;
 				const auto name = fields.front().AsText();
 				return name == "joints" || name == "pose_override";
@@ -1433,8 +1383,7 @@ void ConfigureObservedDevices()
 	statusSetup.values.tracking.trackers[0].connected = statusSetup.values.tracking.trackers[0].tracked = true;
 	CompanionSettings statusSettings;
 	std::array<ImU32, 7> dotColors{};
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({560, 100}, ImGuiCond_Always);
 		ImGui::Begin("Observed device status");
@@ -1446,8 +1395,7 @@ void ConfigureObservedDevices()
 		dotColors.fill(0);
 		for (std::size_t index = 1; index < dotColors.size(); ++index)
 		{
-			const ImVec2 dot{origin.x + width * (index + .5f) + 8 * unit,
-							 origin.y + DeviceTabsHeight() / 2 + 6 * unit};
+			const ImVec2 dot{origin.x + width * (index + .5f) + 8 * unit, origin.y + DeviceTabsHeight() / 2 + 6 * unit};
 			for (int vertex = vertices.Size - 1; vertex >= 0; --vertex)
 			{
 				const auto& point = vertices[vertex];

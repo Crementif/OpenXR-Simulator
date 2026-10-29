@@ -7,8 +7,7 @@ namespace simxr
 {
 VulkanError::VulkanError(VkResult result, const char* operation)
 	: std::runtime_error(std::string(operation) + ": Vulkan result " + std::to_string(result)), m_result(result)
-{
-}
+{}
 
 VkResult VulkanError::Result() const noexcept
 {
@@ -46,6 +45,7 @@ VulkanDevice::~VulkanDevice()
 {
 	ClearCommands();
 }
+
 std::unique_ptr<VulkanCommands> VulkanDevice::AcquireCommands()
 {
 	std::unique_ptr<VulkanCommands> commands;
@@ -64,6 +64,7 @@ std::unique_ptr<VulkanCommands> VulkanDevice::AcquireCommands()
 		commands = std::make_unique<VulkanCommands>(binding.device, binding.queueFamily);
 	return commands;
 }
+
 void VulkanDevice::RecycleCommands(std::unique_ptr<VulkanCommands> commands)
 {
 	std::lock_guard lock(m_commandsMutex);
@@ -76,6 +77,7 @@ void VulkanDevice::RecycleCommands(std::unique_ptr<VulkanCommands> commands)
 			return;
 		}
 }
+
 void VulkanDevice::ClearCommands()
 {
 	decltype(m_commands) retired;

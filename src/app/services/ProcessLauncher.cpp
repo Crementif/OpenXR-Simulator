@@ -5,13 +5,13 @@
 
 namespace simxr::app
 {
-ProcessLauncher::ProcessLauncher(ProcessSupervisor& supervisor) : m_supervisor(supervisor)
-{
-}
+ProcessLauncher::ProcessLauncher(ProcessSupervisor& supervisor) : m_supervisor(supervisor) {}
+
 ProcessLauncher::~ProcessLauncher()
 {
 	CancelRestart();
 }
+
 bool ProcessLauncher::Launch(LaunchProfile profile)
 {
 	ValidateLaunchProfile(profile);
@@ -37,6 +37,7 @@ bool ProcessLauncher::RequestClose()
 	std::lock_guard lock(m_mutex);
 	return m_observation && m_observation->RequestClose();
 }
+
 bool ProcessLauncher::Restart(std::uint64_t expectedProcess, LaunchProfile profile)
 {
 	ValidateLaunchProfile(profile);
@@ -47,11 +48,13 @@ bool ProcessLauncher::Restart(std::uint64_t expectedProcess, LaunchProfile profi
 	std::lock_guard lock(m_mutex);
 	return m_observation && m_observation->RequestRestart(expectedProcess, std::move(profile));
 }
+
 bool ProcessLauncher::CancelRestart()
 {
 	std::lock_guard lock(m_mutex);
 	return m_observation && m_observation->CancelRestart();
 }
+
 LaunchSnapshot ProcessLauncher::Snapshot() const
 {
 	std::shared_ptr<LaunchObservation> observation;

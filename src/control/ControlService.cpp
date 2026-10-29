@@ -34,10 +34,12 @@ static ImageHistoryView HistoryView(const Message& request, const Session& sessi
 		return ImageHistoryView::Quads;
 	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported image-history target"};
 }
+
 static CaptureTarget HistoryTarget(ImageHistoryView view)
 {
 	return {view == ImageHistoryView::Quads ? CaptureKind::QuadLayers : CaptureKind::ComposedEyes};
 }
+
 static Message Response(const Message& request, ErrorCode error = ErrorCode::Ok, const char* detail = nullptr)
 {
 	Message response;
@@ -50,15 +52,18 @@ static Message Response(const Message& request, ErrorCode error = ErrorCode::Ok,
 		response.fields.push_back(Field::Text(tag::Detail, detail));
 	return response;
 }
+
 static Field Nested(std::uint16_t name, std::vector<Field> fields)
 {
 	return Field::Bytes(name, EncodeFields(fields));
 }
+
 static std::uint64_t ImageCapabilitiesMask(ImageCapabilities capabilities, bool handles)
 {
 	return (capabilities.imageExport ? static_cast<std::uint64_t>(Capability::ImageExport) : 0) |
 		   (capabilities.gpuPreview && handles ? static_cast<std::uint64_t>(Capability::GpuPreview) : 0);
 }
+
 struct ControlService::Client
 {
 	ConnectionId identity;
@@ -71,14 +76,11 @@ struct ControlService::Client
 	// Destroy admission first so its close observer can still retire the
 	// connection's leases and simulation source using live member owners.
 	ConnectionRequests requests;
+
 	Client(Runtime& runtime, bool nativeHandles)
-		: nativeHandles(nativeHandles), requests(
-											[this, &runtime]
-											{
-												Retire(runtime);
-											})
-	{
-	}
+		: nativeHandles(nativeHandles), requests([this, &runtime] { Retire(runtime); })
+	{}
+
 	void Retire(Runtime& runtime) noexcept
 	{
 		auto retiredSimulation = std::move(simulation);
@@ -97,11 +99,12 @@ struct ControlService::Publication
 	ConnectionImages::Publication images;
 	std::optional<std::uint64_t> inspection;
 	bool committed = false;
+
 	Publication(Client& client, ConnectionImages::RetiredResource& retired, ImageWindowReader& retiredWindow)
 		: store(client.inspections), windows(client.windows), retiredWindow(retiredWindow),
 		  images(client.images, retired)
-	{
-	}
+	{}
+
 	~Publication()
 	{
 		if (window && !committed)
@@ -109,6 +112,7 @@ struct ControlService::Publication
 		if (inspection && !committed)
 			store.Release(*inspection);
 	}
+
 	void Commit() noexcept
 	{
 		committed = true;
@@ -176,6 +180,7 @@ std::uint64_t ControlService::ServiceCapabilities(std::uint16_t minor) const
 		capabilities |= static_cast<std::uint64_t>(Capability::LiveHaptics);
 	return capabilities;
 }
+
 std::uint64_t ControlService::AdvertisedCapabilities(const Client& client, std::uint16_t minor) const
 {
 	auto capabilities = ServiceCapabilities(minor);
@@ -191,13 +196,11 @@ std::uint64_t ControlService::AdvertisedCapabilities(const Client& client, std::
 std::shared_ptr<ControlService::Client> ControlService::Find(ConnectionId id)
 {
 	std::lock_guard lock(m_mutex);
-	const auto entry = std::find_if(m_clients.begin(), m_clients.end(),
-									[&](const auto& value)
-									{
-										return value.first == id;
-									});
+	const auto entry =
+		std::find_if(m_clients.begin(), m_clients.end(), [&](const auto& value) { return value.first == id; });
 	return entry == m_clients.end() ? nullptr : entry->second;
 }
+
 const ControlSession& ControlService::Resolve(Client& client, const Message& request, HeldReaders& held)
 {
 	m_sessions.Discover(held.sessions);
@@ -305,6 +308,7 @@ Message ControlService::DispatchGame(Client& client, const Message& request)
 	response.fields.push_back(Field::Bytes(tag::Document, document.Encode(), true));
 	return response;
 }
+
 Message ControlService::DispatchWindow(Client& client, const Message& request, HeldReaders& held,
 									   Publication& publication, Message response)
 {
@@ -337,6 +341,7 @@ Message ControlService::DispatchWindow(Client& client, const Message& request, H
 						 image.output, *m_images, client.nativeHandles, publication.images);
 	return response;
 }
+
 Message ControlService::DispatchFrame(Client& client, const Message& request, const ControlSession& binding,
 									  HeldReaders& held, Publication& publication, Message response)
 {
@@ -554,18 +559,18 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 		const CaptureId id{RequireRequestU64(request, tag::CaptureId)};
 		const SessionGeneration generation{RequireRequestU64(request, tag::Generation)};
 		bool released = false;
-		const auto release = [&]
-		{
+		const auto release = [&] {
 			held.capture = session->Captures().Read(id);
 			if (!held.capture)
 				return;
 			if (held.capture->generation != generation)
 				throw ControlRequestError{ErrorCode::StaleGeneration, "Sequence capture belongs to another run"};
-			const bool owned = ApplicationOwnedSequence(request)
-				? held.capture->metadata && held.capture->metadata->sequenceCapture &&
-					held.capture->metadata->sequenceCapture->request.owner == ApplicationAutomationSource &&
-					held.capture->metadata->sequenceCapture->reservation.id == id
-				: client.simulation->OwnsSequenceCapture(*held.capture);
+			const bool owned =
+				ApplicationOwnedSequence(request)
+					? held.capture->metadata && held.capture->metadata->sequenceCapture &&
+						  held.capture->metadata->sequenceCapture->request.owner == ApplicationAutomationSource &&
+						  held.capture->metadata->sequenceCapture->reservation.id == id
+					: client.simulation->OwnsSequenceCapture(*held.capture);
 			if (!owned)
 				throw ControlRequestError{ErrorCode::Conflict, "Sequence capture belongs to another source"};
 			released = session->Captures().Release(id);
@@ -625,6 +630,7 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 		throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported frame inspection operation"};
 	}
 }
+
 Message ControlService::DispatchDebugger(Client& client, const Message& request, const ControlSession& binding,
 										 HeldReaders& held, Message response)
 {
@@ -756,6 +762,7 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 		throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported operation"};
 	}
 }
+
 Message ControlService::Dispatch(Client& client, const Message& request, HeldReaders& held, Publication& publication,
 								 const ControlPacket& incoming, ControlPacket& outgoing)
 {
@@ -843,11 +850,9 @@ Message ControlService::Dispatch(Client& client, const Message& request, HeldRea
 		{
 			const auto& binding = Resolve(client, request, held);
 			if (request.opcode == static_cast<std::uint16_t>(OpCode::ReadGameObservations) &&
-				!binding.session->WithCommandGeneration({RequireRequestU64(request, tag::Generation)},
-														[&]
-														{
-															mapping = binding.session->Scheduler().NativeClockMapping();
-														}))
+				!binding.session->WithCommandGeneration({RequireRequestU64(request, tag::Generation)}, [&] {
+					mapping = binding.session->Scheduler().NativeClockMapping();
+				}))
 				throw ControlRequestError{ErrorCode::StaleGeneration, "Session changed before SDK clock observation"};
 		}
 		auto result = DispatchGame(client, request);
@@ -880,6 +885,7 @@ Message ControlService::Dispatch(Client& client, const Message& request, HeldRea
 		return DispatchFrame(client, request, binding, held, publication, std::move(response));
 	return DispatchDebugger(client, request, binding, held, std::move(response));
 }
+
 ControlService::ControlService(Runtime& runtime, std::size_t capacity, std::shared_ptr<ImageInspectionProvider> images)
 	: m_runtime(runtime), m_images(std::move(images)), m_capacity(capacity), m_sessions(runtime)
 {
@@ -889,10 +895,12 @@ ControlService::ControlService(Runtime& runtime, std::size_t capacity, std::shar
 	// the registry mutex is held: its destructor may retire runtime sources.
 	m_clients.reserve(capacity);
 }
+
 ControlService::~ControlService()
 {
 	Close();
 }
+
 std::optional<ConnectionId> ControlService::Connect(bool nativeHandles)
 {
 	auto client = std::make_shared<Client>(m_runtime, nativeHandles);
@@ -905,16 +913,14 @@ std::optional<ConnectionId> ControlService::Connect(bool nativeHandles)
 	m_clients.push_back({id, std::move(client)});
 	return id;
 }
+
 void ControlService::Disconnect(ConnectionId connection) noexcept
 {
 	std::shared_ptr<Client> client;
 	{
 		std::lock_guard lock(m_mutex);
 		const auto found = std::find_if(m_clients.begin(), m_clients.end(),
-										[&](const auto& entry)
-										{
-											return entry.first == connection;
-										});
+										[&](const auto& entry) { return entry.first == connection; });
 		if (found == m_clients.end())
 			return;
 		client = std::move(found->second);
@@ -925,12 +931,12 @@ void ControlService::Disconnect(ConnectionId connection) noexcept
 	// admitted request submitted another command while disconnect was pending.
 	m_runtime.Game().Disconnect(client->identity.value, true);
 }
+
 ControlPacket ControlService::HandlePacket(ConnectionId connection, const ControlPacket& packet)
 {
 	const auto& request = packet.message;
 	std::uint16_t minor = std::min(request.minor, ProtocolMinor);
-	const auto failureResponse = [&](ErrorCode error, const char* detail)
-	{
+	const auto failureResponse = [&](ErrorCode error, const char* detail) {
 		ControlPacket response;
 		response.message = Response(request, error, detail);
 		response.message.minor = minor;
@@ -1006,6 +1012,7 @@ ControlPacket ControlService::HandlePacket(ConnectionId connection, const Contro
 		return failureResponse(ErrorCode::Internal, "Control request failed");
 	}
 }
+
 void ControlService::Close() noexcept
 {
 	for (;;)

@@ -15,36 +15,40 @@ namespace simxr::app
 {
 class PreviewImages;
 class RuntimeSession;
+
 // The CSV worker owns copied frame metadata. Retained snapshot readers stay
 // protected from eviction until their sequential image exports settle.
 class RangeExportTask
 {
-  public:
+public:
 	explicit RangeExportTask(RuntimeSession& session);
 	bool Start(FrameIdentity first, FrameIdentity last, std::uint64_t epoch, const std::string& path);
 	void Poll();
 	bool Busy() const;
+
 	const std::string& Metadata() const noexcept
 	{
 		return m_metadata;
 	}
+
 	const std::string& Images() const noexcept
 	{
 		return m_images;
 	}
 
-  private:
+private:
 	class Protection
 	{
-	  public:
+	public:
 		Protection(PreviewImages& preview, std::span<const std::uint64_t> images);
 		~Protection();
 		Protection(const Protection&) = delete;
 		Protection& operator=(const Protection&) = delete;
 
-	  private:
+	private:
 		PreviewImages& m_preview;
 	};
+
 	void Finish(std::string result);
 	RuntimeSession& m_session;
 	std::future<void> m_csv;

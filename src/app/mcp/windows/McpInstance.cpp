@@ -18,7 +18,7 @@ static std::wstring NormalizedPath(const std::filesystem::path& path)
 	if (source.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
 		throw std::invalid_argument("MCP app path is too long");
 	const auto count = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, source.data(),
-									static_cast<int>(source.size()), nullptr, 0, nullptr, nullptr, 0);
+									 static_cast<int>(source.size()), nullptr, 0, nullptr, nullptr, 0);
 	if (!count)
 		throw windows::Error("Cannot normalize MCP app path");
 	std::wstring result(count, L'\0');
@@ -56,8 +56,8 @@ static std::string SessionInstanceKey(const std::filesystem::path& executable)
 static std::wstring MutexName(const std::string& key, const std::filesystem::path& directory,
 							  const windows::PrivateSecurity& security)
 {
-	return L"Local\\OpenXRSimulator.Mcp." + security.SidText() + L"." +
-		   windows::Wide(InstanceKey(directory)) + L"." + windows::Wide(key);
+	return L"Local\\OpenXRSimulator.Mcp." + security.SidText() + L"." + windows::Wide(InstanceKey(directory)) + L"." +
+		   windows::Wide(key);
 }
 
 static std::filesystem::path PrivateDirectory()
@@ -71,8 +71,8 @@ static std::filesystem::path PrivateDirectory()
 	if (!CreateDirectoryW(directory.c_str(), security.Attributes()) && GetLastError() != ERROR_ALREADY_EXISTS)
 		throw windows::Error("Cannot create MCP discovery directory");
 	windows::Handle handle(CreateFileW(directory.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-		FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+									   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+									   FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
 	if (handle.Get() == INVALID_HANDLE_VALUE)
 		throw windows::Error("Cannot open MCP discovery directory");
 	BY_HANDLE_FILE_INFORMATION info{};
@@ -86,8 +86,8 @@ static std::filesystem::path PrivateDirectory()
 static void CheckPrivateFile(const std::filesystem::path& path)
 {
 	windows::Handle handle(CreateFileW(path.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-		FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+									   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+									   FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
 	if (handle.Get() == INVALID_HANDLE_VALUE)
 		throw windows::Error("Cannot inspect MCP discovery record");
 	BY_HANDLE_FILE_INFORMATION info{};
@@ -100,11 +100,18 @@ static void CheckPrivateFile(const std::filesystem::path& path)
 
 class McpCreatedFile
 {
-  public:
+public:
 	explicit McpCreatedFile(HANDLE handle) : m_handle(handle) {}
-	~McpCreatedFile() { if (m_handle != INVALID_HANDLE_VALUE) CloseHandle(m_handle); }
+
+	~McpCreatedFile()
+	{
+		if (m_handle != INVALID_HANDLE_VALUE)
+			CloseHandle(m_handle);
+	}
+
 	McpCreatedFile(const McpCreatedFile&) = delete;
 	McpCreatedFile& operator=(const McpCreatedFile&) = delete;
+
 	void Close()
 	{
 		const auto handle = std::exchange(m_handle, INVALID_HANDLE_VALUE);
@@ -112,7 +119,7 @@ class McpCreatedFile
 			throw windows::Error("Cannot close private MCP record");
 	}
 
-  private:
+private:
 	HANDLE m_handle;
 };
 
@@ -124,7 +131,7 @@ static std::filesystem::path CreatePrivateMcpFile(const std::filesystem::path& d
 		auto temporary = destination;
 		temporary += windows::Wide("." + NewMcpIdentifier() + ".tmp");
 		const auto handle = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, security.Attributes(), CREATE_NEW,
-									FILE_ATTRIBUTE_NORMAL, nullptr);
+										FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (handle == INVALID_HANDLE_VALUE)
 		{
 			if (GetLastError() == ERROR_FILE_EXISTS || GetLastError() == ERROR_ALREADY_EXISTS)
@@ -132,7 +139,10 @@ static std::filesystem::path CreatePrivateMcpFile(const std::filesystem::path& d
 			throw windows::Error("Cannot create private MCP record");
 		}
 		McpCreatedFile file(handle);
-		try { file.Close(); }
+		try
+		{
+			file.Close();
+		}
 		catch (...)
 		{
 			DeleteFileW(temporary.c_str());
@@ -151,7 +161,8 @@ struct McpFileIdentity
 static std::optional<McpFileIdentity> FileIdentity(const std::filesystem::path& path)
 {
 	windows::Handle file(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+									 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+									 FILE_ATTRIBUTE_NORMAL, nullptr));
 	if (file.Get() == INVALID_HANDLE_VALUE)
 		return {};
 	BY_HANDLE_FILE_INFORMATION info{};
@@ -178,8 +189,8 @@ std::filesystem::path McpOwnExecutable()
 }
 
 McpInstanceDiscovery::McpInstanceDiscovery(std::filesystem::path executable, bool windowless)
-	: m_executable(std::filesystem::weakly_canonical(std::move(executable))),
-	  m_directory(PrivateDirectory()), m_key(SessionInstanceKey(m_executable)), m_windowless(windowless)
+	: m_executable(std::filesystem::weakly_canonical(std::move(executable))), m_directory(PrivateDirectory()),
+	  m_key(SessionInstanceKey(m_executable)), m_windowless(windowless)
 {
 	if (!m_executable.is_absolute())
 		throw std::invalid_argument("MCP app path must be absolute");
@@ -204,7 +215,7 @@ static std::vector<wchar_t> ChildEnvironment(const std::string& token)
 {
 	std::map<std::wstring, std::wstring, McpEnvironmentOrder> environment;
 	const std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)> inherited(GetEnvironmentStringsW(),
-																						 FreeEnvironmentStringsW);
+																				 FreeEnvironmentStringsW);
 	if (!inherited)
 		throw windows::Error("Cannot read MCP app environment");
 	for (auto entry = inherited.get(); *entry; entry += std::wcslen(entry) + 1)
@@ -229,7 +240,7 @@ static std::vector<wchar_t> ChildEnvironment(const std::string& token)
 
 class McpProcessAttributes
 {
-  public:
+public:
 	explicit McpProcessAttributes(std::span<HANDLE> handles)
 	{
 		SIZE_T size = 0;
@@ -241,17 +252,26 @@ class McpProcessAttributes
 		if (!InitializeProcThreadAttributeList(m_list, 1, 0, &size))
 			throw windows::Error("Cannot prepare MCP app process attributes");
 		if (!UpdateProcThreadAttribute(m_list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles.data(),
-									handles.size_bytes(), nullptr, nullptr))
+									   handles.size_bytes(), nullptr, nullptr))
 		{
 			DeleteProcThreadAttributeList(m_list);
 			m_list = nullptr;
 			throw windows::Error("Cannot restrict MCP app inherited handles");
 		}
 	}
-	~McpProcessAttributes() { if (m_list) DeleteProcThreadAttributeList(m_list); }
-	PPROC_THREAD_ATTRIBUTE_LIST Get() const { return m_list; }
 
-  private:
+	~McpProcessAttributes()
+	{
+		if (m_list)
+			DeleteProcThreadAttributeList(m_list);
+	}
+
+	PPROC_THREAD_ATTRIBUTE_LIST Get() const
+	{
+		return m_list;
+	}
+
+private:
 	std::vector<std::byte> m_storage;
 	PPROC_THREAD_ATTRIBUTE_LIST m_list = nullptr;
 };
@@ -265,7 +285,8 @@ static DWORD StartupFlags()
 	if (inJob)
 	{
 		JOBOBJECT_EXTENDED_LIMIT_INFORMATION information{};
-		if (!QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &information, sizeof(information), nullptr))
+		if (!QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &information, sizeof(information),
+									   nullptr))
 			throw windows::Error("Cannot inspect MCP connector job limits");
 		const auto limits = information.BasicLimitInformation.LimitFlags;
 		if (!(limits & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK))
@@ -282,7 +303,8 @@ void McpInstanceDiscovery::StartIfNeeded()
 {
 	windows::PrivateSecurity security(false, true);
 	SetLastError(ERROR_SUCCESS);
-	windows::Handle reservation(CreateMutexW(security.Attributes(), FALSE, MutexName(m_key, m_directory, security).c_str()));
+	windows::Handle reservation(
+		CreateMutexW(security.Attributes(), FALSE, MutexName(m_key, m_directory, security).c_str()));
 	const auto existing = GetLastError();
 	if (!reservation.Get())
 		throw windows::Error("Cannot claim MCP app startup", existing);
@@ -296,14 +318,14 @@ void McpInstanceDiscovery::StartIfNeeded()
 	if (removal)
 		throw std::runtime_error("Cannot remove stale MCP discovery record: " + removal.message());
 	SECURITY_ATTRIBUTES inherit{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-	windows::Handle nullFile(CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
-		FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+	windows::Handle nullFile(CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+										 &inherit, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
 	if (nullFile.Get() == INVALID_HANDLE_VALUE)
 		throw windows::Error("Cannot isolate MCP app standard streams");
 	std::array<HANDLE, 2> handles{reservation.Get(), nullFile.Get()};
 	McpProcessAttributes attributes(handles);
 	auto command = windows::Quote(m_executable.native()) + L" --mcp-bootstrap-handle " +
-		std::to_wstring(reinterpret_cast<std::uintptr_t>(reservation.Get()));
+				   std::to_wstring(reinterpret_cast<std::uintptr_t>(reservation.Get()));
 	if (m_windowless)
 		command += L" --windowless";
 	if (command.size() >= 32767)
@@ -332,12 +354,13 @@ std::optional<McpEndpoint> McpInstanceDiscovery::Read()
 		DWORD code = 0;
 		if (GetExitCodeProcess(m_child, &code) && !m_observed)
 			m_startupError = "The selected simulator exited before MCP became ready (exit code " +
-				std::to_string(code) + "); start it manually to inspect the error";
+							 std::to_string(code) + "); start it manually to inspect the error";
 		CloseHandle(m_child);
 		m_child = nullptr;
 	}
 	windows::PrivateSecurity security(false);
-	windows::Handle reservation(OpenMutexW(READ_CONTROL | SYNCHRONIZE, FALSE, MutexName(m_key, m_directory, security).c_str()));
+	windows::Handle reservation(
+		OpenMutexW(READ_CONTROL | SYNCHRONIZE, FALSE, MutexName(m_key, m_directory, security).c_str()));
 	if (!reservation.Get())
 	{
 		if (GetLastError() == ERROR_FILE_NOT_FOUND)
@@ -358,11 +381,11 @@ std::optional<McpEndpoint> McpInstanceDiscovery::Read()
 	if (value.is_discarded() || !value.is_object())
 		return {};
 	const auto protocol = value.find("connector_protocol");
-	if (protocol != value.end() && (!protocol->is_number_unsigned() ||
-		protocol->get<std::uint64_t>() != McpConnectorProtocolVersion))
+	if (protocol != value.end() &&
+		(!protocol->is_number_unsigned() || protocol->get<std::uint64_t>() != McpConnectorProtocolVersion))
 	{
 		m_startupError = "The selected app uses an unsupported MCP connector protocol; "
-			"install a compatible connector and reconnect this MCP entry";
+						 "install a compatible connector and reconnect this MCP entry";
 		return {};
 	}
 	if (!value.contains("executable") || !value["executable"].is_string() ||
@@ -375,20 +398,24 @@ std::optional<McpEndpoint> McpInstanceDiscovery::Read()
 	if (!identity || value["volume"] != identity->volume || value["index"] != identity->index)
 	{
 		m_startupError = "The selected app executable changed while an older simulator instance is running; "
-			"close that instance and start the rebuilt app";
+						 "close that instance and start the rebuilt app";
 		return {};
 	}
 	const auto port = value["port"].get<std::uint64_t>();
 	const auto token = value["token"].get<std::string>();
-	if (!port || port > 65535 || token.size() != 64 || !std::ranges::all_of(token, [](unsigned char byte)
-		{ return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f'); }))
+	if (!port || port > 65535 || token.size() != 64 || !std::ranges::all_of(token, [](unsigned char byte) {
+			return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f');
+		}))
 		return {};
 	m_observed = true;
 	m_startupError.clear();
 	return McpEndpoint{static_cast<std::uint16_t>(port), token};
 }
 
-const std::string& McpInstanceDiscovery::StartupError() const noexcept { return m_startupError; }
+const std::string& McpInstanceDiscovery::StartupError() const noexcept
+{
+	return m_startupError;
+}
 
 McpInstanceRegistration::McpInstanceRegistration(std::intptr_t inheritedHandle)
 	: m_executable(McpOwnExecutable()), m_directory(PrivateDirectory()), m_key(SessionInstanceKey(m_executable))
@@ -411,7 +438,8 @@ McpInstanceRegistration::McpInstanceRegistration(std::intptr_t inheritedHandle)
 		if (!SetHandleInformation(inherited.Get(), HANDLE_FLAG_INHERIT, 0))
 			throw windows::Error("Cannot protect MCP bootstrap reservation");
 		HANDLE retained = nullptr;
-		if (!DuplicateHandle(GetCurrentProcess(), inherited.Get(), GetCurrentProcess(), &retained, 0, FALSE, DUPLICATE_SAME_ACCESS))
+		if (!DuplicateHandle(GetCurrentProcess(), inherited.Get(), GetCurrentProcess(), &retained, 0, FALSE,
+							 DUPLICATE_SAME_ACCESS))
 			throw windows::Error("Cannot retain MCP bootstrap reservation");
 		m_lock = retained;
 	}
@@ -426,7 +454,8 @@ McpInstanceRegistration::McpInstanceRegistration(std::intptr_t inheritedHandle)
 		if (result == ERROR_ALREADY_EXISTS)
 			throw std::runtime_error("An MCP-enabled simulator for this executable is already running");
 		HANDLE retained = nullptr;
-		if (!DuplicateHandle(GetCurrentProcess(), reservation.Get(), GetCurrentProcess(), &retained, 0, FALSE, DUPLICATE_SAME_ACCESS))
+		if (!DuplicateHandle(GetCurrentProcess(), reservation.Get(), GetCurrentProcess(), &retained, 0, FALSE,
+							 DUPLICATE_SAME_ACCESS))
 			throw windows::Error("Cannot retain MCP app reservation");
 		m_lock = retained;
 	}
@@ -456,8 +485,13 @@ void McpInstanceRegistration::Publish(const McpEndpoint& endpoint)
 		if (!stream)
 			throw std::runtime_error("Cannot open MCP discovery record");
 		stream << Json({{"connector_protocol", McpConnectorProtocolVersion},
-						{"executable", PathText(m_executable)}, {"port", endpoint.port}, {"token", endpoint.token},
-						{"process_id", GetCurrentProcessId()}, {"volume", identity->volume}, {"index", identity->index}}).dump();
+						{"executable", PathText(m_executable)},
+						{"port", endpoint.port},
+						{"token", endpoint.token},
+						{"process_id", GetCurrentProcessId()},
+						{"volume", identity->volume},
+						{"index", identity->index}})
+					  .dump();
 		stream.close();
 		if (!stream)
 			throw std::runtime_error("Cannot write MCP discovery record");

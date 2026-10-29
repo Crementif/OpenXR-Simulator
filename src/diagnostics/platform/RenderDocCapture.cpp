@@ -7,7 +7,6 @@
 #include <dlfcn.h>
 #endif
 
-
 namespace flicker
 {
 #ifdef _WIN32
@@ -17,6 +16,7 @@ namespace flicker
 #endif
 using RenderDocSetCapturePath = void(SIMXR_CAPTURE_CALL*)(const char*);
 using RenderDocTriggerCapture = void(SIMXR_CAPTURE_CALL*)(uint32_t);
+
 // RenderDoc's append-only 1.1.0 layout through TriggerMultiFrameCapture.
 struct RenderDocApi110
 {
@@ -44,12 +44,13 @@ struct RenderDocApi110
 	void* endFrameCapture;
 	RenderDocTriggerCapture triggerMultiFrameCapture;
 };
+
 using RenderDocGetApi = int(SIMXR_CAPTURE_CALL*)(int, void**);
 #undef SIMXR_CAPTURE_CALL
 
 class CaptureModule
 {
-  public:
+public:
 	CaptureModule()
 	{
 #ifdef _WIN32
@@ -61,8 +62,10 @@ class CaptureModule
 			m_module = dlopen(information.dli_fname, RTLD_NOW | RTLD_NOLOAD);
 #endif
 	}
+
 	CaptureModule(const CaptureModule&) = delete;
 	CaptureModule& operator=(const CaptureModule&) = delete;
+
 	~CaptureModule()
 	{
 		if (m_module)
@@ -74,6 +77,7 @@ class CaptureModule
 #endif
 		}
 	}
+
 	RenderDocGetApi Entry() const
 	{
 		if (!m_module)
@@ -85,7 +89,7 @@ class CaptureModule
 #endif
 	}
 
-  private:
+private:
 #ifdef _WIN32
 	HMODULE m_module = nullptr;
 #else

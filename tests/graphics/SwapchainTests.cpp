@@ -40,12 +40,16 @@ int main()
 	Require(still.Acquire(first) == XR_ERROR_CALL_ORDER_INVALID, "Static image acquired twice");
 	simxr::Swapchain transactional(2);
 	std::uint32_t untouched = 999;
-	Require(transactional.Acquire(untouched, [](auto) { return XR_ERROR_RUNTIME_FAILURE; }) == XR_ERROR_RUNTIME_FAILURE &&
-		untouched == 999 && !transactional.PendingImage(), "Failed initialization consumed acquisition");
+	Require(transactional.Acquire(untouched, [](auto) { return XR_ERROR_RUNTIME_FAILURE; }) ==
+					XR_ERROR_RUNTIME_FAILURE &&
+				untouched == 999 && !transactional.PendingImage(),
+			"Failed initialization consumed acquisition");
 	Require(transactional.Acquire(first) == XR_SUCCESS && first == 0, "Initialization retry advanced image identity");
 	Require(transactional.Acquire(untouched, [](auto) { return XR_ERROR_OUT_OF_MEMORY; }) == XR_ERROR_OUT_OF_MEMORY &&
-		transactional.PendingImage() == first && untouched == 999, "Failed second initialization changed oldest acquired image");
-	Require(transactional.Wait(0, true) == XR_SUCCESS && transactional.Release(released) == XR_SUCCESS && released == first,
-		"Initialization failure damaged existing FIFO");
+				transactional.PendingImage() == first && untouched == 999,
+			"Failed second initialization changed oldest acquired image");
+	Require(transactional.Wait(0, true) == XR_SUCCESS && transactional.Release(released) == XR_SUCCESS &&
+				released == first,
+			"Initialization failure damaged existing FIFO");
 	std::cout << "Swapchain tests passed\n";
 }

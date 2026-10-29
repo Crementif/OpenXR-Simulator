@@ -7,26 +7,32 @@ void RuntimePanelRequests::Connect(std::string path, std::optional<std::uint64_t
 {
 	m_connection.Connect(std::move(path), expectedProcess);
 }
+
 void RuntimePanelRequests::Disconnect()
 {
 	m_connection.Disconnect();
 }
+
 void RuntimePanelRequests::Close() noexcept
 {
 	m_connection.Close();
 }
+
 RuntimeConnectionSnapshot RuntimePanelRequests::Snapshot() const
 {
 	return m_connection.Snapshot();
 }
+
 std::uint64_t RuntimePanelRequests::Epoch() const noexcept
 {
 	return m_epoch;
 }
+
 bool RuntimePanelRequests::Pending() const noexcept
 {
 	return !m_tasks.empty() || Has(PanelWork::Release) || Has(PanelWork::Relinquish);
 }
+
 bool RuntimePanelRequests::RefreshEpoch()
 {
 	const auto epoch = m_connection.Snapshot().epoch;
@@ -37,6 +43,7 @@ bool RuntimePanelRequests::RefreshEpoch()
 	m_epoch = epoch;
 	return true;
 }
+
 std::vector<PanelReply> RuntimePanelRequests::Poll()
 {
 	std::vector<PanelReply> replies;
@@ -56,6 +63,7 @@ std::vector<PanelReply> RuntimePanelRequests::Poll()
 	}
 	return replies;
 }
+
 std::uint64_t RuntimePanelRequests::Send(control::OpCode code, PanelWork kind, PanelFields fields, std::uint64_t id,
 										 std::vector<std::shared_ptr<control::TransferHandle>> handles)
 {
@@ -84,22 +92,19 @@ std::uint64_t RuntimePanelRequests::Send(control::OpCode code, PanelWork kind, P
 		throw;
 	}
 }
+
 bool RuntimePanelRequests::Has(PanelWork kind, std::uint64_t id) const
 {
 	if ((kind == PanelWork::Release || kind == PanelWork::Relinquish) &&
-		std::any_of(m_releases.begin(), m_releases.end(),
-					[&](const auto& release)
-					{
-						return release.id && release.epoch == m_epoch && (!id || release.id == id) &&
-							   (kind == PanelWork::Relinquish) == (release.code == control::OpCode::Relinquish);
-					}))
+		std::any_of(m_releases.begin(), m_releases.end(), [&](const auto& release) {
+			return release.id && release.epoch == m_epoch && (!id || release.id == id) &&
+				   (kind == PanelWork::Relinquish) == (release.code == control::OpCode::Relinquish);
+		}))
 		return true;
 	return std::any_of(m_tasks.begin(), m_tasks.end(),
-					   [&](const auto& entry)
-					   {
-						   return entry.second.kind == kind && (!id || entry.second.id == id);
-					   });
+					   [&](const auto& entry) { return entry.second.kind == kind && (!id || entry.second.id == id); });
 }
+
 void RuntimePanelRequests::Release(control::OpCode code, std::uint16_t field, std::uint64_t id, std::uint64_t session,
 								   std::uint64_t generation)
 {
@@ -109,11 +114,8 @@ void RuntimePanelRequests::Release(control::OpCode code, std::uint16_t field, st
 		if (pending.id == id && pending.code == code && pending.epoch == m_epoch && pending.session == session &&
 			pending.generation == generation)
 			return;
-	const auto entry = std::find_if(m_releases.begin(), m_releases.end(),
-									[](const auto& pending)
-									{
-										return !pending.id;
-									});
+	const auto entry =
+		std::find_if(m_releases.begin(), m_releases.end(), [](const auto& pending) { return !pending.id; });
 	if (entry == m_releases.end())
 	{
 		m_connection.Disconnect(m_epoch);
@@ -122,6 +124,7 @@ void RuntimePanelRequests::Release(control::OpCode code, std::uint16_t field, st
 	}
 	*entry = {code, field, id, m_epoch, session, generation};
 }
+
 void RuntimePanelRequests::FlushReleases()
 {
 	for (auto& pending : m_releases)
@@ -140,6 +143,7 @@ void RuntimePanelRequests::FlushReleases()
 		pending = {};
 	}
 }
+
 std::string RuntimePanelRequests::TakeError()
 {
 	return std::exchange(m_error, {});

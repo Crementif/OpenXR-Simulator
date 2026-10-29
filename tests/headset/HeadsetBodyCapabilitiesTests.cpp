@@ -13,28 +13,35 @@ static std::set<XrStructureType> s_queries;
 static XrResult s_result = XR_SUCCESS;
 static unsigned s_calls = 0;
 } // namespace simxr::headset::test
+
 using namespace simxr::headset::test;
+
 namespace simxr::headset
 {
 OpenXrRuntime::~OpenXrRuntime() = default;
+
 XrInstance OpenXrRuntime::Instance() const
 {
 	return reinterpret_cast<XrInstance>(1);
 }
+
 XrSystemId OpenXrRuntime::System() const
 {
 	return 2;
 }
+
 bool OpenXrRuntime::Supports(std::string_view name) const
 {
 	return s_extensions.contains(name);
 }
+
 void CheckXr(XrResult result, const char* operation)
 {
 	if (XR_FAILED(result))
 		throw std::runtime_error(operation);
 }
 } // namespace simxr::headset
+
 extern "C" XRAPI_ATTR XrResult XRAPI_CALL xrGetSystemProperties(XrInstance instance, XrSystemId system,
 																XrSystemProperties* properties)
 {
@@ -68,6 +75,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL xrGetSystemProperties(XrInstance insta
 	}
 	return s_result;
 }
+
 int main()
 {
 	try

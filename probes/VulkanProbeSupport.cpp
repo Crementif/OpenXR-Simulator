@@ -255,15 +255,18 @@ void Device::VerifyImage(VkPhysicalDevice physicalDevice, VkImage image, std::ui
 	WaitForCompletion();
 	void* data = nullptr;
 	Check(vkMapMemory(handle, memory, 0, VK_WHOLE_SIZE, 0, &data), "map explicit analysis buffer");
+
 	struct Mapping
 	{
 		VkDevice device;
 		VkDeviceMemory memory;
+
 		~Mapping()
 		{
 			vkUnmapMemory(device, memory);
 		}
 	} mapping{handle, memory};
+
 	if (!(properties.memoryTypes[memoryType].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
 	{
 		VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
@@ -329,10 +332,7 @@ bool SupportsSharing(VkPhysicalDevice device, std::uint32_t& family, std::uint32
 	for (auto name : {VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME})
 	{
 		if (std::none_of(extensions.begin(), extensions.end(),
-						 [name](const auto& extension)
-						 {
-							 return std::strcmp(extension.extensionName, name) == 0;
-						 }))
+						 [name](const auto& extension) { return std::strcmp(extension.extensionName, name) == 0; }))
 		{
 			std::printf("UNAVAILABLE: %s is absent\n", name);
 			return false;

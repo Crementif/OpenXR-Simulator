@@ -17,7 +17,7 @@ class ApplicationCatalog;
 // Owns the app's MCP service and retires its listener without blocking the UI thread.
 class McpHost
 {
-  public:
+public:
 	McpHost(bool preference, std::optional<std::uint16_t> initialPort, std::string initialToken,
 			std::intptr_t bootstrapDescriptor, std::unique_ptr<McpInstanceRegistration> startupRegistration = {},
 			bool windowless = false);
@@ -31,7 +31,7 @@ class McpHost
 	void Poll(ApplicationCatalog& applications);
 	McpUiState State() const;
 
-  private:
+private:
 	struct Running;
 	void Start();
 	void Retire();

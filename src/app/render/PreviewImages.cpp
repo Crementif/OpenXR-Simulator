@@ -9,6 +9,7 @@ namespace wire = control;
 namespace tag = wire::tag;
 using namespace panel;
 using Work = PanelWork;
+
 struct PreviewImages::Image
 {
 	std::uint64_t id = 0, reader = 0, delivery = 0, frame = 0, capture = 0, epoch = 0, session = 0, generation = 0;
@@ -19,11 +20,13 @@ struct PreviewImages::Image
 	std::unique_ptr<PreviewTexture> texture;
 	std::shared_ptr<const wire::Message> state;
 };
+
 PreviewImages::PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests)
 	: m_renderer(renderer), m_requests(requests), m_history(renderer)
 {
 	m_images.reserve(SnapshotBudget::Capacity());
 }
+
 PreviewImages::~PreviewImages()
 {
 	std::uint64_t completed = 0;
@@ -40,6 +43,7 @@ PreviewImages::~PreviewImages()
 	for (auto& image : m_images)
 		image->texture->ObserveCompletion(completed);
 }
+
 void PreviewImages::BeginRetirement()
 {
 	if (m_retiring)
@@ -47,8 +51,7 @@ void PreviewImages::BeginRetirement()
 	m_retiring = true;
 	if (m_pending)
 	{
-		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
-						   U64(m_pending->message, tag::ImageReaderId));
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, U64(m_pending->message, tag::ImageReaderId));
 		m_pending.reset();
 	}
 	for (auto& image : m_images)
@@ -56,12 +59,14 @@ void PreviewImages::BeginRetirement()
 	m_selectedImage = 0;
 	m_history.BeginRetirement();
 }
+
 bool PreviewImages::RetirementComplete() const
 {
 	return m_retiring && m_images.empty() && m_history.RetirementComplete() && !m_requests.Has(Work::Release) &&
-		   !m_requests.Has(Work::Retain) && !m_requests.Has(Work::Preview) &&
-		   !m_requests.Has(Work::PastPreview) && !m_requests.Has(Work::Thumbnail);
+		   !m_requests.Has(Work::Retain) && !m_requests.Has(Work::Preview) && !m_requests.Has(Work::PastPreview) &&
+		   !m_requests.Has(Work::Thumbnail);
 }
+
 void PreviewImages::PreserveUnfinished() noexcept
 {
 	std::uint64_t completed = 0;
@@ -70,23 +75,25 @@ void PreviewImages::PreserveUnfinished() noexcept
 		completed = m_renderer.CompletedFrames();
 	}
 	catch (...)
-	{
-	}
+	{}
 	for (auto& image : m_images)
 		image->texture->PreserveUnfinished(completed);
 	m_images.clear();
 	m_history.PreserveRetired();
 }
+
 void PreviewImages::SetCapacity(std::size_t capacity) noexcept
 {
 	if (m_capacity != capacity)
 		m_memoryBlocked = false;
 	m_capacity = capacity;
 }
+
 std::size_t PreviewImages::Capacity() const noexcept
 {
 	return m_capacity.value_or(SnapshotBudget::Capacity());
 }
+
 PreviewImages::Image* PreviewImages::Find(std::uint64_t id) const
 {
 	for (const auto& image : m_images)
@@ -94,6 +101,7 @@ PreviewImages::Image* PreviewImages::Find(std::uint64_t id) const
 			return image.get();
 	return nullptr;
 }
+
 void PreviewImages::SetScope(PanelScope scope)
 {
 	if (scope != m_scope && m_pending)
@@ -114,6 +122,7 @@ void PreviewImages::SetScope(PanelScope scope)
 		m_selectedCapture = 0;
 	m_scope = scope;
 }
+
 bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 {
 	m_selectedCapture = capture;
@@ -131,6 +140,7 @@ bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 		}
 	return false;
 }
+
 bool PreviewImages::SelectFrame(PanelScope scope, std::uint64_t frame)
 {
 	m_selectedCapture = 0;
@@ -146,6 +156,7 @@ bool PreviewImages::SelectFrame(PanelScope scope, std::uint64_t frame)
 		}
 	return false;
 }
+
 void PreviewImages::SelectImage(std::uint64_t id)
 {
 	if (const auto image = Find(id); image && !image->thumbnail)
@@ -154,16 +165,17 @@ void PreviewImages::SelectImage(std::uint64_t id)
 		m_live = false;
 	}
 }
+
 void PreviewImages::ClearSelection()
 {
 	m_selectedImage = 0;
 }
+
 void PreviewImages::ReleaseLive()
 {
 	if (m_pending && m_pending->live)
 	{
-		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
-						   U64(m_pending->message, tag::ImageReaderId));
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, U64(m_pending->message, tag::ImageReaderId));
 		m_pending.reset();
 	}
 	for (auto& image : m_images)
@@ -174,40 +186,46 @@ void PreviewImages::ReleaseLive()
 				m_selectedImage = 0;
 		}
 }
+
 void PreviewImages::ReleaseInactive()
 {
 	ReleaseLive();
 	if (m_pending && m_pending->thumbnail)
 	{
-		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
-						   U64(m_pending->message, tag::ImageReaderId));
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, U64(m_pending->message, tag::ImageReaderId));
 		m_pending.reset();
 	}
 	for (auto& image : m_images)
 		if (image->thumbnail && !image->exporting)
 			image->release = true;
 }
+
 void PreviewImages::ReleaseSelected()
 {
 	if (auto image = Find(m_selectedImage))
 		image->release = true;
 }
+
 void PreviewImages::ShowLive(bool enabled) noexcept
 {
 	m_live = enabled;
 }
+
 bool PreviewImages::ShowingLive() const noexcept
 {
 	return m_live;
 }
+
 std::uint64_t PreviewImages::SelectedId() const noexcept
 {
 	return m_selectedImage;
 }
+
 std::string PreviewImages::TakeError()
 {
 	return std::exchange(m_error, {});
 }
+
 PreviewImageSummary PreviewImages::Summary(const Image& image) const
 {
 	return {image.id,
@@ -226,12 +244,14 @@ PreviewImageSummary PreviewImages::Summary(const Image& image) const
 			image.imageTick,
 			image.state};
 }
+
 std::optional<PreviewImageSummary> PreviewImages::Selected() const
 {
 	if (const auto image = Find(m_selectedImage))
 		return Summary(*image);
 	return {};
 }
+
 std::vector<PreviewImageSummary> PreviewImages::Images() const
 {
 	std::vector<PreviewImageSummary> images;
@@ -241,14 +261,13 @@ std::vector<PreviewImageSummary> PreviewImages::Images() const
 			images.push_back(Summary(*image));
 	return images;
 }
+
 std::size_t PreviewImages::ReadyCount() const
 {
 	return std::count_if(m_images.begin(), m_images.end(),
-						 [](const auto& image)
-						 {
-							 return image->texture->Ready() && !image->release;
-						 });
+						 [](const auto& image) { return image->texture->Ready() && !image->release; });
 }
+
 std::uint64_t PreviewImages::SnapshotChargeBytes() const
 {
 	std::uint64_t bytes = 0;
@@ -261,22 +280,20 @@ std::uint64_t PreviewImages::SnapshotChargeBytes() const
 	}
 	return bytes;
 }
+
 bool PreviewImages::HasPendingLive() const
 {
 	return std::any_of(m_images.begin(), m_images.end(),
-					   [](const auto& image)
-					   {
-						   return image->live && !image->texture->Ready() && !image->release;
-					   });
+					   [](const auto& image) { return image->live && !image->texture->Ready() && !image->release; });
 }
+
 bool PreviewImages::HasPendingThumbnail() const
 {
-	return (m_pending && m_pending->thumbnail) || std::any_of(m_images.begin(), m_images.end(),
-															  [](const auto& image)
-															  {
-																  return image->thumbnail && !image->release;
-															  });
+	return (m_pending && m_pending->thumbnail) || std::any_of(m_images.begin(), m_images.end(), [](const auto& image) {
+			   return image->thumbnail && !image->release;
+		   });
 }
+
 void PreviewImages::BeginFrame()
 {
 	m_history.BeginFrame();
@@ -300,10 +317,12 @@ void PreviewImages::BeginFrame()
 			m_selectedImage = image->id;
 	}
 }
+
 void PreviewImages::DrawSelected(float width, std::optional<std::size_t> slice, ImVec4 crop, bool correctProportions)
 {
 	DrawImage(m_selectedImage, width, slice, crop, correctProportions);
 }
+
 void PreviewImages::DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice, ImVec4 crop,
 							  bool correctProportions)
 {
@@ -315,10 +334,12 @@ void PreviewImages::DrawImage(std::uint64_t id, float width, std::optional<std::
 							{image->session, image->generation, image->frame}, image->epoch);
 	}
 }
+
 void PreviewImages::RecordTransfers(VkCommandBuffer command)
 {
 	m_history.Record(command);
 }
+
 std::vector<VkSemaphore> PreviewImages::ReadyWaits() const
 {
 	std::vector<VkSemaphore> waits;
@@ -327,12 +348,14 @@ std::vector<VkSemaphore> PreviewImages::ReadyWaits() const
 			waits.push_back(wait);
 	return waits;
 }
+
 void PreviewImages::Submitted(std::uint64_t serial)
 {
 	for (auto& image : m_images)
 		image->texture->Submitted(serial);
 	m_history.Submitted(serial);
 }
+
 void PreviewImages::Retained(const wire::Message& message, bool preview, bool thumbnail)
 {
 	if (m_retiring)
@@ -544,27 +567,25 @@ void PreviewImages::ShareFailed(std::uint64_t id)
 	if (auto image = Find(id))
 		image->release = true;
 }
+
 void PreviewImages::ProtectExports(std::span<const std::uint64_t> images)
 {
 	for (auto& image : m_images)
 		image->exporting = std::find(images.begin(), images.end(), image->id) != images.end();
 }
+
 void PreviewImages::Poll()
 {
 	m_history.Poll();
 	if (m_pending && Capacity() == 0)
 	{
-		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
-						   U64(m_pending->message, tag::ImageReaderId));
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, U64(m_pending->message, tag::ImageReaderId));
 		m_pending.reset();
 		if (!std::exchange(m_memoryBlocked, true))
 			m_error = "Snapshot memory is too small for this application's images.";
 	}
-	std::size_t retained = std::count_if(m_images.begin(), m_images.end(),
-										 [](const auto& image)
-										 {
-											 return !image->release;
-										 });
+	std::size_t retained =
+		std::count_if(m_images.begin(), m_images.end(), [](const auto& image) { return !image->release; });
 	const auto capacity = Capacity();
 	const auto cacheLimit = capacity > 2 ? capacity - 2 : 1;
 	for (auto& image : m_images)

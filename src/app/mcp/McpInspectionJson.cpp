@@ -14,13 +14,29 @@ static wire::FieldViewsResult Fields(std::span<const std::byte> bytes)
 		throw std::runtime_error("Runtime returned malformed inspection data");
 	return result;
 }
+
 static bool IdentityName(std::string_view name)
 {
-	static const std::set<std::string_view> identities{"id", "identity", "session", "generation", "frame_id", "trigger_frame", "space_revision",
-		"transaction_id", "applied_frame", "seed", "revision_id", "recording_id", "source_id", "operation_id", "game_id"};
+	static const std::set<std::string_view> identities{"id",
+													   "identity",
+													   "session",
+													   "generation",
+													   "frame_id",
+													   "trigger_frame",
+													   "space_revision",
+													   "transaction_id",
+													   "applied_frame",
+													   "seed",
+													   "revision_id",
+													   "recording_id",
+													   "source_id",
+													   "operation_id",
+													   "game_id"};
 	return identities.contains(name);
 }
-static Json Node(std::span<const std::byte> bytes, std::size_t depth, std::size_t& count, bool preserveIntegers, std::string* label = nullptr)
+
+static Json Node(std::span<const std::byte> bytes, std::size_t depth, std::size_t& count, bool preserveIntegers,
+				 std::string* label = nullptr)
 {
 	if (depth > 32 || ++count > 65536)
 		throw std::runtime_error("Runtime inspection document exceeds its structural bound");
@@ -47,13 +63,18 @@ static Json Node(std::span<const std::byte> bytes, std::size_t depth, std::size_
 	case wire::InspectionType::Unsigned:
 	case wire::InspectionType::Revision:
 		if (const auto value = data->AsU64())
-			return !preserveIntegers && (IdentityName(key) || *type->AsU32() == static_cast<std::uint32_t>(wire::InspectionType::Revision) || *value > safe)
-					   ? Json(std::to_string(*value)) : Json(*value);
+			return !preserveIntegers && (IdentityName(key) ||
+										 *type->AsU32() == static_cast<std::uint32_t>(wire::InspectionType::Revision) ||
+										 *value > safe)
+					   ? Json(std::to_string(*value))
+					   : Json(*value);
 		break;
 	case wire::InspectionType::Signed:
 		if (const auto value = data->AsI64())
-			return !preserveIntegers && (*value > static_cast<std::int64_t>(safe) || *value < -static_cast<std::int64_t>(safe))
-					   ? Json(std::to_string(*value)) : Json(*value);
+			return !preserveIntegers &&
+						   (*value > static_cast<std::int64_t>(safe) || *value < -static_cast<std::int64_t>(safe))
+					   ? Json(std::to_string(*value))
+					   : Json(*value);
 		break;
 	case wire::InspectionType::Float:
 		if (const auto value = data->AsF32())
@@ -99,6 +120,7 @@ static Json Node(std::span<const std::byte> bytes, std::size_t depth, std::size_
 	}
 	throw std::runtime_error("Runtime returned an invalid inspection value");
 }
+
 Json InspectionJson(std::span<const std::byte> document, bool preserveIntegers)
 {
 	std::size_t count = 0;

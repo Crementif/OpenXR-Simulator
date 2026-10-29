@@ -18,12 +18,13 @@ namespace simxr::control
 class ControlService;
 class LocalControlServer;
 } // namespace simxr::control
+
 namespace simxr
 {
 
 class LinuxInstance final
 {
-  public:
+public:
 	LinuxInstance(Runtime::InstanceRef instance, const std::filesystem::path& directory, ExecutionMode executionMode);
 	~LinuxInstance();
 	LinuxInstance(const LinuxInstance&) = delete;
@@ -36,7 +37,7 @@ class LinuxInstance final
 	const ExecutionMode mode;
 	VulkanInstanceGraphics graphics;
 
-  private:
+private:
 	friend class LinuxRuntime;
 	LegacyInput m_input;
 	const std::shared_ptr<const PoseSequence> m_startupSequence;
@@ -48,8 +49,9 @@ class LinuxInstance final
 // and GPU drain run outside both. Never acquire a graphics gate while holding Mutex.
 class LinuxRuntime final
 {
-  public:
+public:
 	using InstanceRef = HandleRef<XrInstance, LinuxInstance>;
+
 	struct SessionBinding
 	{
 		SessionBinding(InstanceRef instance, Runtime::SessionRef session,
@@ -59,6 +61,7 @@ class LinuxRuntime final
 		std::mutex graphicsMutex;
 		const std::unique_ptr<VulkanSessionGraphics> graphics;
 	};
+
 	using SessionRef = HandleRef<XrSession, SessionBinding>;
 
 	LinuxRuntime();
@@ -82,7 +85,7 @@ class LinuxRuntime final
 	bool Shutdown();
 	static RuntimeTime SessionTime(const SessionBinding& session);
 
-  private:
+private:
 	void CloseControlEndpoint() noexcept;
 	const std::filesystem::path& DataDirectory();
 

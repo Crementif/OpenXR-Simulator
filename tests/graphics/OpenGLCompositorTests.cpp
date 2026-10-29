@@ -122,10 +122,13 @@ extern "C"
 }
 #endif
 using namespace simxr;
+
 void Require(bool result, const char* message)
 {
-	if (!result) throw std::runtime_error(message);
+	if (!result)
+		throw std::runtime_error(message);
 }
+
 struct Application
 {
 	HWND window = nullptr;
@@ -135,10 +138,11 @@ struct Application
 	GLuint depthTexture = 0;
 	GLuint sampleProgram = 0;
 	GLuint sampleVertexArray = 0;
+
 	Application()
 	{
-		window = CreateWindowExW(0, L"STATIC", L"OpenGL compositor fixture", WS_POPUP, 0, 0, 16, 16,
-			nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+		window = CreateWindowExW(0, L"STATIC", L"OpenGL compositor fixture", WS_POPUP, 0, 0, 16, 16, nullptr, nullptr,
+								 GetModuleHandleW(nullptr), nullptr);
 		Require(window != nullptr, "Create application window");
 		device = GetDC(window);
 		PIXELFORMATDESCRIPTOR format{};
@@ -190,6 +194,7 @@ struct Application
 		glTexImage2D(GL_TEXTURE_2D, 0, 0x8058, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 		Require(glGetError() == GL_NO_ERROR, "Upload application image");
 	}
+
 	~Application()
 	{
 		if (context)
@@ -205,8 +210,10 @@ struct Application
 			wglMakeCurrent(nullptr, nullptr);
 			wglDeleteContext(context);
 		}
-		if (device) ReleaseDC(window, device);
-		if (window) DestroyWindow(window);
+		if (device)
+			ReleaseDC(window, device);
+		if (window)
+			DestroyWindow(window);
 	}
 };
 
@@ -214,6 +221,7 @@ static void VerifyApplicationCapabilities(Application& app, const VulkanExternal
 {
 #ifdef SIMXR_TEST_WGL_FAILURE
 	Require(wglGetProcAddress("glCreateTextures") != nullptr, "DSA entry point exists before capability rejection");
+
 	struct RestoreFeature
 	{
 		~RestoreFeature()
@@ -221,6 +229,7 @@ static void VerifyApplicationCapabilities(Application& app, const VulkanExternal
 			s_featureContext = nullptr;
 		}
 	} restore;
+
 	s_featureContext = app.context;
 	Require(wglMakeCurrent(nullptr, nullptr), "Release context before rejected capability admission");
 	bool rejected = false;
@@ -258,8 +267,7 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 	const auto bindVertexArray = std::bit_cast<PFNGLBINDVERTEXARRAYPROC>(wglGetProcAddress("glBindVertexArray"));
 	app.sampleProgram = std::bit_cast<PFNGLCREATEPROGRAMPROC>(wglGetProcAddress("glCreateProgram"))();
 	Require(app.sampleProgram != 0, "Create multisample source program");
-	const auto compile = [&](GLenum type, const char* source)
-	{
+	const auto compile = [&](GLenum type, const char* source) {
 		const auto shader = createShader(type);
 		Require(shader != 0, "Create multisample source shader");
 		attachShader(app.sampleProgram, shader);
@@ -295,14 +303,17 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 	const auto setDepth = std::bit_cast<PFNGLUNIFORM1FPROC>(wglGetProcAddress("glUniform1f"));
 	Require(color >= 0 && sourceDepth >= 0, "Find multisample source uniforms");
 	const auto createTexture = std::bit_cast<PFNGLCREATETEXTURESPROC>(wglGetProcAddress("glCreateTextures"));
-	const auto createFramebuffer = std::bit_cast<PFNGLCREATEFRAMEBUFFERSPROC>(wglGetProcAddress("glCreateFramebuffers"));
-	const auto attach = std::bit_cast<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>(wglGetProcAddress("glNamedFramebufferTextureLayer"));
+	const auto createFramebuffer =
+		std::bit_cast<PFNGLCREATEFRAMEBUFFERSPROC>(wglGetProcAddress("glCreateFramebuffers"));
+	const auto attach =
+		std::bit_cast<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>(wglGetProcAddress("glNamedFramebufferTextureLayer"));
 	const auto bindFramebuffer = std::bit_cast<PFNGLBINDFRAMEBUFFERPROC>(wglGetProcAddress("glBindFramebuffer"));
 	const auto sampleMask = std::bit_cast<PFNGLSAMPLEMASKIPROC>(wglGetProcAddress("glSampleMaski"));
-	for (const GLenum format : {GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGBA32F, GL_RGB10_A2,
-		GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT32F, GL_DEPTH24_STENCIL8})
+	for (const GLenum format : {GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGBA32F, GL_RGB10_A2, GL_DEPTH_COMPONENT16,
+								GL_DEPTH_COMPONENT32F, GL_DEPTH24_STENCIL8})
 	{
-		const bool depth = format == GL_DEPTH_COMPONENT16 || format == GL_DEPTH_COMPONENT32F || format == GL_DEPTH24_STENCIL8;
+		const bool depth =
+			format == GL_DEPTH_COMPONENT16 || format == GL_DEPTH_COMPONENT32F || format == GL_DEPTH24_STENCIL8;
 		GLuint texture = 0, framebuffer = 0;
 		createTexture(GL_TEXTURE_2D_MULTISAMPLE_ARRAY, 1, &texture);
 		std::bit_cast<PFNGLTEXTURESTORAGE3DMULTISAMPLEPROC>(wglGetProcAddress("glTextureStorage3DMultisample"))(
@@ -343,7 +354,8 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 		{
 			VulkanBackend delivery(device.Device(), 8, device.EnabledExtensions(), true);
 			VulkanInspection inspection(OpenGLBackend::Identity(app.device, app.context), 8);
-			auto backend = std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
+			auto backend =
+				std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
 			const OpenGLCompositionSource source{texture, format, 8, 8, 2, 1, 4};
 			LayerDepthDescription selected{};
 			selected.image.arraySlice = 1;
@@ -356,7 +368,8 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 			std::shared_ptr<OpenGLFrame> frame;
 			if (depth)
 			{
-				Require(PrepareDepthComposition(selected, mode == 1, {8, 8}, true, plan) == XR_SUCCESS, "Plan MSAA depth");
+				Require(PrepareDepthComposition(selected, mode == 1, {8, 8}, true, plan) == XR_SUCCESS,
+						"Plan MSAA depth");
 				Require(backend->Prepare(plan, std::span{&source, 1}, frame, 1) == XR_SUCCESS, "Prepare MSAA depth");
 			}
 			else if (mode == 0)
@@ -372,9 +385,11 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 				Require(backend->Prepare(plan, std::span{&source, 1}, frame, 1) == XR_SUCCESS, "Prepare MSAA color");
 			}
 			else
-				Require(backend->PrepareCapture(selected.image, source, frame, mode == 2) == XR_SUCCESS, "Prepare MSAA raw/retained color");
+				Require(backend->PrepareCapture(selected.image, source, frame, mode == 2) == XR_SUCCESS,
+						"Prepare MSAA raw/retained color");
 			std::shared_ptr<VulkanFrame> copied;
-			Require(delivery.PrepareNativeCopy(frame->Image(), frame->Ready(), 0, frame, {}, copied) == XR_SUCCESS, "Prepare MSAA handoff");
+			Require(delivery.PrepareNativeCopy(frame->Image(), frame->Ready(), 0, frame, {}, copied) == XR_SUCCESS,
+					"Prepare MSAA handoff");
 			auto transfer = inspection.Prepare(copied);
 			Require(backend->Submit(frame) == XR_SUCCESS, "Submit MSAA OpenGL");
 			Require(wglGetCurrentContext() == app.context, "MSAA submission changed application context");
@@ -398,12 +413,14 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 			while (!(pixels = exported->Pixels()) && std::chrono::steady_clock::now() < deadline)
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			Require(pixels && pixels->layers == 1 && pixels->width == (mode == 2 ? 8u : 4u) &&
-				pixels->height == (mode == 2 ? 8u : 6u), "MSAA retention lost full source or crop extent");
+						pixels->height == (mode == 2 ? 8u : 6u),
+					"MSAA retention lost full source or crop extent");
 			const auto stride = ColorPixelBytes(pixels->format);
 			for (const auto y : {1u, pixels->height - 2})
 			{
-				const auto color = DecodeColorPixel(pixels->format, std::as_bytes(std::span(pixels->rgba)).subspan(
-					(y * pixels->width + pixels->width / 2) * stride, stride));
+				const auto color = DecodeColorPixel(
+					pixels->format, std::as_bytes(std::span(pixels->rgba))
+										.subspan((y * pixels->width + pixels->width / 2) * stride, stride));
 				const bool top = y < pixels->height / 2;
 				float value = depth ? (top ? 0.75f : 0.5f) : 0.25f;
 				if (depth && mode == 1)
@@ -413,7 +430,8 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 				for (std::size_t channel = 0; channel < 3; ++channel)
 				{
 					const float expected = depth || channel == (top ? 0u : 2u) ? value : 0;
-					Require(std::abs(color[channel] - expected) <= 0.012f, "MSAA resolve/depth sample zero/orientation mismatch");
+					Require(std::abs(color[channel] - expected) <= 0.012f,
+							"MSAA resolve/depth sample zero/orientation mismatch");
 				}
 				Require(color[3] == 1, "MSAA alpha changed");
 			}
@@ -465,6 +483,7 @@ static void VerifySubmissionFailures(const VulkanInspectionDevice& device)
 			s_applicationContext = nullptr;
 		}
 	} reset;
+
 	glGenTextures(1, &app.texture);
 	const std::array textures{app.texture, app.depthTexture};
 	std::array<OpenGLCompositionSource, 2> sources;
@@ -591,8 +610,7 @@ static void VerifyImageReuse(const VulkanInspectionDevice& device)
 	std::shared_ptr<VulkanImage> held;
 	std::shared_ptr<const VulkanInspectionFrame> first;
 	VkImage firstImage = VK_NULL_HANDLE;
-	const auto verify = [](const std::shared_ptr<const VulkanInspectionFrame>& frame, unsigned channel)
-	{
+	const auto verify = [](const std::shared_ptr<const VulkanInspectionFrame>& frame, unsigned channel) {
 		auto exported = frame->Export();
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 		std::shared_ptr<const VulkanImagePixels> pixels;
@@ -679,7 +697,7 @@ int main()
 		draw.eye = 1;
 		plan.draws.push_back(draw);
 		std::array sources{OpenGLCompositionSource{app.texture, 0x8058, 8, 8},
-			OpenGLCompositionSource{app.texture, 0x8058, 8, 8}};
+						   OpenGLCompositionSource{app.texture, 0x8058, 8, 8}};
 		for (int scenario = 0; scenario < 16; ++scenario)
 		{
 			sources[0].texture = sources[1].texture = app.texture;
@@ -697,9 +715,11 @@ int main()
 				if (mipChain || hdrRaw)
 				{
 					if (!backend)
-						backend = std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
-					source.format = hdrRaw ? std::array<GLenum, 3>{GL_RGBA16F, GL_RGBA32F, GL_RGB10_A2}[scenario - 13] :
-						std::array<GLenum, 5>{GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGB10_A2, GL_RGBA32F}[scenario - 8];
+						backend = std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(),
+																  device.EnabledExtensions());
+					source.format = hdrRaw ? std::array<GLenum, 3>{GL_RGBA16F, GL_RGBA32F, GL_RGB10_A2}[scenario - 13]
+										   : std::array<GLenum, 5>{GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGB10_A2,
+																   GL_RGBA32F}[scenario - 8];
 					source.mipLevels = hdrRaw ? 1 : 4;
 					for (std::uint32_t mip = 0; mip < source.mipLevels; ++mip)
 					{
@@ -717,16 +737,18 @@ int main()
 								values[pixel * 4 + 3] = 0.25f;
 							}
 						}
-						glTexImage2D(GL_TEXTURE_2D, mip, source.format, size, size, 0, GL_RGBA, GL_FLOAT, values.data());
+						glTexImage2D(GL_TEXTURE_2D, mip, source.format, size, size, 0, GL_RGBA, GL_FLOAT,
+									 values.data());
 					}
 					Require(glGetError() == GL_NO_ERROR, "Upload retained application mip chain");
 				}
-				Require(backend->PrepareCapture(image, source, frame, mipChain) == XR_SUCCESS, "Prepare raw OpenGL capture");
+				Require(backend->PrepareCapture(image, source, frame, mipChain) == XR_SUCCESS,
+						"Prepare raw OpenGL capture");
 			}
 			else if (depthCase)
 			{
 				const GLenum format = std::array<GLenum, 3>{GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT32F,
-					GL_DEPTH24_STENCIL8}[(scenario - 2) / 2];
+															GL_DEPTH24_STENCIL8}[(scenario - 2) / 2];
 				std::array<float, 128> values{};
 				std::array<std::uint32_t, 128> packed{};
 				for (std::size_t index = 0; index < values.size(); ++index)
@@ -737,8 +759,7 @@ int main()
 				glBindTexture(GL_TEXTURE_2D_ARRAY, app.depthTexture);
 				const bool packedDepth = format == GL_DEPTH24_STENCIL8;
 				std::bit_cast<PFNGLTEXIMAGE3DPROC>(wglGetProcAddress("glTexImage3D"))(
-					GL_TEXTURE_2D_ARRAY, 0, format, 8, 8, 2, 0,
-					packedDepth ? GL_DEPTH_STENCIL : GL_DEPTH_COMPONENT,
+					GL_TEXTURE_2D_ARRAY, 0, format, 8, 8, 2, 0, packedDepth ? GL_DEPTH_STENCIL : GL_DEPTH_COMPONENT,
 					packedDepth ? GL_UNSIGNED_INT_24_8 : GL_FLOAT,
 					packedDepth ? static_cast<const void*>(packed.data()) : values.data());
 				Require(glGetError() == GL_NO_ERROR, "Upload application depth array");
@@ -751,34 +772,37 @@ int main()
 				depth.farZ = 10;
 				CompositionPlan depthPlan;
 				Require(PrepareDepthComposition(depth, linear, {8, 8}, false, depthPlan) == XR_SUCCESS,
-					"Prepare shared depth inspection plan");
+						"Prepare shared depth inspection plan");
 				const OpenGLCompositionSource source{app.depthTexture, format, 8, 8, 2};
 				Require(backend->Prepare(depthPlan, std::span{&source, 1}, frame, 1) == XR_SUCCESS,
-					"Prepare OpenGL depth inspection");
+						"Prepare OpenGL depth inspection");
 			}
 			else
 				Require(backend->Prepare(plan, sources, frame) == XR_SUCCESS, "Prepare OpenGL composition");
 			std::shared_ptr<VulkanFrame> copied;
 			Require(delivery.PrepareNativeCopy(frame->Image(), frame->Ready(), 0, frame, {}, copied) == XR_SUCCESS,
-				"Prepare OpenGL GPU delivery");
+					"Prepare OpenGL GPU delivery");
 			auto transfer = inspection.Prepare(copied);
 			Require(backend->Submit(frame) == XR_SUCCESS, "Submit OpenGL composition");
 			GLint bound = 0;
 			glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
 			Require(wglGetCurrentContext() == app.context && wglGetCurrentDC() == app.device &&
-				static_cast<GLuint>(bound) == app.texture, "Application OpenGL context and bindings changed");
+						static_cast<GLuint>(bound) == app.texture,
+					"Application OpenGL context and bindings changed");
 			Require(delivery.Submit(copied) == XR_SUCCESS, "Submit OpenGL GPU delivery");
 			transfer->Commit();
 			auto retained = transfer->Output();
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-			while (retained->PollCompletion() == CompletionStatus::Pending && std::chrono::steady_clock::now() < deadline)
+			while (retained->PollCompletion() == CompletionStatus::Pending &&
+				   std::chrono::steady_clock::now() < deadline)
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			Require(retained->PollCompletion() == CompletionStatus::Complete, "OpenGL delivery did not finish");
 			std::shared_ptr<const VulkanInspectionFrame> recomposed;
 			if (mipChain)
 			{
 				Require(retained->Image().mipLevels == 4 && retained->Image().layers == 1 &&
-					retained->Image().extent.width == 8, "Retained OpenGL image lost full mip chain");
+							retained->Image().extent.width == 8,
+						"Retained OpenGL image lost full mip chain");
 				backend.reset();
 				glDeleteTextures(1, &app.texture);
 				glGenTextures(1, &app.texture);
@@ -788,31 +812,43 @@ int main()
 				const std::array<std::shared_ptr<const VulkanInspectionFrame>, 2> retainedSources{retained, retained};
 				recomposed = VulkanInspectionFrame::Compose(minified, retainedSources);
 				Require(recomposed != nullptr, "Recompose retained OpenGL mip chain after producer teardown");
-				while (recomposed->PollCompletion() == CompletionStatus::Pending && std::chrono::steady_clock::now() < deadline)
+				while (recomposed->PollCompletion() == CompletionStatus::Pending &&
+					   std::chrono::steady_clock::now() < deadline)
 					std::this_thread::sleep_for(std::chrono::milliseconds(1));
-				Require(recomposed->PollCompletion() == CompletionStatus::Complete, "Retained OpenGL mip composition did not finish");
+				Require(recomposed->PollCompletion() == CompletionStatus::Complete,
+						"Retained OpenGL mip composition did not finish");
 			}
 			auto exported = (recomposed ? recomposed : retained)->Export();
 			std::shared_ptr<const VulkanImagePixels> pixels;
 			while (!(pixels = exported->Pixels()) && std::chrono::steady_clock::now() < deadline)
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			const std::uint32_t width = mipChain ? 1 : raw || depthCase ? 4 : 8,
-				height = mipChain ? 1 : raw || depthCase ? 6 : 8, layers = mipChain ? 2 : raw || depthCase ? 1 : 2;
-			Require(pixels && pixels->width == width && pixels->height == height && pixels->layers == layers, "OpenGL output shape mismatch");
+			const std::uint32_t width = mipChain		   ? 1
+										: raw || depthCase ? 4
+														   : 8,
+								height = mipChain			? 1
+										 : raw || depthCase ? 6
+															: 8,
+								layers = mipChain			? 2
+										 : raw || depthCase ? 1
+															: 2;
+			Require(pixels && pixels->width == width && pixels->height == height && pixels->layers == layers,
+					"OpenGL output shape mismatch");
 			if (hdrRaw)
 			{
 				const auto format = std::array<std::uint32_t, 3>{97, 109, 64}[scenario - 13];
 				const auto stride = ColorPixelBytes(format);
-				Require(pixels->format == format && pixels->rgba.size() == width * height * stride, "OpenGL HDR raw format/size mismatch");
+				Require(pixels->format == format && pixels->rgba.size() == width * height * stride,
+						"OpenGL HDR raw format/size mismatch");
 				const auto bytes = std::as_bytes(std::span(pixels->rgba));
-				const std::array expected = scenario == 15 ? std::array{0.0f, 512.0f / 1023, 1.0f, 1.0f / 3} :
-					std::array{-0.5f, 0.5f, 2.0f, 0.25f};
+				const std::array expected = scenario == 15 ? std::array{0.0f, 512.0f / 1023, 1.0f, 1.0f / 3}
+														   : std::array{-0.5f, 0.5f, 2.0f, 0.25f};
 				for (std::size_t offset = 0; offset < bytes.size(); offset += stride)
 				{
 					const auto color = DecodeColorPixel(format, bytes.subspan(offset, stride));
 					for (std::size_t channel = 0; channel < 4; ++channel)
-						Require(std::abs(color[channel] - expected[channel]) <= (scenario == 15 && channel < 3 ? 1.0f / 1023 : 0.0001f),
-							"OpenGL HDR range/alpha changed");
+						Require(std::abs(color[channel] - expected[channel]) <=
+									(scenario == 15 && channel < 3 ? 1.0f / 1023 : 0.0001f),
+								"OpenGL HDR range/alpha changed");
 				}
 			}
 			for (std::size_t eye = 0; !hdrRaw && eye < layers; ++eye)
@@ -824,24 +860,26 @@ int main()
 					{
 						const int expected = scenario == 9 ? 128 : 188;
 						Require(pixels->rgba[offset] <= 2 && std::abs(pixels->rgba[offset + 1] - expected) <= 2 &&
-							pixels->rgba[offset + 2] <= 2 && pixels->rgba[offset + 3] == 255,
-							"Retained OpenGL mip selection or HDR/sRGB conversion mismatch");
+									pixels->rgba[offset + 2] <= 2 && pixels->rgba[offset + 3] == 255,
+								"Retained OpenGL mip selection or HDR/sRGB conversion mismatch");
 						continue;
 					}
 					if (depthCase)
 					{
 						const double depth = y < height / 2 ? 0.75 : 0.5;
 						const double value = linear ? 0.1 * depth / (10 * (1 - depth) + 0.1 * depth) : depth;
-						const auto expected = static_cast<int>(std::lround(255 * (value <= 0.0031308 ? 12.92 * value :
-							1.055 * std::pow(value, 1 / 2.4) - 0.055)));
+						const auto expected = static_cast<int>(std::lround(
+							255 * (value <= 0.0031308 ? 12.92 * value : 1.055 * std::pow(value, 1 / 2.4) - 0.055)));
 						for (std::size_t channel = 0; channel < 3; ++channel)
-							Require(std::abs(pixels->rgba[offset + channel] - expected) <= 2,
+							Require(
+								std::abs(pixels->rgba[offset + channel] - expected) <= 2,
 								"Depth inspection differs from normalized/linear conversion or selected array slice");
 						Require(pixels->rgba[offset + 3] == 255, "Depth inspection alpha mismatch");
 						continue;
 					}
 					Require(pixels->rgba[offset] == (y < height / 2 ? 255 : 0) && pixels->rgba[offset + 1] == 0 &&
-						pixels->rgba[offset + 2] == (y < height / 2 ? 0 : 255), "OpenGL image orientation or color mismatch");
+								pixels->rgba[offset + 2] == (y < height / 2 ? 0 : 255),
+							"OpenGL image orientation or color mismatch");
 				}
 			}
 			CheckVulkan(delivery.Drain(5000000000ULL), "Drain OpenGL delivery");
@@ -850,7 +888,9 @@ int main()
 		VerifyMultisample(app, device);
 		VerifyImageReuse(device);
 		VerifySubmissionFailures(device);
-		std::puts("PASS: canonical GLSL, exact float16/float32/RGB10 raw captures, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer teardown and GPU handoff");
+		std::puts("PASS: canonical GLSL, exact float16/float32/RGB10 raw captures, cropped raw/depth arrays, "
+				  "normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer "
+				  "teardown and GPU handoff");
 		return 0;
 	}
 	catch (const std::exception& error)

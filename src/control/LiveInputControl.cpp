@@ -11,7 +11,6 @@ namespace simxr::control
 {
 std::vector<Field> EncodeLiveInput(const LiveInputSample& sample)
 {
-
 	std::vector<Field> commands{EncodeSimulationCommand(SetHeadPose{sample.head}, 1),
 								EncodeSimulationCommand(SetControllerPose{0, sample.hands[0]}, 2),
 								EncodeSimulationCommand(SetControllerPose{1, sample.hands[1]}, 3),
@@ -34,6 +33,7 @@ std::vector<Field> EncodeLiveInput(const LiveInputSample& sample)
 			Field::U32(tag::MaxSampleAgeMs, static_cast<std::uint32_t>(sample.maxAge.count()), true),
 			Field::Bytes(tag::Commands, EncodeFields(commands), true)};
 }
+
 LiveInputSample DecodeLiveInput(const Message& request)
 {
 	LiveInputSample sample;
@@ -88,6 +88,7 @@ LiveInputSample DecodeLiveInput(const Message& request)
 	}
 	return sample;
 }
+
 std::optional<FrameNativeClockMapping> DecodeLiveClock(const Message& response)
 {
 	const auto phase = response.Find(tag::Phase);
@@ -97,8 +98,7 @@ std::optional<FrameNativeClockMapping> DecodeLiveClock(const Message& response)
 		return {};
 	if (*phase->AsText() != "available")
 		throw std::invalid_argument("Unknown native clock phase");
-	const auto signedTime = [&](std::uint16_t tag)
-	{
+	const auto signedTime = [&](std::uint16_t tag) {
 		const auto field = response.Find(tag);
 		if (!field || !field->AsI64() || *field->AsI64() <= 0)
 			throw std::invalid_argument("Missing or invalid native clock timestamp");
@@ -143,15 +143,13 @@ Message SimulationConnection::DispatchLiveInput(const Message& request, const Co
 			throw ControlRequestError{ErrorCode::Capacity, "Attachment identities exhausted"};
 		// Allocate the response before changing ownership of this connection.
 		response.fields.push_back(Field::U64(tag::AttachmentId, m_attachment + 1, true));
-		if (!session->WithCommandGeneration(generation,
-											[&]
-											{
-												m_kind = CommandSourceKind::Device;
-												Track(session, source);
-												m_liveSession = session;
-												m_liveGeneration = generation;
-												++m_attachment;
-											}))
+		if (!session->WithCommandGeneration(generation, [&] {
+				m_kind = CommandSourceKind::Device;
+				Track(session, source);
+				m_liveSession = session;
+				m_liveGeneration = generation;
+				++m_attachment;
+			}))
 			throw ControlRequestError{ErrorCode::StaleGeneration, "Session changed before attachment"};
 		return response;
 	}
@@ -174,11 +172,7 @@ Message SimulationConnection::DispatchLiveInput(const Message& request, const Co
 	if (opcode == OpCode::ReadLiveClock)
 	{
 		std::optional<FrameNativeClockMapping> mapping;
-		if (!session->WithCommandGeneration(generation,
-											[&]
-											{
-												mapping = session->Scheduler().NativeClockMapping();
-											}))
+		if (!session->WithCommandGeneration(generation, [&] { mapping = session->Scheduler().NativeClockMapping(); }))
 			throw ControlRequestError{ErrorCode::StaleGeneration, "Session changed before clock observation"};
 		response.fields.push_back(Field::U64(tag::AttachmentId, m_attachment, true));
 		response.fields.push_back(Field::Text(tag::Phase, mapping ? "available" : "unavailable", true));
@@ -197,13 +191,7 @@ Message SimulationConnection::DispatchLiveInput(const Message& request, const Co
 	{
 		response.fields.push_back(Field::Bool(tag::Released, true));
 		// Generation check also permits cleanup after End, but never the next run.
-		if (!session->WithCommandGeneration(
-				generation,
-				[&]
-				{
-					session->ReleaseCommandSource(source);
-				},
-				false))
+		if (!session->WithCommandGeneration(generation, [&] { session->ReleaseCommandSource(source); }, false))
 			throw ControlRequestError{ErrorCode::StaleGeneration, "Session changed before detach"};
 		m_liveSession.reset();
 		m_liveGeneration = {};

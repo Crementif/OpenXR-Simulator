@@ -25,10 +25,12 @@ thread_local bool allocationFailed = false;
 		return memory;
 	throw std::bad_alloc{};
 }
+
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -58,8 +60,7 @@ void HapticPublicationFailure()
 					"Apply haptic replacement");
 		}
 		catch (const std::bad_alloc&)
-		{
-		}
+		{}
 		allocationCountdown = -1;
 		const bool failed = allocationFailed;
 		if (failed)
@@ -67,8 +68,7 @@ void HapticPublicationFailure()
 			const auto unchanged = haptics.Snapshot({Duration{20}});
 			Require(unchanged.size() == previous.size() &&
 						std::equal(unchanged.begin(), unchanged.end(), previous.begin(),
-								   [](const auto& left, const auto& right)
-								   {
+								   [](const auto& left, const auto& right) {
 									   return left.sequence == right.sequence && left.device == right.device &&
 											  left.action == right.action &&
 											  left.subactionPath == right.subactionPath &&
@@ -84,10 +84,7 @@ void HapticPublicationFailure()
 		const auto committed = haptics.Snapshot({Duration{20}});
 		Require(committed.size() == 5 && committed.back().sequence == 5 &&
 					std::count_if(committed.begin(), committed.end(),
-								  [](const auto& output)
-								  {
-									  return output.status == HapticStatus::Active;
-								  }) == 3,
+								  [](const auto& output) { return output.status == HapticStatus::Active; }) == 3,
 				"Haptic replacement lost output or consumed sequence on failure");
 		if (!failed)
 		{
@@ -131,11 +128,9 @@ void HapticRetirementWithoutAllocation()
 		}
 		allocationCountdown = -1;
 		const auto snapshot = haptics.Snapshot(finish);
-		Require(snapshot.size() <= 8 && std::none_of(snapshot.begin(), snapshot.end(),
-													 [](const auto& output)
-													 {
-														 return output.status == HapticStatus::Active;
-													 }),
+		Require(snapshot.size() <= 8 &&
+					std::none_of(snapshot.begin(), snapshot.end(),
+								 [](const auto& output) { return output.status == HapticStatus::Active; }),
 				"Haptic retirement left active output");
 	}
 }
@@ -162,8 +157,7 @@ void TrackerPublicationFailure()
 			Require(trackers.Publish(snapshot, &changed) == XR_SUCCESS, "Publish replacement tracker inventory");
 		}
 		catch (const std::bad_alloc&)
-		{
-		}
+		{}
 		allocationCountdown = -1;
 		const bool failed = allocationFailed;
 		if (failed)
@@ -171,8 +165,7 @@ void TrackerPublicationFailure()
 			const auto unchanged = trackers.Paths();
 			Require(unchanged.size() == previous.size() &&
 						std::equal(unchanged.begin(), unchanged.end(), previous.begin(),
-								   [](const auto& left, const auto& right)
-								   {
+								   [](const auto& left, const auto& right) {
 									   return left.identity == right.identity &&
 											  left.persistentPath == right.persistentPath &&
 											  left.rolePath == right.rolePath && left.connected == right.connected;
@@ -206,8 +199,7 @@ void ProfileNotificationFailure()
 		Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
 				"Start profile notification session");
 		auto& registry = instance.Actions();
-		const auto path = [&](const char* name)
-		{
+		const auto path = [&](const char* name) {
 			XrPath result = XR_NULL_PATH;
 			Require(registry.StringToPath(name, result) == XR_SUCCESS, "Create profile path");
 			return result;
@@ -239,14 +231,11 @@ void ProfileNotificationFailure()
 		const XrActiveActionSet active{actionSet, XR_NULL_PATH};
 		const XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &active};
 		Require(session.SyncActions(sync) == XR_SUCCESS, "Synchronize initial profile");
-		const auto profileEvents = [&]
-		{
+		const auto profileEvents = [&] {
 			const auto events = instance.Events().Observe();
-			return std::count_if(events.begin(), events.end(),
-								 [](const auto& event)
-								 {
-									 return std::holds_alternative<InteractionProfileEvent>(event.event);
-								 });
+			return std::count_if(events.begin(), events.end(), [](const auto& event) {
+				return std::holds_alternative<InteractionProfileEvent>(event.event);
+			});
 		};
 		const auto before = profileEvents();
 		auto input = session.Input().Snapshot();
@@ -260,8 +249,7 @@ void ProfileNotificationFailure()
 			result = session.SyncActions(sync);
 		}
 		catch (const std::bad_alloc&)
-		{
-		}
+		{}
 		allocationCountdown = -1;
 		Require((result == XR_SUCCESS || result == XR_ERROR_OUT_OF_MEMORY) && session.SyncActions(sync) == XR_SUCCESS,
 				"Retry profile synchronization");
@@ -326,15 +314,12 @@ void ReplacedGeneration()
 			"Start replaced-generation session");
 	const auto generation = session.Snapshot().generation;
 	FramePrediction prediction;
-	const auto result = session.WaitFrame(
-		prediction,
-		[&](const FramePrediction&) -> XrResult
-		{
-			Require(session.RequestExit(timing.epoch) == XR_SUCCESS && session.End(timing.epoch) == XR_SUCCESS &&
-						session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
-					"Replace generation while native publication is in progress");
-			throw std::bad_alloc{};
-		});
+	const auto result = session.WaitFrame(prediction, [&](const FramePrediction&) -> XrResult {
+		Require(session.RequestExit(timing.epoch) == XR_SUCCESS && session.End(timing.epoch) == XR_SUCCESS &&
+					session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+				"Replace generation while native publication is in progress");
+		throw std::bad_alloc{};
+	});
 	Require(result == XR_ERROR_SESSION_LOST && session.Snapshot().generation != generation &&
 				!session.Snapshot().closed && session.WaitFrame(prediction) == XR_SUCCESS,
 			"An old publication failure closed its replacement generation");
@@ -367,13 +352,10 @@ void PublicationFailure()
 		allocationCountdown = failure;
 		try
 		{
-			result = session.WaitFrame(prediction,
-									   [&](const FramePrediction& admitted)
-									   {
-										   session.PublishTracking(admitted.displayTime, TrackingState{},
-																   ViewSettings{}, admitted.id);
-										   return XR_SUCCESS;
-									   });
+			result = session.WaitFrame(prediction, [&](const FramePrediction& admitted) {
+				session.PublishTracking(admitted.displayTime, TrackingState{}, ViewSettings{}, admitted.id);
+				return XR_SUCCESS;
+			});
 		}
 		catch (const std::bad_alloc&)
 		{
@@ -398,8 +380,7 @@ void PublicationFailure()
 					"Publication failure left live owners or an uncancelled frame");
 			const auto diagnostics = session.History().Diagnostics();
 			Require(std::count_if(diagnostics.events.begin(), diagnostics.events.end(),
-								  [](const auto& event)
-								  {
+								  [](const auto& event) {
 									  return event.kind == FrameTraceKind::WaitReturned &&
 											 event.result == XR_ERROR_SESSION_LOST;
 								  }) == 1,

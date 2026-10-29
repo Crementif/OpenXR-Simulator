@@ -8,19 +8,15 @@ void UndoStack::Observe(const ObservedSetup& observed)
 	if (!m_open)
 		m_authored = State{observed.values.tracking, observed.values.proportions};
 }
+
 void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edit)
 {
-	const bool pose = std::any_of(edit.commands.begin(), edit.commands.end(),
-								  [](const SimulationCommand& command)
-								  {
-									  return std::holds_alternative<SetHeadPose>(command) ||
-											 std::holds_alternative<SetControllerPose>(command) ||
-											 std::holds_alternative<SetBodyControls>(command) ||
-											 std::holds_alternative<SetGaze>(command) ||
-											 std::holds_alternative<SetTracker>(command) ||
-											 std::holds_alternative<SetTrackers>(command) ||
-											 std::holds_alternative<SetBodyProportions>(command);
-								  });
+	const bool pose = std::any_of(edit.commands.begin(), edit.commands.end(), [](const SimulationCommand& command) {
+		return std::holds_alternative<SetHeadPose>(command) || std::holds_alternative<SetControllerPose>(command) ||
+			   std::holds_alternative<SetBodyControls>(command) || std::holds_alternative<SetGaze>(command) ||
+			   std::holds_alternative<SetTracker>(command) || std::holds_alternative<SetTrackers>(command) ||
+			   std::holds_alternative<SetBodyProportions>(command);
+	});
 	if (!pose)
 		return;
 	if (!m_authored)
@@ -38,14 +34,12 @@ void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edi
 	else if (m_entries.back().label.empty())
 		m_entries.back().label = edit.label;
 	auto& entry = m_entries.back();
-	const auto remember = [&](ControlChannel channel)
-	{
+	const auto remember = [&](ControlChannel channel) {
 		entry.channels[static_cast<std::size_t>(channel)] = true;
 	};
 	for (const auto& command : edit.commands)
 		std::visit(
-			[&](const auto& value)
-			{
+			[&](const auto& value) {
 				using T = std::decay_t<decltype(value)>;
 				if constexpr (std::is_same_v<T, SetHeadPose>)
 				{
@@ -91,12 +85,14 @@ void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edi
 	entry.description = Describe(entry.before, *m_authored);
 	m_open = edit.continuous;
 }
+
 void UndoStack::Clear()
 {
 	m_entries.clear();
 	m_authored.reset();
 	m_open = false;
 }
+
 std::vector<UndoStack::Change> UndoStack::Changes() const
 {
 	std::vector<Change> result;
@@ -104,18 +100,17 @@ std::vector<UndoStack::Change> UndoStack::Changes() const
 		result.push_back({entry.label.empty() ? entry.description : entry.label, entry.time});
 	return result;
 }
+
 std::string UndoStack::Describe(const State& before, const State& after)
 {
-	const auto moved = [](const XrPosef& a, const XrPosef& b)
-	{
+	const auto moved = [](const XrPosef& a, const XrPosef& b) {
 		const float distance =
 			std::hypot(a.position.x - b.position.x, a.position.y - b.position.y, a.position.z - b.position.z);
 		const float dot = a.orientation.x * b.orientation.x + a.orientation.y * b.orientation.y +
 						  a.orientation.z * b.orientation.z + a.orientation.w * b.orientation.w;
 		return distance > .0005f || std::abs(dot) < .99999f;
 	};
-	const auto movedOptional = [&](const std::optional<XrPosef>& a, const std::optional<XrPosef>& b)
-	{
+	const auto movedOptional = [&](const std::optional<XrPosef>& a, const std::optional<XrPosef>& b) {
 		return a.has_value() != b.has_value() || (a && moved(*a, *b));
 	};
 	const auto& from = before.tracking;
@@ -127,8 +122,7 @@ std::string UndoStack::Describe(const State& before, const State& after)
 	if (from.body.preset != to.body.preset)
 		return "Body pose changed";
 	char text[64];
-	const auto measure = [&](const char* name, float a, float b)
-	{
+	const auto measure = [&](const char* name, float a, float b) {
 		std::snprintf(text, sizeof(text), "%s %.2f \u2192 %.2f m", name, a, b);
 		return std::string(text);
 	};
@@ -140,8 +134,7 @@ std::string UndoStack::Describe(const State& before, const State& after)
 		return measure("Hip width", before.proportions.hipWidth, after.proportions.hipWidth);
 	std::vector<std::string> names;
 	bool posed = false;
-	const auto note = [&](std::string name, bool pose)
-	{
+	const auto note = [&](std::string name, bool pose) {
 		names.push_back(std::move(name));
 		posed |= pose;
 	};
@@ -181,6 +174,7 @@ std::string UndoStack::Describe(const State& before, const State& after)
 		return names[0] + " and " + names[1] + verb;
 	return std::to_string(names.size()) + " devices" + verb;
 }
+
 std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, std::optional<CommandSource> source,
 												 std::size_t steps)
 {
@@ -195,8 +189,7 @@ std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, s
 	for (std::size_t index = m_entries.size(); index > m_entries.size() - steps; --index)
 	{
 		const auto& entry = m_entries[index - 1];
-		const auto restore = [&](ControlChannel channel, auto& value, const auto& before)
-		{
+		const auto restore = [&](ControlChannel channel, auto& value, const auto& before) {
 			const auto slot = static_cast<std::size_t>(channel);
 			if (entry.channels[slot])
 			{
@@ -240,8 +233,7 @@ std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, s
 	if (channels[static_cast<std::size_t>(ControlChannel::Trackers)] && !current.trackerAttachmentsAvailable)
 		return {};
 	ManualTransaction result;
-	const auto restore = [&](ControlChannel channel, SimulationCommand command)
-	{
+	const auto restore = [&](ControlChannel channel, SimulationCommand command) {
 		if (channels[static_cast<std::size_t>(channel)])
 		{
 			result.commands.emplace_back(TakeControl{channel, false});

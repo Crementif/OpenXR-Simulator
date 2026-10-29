@@ -8,16 +8,19 @@ namespace simxr::app
 static constexpr std::string_view s_magic = "SIMXR-COMPANION\x01";
 static constexpr std::size_t s_maxFile = 8 * 1024 * 1024;
 static constexpr std::size_t s_maxText = 1024 * 1024;
+
 static void TextValid(const std::string& text)
 {
 	if (text.size() > s_maxText || text.find('\0') != std::string::npos)
 		throw std::invalid_argument("Settings text exceeds its bound or contains NUL");
 }
+
 static void Put(std::string& bytes, std::uint32_t number)
 {
 	for (unsigned shift = 0; shift < 32; shift += 8)
 		bytes.push_back(static_cast<char>(number >> shift));
 }
+
 static void Put(std::string& bytes, const std::string& text)
 {
 	TextValid(text);
@@ -26,14 +29,17 @@ static void Put(std::string& bytes, const std::string& text)
 	Put(bytes, static_cast<std::uint32_t>(text.size()));
 	bytes += text;
 }
+
 class SettingsReader
 {
-  public:
+public:
 	explicit SettingsReader(std::string_view bytes) : m_bytes(bytes) {}
+
 	bool Empty() const noexcept
 	{
 		return m_bytes.empty();
 	}
+
 	std::uint32_t Number()
 	{
 		if (m_bytes.size() < 4)
@@ -44,6 +50,7 @@ class SettingsReader
 		m_bytes.remove_prefix(4);
 		return value;
 	}
+
 	std::string Text()
 	{
 		const auto size = Number();
@@ -54,6 +61,7 @@ class SettingsReader
 		TextValid(result);
 		return result;
 	}
+
 	std::uint32_t Count(std::uint32_t limit)
 	{
 		const auto count = Number();
@@ -62,9 +70,10 @@ class SettingsReader
 		return count;
 	}
 
-  private:
+private:
 	std::string_view m_bytes;
 };
+
 static void PutProfile(std::string& bytes, const LaunchProfile& profile)
 {
 	Put(bytes, profile.name);
@@ -83,6 +92,7 @@ static void PutProfile(std::string& bytes, const LaunchProfile& profile)
 		Put(bytes, value);
 	}
 }
+
 static LaunchProfile ReadProfile(SettingsReader& reader)
 {
 	LaunchProfile profile;
@@ -102,6 +112,7 @@ static LaunchProfile ReadProfile(SettingsReader& reader)
 	}
 	return profile;
 }
+
 void ResetLayout(CompanionSettings& settings)
 {
 	const CompanionSettings defaults;
@@ -111,6 +122,7 @@ void ResetLayout(CompanionSettings& settings)
 	settings.inspectorFolded = false;
 	settings.timelineFolded = false;
 }
+
 void ValidateSettings(const CompanionSettings& settings)
 {
 	if (settings.previewRamMiB < FramePreviewHistory::MinMiB || settings.previewRamMiB > FramePreviewHistory::MaxMiB ||
@@ -173,6 +185,7 @@ void ValidateSettings(const CompanionSettings& settings)
 			throw std::invalid_argument("Invalid or duplicate layout name");
 	}
 }
+
 std::string PathProblem(const std::string& path, PathKind kind)
 {
 	if (path.empty())
@@ -190,20 +203,19 @@ std::string PathProblem(const std::string& path, PathKind kind)
 		return "Not executable";
 	return {};
 }
+
 void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed)
 {
 	ValidateLaunchProfile(launch);
-	std::erase_if(settings.recent,
-				  [&](const RecentApp& recent)
-				  {
-					  return recent.launch.executable == launch.executable &&
-							 recent.launch.arguments == launch.arguments &&
-							 recent.launch.workingDirectory == launch.workingDirectory;
-				  });
+	std::erase_if(settings.recent, [&](const RecentApp& recent) {
+		return recent.launch.executable == launch.executable && recent.launch.arguments == launch.arguments &&
+			   recent.launch.workingDirectory == launch.workingDirectory;
+	});
 	settings.recent.insert(settings.recent.begin(), RecentApp{std::move(launch), lastUsed});
 	if (settings.recent.size() > MaxRecentApps)
 		settings.recent.resize(MaxRecentApps);
 }
+
 CompanionSettings LoadSettings(const std::filesystem::path& path)
 {
 	std::error_code error;
@@ -362,6 +374,7 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 	ValidateSettings(result);
 	return result;
 }
+
 static void WriteSettings(const std::filesystem::path& path, const CompanionSettings& settings)
 {
 	ValidateSettings(settings);
@@ -440,10 +453,10 @@ static void WriteSettings(const std::filesystem::path& path, const CompanionSett
 	Put(bytes, settings.previewBudgetMiB);
 	Put(bytes, std::uint32_t{10});
 	Put(bytes, settings.previewRamMiB);
-	const bool bundled = std::ranges::any_of(settings.profiles,
-											 [](const LaunchProfile& profile) { return profile.useBundledRuntime; }) ||
-		std::ranges::any_of(settings.recent,
-							[](const RecentApp& recent) { return recent.launch.useBundledRuntime; });
+	const bool bundled =
+		std::ranges::any_of(settings.profiles,
+							[](const LaunchProfile& profile) { return profile.useBundledRuntime; }) ||
+		std::ranges::any_of(settings.recent, [](const RecentApp& recent) { return recent.launch.useBundledRuntime; });
 	if (bundled || settings.mcpEnabled || settings.autoUpdateCheck)
 	{
 		Put(bytes, std::uint32_t{11});
@@ -488,13 +501,15 @@ static void WriteSettings(const std::filesystem::path& path, const CompanionSett
 		throw;
 	}
 }
+
 void SaveSettings(const std::filesystem::path& path, const CompanionSettings& settings)
 {
 	const SettingsFileLock lock(path);
 	WriteSettings(path, settings);
 }
+
 CompanionSettings SaveSettingsIfUnchanged(const std::filesystem::path& path, const CompanionSettings& expected,
-										   const CompanionSettings& settings)
+										  const CompanionSettings& settings)
 {
 	const SettingsFileLock lock(path);
 	if (LoadSettings(path) != expected)
@@ -502,6 +517,7 @@ CompanionSettings SaveSettingsIfUnchanged(const std::filesystem::path& path, con
 	WriteSettings(path, settings);
 	return LoadSettings(path);
 }
+
 std::string LoadWindowLayout(const std::filesystem::path& path)
 {
 	std::error_code error;
@@ -531,6 +547,7 @@ std::string LoadWindowLayout(const std::filesystem::path& path)
 		throw std::runtime_error("Window layout contains NUL");
 	return text;
 }
+
 void SaveWindowLayout(const std::filesystem::path& path, std::string_view text)
 {
 	if (!path.is_absolute())

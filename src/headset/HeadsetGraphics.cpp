@@ -130,10 +130,7 @@ void HeadsetGraphics::Open(OpenXrRuntime& runtime, bool validation)
 		std::vector<VkLayerProperties> layers(layerCount);
 		CheckVk(vkEnumerateInstanceLayerProperties(&layerCount, layers.data()), "Read Vulkan validation layers");
 		if (std::none_of(layers.begin(), layers.end(),
-						 [&](const auto& layer)
-						 {
-							 return std::strcmp(layer.layerName, validationLayer) == 0;
-						 }))
+						 [&](const auto& layer) { return std::strcmp(layer.layerName, validationLayer) == 0; }))
 			throw std::runtime_error("Requested Vulkan validation layer is unavailable");
 		instanceInfo.enabledLayerCount = 1;
 		instanceInfo.ppEnabledLayerNames = &validationLayer;
@@ -178,11 +175,9 @@ void HeadsetGraphics::Open(OpenXrRuntime& runtime, bool validation)
 	vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &count, nullptr);
 	std::vector<VkQueueFamilyProperties> families(count);
 	vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &count, families.data());
-	const auto family = std::find_if(families.begin(), families.end(),
-									 [](const auto& entry)
-									 {
-										 return entry.queueCount && (entry.queueFlags & VK_QUEUE_GRAPHICS_BIT);
-									 });
+	const auto family = std::find_if(families.begin(), families.end(), [](const auto& entry) {
+		return entry.queueCount && (entry.queueFlags & VK_QUEUE_GRAPHICS_BIT);
+	});
 	if (family == families.end())
 		throw std::runtime_error("The physical headset GPU has no graphics queue");
 	m_queueFamily = static_cast<std::uint32_t>(family - families.begin());
@@ -200,10 +195,7 @@ void HeadsetGraphics::Open(OpenXrRuntime& runtime, bool validation)
 		m_extensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
 	for (const auto* name : m_extensions)
 		if (std::none_of(extensions.begin(), extensions.end(),
-						 [&](const auto& entry)
-						 {
-							 return std::strcmp(entry.extensionName, name) == 0;
-						 }))
+						 [&](const auto& entry) { return std::strcmp(entry.extensionName, name) == 0; }))
 			throw std::runtime_error(std::string("Headset GPU sharing requires ") + name);
 	VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
 	VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
@@ -235,30 +227,37 @@ VkInstance HeadsetGraphics::Instance() const
 {
 	return m_instance;
 }
+
 VkPhysicalDevice HeadsetGraphics::PhysicalDevice() const
 {
 	return m_physicalDevice;
 }
+
 VkDevice HeadsetGraphics::Device() const
 {
 	return m_device;
 }
+
 std::uint32_t HeadsetGraphics::QueueFamily() const
 {
 	return m_queueFamily;
 }
+
 std::uint32_t HeadsetGraphics::ApiVersion() const
 {
 	return m_apiVersion;
 }
+
 const VkPhysicalDeviceProperties& HeadsetGraphics::Properties() const
 {
 	return m_properties;
 }
+
 const VkPhysicalDeviceIDProperties& HeadsetGraphics::Identity() const
 {
 	return m_identity;
 }
+
 const std::vector<const char*>& HeadsetGraphics::Extensions() const
 {
 	return m_extensions;

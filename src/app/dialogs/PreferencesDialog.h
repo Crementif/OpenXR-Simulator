@@ -11,13 +11,13 @@ namespace simxr::app
 {
 class PreferencesDialog
 {
-  public:
+public:
 	bool Draw(CompanionSettings& settings, bool& open, bool& dirty, std::uint64_t keptBytes = 0,
 			  std::uint64_t keptBudget = 0, std::uint64_t ramBytes = 0, std::uint64_t ramBudget = 0,
 			  const std::string& historyError = {}, std::uint64_t tabSnapshots = 0, std::uint64_t allSnapshots = 0,
 			  McpUiState* mcp = nullptr, UpdateUiState* update = nullptr);
 
-  private:
+private:
 	bool DrawKeyboard(CompanionSettings& settings, bool& dirty);
 	void DrawGamepad(CompanionSettings& settings, bool& dirty);
 	void CaptureKey(CompanionSettings& settings, bool& dirty, bool overBinding);

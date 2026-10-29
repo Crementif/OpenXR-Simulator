@@ -7,12 +7,14 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 static void CheckCaptureSpace(const std::filesystem::path& directory)
 {
 	const auto space = std::filesystem::space(directory);
 	if (space.available == static_cast<std::uintmax_t>(-1) || space.available < 64 * 1024 * 1024)
 		throw std::runtime_error("Recording needs at least 64 MiB of free disk space");
 }
+
 static wire::Message CaptureRequest(WorkerConnection& connection, const RecordingTarget& target, wire::OpCode code,
 									std::vector<wire::Field> fields = {})
 {
@@ -28,10 +30,12 @@ static wire::Message CaptureRequest(WorkerConnection& connection, const Recordin
 	}
 	return response;
 }
+
 RecordingCapture::RecordingCapture()
 {
 	m_worker = std::thread(&RecordingCapture::Run, this);
 }
+
 RecordingCapture::~RecordingCapture()
 {
 	{
@@ -43,6 +47,7 @@ RecordingCapture::~RecordingCapture()
 	m_changed.notify_one();
 	m_worker.join();
 }
+
 void RecordingCapture::SetTarget(RecordingTarget target)
 {
 	{
@@ -59,6 +64,7 @@ void RecordingCapture::SetTarget(RecordingTarget target)
 	}
 	m_changed.notify_one();
 }
+
 bool RecordingCapture::Start(std::filesystem::path directory)
 {
 	if (directory.empty() ||
@@ -78,6 +84,7 @@ bool RecordingCapture::Start(std::filesystem::path directory)
 	m_changed.notify_one();
 	return true;
 }
+
 void RecordingCapture::Stop()
 {
 	{
@@ -89,11 +96,13 @@ void RecordingCapture::Stop()
 	}
 	m_changed.notify_one();
 }
+
 RecordingCaptureSnapshot RecordingCapture::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_snapshot;
 }
+
 void RecordingCapture::Capture(WorkerConnection& connection, const Job& job)
 {
 	if (std::filesystem::exists(job.directory))
@@ -192,14 +201,11 @@ void RecordingCapture::Capture(WorkerConnection& connection, const Job& job)
 		if (page.recording.transactions.empty())
 		{
 			std::unique_lock lock(m_mutex);
-			m_changed.wait_for(lock, std::chrono::milliseconds{5},
-							   [&]
-							   {
-								   return m_exiting || m_retired || m_stop;
-							   });
+			m_changed.wait_for(lock, std::chrono::milliseconds{5}, [&] { return m_exiting || m_retired || m_stop; });
 		}
 	}
 }
+
 void RecordingCapture::Run()
 {
 	for (;;)
@@ -208,11 +214,7 @@ void RecordingCapture::Run()
 		std::shared_ptr<WorkerConnection> connection;
 		{
 			std::unique_lock lock(m_mutex);
-			m_changed.wait(lock,
-						   [&]
-						   {
-							   return m_exiting || m_pending.has_value();
-						   });
+			m_changed.wait(lock, [&] { return m_exiting || m_pending.has_value(); });
 			if (m_exiting)
 				return;
 			job = std::move(*m_pending);

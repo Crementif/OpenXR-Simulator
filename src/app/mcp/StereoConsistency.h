@@ -27,7 +27,8 @@ bool StereoProjectionsMatch(const nlohmann::json& views);
 
 // The two RGB8 inputs already have the same bounded analysis dimensions.
 StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> left,
-	std::span<const std::uint8_t> right, std::uint32_t width, std::uint32_t height,
-	std::uint32_t sourceHeight, float threshold, std::optional<StereoFrusta> frusta,
-	bool includeImage, const std::function<void()>& check);
+												 std::span<const std::uint8_t> right, std::uint32_t width,
+												 std::uint32_t height, std::uint32_t sourceHeight, float threshold,
+												 std::optional<StereoFrusta> frusta, bool includeImage,
+												 const std::function<void()>& check);
 } // namespace simxr::app::mcp

@@ -49,8 +49,8 @@ int Application::Run()
 	if (m_options.windowless)
 	{
 		HeadlessApplications applications(processes);
-		McpHost mcp(false, m_options.mcpPort, std::move(m_options.mcpToken),
-					m_options.mcpBootstrapDescriptor, std::move(startupRegistration), true);
+		McpHost mcp(false, m_options.mcpPort, std::move(m_options.mcpToken), m_options.mcpBootstrapDescriptor,
+					std::move(startupRegistration), true);
 		mcp.Poll(applications);
 		if (!mcp.State().listening)
 			throw std::runtime_error("Windowless MCP startup failed: " + mcp.State().error);
@@ -82,9 +82,9 @@ int Application::Run()
 #endif
 		std::unique_ptr<ApplicationTabs> tabs;
 		if (m_options.proofDescriptor < 0)
-			tabs = std::make_unique<ApplicationTabs>(processes, renderer, window,
-													!m_options.smokeFrames && !m_options.runtimeSmoke,
-													m_options.controlSocket, !m_options.smokeFrames && !m_options.runtimeSmoke);
+			tabs = std::make_unique<ApplicationTabs>(
+				processes, renderer, window, !m_options.smokeFrames && !m_options.runtimeSmoke, m_options.controlSocket,
+				!m_options.smokeFrames && !m_options.runtimeSmoke);
 		if (startupProfile)
 			tabs->LaunchApplication(*startupProfile);
 		std::unique_ptr<McpHost> mcp;
@@ -110,17 +110,14 @@ int Application::Run()
 		auto lastInput = lastFrame;
 		while (running)
 		{
-			running = window.PollEvents(
-				[&](const SDL_Event& event)
-				{
-					renderer.ProcessEvent(event);
-					if ((event.type >= SDL_EVENT_KEY_DOWN && event.type <= SDL_EVENT_TEXT_EDITING_CANDIDATES) ||
-						(event.type >= SDL_EVENT_MOUSE_MOTION && event.type <= SDL_EVENT_MOUSE_WHEEL) ||
-						(event.type >= SDL_EVENT_GAMEPAD_AXIS_MOTION && event.type <= SDL_EVENT_GAMEPAD_BUTTON_UP) ||
-						event.type == SDL_EVENT_WINDOW_FOCUS_GAINED ||
-						event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
-						lastInput = std::chrono::steady_clock::now();
-				});
+			running = window.PollEvents([&](const SDL_Event& event) {
+				renderer.ProcessEvent(event);
+				if ((event.type >= SDL_EVENT_KEY_DOWN && event.type <= SDL_EVENT_TEXT_EDITING_CANDIDATES) ||
+					(event.type >= SDL_EVENT_MOUSE_MOTION && event.type <= SDL_EVENT_MOUSE_WHEEL) ||
+					(event.type >= SDL_EVENT_GAMEPAD_AXIS_MOTION && event.type <= SDL_EVENT_GAMEPAD_BUTTON_UP) ||
+					event.type == SDL_EVENT_WINDOW_FOCUS_GAINED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+					lastInput = std::chrono::steady_clock::now();
+			});
 			if (window.TakeFocusLost() && tabs)
 				tabs->FocusLost();
 			if (mcp && tabs)
@@ -154,8 +151,7 @@ int Application::Run()
 			}
 #endif
 			const auto now = std::chrono::steady_clock::now();
-			const bool interactive =
-				(tabs && tabs->PilotActive()) || now - lastInput < std::chrono::milliseconds(500);
+			const bool interactive = (tabs && tabs->PilotActive()) || now - lastInput < std::chrono::milliseconds(500);
 			const auto interval = std::chrono::nanoseconds(1000000000 / (interactive ? 60 : 30));
 			// Poll native events while pacing; queued ImGui input is consumed only by an admitted frame.
 			if (now - lastFrame < interval)
@@ -218,12 +214,10 @@ int Application::Run()
 			bool rendered = false;
 			try
 			{
-				rendered = renderer.Render(waits,
-										   [&](VkCommandBuffer command)
-										   {
-												   if (tabs)
-													   tabs->RecordTransfers(command);
-										   });
+				rendered = renderer.Render(waits, [&](VkCommandBuffer command) {
+					if (tabs)
+						tabs->RecordTransfers(command);
+				});
 			}
 			catch (...)
 			{

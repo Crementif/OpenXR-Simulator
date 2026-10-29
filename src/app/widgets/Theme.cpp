@@ -9,6 +9,7 @@ ImU32 Mix(ImU32 from, ImU32 to, float t)
 	return ImGui::ColorConvertFloat4ToU32(
 		{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t});
 }
+
 void Apply(ImGuiStyle& style)
 {
 	ImGui::StyleColorsDark(&style);

@@ -20,6 +20,7 @@ struct TimelinePoint
 	double seconds = 0;
 	RuntimeFrameRun Run() const;
 };
+
 struct TimelineSpan
 {
 	TimelinePoint first, last;
@@ -29,6 +30,7 @@ struct TimelineSpan
 	std::uint64_t scriptRun = 0;
 	std::optional<std::pair<std::size_t, std::size_t>> Range(const HistoryStore& history) const;
 };
+
 struct TimelineEvent
 {
 	RuntimeFrameRun run;
@@ -36,10 +38,11 @@ struct TimelineEvent
 	std::string text;
 	bool failed = false;
 };
+
 // Bounded observations retain their original frame endpoints even after eviction or reconnect.
 class TimelineHistory
 {
-  public:
+public:
 	void Observe(const SessionView& state, bool recording);
 	void ObserveScript(const SessionView& state, std::uint64_t run, const automation::RigSnapshot& script,
 					   bool matchesTarget);
@@ -48,41 +51,49 @@ class TimelineHistory
 	void ReplayTake(std::uint64_t run, std::string path, const SessionView& launch);
 	const TimelineSpan* FindScript(std::uint64_t run) const;
 	void Error(std::string text, double seconds);
+
 	const std::vector<TimelineSpan>& Clips() const
 	{
 		return m_clips;
 	}
+
 	const std::vector<TimelineSpan>& Pauses() const
 	{
 		return m_pauses;
 	}
+
 	const std::vector<TimelineEvent>& Events() const
 	{
 		return m_events;
 	}
+
 	const std::optional<TimelineSpan>& Recording() const
 	{
 		return m_recording;
 	}
+
 	const std::optional<TimelineSpan>& Script() const
 	{
 		return m_script;
 	}
+
 	const std::optional<TimelineSpan>& Pause() const
 	{
 		return m_pause;
 	}
+
 	std::uint64_t ScriptRun() const
 	{
 		return m_scriptRun;
 	}
 
-  private:
+private:
 	struct Observation
 	{
 		TimelinePoint point;
 		bool connected = false, manual = false;
 	};
+
 	void Push(RuntimeFrameRun run, double seconds, std::string text, bool failed = false);
 	TimelineSpan Start(TimelinePoint point, bool replay = false);
 	static void Close(std::optional<TimelineSpan>& span, std::vector<TimelineSpan>& destination);

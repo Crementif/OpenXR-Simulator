@@ -29,6 +29,7 @@ int SpatialEditor::SelectedDevice(const Selection& selection)
 	}
 	return -1;
 }
+
 void SpatialEditor::SelectDevice(Selection& selection, int device)
 {
 	if (device >= 0)
@@ -38,6 +39,7 @@ void SpatialEditor::SelectDevice(Selection& selection, int device)
 											: DevicePage::Trackers,
 							  device > 2 ? static_cast<unsigned>(device - 3) : 0};
 }
+
 ControlChannel SpatialEditor::DeviceChannel(int device)
 {
 	return device == 0	 ? ControlChannel::Head
@@ -45,10 +47,11 @@ ControlChannel SpatialEditor::DeviceChannel(int device)
 		   : device == 2 ? ControlChannel::RightPose
 						 : ControlChannel::Trackers;
 }
+
 SpatialEditor::SpatialEditor(PlayerRig& rig, ManualInputController& input, UndoStack& undo)
 	: m_rig(rig), m_input(input), m_undo(undo)
-{
-}
+{}
+
 void SpatialEditor::Reset()
 {
 	Cancel();
@@ -65,6 +68,7 @@ void SpatialEditor::Reset()
 	m_error.clear();
 	m_selected = -1;
 }
+
 void SpatialEditor::Cancel()
 {
 	CancelPoseGizmo(m_view.gizmo);
@@ -81,6 +85,7 @@ void SpatialEditor::Cancel()
 		m_editing = false;
 	}
 }
+
 void SpatialEditor::EndFrame()
 {
 	const int frame = ImGui::GetFrameCount();
@@ -97,6 +102,7 @@ void SpatialEditor::EndFrame()
 	if (m_editing && !Active())
 		Cancel();
 }
+
 void SpatialEditor::PrepareSelection(const Selection& selection)
 {
 	const int selected = SelectedDevice(selection);
@@ -106,6 +112,7 @@ void SpatialEditor::PrepareSelection(const Selection& selection)
 		m_selected = selected;
 	}
 }
+
 void SpatialEditor::Observe(const ManualInputSnapshot& snapshot, bool piloting)
 {
 	m_source = snapshot.source;
@@ -120,10 +127,7 @@ void SpatialEditor::Observe(const ManualInputSnapshot& snapshot, bool piloting)
 			!m_observed ||
 			!std::equal(observed.values.tracking.trackers.begin(), observed.values.tracking.trackers.end(),
 						m_observed->values.tracking.trackers.begin(), m_observed->values.tracking.trackers.end(),
-						[](const auto& a, const auto& b)
-						{
-							return a.identity == b.identity;
-						});
+						[](const auto& a, const auto& b) { return a.identity == b.identity; });
 		if (changed)
 			Cancel();
 		m_observed = std::move(observed);
@@ -139,6 +143,7 @@ void SpatialEditor::Observe(const ManualInputSnapshot& snapshot, bool piloting)
 		m_error = error.what();
 	}
 }
+
 void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const FrameView> eyes,
 							   const control::Message* historical, std::uint64_t historyIdentity)
 {
@@ -167,20 +172,16 @@ void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const 
 	if (m_historical)
 		m_historical->eye = m_eye;
 }
+
 bool SpatialEditor::Active() const
 {
 	return m_view.gizmo.usingGizmo ||
 		   std::any_of(m_arcballs.begin(), m_arcballs.end(),
-					   [](const auto& state)
-					   {
-						   return state.dragging || state.activeField;
-					   }) ||
+					   [](const auto& state) { return state.dragging || state.activeField; }) ||
 		   std::any_of(m_previewGizmos.begin(), m_previewGizmos.end(),
-					   [](const auto& state)
-					   {
-						   return state.usingGizmo;
-					   });
+					   [](const auto& state) { return state.usingGizmo; });
 }
+
 SpatialScene SpatialEditor::LiveScene() const
 {
 	if (!m_observed || !m_rig.Ready())
@@ -205,6 +206,7 @@ SpatialScene SpatialEditor::LiveScene() const
 	scene.attachable = AttachableJoints();
 	return scene;
 }
+
 std::array<bool, MaxTrackerDevices + 3> SpatialEditor::EditableDevices(const SpatialScene& scene) const
 {
 	std::array<bool, MaxTrackerDevices + 3> result{};
@@ -222,6 +224,7 @@ std::array<bool, MaxTrackerDevices + 3> SpatialEditor::EditableDevices(const Spa
 	}
 	return result;
 }
+
 void SpatialEditor::EditPose(int device, XrPosef pose, bool final)
 {
 	if (!Editable() || device < 0 || device >= static_cast<int>(MaxTrackerDevices + 3) ||
@@ -235,6 +238,7 @@ void SpatialEditor::EditPose(int device, XrPosef pose, bool final)
 		m_rig.SetTrackerWorld(device - 3, pose);
 	Submit(final);
 }
+
 void SpatialEditor::Submit(bool final)
 {
 	auto edit = m_rig.Transaction(*m_observed, m_source, true);
@@ -247,11 +251,13 @@ void SpatialEditor::Submit(bool final)
 	else
 		m_error = "Could not change the pose. Try again.";
 }
+
 void SpatialEditor::ApplyResult(const SpatialEditResult& result, int device, XrPosef pose)
 {
 	if (result.changed || result.finished)
 		EditPose(device, pose, result.finished);
 }
+
 void SpatialEditor::DrawRig(Selection& selection, ImVec2 size)
 {
 	PrepareSelection(selection);
@@ -285,6 +291,7 @@ void SpatialEditor::DrawRig(Selection& selection, ImVec2 size)
 	else if (selected >= 0)
 		ApplyResult(result, selected, scene.devices[selected]);
 }
+
 void SpatialEditor::DrawRigView(Selection& selection)
 {
 	if (!std::holds_alternative<DeviceSel>(selection) || (!m_observed && !m_historical) || m_view.expanded)
@@ -294,6 +301,7 @@ void SpatialEditor::DrawRigView(Selection& selection)
 	const auto available = ImGui::GetContentRegionAvail();
 	DrawRig(selection, {available.x / scale, std::clamp(available.y / scale * .3f, 120.0f, 220.0f)});
 }
+
 void SpatialEditor::DrawPlacement(Selection& selection)
 {
 	PrepareSelection(selection);
@@ -334,15 +342,18 @@ void SpatialEditor::DrawPlacement(Selection& selection)
 	if (!m_error.empty() && ImGui::IsWindowHovered())
 		ImGui::SetTooltip("%s", m_error.c_str());
 }
+
 void SpatialEditor::DrawExpanded(Selection& selection, ImVec2 size)
 {
 	const float scale = ImGui::GetFontSize() / 16;
 	DrawRig(selection, {size.x / scale, size.y / scale});
 }
+
 ShellRect SpatialEditor::RigViewRect() const
 {
 	return {m_view.minimum.x, m_view.minimum.y, m_view.size.x, m_view.size.y};
 }
+
 std::array<ShellRect, MaxTrackerDevices + 3> SpatialEditor::RigDevicePoints() const
 {
 	std::array<ShellRect, MaxTrackerDevices + 3> result{};
@@ -350,6 +361,7 @@ std::array<ShellRect, MaxTrackerDevices + 3> SpatialEditor::RigDevicePoints() co
 		result[device] = {m_view.points[device].x, m_view.points[device].y, 0, 0};
 	return result;
 }
+
 void SpatialEditor::DrawSpaceToggle()
 {
 	if (IconButton("Gizmo space", m_view.gizmo.local ? Icon::Axes : Icon::Globe,

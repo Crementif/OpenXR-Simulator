@@ -24,14 +24,8 @@ void GenerationHistoryAndBounds()
 	const auto action = reinterpret_cast<XrAction>(601);
 	SpaceSystem spaces(
 		session, tracking,
-		[](XrAction, XrPath, RuntimeTime time)
-		{
-			return PoseSample{IdentityPose(), TrackedPoseFlags, time};
-		},
-		[action](XrAction candidate, XrPath)
-		{
-			return candidate == action ? XR_SUCCESS : XR_ERROR_HANDLE_INVALID;
-		},
+		[](XrAction, XrPath, RuntimeTime time) { return PoseSample{IdentityPose(), TrackedPoseFlags, time}; },
+		[action](XrAction candidate, XrPath) { return candidate == action ? XR_SUCCESS : XR_ERROR_HANDLE_INVALID; },
 		&events);
 	XrSpace local = XR_NULL_HANDLE;
 	XrSpace stage = XR_NULL_HANDLE;
@@ -203,13 +197,11 @@ int main()
 	EventQueue events;
 	SpaceSystem spaces(
 		owner, tracking,
-		[&](XrAction, XrPath, RuntimeTime time)
-		{
+		[&](XrAction, XrPath, RuntimeTime time) {
 			auto snapshot = tracking.Sample(time);
 			return snapshot ? snapshot->controllers[0].pose : PoseSample{};
 		},
-		[&](XrAction value, XrPath path)
-		{
+		[&](XrAction value, XrPath path) {
 			return value != action ? XR_ERROR_HANDLE_INVALID : path == 2 ? XR_SUCCESS : XR_ERROR_PATH_UNSUPPORTED;
 		},
 		&events);
@@ -228,8 +220,8 @@ int main()
 	Require(spaces.CreateActionSpace(action, 2, offset, controllerOffset) == XR_SUCCESS, "Create action offset");
 	SpaceSample sampled;
 	Require(spaces.Sample(controllerOffset, first, sampled) == XR_SUCCESS &&
-		sampled.referenceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM && sampled.poseOffset.position.z == -1,
-		"Action-space snapshot fabricated a reference-space attachment");
+				sampled.referenceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM && sampled.poseOffset.position.z == -1,
+			"Action-space snapshot fabricated a reference-space attachment");
 	XrSpace unchanged = shifted;
 	Require(spaces.CreateActionSpace(reinterpret_cast<XrAction>(999), 2, IdentityPose(), unchanged) ==
 					XR_ERROR_HANDLE_INVALID &&
@@ -319,17 +311,15 @@ int main()
 			"Unavailable action tracking");
 	std::atomic<XrSpace> changing{XR_NULL_HANDLE};
 	std::atomic<bool> done = false;
-	std::thread observer(
-		[&]
+	std::thread observer([&] {
+		while (!done.load())
 		{
-			while (!done.load())
-			{
-				auto handle = changing.load();
-				PoseSample pose;
-				auto status = spaces.WorldPose(handle, last, pose);
-				Require(status == XR_SUCCESS || status == XR_ERROR_HANDLE_INVALID, "Concurrent space retirement");
-			}
-		});
+			auto handle = changing.load();
+			PoseSample pose;
+			auto status = spaces.WorldPose(handle, last, pose);
+			Require(status == XR_SUCCESS || status == XR_ERROR_HANDLE_INVALID, "Concurrent space retirement");
+		}
+	});
 	for (int index = 0; index < 100; ++index)
 	{
 		XrSpace handle{};

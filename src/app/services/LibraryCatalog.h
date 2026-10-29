@@ -30,6 +30,7 @@ enum class LibraryAction
 	Evidence,
 	Delete
 };
+
 struct LibraryResult
 {
 	LibraryAction action = LibraryAction::Scan;
@@ -39,10 +40,11 @@ struct LibraryResult
 	std::exception_ptr error;
 	std::optional<automation::RecordingEvidence> evidence;
 };
+
 // One worker serializes file changes and scans. Results remain owned until consumed.
 class LibraryCatalog
 {
-  public:
+public:
 	explicit LibraryCatalog(std::filesystem::path root);
 	~LibraryCatalog();
 	void Refresh();
@@ -54,13 +56,14 @@ class LibraryCatalog
 	std::optional<LibraryResult> TakeResult();
 	static bool ValidName(const std::string& name);
 
-  private:
+private:
 	struct Job
 	{
 		LibraryAction action;
 		std::string path, name;
 		std::uint64_t first = 0, last = 0;
 	};
+
 	bool Submit(Job job);
 	void StartWorker();
 	void Run(std::stop_token stop);

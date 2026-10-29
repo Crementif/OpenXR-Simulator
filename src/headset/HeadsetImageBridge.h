@@ -12,6 +12,7 @@ namespace simxr::control
 {
 class LocalControlClient;
 }
+
 namespace simxr::headset
 {
 enum class HeadsetImageKind
@@ -21,6 +22,7 @@ enum class HeadsetImageKind
 	Unchanged,
 	Unavailable
 };
+
 struct HeadsetImagePacket
 {
 	HeadsetImageKind kind = HeadsetImageKind::Unavailable;
@@ -32,15 +34,17 @@ struct HeadsetImagePacket
 	control::ImageDescription description;
 	std::vector<std::shared_ptr<control::TransferHandle>> handles;
 };
+
 std::optional<std::chrono::nanoseconds> HeadsetImageAge(const HeadsetImagePacket& packet,
 														std::chrono::steady_clock::time_point now);
 bool FreshHeadsetImage(const HeadsetImagePacket& packet, std::chrono::nanoseconds period,
 					   std::chrono::steady_clock::time_point now);
+
 // Transport only. The physical frame thread owns imports, GPU submissions and
 // completion. One delivery remains retained until that owner acknowledges it.
 class HeadsetImageBridge
 {
-  public:
+public:
 	explicit HeadsetImageBridge(HeadsetImageSource source);
 	~HeadsetImageBridge();
 	bool Request(control::ImageDeviceIdentity identity, std::shared_ptr<control::TransferHandle> completion,
@@ -52,7 +56,7 @@ class HeadsetImageBridge
 	// preserve any offered native consumer before destroying its graphics device.
 	void Stop();
 
-  private:
+private:
 	enum class Phase
 	{
 		Idle,
@@ -62,6 +66,7 @@ class HeadsetImageBridge
 		Failed,
 		Stopped
 	};
+
 	struct Offer
 	{
 		control::ImageDeviceIdentity identity;
@@ -69,6 +74,7 @@ class HeadsetImageBridge
 		std::uint64_t afterImageTick;
 		ImageCompletionKind completionKind;
 	};
+
 	void Run(std::stop_token stop) noexcept;
 	HeadsetImageSource m_source;
 	mutable std::mutex m_mutex;

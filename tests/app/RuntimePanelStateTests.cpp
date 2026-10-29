@@ -24,16 +24,19 @@ namespace app = simxr::app;
 namespace wire = simxr::control;
 namespace tag = wire::tag;
 using namespace std::chrono_literals;
+
 wire::Message Message(app::PanelFields fields)
 {
 	wire::Message result;
 	result.fields = std::move(fields);
 	return result;
 }
+
 wire::Field Frame(std::uint64_t id)
 {
 	return wire::Field::Bytes(tag::Frame, wire::EncodeFields(app::PanelFields{wire::Field::U64(tag::FrameId, id)}));
 }
+
 app::SessionView TimelineState(std::uint64_t epoch, std::uint64_t frame, double seconds)
 {
 	app::SessionView state;
@@ -46,6 +49,7 @@ app::SessionView TimelineState(std::uint64_t epoch, std::uint64_t frame, double 
 	state.historySeconds = seconds;
 	return state;
 }
+
 void TimelineRecordingIdentity()
 {
 	app::HistoryStore frames(3);
@@ -70,14 +74,14 @@ void TimelineRecordingIdentity()
 				clip.last.identity == app::FrameIdentity{11, 5, 12} && clip.first.epoch == 1 && clip.last.epoch == 1,
 			"Reconnect retargeted a completed recording to reused frame identities");
 }
+
 void TimelineScriptReconnect()
 {
 	app::TimelineHistory timeline;
 	simxr::automation::RigSnapshot script;
 	script.phase = simxr::automation::RigPhase::Running;
 	auto state = TimelineState(1, 10, 10);
-	const auto observe = [&](std::uint64_t run)
-	{
+	const auto observe = [&](std::uint64_t run) {
 		timeline.Observe(state, false);
 		timeline.ObserveScript(state, run, script, true);
 	};
@@ -102,6 +106,7 @@ void TimelineScriptReconnect()
 				timeline.Script()->first.Run() == app::RuntimeFrameRun{2, 11, 5},
 			"New script could not bind after the prior epoch retired");
 }
+
 void TimelineCompletedScripts()
 {
 	for (const auto phase : {simxr::automation::RigPhase::Complete, simxr::automation::RigPhase::Cancelled})
@@ -110,8 +115,7 @@ void TimelineCompletedScripts()
 		auto state = TimelineState(1, 10, 10);
 		simxr::automation::RigSnapshot script;
 		script.phase = simxr::automation::RigPhase::Running;
-		const auto observe = [&](std::uint64_t run)
-		{
+		const auto observe = [&](std::uint64_t run) {
 			timeline.Observe(state, false);
 			timeline.ObserveScript(state, run, script, true);
 		};
@@ -142,6 +146,7 @@ void TimelineCompletedScripts()
 				"New runtime scope retargeted the old script span or inherited its replay label");
 	}
 }
+
 void TimelineImmediateReplayCompletion()
 {
 	const auto launch = TimelineState(1, 10, 10);
@@ -174,6 +179,7 @@ void TimelineImmediateReplayCompletion()
 	Require(!reconnect.Script() && !reconnect.FindScript(7),
 			"Replay first observed after reconnect bound to the new epoch instead of its launch target");
 }
+
 void TimelinePauseEndpoints()
 {
 	for (const bool alreadyAdvanced : {false, true})
@@ -217,6 +223,7 @@ void TimelinePauseEndpoints()
 				timeline.Pauses().front().last.identity.frame == 20 && timeline.Pauses().front().last.seconds == 20,
 			"Pending pause endpoint extended into the next runtime run");
 }
+
 void TimelineSavedRecordingScope()
 {
 	app::TimelineHistory timeline;
@@ -238,6 +245,7 @@ void TimelineSavedRecordingScope()
 	Require(timeline.Clips()[0].take == "original.luau" && timeline.Clips()[1].take == "reconnected.luau",
 			"Recording save failed to attach to its matching runtime scope");
 }
+
 void SessionRunningUpdates()
 {
 	app::RuntimePanelRequests requests;
@@ -246,20 +254,23 @@ void SessionRunningUpdates()
 	const auto scope = debugger.Scope();
 	for (const bool running : {true, false, true})
 	{
-		debugger.Handle({app::PanelWork::Sessions}, Message({wire::Field::Bytes(tag::Sessions,
-			wire::EncodeFields(app::PanelFields{wire::Field::Bytes(1, wire::EncodeFields(app::PanelFields{
-				wire::Field::U64(tag::Session, 11), wire::Field::U64(tag::Generation, 5),
-				wire::Field::Bool(tag::Running, running)}))}))}));
+		debugger.Handle(
+			{app::PanelWork::Sessions},
+			Message({wire::Field::Bytes(
+				tag::Sessions, wire::EncodeFields(app::PanelFields{wire::Field::Bytes(
+								   1, wire::EncodeFields(app::PanelFields{
+										  wire::Field::U64(tag::Session, 11), wire::Field::U64(tag::Generation, 5),
+										  wire::Field::Bool(tag::Running, running)}))}))}));
 		Require(debugger.Selected().running == running && debugger.Scope() == scope,
-			"Session discovery failed to refresh running state within the same scope");
+				"Session discovery failed to refresh running state within the same scope");
 	}
 }
+
 void MissingCaptureKeepsSession()
 {
 	app::RuntimePanelRequests requests;
 	app::DebuggerPanelController debugger(requests);
-	const auto select = [&]
-	{
+	const auto select = [&] {
 		debugger.ChooseSession({11, 5, true});
 		debugger.Handle({app::PanelWork::Status}, Message({wire::Field::Bool(tag::Manual, true)}));
 		debugger.Handle({app::PanelWork::Acquire}, Message({wire::Field::U64(tag::Lease, 17)}));
@@ -270,14 +281,14 @@ void MissingCaptureKeepsSession()
 		const auto scope = debugger.Scope();
 		debugger.Failed({kind, 7, 11, 5}, wire::ErrorCode::NotFound, "Snapshot is absent or released");
 		Require(debugger.Scope() == scope && debugger.Selected().running && debugger.HasLease() && debugger.Manual() &&
-				!debugger.Status().fields.empty(),
+					!debugger.Status().fields.empty(),
 				"Evicted capture retired the running session or its debugger state");
 		for (const auto error : {wire::ErrorCode::Closed, wire::ErrorCode::StaleGeneration})
 		{
 			select();
 			debugger.Failed({kind, 7, 11, 5}, error, "Session retired");
 			Require(!debugger.Selected().id && !debugger.HasLease() && !debugger.Manual() &&
-					debugger.Status().fields.empty(),
+						debugger.Status().fields.empty(),
 					"Retired session survived a capture request failure");
 		}
 	}
@@ -286,6 +297,7 @@ void MissingCaptureKeepsSession()
 	Require(!debugger.Selected().id && !debugger.HasLease() && debugger.Status().fields.empty(),
 			"Missing session status was mistaken for an evicted capture");
 }
+
 void ScopedInspectionReaders()
 {
 	app::RuntimePanelRequests requests;
@@ -302,19 +314,19 @@ void ScopedInspectionReaders()
 							  wire::Field::Text(tag::Detail, "original immutable document")}));
 	workspace.MarkUnavailable(7);
 	Require(!workspace.Select(7) && workspace.Selected()->released && workspace.Selected()->inspection == 19 &&
-			workspace.CaptureIds().empty() &&
-			app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
+				workspace.CaptureIds().empty() &&
+				app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
 			"Evicted capture remained fetchable or discarded its retained CPU document");
-	workspace.Handle({app::PanelWork::Inspect, 7},
-		Message({wire::Field::U64(tag::InspectionId, 20), wire::Field::Text(tag::Detail, "late response")}));
+	workspace.Handle({app::PanelWork::Inspect, 7}, Message({wire::Field::U64(tag::InspectionId, 20),
+															wire::Field::Text(tag::Detail, "late response")}));
 	Require(workspace.Selected()->inspection == 19 &&
-			app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
+				app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
 			"Late inspection response replaced the document of an unavailable capture");
 	workspace.Handle({app::PanelWork::Revision, 31}, Message({wire::Field::Text(tag::Detail, "original revision")}));
 	workspace.SetScope(restarted);
 	Require(workspace.Add(7, 202) && workspace.Select(7), "Reuse remote capture ID in a new generation");
 	Require(workspace.Selected()->scope == restarted && workspace.Selected()->frame == 202 &&
-			!workspace.Selected()->released,
+				!workspace.Selected()->released,
 			"Selection substituted an older generation");
 	workspace.Handle({app::PanelWork::Capture, 7}, Message({wire::Field::Text(tag::Phase, "clear"), Frame(203)}));
 	workspace.SelectLocal(originalLocal);
@@ -322,10 +334,11 @@ void ScopedInspectionReaders()
 				app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
 			"A later capture response mutated the original CPU document");
 	workspace.SetScope(reconnect);
-	Require(!workspace.Revision(31, reconnect.epoch), "A revision from another endpoint epoch survived as a live lookup");
+	Require(!workspace.Revision(31, reconnect.epoch),
+			"A revision from another endpoint epoch survived as a live lookup");
 	workspace.Handle({app::PanelWork::Revision, 31}, Message({wire::Field::Text(tag::Detail, "new revision")}));
 	Require(workspace.Revision(31, reconnect.epoch) && !workspace.Revision(31, original.epoch),
-		"A historical document resolved a reused revision ID from another endpoint");
+			"A historical document resolved a reused revision ID from another endpoint");
 	workspace.SelectLocal(originalLocal);
 	Require(workspace.Selected() && workspace.Selected()->inspection == 19,
 			"Reconnect lost retained historical metadata");
@@ -340,9 +353,11 @@ void ScopedInspectionReaders()
 	for (std::uint64_t id = 1; id <= capacity; ++id)
 		Require(bounded.Add(id, id), "Admit bounded catalog entry");
 	Require(bounded.Add(capacity + 1, capacity + 1) && bounded.Captures().size() == capacity &&
-		bounded.Captures().front().id == 2, "Catalog did not evict oldest unselected entry");
+				bounded.Captures().front().id == 2,
+			"Catalog did not evict oldest unselected entry");
 	bounded.MarkReleased(2);
-	Require(bounded.Add(capacity + 2, capacity + 2) && bounded.Captures().size() == capacity, "Released catalog entry did not make room");
+	Require(bounded.Add(capacity + 2, capacity + 2) && bounded.Captures().size() == capacity,
+			"Released catalog entry did not make room");
 	bounded.Select(3);
 	bounded.Handle({app::PanelWork::Inspect, 3},
 				   Message({wire::Field::U64(tag::InspectionId, 77),
@@ -372,28 +387,29 @@ void ScopedInspectionReaders()
 	for (std::uint64_t id = 1; id <= capacity; ++id)
 	{
 		Require(pinned.Add(id, id), "Admit pinned capture");
-		pinned.Handle({app::PanelWork::Capture, id},
-			Message({wire::Field::Text(tag::Phase, "ready"), wire::Field::Bool(tag::Pinned, true), Frame(id)}));
+		pinned.Handle({app::PanelWork::Capture, id}, Message({wire::Field::Text(tag::Phase, "ready"),
+															  wire::Field::Bool(tag::Pinned, true), Frame(id)}));
 	}
 	Require(!pinned.Add(capacity + 1, capacity + 1), "Catalog evicted an active pinned capture");
 	Require(pinned.Select(1), "Select pinned capture for release");
 	pinned.Handle({app::PanelWork::Inspect, 1}, Message({wire::Field::U64(tag::InspectionId, 81)}));
 	pinned.MarkReleased(1);
 	Require(pinned.Selected()->released && !pinned.Selected()->inspection && pinned.Selected()->document.fields.empty(),
-		"Capture release retained an inspection reader");
+			"Capture release retained an inspection reader");
 	pinned.Handle({app::PanelWork::Inspect, 1}, Message({wire::Field::U64(tag::InspectionId, 82)}));
 	Require(!pinned.Selected()->inspection && pinned.Selected()->document.fields.empty(),
-		"Late inspection response revived a released capture");
+			"Late inspection response revived a released capture");
 	pinned.Select(2);
 	Require(pinned.Add(capacity + 1, capacity + 1) && pinned.Captures().front().id == 2,
-		"Released pin permanently blocked catalog admission");
+			"Released pin permanently blocked catalog admission");
 	pinned.SetScope(reconnect);
 	pinned.SelectLocal(pinned.Captures().front().local);
 	pinned.ReleaseSelected();
 	pinned.SelectLocal(pinned.Captures().back().local);
 	Require(pinned.Add(capacity + 2, capacity + 2) && pinned.Captures().front().id == 3,
-		"Released historical pin blocked the new run");
+			"Released historical pin blocked the new run");
 }
+
 std::filesystem::path Directory()
 {
 	const auto name =
@@ -402,11 +418,13 @@ std::filesystem::path Directory()
 	Require(std::filesystem::create_directory(directory), "Create panel test directory");
 	return directory;
 }
+
 std::string PathString(const std::filesystem::path& path)
 {
 	const auto utf8 = path.u8string();
 	return std::string(utf8.begin(), utf8.end());
 }
+
 std::vector<std::byte> Read(const std::filesystem::path& path)
 {
 	std::ifstream stream(path, std::ios::binary);
@@ -417,17 +435,21 @@ std::vector<std::byte> Read(const std::filesystem::path& path)
 		result.push_back(static_cast<std::byte>(static_cast<unsigned char>(byte)));
 	return result;
 }
+
 void FileWorkerAndChunkValidation()
 {
 	const auto directory = Directory();
+
 	struct Cleanup
 	{
 		std::filesystem::path path;
+
 		~Cleanup()
 		{
 			std::filesystem::remove_all(path);
 		}
 	} cleanup{directory};
+
 	const std::vector<std::byte> expected{std::byte{0}, std::byte{0xff}, std::byte{0x31}, std::byte{0x80}};
 	const auto protectedFile = directory / "protected.bin";
 	for (unsigned failure = 0; failure < 4; ++failure)
@@ -438,45 +460,42 @@ void FileWorkerAndChunkValidation()
 		bool rejected = false;
 		try
 		{
-			app::SaveExportFile(protectedFile, [&](std::ostream& output)
-			{
-				output << "partial export";
-				if (failure == 0)
-					throw std::runtime_error("Transfer interrupted");
-				if (failure == 1)
-					output.setstate(std::ios::badbit);
-				if (failure == 3)
-					app::SaveExportFile(protectedFile, expected, true);
-			}, failure != 3, [&]
-			{
-				if (failure == 2)
-					throw std::runtime_error("Cancelled before publication");
-			});
+			app::SaveExportFile(
+				protectedFile,
+				[&](std::ostream& output) {
+					output << "partial export";
+					if (failure == 0)
+						throw std::runtime_error("Transfer interrupted");
+					if (failure == 1)
+						output.setstate(std::ios::badbit);
+					if (failure == 3)
+						app::SaveExportFile(protectedFile, expected, true);
+				},
+				failure != 3,
+				[&] {
+					if (failure == 2)
+						throw std::runtime_error("Cancelled before publication");
+				});
 		}
 		catch (const std::exception&)
 		{
 			rejected = true;
 		}
-		Require(rejected && Read(protectedFile) == expected,
-			"Failed or racing export replaced the destination");
+		Require(rejected && Read(protectedFile) == expected, "Failed or racing export replaced the destination");
 		for (const auto& entry : std::filesystem::directory_iterator(directory))
 			Require(entry.path() == protectedFile, "Failed export left a temporary file");
 	}
-	app::SaveExportFile(protectedFile, [](std::ostream& output)
-	{
-		output << "complete";
-	}, true);
+	app::SaveExportFile(protectedFile, [](std::ostream& output) { output << "complete"; }, true);
 	Require(Read(protectedFile).size() == 8, "Streaming export did not publish its completed file");
 	{
 		app::ImageExportWriter writer;
 		Require(writer.Save(PathString(directory / "exact.rgba"), expected), "Admit explicit CPU file job");
 		std::this_thread::sleep_for(50ms);
 		Require(writer.Busy() && !writer.Save(PathString(directory / "lost-result.rgba"), expected),
-			"An unread file result was overwritten by a later export");
+				"An unread file result was overwritten by a later export");
 		std::optional<app::ImageExportWriteResult> result;
 		Eventually(
-			[&]
-			{
+			[&] {
 				result = writer.TakeResult();
 				return result.has_value();
 			},
@@ -489,19 +508,30 @@ void FileWorkerAndChunkValidation()
 		{
 			const auto destination = directory / (std::string("frame") + extension);
 			Require(writer.Save(PathString(destination), expected, metadata), "Admit encoded image");
-			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "Image write did not settle");
-			const auto encoded = app::EncodeImage(expected, metadata.format, 1, 1,
-				std::string_view{extension} == ".png", 85);
+			Eventually(
+				[&] {
+					result = writer.TakeResult();
+					return result.has_value();
+				},
+				"Image write did not settle");
+			const auto encoded =
+				app::EncodeImage(expected, metadata.format, 1, 1, std::string_view{extension} == ".png", 85);
 			Require(result->status == app::ImageExportWriteResult::Status::Saved && Read(destination) == encoded.bytes,
-				"File writer did not use the shared image encoder");
+					"File writer did not use the shared image encoder");
 		}
 		if (std::filesystem::exists("/dev/full"))
 		{
 			const auto full = directory / "full.rgba";
 			std::filesystem::create_directory(full);
 			Require(writer.Save(PathString(full), expected), "Admit failing atomic publication");
-			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "Write failure did not settle");
-			Require(result->status == app::ImageExportWriteResult::Status::Failed, "Atomic publication failure reported success");
+			Eventually(
+				[&] {
+					result = writer.TakeResult();
+					return result.has_value();
+				},
+				"Write failure did not settle");
+			Require(result->status == app::ImageExportWriteResult::Status::Failed,
+					"Atomic publication failure reported success");
 		}
 
 		bool rejected = false;
@@ -516,12 +546,11 @@ void FileWorkerAndChunkValidation()
 			rejected = true;
 		}
 		Require(rejected && !std::filesystem::exists(directory / "bad.png"),
-			"Mismatched image dimensions wrote a misleading artifact");
+				"Mismatched image dimensions wrote a misleading artifact");
 		const auto unicode = directory / app::Utf8Path("目-étude.rgba");
 		Require(writer.Save(PathString(unicode), expected), "Admit UTF-8 destination");
 		Eventually(
-			[&]
-			{
+			[&] {
 				result = writer.TakeResult();
 				return result.has_value();
 			},
@@ -531,8 +560,7 @@ void FileWorkerAndChunkValidation()
 				"Explicit Unicode destination or result path lost UTF-8 fidelity");
 		Require(writer.Save(PathString(directory / "missing" / "bad.rgba"), expected), "Admit failing file job");
 		Eventually(
-			[&]
-			{
+			[&] {
 				result = writer.TakeResult();
 				return result.has_value();
 			},
@@ -549,8 +577,7 @@ void FileWorkerAndChunkValidation()
 	app::RuntimePanelRequests requests;
 	app::ImageExportTask task(requests);
 	const auto start = Message({wire::Field::U64(tag::ExportId, 9), wire::Field::U64(tag::TotalBytes, 4)});
-	const auto rejected = [&](wire::Message chunk)
-	{
+	const auto rejected = [&](wire::Message chunk) {
 		task.Handle({app::PanelWork::Export}, start);
 		bool threw = false;
 		try
@@ -574,29 +601,30 @@ void FileWorkerAndChunkValidation()
 void ActualConnectionAndDebugger()
 {
 	const auto directory = Directory();
+
 	struct Cleanup
 	{
 		std::filesystem::path path;
+
 		~Cleanup()
 		{
 			std::filesystem::remove_all(path);
 		}
 	} cleanup{directory};
+
 	wire::test::Fixture fixture;
 	wire::LocalControlServer server(fixture.service, (directory / "endpoint.sock").string());
 	app::RuntimePanelRequests requests;
 	app::DebuggerPanelController debugger(requests);
 	requests.Connect(server.Path());
 	Eventually(
-		[&]
-		{
+		[&] {
 			requests.RefreshEpoch();
 			return requests.Snapshot().state == app::RuntimeConnectionState::Connected;
 		},
 		"Panel request owner did not negotiate asynchronously");
 	const auto firstEpoch = requests.Epoch();
-	const auto pump = [&]
-	{
+	const auto pump = [&] {
 		requests.FlushReleases();
 		debugger.Poll();
 		for (auto& reply : requests.Poll())
@@ -607,8 +635,7 @@ void ActualConnectionAndDebugger()
 		}
 	};
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump();
 			return debugger.Selected().id != 0;
 		},
@@ -616,19 +643,22 @@ void ActualConnectionAndDebugger()
 	{
 		class PendingOutput final : public simxr::FrameOutput
 		{
-		  public:
+		public:
 			std::atomic<bool> complete{false};
 			std::shared_ptr<simxr::FrameReservation> slot;
+
 			simxr::CompletionStatus PollCompletion() const noexcept override
 			{
 				return complete ? simxr::CompletionStatus::Complete : simxr::CompletionStatus::Pending;
 			}
 		};
+
 		app::InspectionWorkspace workspace(requests);
 		workspace.SetScope(debugger.Scope());
 		const auto reserved = fixture.session->ReserveCapture();
 		Require(reserved.result == simxr::SnapshotAdmission::Accepted &&
-				fixture.session->Scheduler().GrantPermits() == XR_SUCCESS, "Reserve pending CPU inspection");
+					fixture.session->Scheduler().GrantPermits() == XR_SUCCESS,
+				"Reserve pending CPU inspection");
 		simxr::FramePrediction prediction;
 		Require(fixture.session->WaitFrame(prediction) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS,
 				"Begin pending CPU inspection frame");
@@ -637,8 +667,7 @@ void ActualConnectionAndDebugger()
 		workspace.InspectSelected();
 		Require(!requests.Has(app::PanelWork::Inspect), "Inspection was requested before capture metadata arrived");
 		unsigned inspections = 0;
-		const auto poll = [&]
-		{
+		const auto poll = [&] {
 			for (auto& reply : requests.Poll())
 			{
 				const auto& message = reply.response.packet.message;
@@ -649,36 +678,49 @@ void ActualConnectionAndDebugger()
 					debugger.Handle(reply.task, message);
 			}
 		};
-		const auto refresh = [&]
-		{
+		const auto refresh = [&] {
 			auto fields = debugger.SessionFields();
 			fields.push_back(wire::Field::U64(tag::CaptureId, reserved.id.value));
 			Require(requests.Send(wire::OpCode::Capture, app::PanelWork::Capture, std::move(fields), reserved.id.value),
 					"Request pending capture metadata");
-			Eventually([&] { poll(); return !requests.Has(app::PanelWork::Capture); }, "Capture metadata did not arrive");
+			Eventually(
+				[&] {
+					poll();
+					return !requests.Has(app::PanelWork::Capture);
+				},
+				"Capture metadata did not arrive");
 		};
 		refresh();
 		workspace.InspectSelected();
 		Require(!requests.Has(app::PanelWork::Inspect) && !inspections && workspace.Selected()->phase == "begun",
 				"A begun frame was mistaken for submitted CPU metadata");
 		auto output = std::make_shared<PendingOutput>();
-		output->slot = fixture.session->Captures().ProducerReservation(
-			{fixture.session->Snapshot().generation, prediction.id});
+		output->slot =
+			fixture.session->Captures().ProducerReservation({fixture.session->Snapshot().generation, prediction.id});
 		Require(fixture.pool.Consume(output->slot), "Consume pending inspection output reservation");
-		auto metadata = std::make_shared<const simxr::FrameLayers>(prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+		auto metadata = std::make_shared<const simxr::FrameLayers>(
+			prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
 			std::vector<simxr::LayerDescription>{simxr::QuadLayerDescription{}});
-		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, prediction.displayTime.value.count(),
-			XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1, nullptr};
+		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
+								 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
 		Require(fixture.session->EndFrame(prediction, &end, std::move(metadata), output) == XR_SUCCESS,
 				"Submit pending CPU inspection frame");
 		refresh();
-		Eventually([&] { poll(); return workspace.Selected()->document.Find(tag::Document) != nullptr; },
+		Eventually(
+			[&] {
+				poll();
+				return workspace.Selected()->document.Find(tag::Document) != nullptr;
+			},
 			"Submitted capture did not automatically load CPU details");
 		Require(inspections == 1 && workspace.Selected()->phase == "gpu_pending" && !output->complete,
 				"CPU details waited for GPU completion or were requested more than once");
 		workspace.InspectSelected();
 		workspace.InspectSelected();
-		Eventually([&] { poll(); return !requests.Has(app::PanelWork::Inspect); },
+		Eventually(
+			[&] {
+				poll();
+				return !requests.Has(app::PanelWork::Inspect);
+			},
 			"Manual CPU refresh did not finish");
 		Require(inspections == 2, "Repeated refresh queued duplicate CPU inspections");
 		workspace.ReleaseSelected();
@@ -690,53 +732,54 @@ void ActualConnectionAndDebugger()
 	{
 		debugger.Command(wire::CommandKind::Pause);
 		bool rejected = false;
-		Eventually([&]
-		{
-			requests.FlushReleases();
-			debugger.Poll();
-			for (auto& reply : requests.Poll())
-			{
-				if (reply.task.kind != app::PanelWork::Acquire)
+		Eventually(
+			[&] {
+				requests.FlushReleases();
+				debugger.Poll();
+				for (auto& reply : requests.Poll())
 				{
-					debugger.Handle(reply.task, reply.response.packet.message);
-					continue;
-				}
-				const auto lease = app::panel::U64(reply.response.packet.message, tag::Lease);
-				Require(lease != 0, "Acquire did not return a test lease");
-				requests.Release(wire::OpCode::Relinquish, tag::Lease, lease,
-					reply.task.session, reply.task.generation);
-				if (malformed)
-				{
-					try
+					if (reply.task.kind != app::PanelWork::Acquire)
 					{
-						debugger.Handle(reply.task, Message({}));
+						debugger.Handle(reply.task, reply.response.packet.message);
+						continue;
 					}
-					catch (const std::runtime_error&)
+					const auto lease = app::panel::U64(reply.response.packet.message, tag::Lease);
+					Require(lease != 0, "Acquire did not return a test lease");
+					requests.Release(wire::OpCode::Relinquish, tag::Lease, lease, reply.task.session,
+									 reply.task.generation);
+					if (malformed)
 					{
+						try
+						{
+							debugger.Handle(reply.task, Message({}));
+						}
+						catch (const std::runtime_error&)
+						{
+							rejected = true;
+						}
+					}
+					else
+					{
+						debugger.Failed(reply.task, wire::ErrorCode::Busy, "Another client owns debugging");
 						rejected = true;
 					}
 				}
-				else
-				{
-					debugger.Failed(reply.task, wire::ErrorCode::Busy, "Another client owns debugging");
-					rejected = true;
-				}
-			}
-			return rejected;
-		}, "Debugger did not consume the rejected lease reply");
-		Eventually([&]
-		{
-			pump();
-			return !debugger.Relinquishing();
-		}, "Test lease was not relinquished");
+				return rejected;
+			},
+			"Debugger did not consume the rejected lease reply");
+		Eventually(
+			[&] {
+				pump();
+				return !debugger.Relinquishing();
+			},
+			"Test lease was not relinquished");
 		debugger.Poll();
 		Require(!debugger.Pending() && !requests.Has(app::PanelWork::Acquire) && !debugger.HasLease(),
-			"Rejected lease request kept retrying its deferred command");
+				"Rejected lease request kept retrying its deferred command");
 	}
 	debugger.Command(wire::CommandKind::Pause);
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump();
 			return !debugger.Operations().empty() && debugger.Operations().back().phase == "complete";
 		},
@@ -744,18 +787,16 @@ void ActualConnectionAndDebugger()
 	Require(debugger.HasLease() && debugger.Operations().size() == 1 && debugger.Operations().front().command == 1,
 			"Lease acquisition duplicated or changed command admission");
 	const auto pausedCaptures = debugger.TakeCaptures();
-	Require(!pausedCaptures.empty() && std::all_of(pausedCaptures.begin(), pausedCaptures.end(),
-		[](const auto& capture)
-		{
-			return capture.kind == wire::CommandKind::Pause;
-		}), "Pause capture lost the operation that produced it");
+	Require(!pausedCaptures.empty() &&
+				std::all_of(pausedCaptures.begin(), pausedCaptures.end(),
+							[](const auto& capture) { return capture.kind == wire::CommandKind::Pause; }),
+			"Pause capture lost the operation that produced it");
 	// Strict admission remains pending because the application makes no further
 	// WaitFrame call. Replace one already-polled reply with malformed metadata.
 	debugger.Command(wire::CommandKind::StrictAdmission);
 	std::uint64_t rejectedTicket = 0, recoveredTicket = 0;
 	Eventually(
-		[&]
-		{
+		[&] {
 			debugger.Poll();
 			for (auto& reply : requests.Poll())
 			{
@@ -790,8 +831,7 @@ void ActualConnectionAndDebugger()
 		},
 		"Strict admission did not produce an operation reply");
 	Eventually(
-		[&]
-		{
+		[&] {
 			debugger.Poll();
 			for (auto& reply : requests.Poll())
 			{
@@ -806,16 +846,14 @@ void ActualConnectionAndDebugger()
 		"Malformed operation metadata prevented a fresh healthy poll");
 	debugger.CancelPending();
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump();
 			return debugger.Operations().size() == 3 && debugger.Operations().back().phase == "complete";
 		},
 		"Cancel did not recover the pending strict admission");
 	debugger.Command(wire::CommandKind::Resume);
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump();
 			return debugger.Operations().size() == 4 && debugger.Operations().back().phase == "complete";
 		},
@@ -828,8 +866,7 @@ void ActualConnectionAndDebugger()
 	Require(requests.Send(wire::OpCode::RetainImage, app::PanelWork::Retain, std::move(retain)) != 0,
 			"Admit exact source reader for export");
 	Eventually(
-		[&]
-		{
+		[&] {
 			for (auto& reply : requests.Poll())
 			{
 				Require(reply.response.error.empty() && app::panel::U32(reply.response.packet.message, tag::Error) == 0,
@@ -848,8 +885,7 @@ void ActualConnectionAndDebugger()
 	Require(exporter.Request(reader, destination.string()), "Admit explicit export exchange");
 	Require(!exporter.Request(reader, destination.string()), "A second export bypassed single-job admission");
 	Eventually(
-		[&]
-		{
+		[&] {
 			requests.FlushReleases();
 			for (auto& reply : requests.Poll())
 			{
@@ -872,7 +908,8 @@ void ActualConnectionAndDebugger()
 		},
 		"Export owner did not finish exact endpoint bytes");
 	Require(infoReplies == 1 && readReplies == 2, "Chunked export repeated completion polling");
-	Require(Read(destination) == wire::test::Pixels() && fixture.state->reads == readReplies && fixture.state->shares == 0,
+	Require(Read(destination) == wire::test::Pixels() && fixture.state->reads == readReplies &&
+				fixture.state->shares == 0,
 			"Explicit export substituted bytes or entered the GPU sharing path");
 	Require(!debugger.Status().fields.empty(), "Reconnect status-reset regression requires an observed status");
 	requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
@@ -884,29 +921,27 @@ void ActualConnectionAndDebugger()
 	requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions);
 	const auto retiredSession = debugger.Selected();
 	while (requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions))
-	{
-	}
+	{}
 	debugger.ChooseSession({});
 	Require(!debugger.HasLease() && debugger.Relinquishing() && requests.Pending(),
 			"Full transport queue lost the deferred debugger release");
 	bool relinquished = false, imageReleased = false;
 	Eventually(
-		[&]
-		{
+		[&] {
 			requests.FlushReleases();
 			for (const auto& reply : requests.Poll())
 				if (reply.response.packet.message.opcode == static_cast<std::uint16_t>(wire::OpCode::Relinquish))
 				{
 					Require(reply.task.kind == app::PanelWork::Relinquish && reply.task.session == retiredSession.id &&
-							reply.task.generation == retiredSession.generation &&
-							reply.response.error.empty() && app::panel::U32(reply.response.packet.message, tag::Error, 1) == 0,
+								reply.task.generation == retiredSession.generation && reply.response.error.empty() &&
+								app::panel::U32(reply.response.packet.message, tag::Error, 1) == 0,
 							"Deferred release lost the original session or failed to release its lease");
 					relinquished = true;
 				}
 				else if (reply.response.packet.message.opcode == static_cast<std::uint16_t>(wire::OpCode::ReleaseImage))
 				{
 					Require(reply.task.kind == app::PanelWork::Release && reply.response.error.empty() &&
-							app::panel::U32(reply.response.packet.message, tag::Error, 1) == 0,
+								app::panel::U32(reply.response.packet.message, tag::Error, 1) == 0,
 							"Image release lost its resource-only work category or failed");
 					imageReleased = true;
 				}
@@ -915,46 +950,43 @@ void ActualConnectionAndDebugger()
 		"Debugger release did not recover after request capacity became available");
 	debugger.ChooseSession(retiredSession);
 	while (requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions))
-	{
-	}
+	{}
 	debugger.Command(wire::CommandKind::Pause);
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump();
 			return debugger.HasLease() && !debugger.Operations().empty() &&
-				debugger.Operations().back().phase == "complete";
+				   debugger.Operations().back().phase == "complete";
 		},
 		"Deferred command did not retry lease acquisition after queue pressure");
 	debugger.TakeCaptures();
 	debugger.Command(wire::CommandKind::Step);
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump();
 			return debugger.Operations().back().kind == wire::CommandKind::Step &&
-				(debugger.Operations().back().phase == "pending" || debugger.Operations().back().phase == "complete");
+				   (debugger.Operations().back().phase == "pending" ||
+					debugger.Operations().back().phase == "complete");
 		},
 		"Debugger step did not admit a fixture frame");
 	if (debugger.Operations().back().phase == "pending")
 		fixture.Submit();
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump();
 			return debugger.Operations().back().phase == "complete";
 		},
 		"Debugger step did not settle the submitted fixture frame");
 	const auto steppedCaptures = debugger.TakeCaptures();
 	Require(!steppedCaptures.empty() && std::all_of(steppedCaptures.begin(), steppedCaptures.end(),
-		[](const auto& capture)
-		{
-			return capture.kind == wire::CommandKind::Step && capture.frame != 0;
-		}), "Step capture lost its command attribution or completed frame identity");
+													[](const auto& capture) {
+														return capture.kind == wire::CommandKind::Step &&
+															   capture.frame != 0;
+													}),
+			"Step capture lost its command attribution or completed frame identity");
 	requests.Connect(server.Path());
 	Eventually(
-		[&]
-		{
+		[&] {
 			requests.RefreshEpoch();
 			return requests.Epoch() != firstEpoch &&
 				   requests.Snapshot().state == app::RuntimeConnectionState::Connected;
@@ -968,6 +1000,7 @@ void ActualConnectionAndDebugger()
 }
 #endif
 } // namespace
+
 int main()
 {
 	try

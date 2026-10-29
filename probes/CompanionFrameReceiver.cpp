@@ -10,7 +10,8 @@ namespace simxr::app
 {
 using namespace simxr::probe;
 
-template <typename Function> static Function DeviceFunction(VkDevice device, const char* name)
+template<typename Function>
+static Function DeviceFunction(VkDevice device, const char* name)
 {
 	auto function = reinterpret_cast<Function>(vkGetDeviceProcAddr(device, name));
 	if (!function)
@@ -25,7 +26,8 @@ static bool Readable(int channel)
 	do
 	{
 		result = poll(&status, 1, 0);
-	} while (result < 0 && errno == EINTR);
+	}
+	while (result < 0 && errno == EINTR);
 	if (result < 0)
 		throw std::runtime_error("Companion proof channel poll failed");
 	if (result && !(status.revents & POLLIN))
@@ -288,6 +290,7 @@ void CompanionFrameReceiver::Verify()
 		VkBuffer buffer = VK_NULL_HANDLE;
 		VkDeviceMemory memory = VK_NULL_HANDLE;
 		VkFence completion = VK_NULL_HANDLE;
+
 		struct Analysis
 		{
 			VkDevice device;
@@ -295,6 +298,7 @@ void CompanionFrameReceiver::Verify()
 			VkDeviceMemory& memory;
 			VkFence& completion;
 			bool pending = false;
+
 			~Analysis()
 			{
 				if (pending && vkWaitForFences(device, 1, &completion, VK_TRUE, 5000000000ULL) != VK_SUCCESS)
@@ -310,6 +314,7 @@ void CompanionFrameReceiver::Verify()
 					vkFreeMemory(device, memory, nullptr);
 			}
 		} analysis{m_access.device, buffer, memory, completion};
+
 		VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
 		info.size = bytes;
 		info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -364,15 +369,18 @@ void CompanionFrameReceiver::Verify()
 		void* pixels = nullptr;
 		Check(vkMapMemory(m_access.device, memory, 0, VK_WHOLE_SIZE, 0, &pixels),
 			  "map explicit retained image analysis");
+
 		struct Mapping
 		{
 			VkDevice device;
 			VkDeviceMemory memory;
+
 			~Mapping()
 			{
 				vkUnmapMemory(device, memory);
 			}
 		} mapping{m_access.device, memory};
+
 		if (!(memoryProperties.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
 		{
 			VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
@@ -399,29 +407,24 @@ std::vector<CompanionProofFrame> CompanionFrameReceiver::ReadyFrames() const
 			result.push_back({index + 1, m_frames[index].output.view, m_sampler, m_frames[index].sampleReady});
 	return result;
 }
+
 bool CompanionFrameReceiver::AllCopied() const
 {
-	return std::all_of(m_frames.begin(), m_frames.end(),
-					   [](const auto& frame)
-					   {
-						   return frame.copied;
-					   });
+	return std::all_of(m_frames.begin(), m_frames.end(), [](const auto& frame) { return frame.copied; });
 }
+
 void CompanionFrameReceiver::MarkSampled(std::uint32_t id)
 {
 	if (!id || id > m_frames.size() || !m_frames[id - 1].copied)
 		throw std::invalid_argument("Companion proof sampled an unavailable image");
 	m_frames[id - 1].sampled = true;
 }
+
 void CompanionFrameReceiver::Finish(bool verifyPixels)
 {
 	if (m_finished)
 		return;
-	if (!std::all_of(m_frames.begin(), m_frames.end(),
-					 [](const auto& frame)
-					 {
-						 return frame.sampled;
-					 }))
+	if (!std::all_of(m_frames.begin(), m_frames.end(), [](const auto& frame) { return frame.sampled; }))
 		throw std::logic_error("Companion proof has not sampled every retained image");
 	if (verifyPixels)
 		Verify();

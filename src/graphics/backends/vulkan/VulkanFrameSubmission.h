@@ -23,7 +23,7 @@ class VulkanReprojectionPreparation;
 
 class VulkanFrameBindings
 {
-  public:
+public:
 	virtual ~VulkanFrameBindings() = default;
 	virtual std::optional<SwapchainDescription> Describe(XrSwapchain swapchain) const = 0;
 	virtual std::shared_ptr<VulkanImage> ReleasedImage(XrSwapchain swapchain) const = 0;
@@ -36,7 +36,7 @@ class VulkanFrameBindings
 // source readers after submission. No GPU waits occur.
 class VulkanFrameSubmission final : public FrameSubmissionBackend
 {
-  public:
+public:
 	VulkanFrameSubmission(Session& session, VulkanBackend& backend, VulkanInspection* inspection,
 						  const VulkanFrameBindings& bindings, bool retainLayers = false);
 	~VulkanFrameSubmission() override;
@@ -49,7 +49,7 @@ class VulkanFrameSubmission final : public FrameSubmissionBackend
 	XrResult Submit() override;
 	bool Submitted() const noexcept override;
 
-  private:
+private:
 	struct Capture
 	{
 		CaptureTarget target;

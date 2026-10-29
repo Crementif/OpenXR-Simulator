@@ -23,13 +23,12 @@ struct ApplicationTabs::Tab
 	Tab(std::uint64_t identity, ProcessSupervisor& processes, UiRenderer& renderer, Window& window, bool enabled,
 		std::string endpoint)
 		: id(identity), workspace(processes, enabled, endpoint), runtime(renderer, workspace.InitialEndpoint(), &window)
-	{
-	}
+	{}
+
 	Tab(std::uint64_t identity, ProcessSupervisor& processes, UiRenderer& renderer, Window& window,
 		WorkspacePanels& existing, std::string endpoint)
 		: id(identity), workspace(processes, existing), runtime(renderer, endpoint, &window)
-	{
-	}
+	{}
 };
 
 ApplicationTabs::ApplicationTabs(ProcessSupervisor& processes, UiRenderer& renderer, Window& window, bool enabled,
@@ -39,6 +38,7 @@ ApplicationTabs::ApplicationTabs(ProcessSupervisor& processes, UiRenderer& rende
 	auto& tab = Add(std::move(endpoint));
 	m_active = tab.id;
 }
+
 ApplicationTabs::~ApplicationTabs() = default;
 
 ApplicationTabs::Tab& ApplicationTabs::Add(std::string endpoint)
@@ -52,61 +52,48 @@ ApplicationTabs::Tab& ApplicationTabs::Add(std::string endpoint)
 	auto& tab = *m_tabs.back();
 	if (m_showTabs)
 	{
-		tab.runtime.SetHeadsetAdmission(
-			[this, id]
+		tab.runtime.SetHeadsetAdmission([this, id] {
+			if (m_headsetUncertain)
+				throw std::runtime_error(
+					"The headset did not stop cleanly. Restart the companion before reconnecting.");
+			for (const auto& other : m_tabs)
 			{
-				if (m_headsetUncertain)
-					throw std::runtime_error("The headset did not stop cleanly. Restart the companion before reconnecting.");
-				for (const auto& other : m_tabs)
-				{
-					if (other->id == id)
-						continue;
-					const auto phase = other->runtime.HeadsetStatus().phase;
-					if (phase != HeadsetHostPhase::Idle && phase != HeadsetHostPhase::Exited &&
-						phase != HeadsetHostPhase::Failed)
-						return false;
-				}
-				return true;
-			});
-		tab.workspace.SetTabBar(
-			[this]
-			{
-				DrawBar();
-			});
-		tab.workspace.SetEndpointAdmission(
-			[this, id](const std::string& endpoint)
-			{
-				return std::ranges::none_of(m_tabs,
-											[&](const auto& other)
-											{
-												return other->id != id && !other->closing &&
-													   other->runtime.Endpoint() == endpoint;
-											});
-			});
-		tab.runtime.SetEndpointOpenHandler(
-			[this, id](const std::string& endpoint)
-			{
-				if (endpoint.empty())
+				if (other->id == id)
+					continue;
+				const auto phase = other->runtime.HeadsetStatus().phase;
+				if (phase != HeadsetHostPhase::Idle && phase != HeadsetHostPhase::Exited &&
+					phase != HeadsetHostPhase::Failed)
 					return false;
-				for (const auto& other : m_tabs)
-					if (!other->closing && other->runtime.Endpoint() == endpoint)
-					{
-						OpenApplication(RunningApp{endpoint});
-						return true;
-					}
-				const auto* current = Find(id);
-				if (current && (!current->runtime.Endpoint().empty() ||
-								current->workspace.Process().state == LaunchState::Starting ||
-								current->workspace.Process().state == LaunchState::Running))
+			}
+			return true;
+		});
+		tab.workspace.SetTabBar([this] { DrawBar(); });
+		tab.workspace.SetEndpointAdmission([this, id](const std::string& endpoint) {
+			return std::ranges::none_of(m_tabs, [&](const auto& other) {
+				return other->id != id && !other->closing && other->runtime.Endpoint() == endpoint;
+			});
+		});
+		tab.runtime.SetEndpointOpenHandler([this, id](const std::string& endpoint) {
+			if (endpoint.empty())
+				return false;
+			for (const auto& other : m_tabs)
+				if (!other->closing && other->runtime.Endpoint() == endpoint)
 				{
-					m_open = RunningApp{endpoint};
+					OpenApplication(RunningApp{endpoint});
 					return true;
 				}
-				return false;
-			});
-		tab.workspace.SetOpenHandlers(
-			[this, id](const RunningApp& app)
+			const auto* current = Find(id);
+			if (current &&
+				(!current->runtime.Endpoint().empty() || current->workspace.Process().state == LaunchState::Starting ||
+				 current->workspace.Process().state == LaunchState::Running))
 			{
+				m_open = RunningApp{endpoint};
+				return true;
+			}
+			return false;
+		});
+		tab.workspace.SetOpenHandlers(
+			[this, id](const RunningApp& app) {
 				for (const auto& other : m_tabs)
 					if (!other->closing && other->runtime.Endpoint() == app.endpoint)
 					{
@@ -125,8 +112,7 @@ ApplicationTabs::Tab& ApplicationTabs::Add(std::string endpoint)
 					current->process = app.process;
 				return false;
 			},
-			[this, id](const LaunchProfile& profile)
-			{
+			[this, id](const LaunchProfile& profile) {
 				const auto* current = Find(id);
 				if (current && (!current->runtime.Endpoint().empty() ||
 								current->workspace.Process().state == LaunchState::Starting ||
@@ -140,6 +126,7 @@ ApplicationTabs::Tab& ApplicationTabs::Add(std::string endpoint)
 	}
 	return tab;
 }
+
 ApplicationTabs::Tab* ApplicationTabs::Find(std::uint64_t id) const
 {
 	for (const auto& tab : m_tabs)
@@ -147,14 +134,17 @@ ApplicationTabs::Tab* ApplicationTabs::Find(std::uint64_t id) const
 			return tab.get();
 	return nullptr;
 }
+
 RuntimePanels& ApplicationTabs::ActiveRuntime()
 {
 	return Find(m_active)->runtime;
 }
+
 WorkspacePanels& ApplicationTabs::ActiveWorkspace()
 {
 	return Find(m_active)->workspace;
 }
+
 void ApplicationTabs::OpenApplication(RunningApp app)
 {
 	for (const auto& tab : m_tabs)
@@ -162,9 +152,9 @@ void ApplicationTabs::OpenApplication(RunningApp app)
 		{
 			auto* current = Find(m_active);
 			if (current && current->id != tab->id && current->runtime.Endpoint().empty() &&
-				current->workspace.Process().state == LaunchState::Idle &&
-				!current->runtime.Snapshot().recording && !current->runtime.Exporting() &&
-				!current->workspace.HasActiveAutomation() && !current->workspace.HasPendingFiles())
+				current->workspace.Process().state == LaunchState::Idle && !current->runtime.Snapshot().recording &&
+				!current->runtime.Exporting() && !current->workspace.HasActiveAutomation() &&
+				!current->workspace.HasPendingFiles())
 			{
 				const auto host = current->runtime.HeadsetStatus();
 				if (host.phase == HeadsetHostPhase::Idle || host.phase == HeadsetHostPhase::Exited)
@@ -175,6 +165,7 @@ void ApplicationTabs::OpenApplication(RunningApp app)
 		}
 	m_open = std::move(app);
 }
+
 std::uint64_t ApplicationTabs::LaunchApplication(const LaunchProfile& profile)
 {
 	auto* tab = Find(m_active);
@@ -190,14 +181,17 @@ std::uint64_t ApplicationTabs::LaunchApplication(const LaunchProfile& profile)
 	m_select = tab->id;
 	return tab->id;
 }
+
 void ApplicationTabs::RequestApplicationClose(std::uint64_t id)
 {
 	auto* tab = Find(id);
 	if (!tab || tab->closing)
 		throw std::runtime_error("Application is no longer available");
 	if (!tab->workspace.RequestApplicationClose(tab->runtime))
-		throw std::runtime_error("No running simulator-launched process matches this application, or a close/restart is pending");
+		throw std::runtime_error(
+			"No running simulator-launched process matches this application, or a close/restart is pending");
 }
+
 void ApplicationTabs::RequestApplicationRestart(std::uint64_t id, std::uint64_t expectedProcess)
 {
 	auto* tab = Find(id);
@@ -206,6 +200,7 @@ void ApplicationTabs::RequestApplicationRestart(std::uint64_t id, std::uint64_t 
 	if (!tab->workspace.RequestApplicationRestart(tab->runtime, expectedProcess))
 		throw std::runtime_error(tab->workspace.LaunchError());
 }
+
 std::vector<ApplicationSnapshot> ApplicationTabs::Applications() const
 {
 	std::vector<ApplicationSnapshot> result;
@@ -219,22 +214,24 @@ std::vector<ApplicationSnapshot> ApplicationTabs::Applications() const
 		if (view.endpoint.empty() && launch.state == LaunchState::Idle)
 			continue;
 		const bool current = !launch.restartPending && tab->workspace.ConnectionMatchesLaunch(tab->runtime);
-		result.push_back({tab->id, current ? view.session : 0, current ? view.generation : 0,
-						  current ? view.runtimeProcess : 0, current ? view.epoch : 0, launch,
-						  tab->workspace.ApplicationName(tab->runtime), current ? view.endpoint : std::string{},
-						  tab->workspace.LaunchError(), current && view.connected, current && view.sessionRunning,
-						  current ? tab->workspace.LaunchControlEndpoint() : std::string{},
-						  current && launch.process && launch.process == view.runtimeProcess ? tab->workspace.LaunchDataDirectory() : std::string{}});
+		result.push_back(
+			{tab->id, current ? view.session : 0, current ? view.generation : 0, current ? view.runtimeProcess : 0,
+			 current ? view.epoch : 0, launch, tab->workspace.ApplicationName(tab->runtime),
+			 current ? view.endpoint : std::string{}, tab->workspace.LaunchError(), current && view.connected,
+			 current && view.sessionRunning, current ? tab->workspace.LaunchControlEndpoint() : std::string{},
+			 current && launch.process && launch.process == view.runtimeProcess ? tab->workspace.LaunchDataDirectory()
+																				: std::string{}});
 	}
 	return result;
 }
+
 bool ApplicationTabs::RequestShutdown()
 {
 	return false;
 }
 #ifdef SIMXR_COMPANION_AUTOMATION
 std::uint64_t ApplicationTabs::StartLuau(std::uint64_t id, LuauRunRequest request,
-										const std::shared_ptr<AutomationOwner>& owner)
+										 const std::shared_ptr<AutomationOwner>& owner)
 {
 	auto* tab = Find(id);
 	if (!tab || tab->closing)
@@ -247,16 +244,18 @@ std::uint64_t ApplicationTabs::StartLuau(std::uint64_t id, LuauRunRequest reques
 		throw std::runtime_error("Application is no longer available");
 	return StartLuauRun(tab->workspace.Rigs(), *application, std::move(request), owner);
 }
+
 LuauRunStatus ApplicationTabs::LuauStatus(std::uint64_t id, std::uint64_t run,
-										const std::shared_ptr<AutomationOwner>& owner) const
+										  const std::shared_ptr<AutomationOwner>& owner) const
 {
 	const auto* tab = Find(id);
 	if (!tab || tab->closing)
 		throw std::runtime_error("Application is no longer available");
 	return ReadLuauRun(tab->workspace.Rigs(), run, owner);
 }
+
 void ApplicationTabs::ControlLuau(std::uint64_t id, std::uint64_t run, LuauControl action,
-								   const std::shared_ptr<AutomationOwner>& owner)
+								  const std::shared_ptr<AutomationOwner>& owner)
 {
 	auto* tab = Find(id);
 	if (!tab || tab->closing)
@@ -268,14 +267,17 @@ std::size_t ApplicationTabs::Count() const noexcept
 {
 	return m_tabs.size();
 }
+
 bool ApplicationTabs::PilotActive() const
 {
 	return Find(m_active)->runtime.PilotActive();
 }
+
 void ApplicationTabs::FocusLost()
 {
 	Find(m_active)->runtime.FocusLost();
 }
+
 void ApplicationTabs::BeginClose(Tab& tab)
 {
 	if (tab.id == m_active)
@@ -286,6 +288,7 @@ void ApplicationTabs::BeginClose(Tab& tab)
 	tab.runtime.DisconnectHeadset();
 	tab.closing = true;
 }
+
 void ApplicationTabs::ApplyRequests()
 {
 	if (m_add || m_open)
@@ -325,8 +328,7 @@ void ApplicationTabs::ApplyRequests()
 	}
 	else if (Find(m_active)->closing)
 	{
-		auto replacement = std::ranges::find_if(m_tabs, [](const auto& candidate)
-		{
+		auto replacement = std::ranges::find_if(m_tabs, [](const auto& candidate) {
 			return !candidate->closing && !candidate->runtime.Endpoint().empty();
 		});
 		if (replacement == m_tabs.end())
@@ -379,6 +381,7 @@ void ApplicationTabs::ApplyRequests()
 		it = m_tabs.erase(it);
 	}
 }
+
 void ApplicationTabs::DrawBar()
 {
 	bool requestConfirmation = false;
@@ -469,6 +472,7 @@ void ApplicationTabs::DrawBar()
 		ImGui::EndPopup();
 	}
 }
+
 void ApplicationTabs::Draw()
 {
 	ApplyRequests();
@@ -485,6 +489,7 @@ void ApplicationTabs::Draw()
 	tab.workspace.Draw(tab.runtime);
 	PollMonitors();
 }
+
 std::vector<VkSemaphore> ApplicationTabs::ReadyWaits() const
 {
 	std::vector<VkSemaphore> waits;
@@ -495,16 +500,19 @@ std::vector<VkSemaphore> ApplicationTabs::ReadyWaits() const
 	}
 	return waits;
 }
+
 void ApplicationTabs::RecordTransfers(VkCommandBuffer command)
 {
 	for (const auto& tab : m_tabs)
 		tab->runtime.RecordTransfers(command);
 }
+
 void ApplicationTabs::Submitted(std::uint64_t serial)
 {
 	for (const auto& tab : m_tabs)
 		tab->runtime.Submitted(serial);
 }
+
 void ApplicationTabs::Finish()
 {
 	m_renderer.WaitIdle();

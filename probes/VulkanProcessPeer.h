@@ -27,13 +27,13 @@ struct SharingPacket
 
 class ConsumerUnavailable : public std::runtime_error
 {
-  public:
+public:
 	ConsumerUnavailable();
 };
 
 class ConsumerProcess
 {
-  public:
+public:
 	explicit ConsumerProcess(bool verifyPixels, bool disconnect = false, const std::string& companion = {},
 							 const std::string& screenshot = {});
 	ConsumerProcess(const std::string& executable, std::vector<std::string> options);
@@ -45,7 +45,7 @@ class ConsumerProcess
 	void ObserveClosed();
 	void Join();
 
-  private:
+private:
 	static std::vector<std::string> Arguments(bool verifyPixels, bool disconnect, const std::string& companion,
 											  const std::string& screenshot);
 	int m_socket = -1;

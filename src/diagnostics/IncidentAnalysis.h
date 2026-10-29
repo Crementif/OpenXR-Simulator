@@ -27,15 +27,19 @@ struct AnalysisCounts
 
 class IncidentAnalysis
 {
-  public:
+public:
 	explicit IncidentAnalysis(bool ui);
-	AnalysisObservation Observe(std::uint64_t frame, std::span<const std::byte> pixels,
-		std::uint32_t width, std::uint32_t height, std::uint32_t stride, PixelOrder order,
-		const std::array<std::array<std::int32_t, 4>, 2>& rectangles = {});
+	AnalysisObservation Observe(std::uint64_t frame, std::span<const std::byte> pixels, std::uint32_t width,
+								std::uint32_t height, std::uint32_t stride, PixelOrder order,
+								const std::array<std::array<std::int32_t, 4>, 2>& rectangles = {});
 	void Skip(std::uint64_t frame);
-	const AnalysisCounts& Counts() const { return m_counts; }
 
-  private:
+	const AnalysisCounts& Counts() const
+	{
+		return m_counts;
+	}
+
+private:
 	void Track(std::uint64_t frame);
 	void Reset();
 	bool m_ui;

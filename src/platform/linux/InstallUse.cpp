@@ -13,15 +13,16 @@ static void InstallAnchor() {}
 
 class __attribute__((visibility("hidden"))) InstallUse
 {
-  public:
+public:
 	InstallUse() noexcept;
 	~InstallUse();
+
 	bool Ready() const noexcept
 	{
 		return m_ready;
 	}
 
-  private:
+private:
 	int m_file = -1;
 	bool m_ready = false;
 };
@@ -57,8 +58,8 @@ InstallUse::InstallUse() noexcept
 		while (std::getline(maps, line))
 		{
 			unsigned long long start = 0, end = 0, inode = 0;
-			if (std::sscanf(line.c_str(), "%llx-%llx %*s %*s %*s %llu", &start, &end, &inode) != 3 ||
-				address < start || address >= end)
+			if (std::sscanf(line.c_str(), "%llx-%llx %*s %*s %*s %llu", &start, &end, &inode) != 3 || address < start ||
+				address >= end)
 				continue;
 			// Btrfs subvolumes can report different devices in stat and maps.
 			// The kernel link also distinguishes renamed or deleted old mappings.
@@ -69,9 +70,9 @@ InstallUse::InstallUse() noexcept
 		}
 	}
 	catch (...)
-	{
-	}
+	{}
 }
+
 InstallUse::~InstallUse()
 {
 	if (m_file >= 0)
@@ -79,6 +80,7 @@ InstallUse::~InstallUse()
 }
 
 static InstallUse s_installUse;
+
 bool InstallationReady() noexcept
 {
 	return s_installUse.Ready();

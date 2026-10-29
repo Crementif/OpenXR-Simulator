@@ -14,7 +14,7 @@ void CheckXr(XrResult result, const char* operation);
 
 class OpenXrRuntime
 {
-  public:
+public:
 	OpenXrRuntime() = default;
 	~OpenXrRuntime();
 	OpenXrRuntime(const OpenXrRuntime&) = delete;
@@ -32,7 +32,7 @@ class OpenXrRuntime
 	const std::vector<XrExtensionProperties>& Extensions() const;
 	const std::vector<XrApiLayerProperties>& Layers() const;
 
-  private:
+private:
 	XrInstance m_instance = XR_NULL_HANDLE;
 	XrSystemId m_system = XR_NULL_SYSTEM_ID;
 	XrInstanceProperties m_properties{XR_TYPE_INSTANCE_PROPERTIES};

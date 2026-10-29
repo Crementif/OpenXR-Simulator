@@ -46,6 +46,7 @@ static void ClockConversion()
 	}
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

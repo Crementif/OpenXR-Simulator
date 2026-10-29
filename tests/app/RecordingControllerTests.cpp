@@ -36,9 +36,10 @@ namespace simxr::recording_tests
 using namespace simxr;
 namespace wire = control;
 namespace app = simxr::app;
+
 class RecordingHost
 {
-  public:
+public:
 	explicit RecordingHost(ExecutionMode mode = ExecutionMode::Deterministic)
 	{
 		static std::atomic<std::uint64_t> serial{0};
@@ -66,6 +67,7 @@ class RecordingHost
 #endif
 		server = std::make_unique<wire::LocalControlServer>(service, endpoint);
 	}
+
 	~RecordingHost()
 	{
 		server.reset();
@@ -74,10 +76,12 @@ class RecordingHost
 		std::error_code error;
 		std::filesystem::remove_all(path, error);
 	}
+
 	app::RecordingTarget Target() const
 	{
 		return {server->Path(), 1, session->Snapshot().generation.value};
 	}
+
 	void Frame()
 	{
 		FramePrediction prediction;
@@ -85,6 +89,7 @@ class RecordingHost
 					session->EndFrame(prediction) == XR_SUCCESS,
 				"Publish recording frame");
 	}
+
 	void RecordHead(std::uint64_t frame)
 	{
 		PoseSample head;
@@ -104,6 +109,7 @@ class RecordingHost
 		Require(session->Commands().Submit(transaction).result == CommandResult::Queued, "Queue head edit");
 		Frame();
 	}
+
 	Runtime runtime{ExtensionRegistry{std::span<const ExtensionDefinition>{}}};
 	Runtime::InstanceRef instance;
 	Runtime::SessionRef session;
@@ -112,21 +118,19 @@ class RecordingHost
 	std::filesystem::path path;
 	const CommandSource source{CommandSourceKind::Manual, 991};
 };
+
 app::RecordingSnapshot Finished(app::RecordingController& controller)
 {
-	Eventually(
-		[&]
-		{
-			return !controller.Snapshot().busy;
-		},
-		"Recording worker did not finish");
+	Eventually([&] { return !controller.Snapshot().busy; }, "Recording worker did not finish");
 	return controller.Snapshot();
 }
+
 app::RecordingSnapshot Request(app::RecordingController& controller, app::RecordingAction action, std::string path = {})
 {
 	Require(controller.Request(action, 0, std::move(path)), "Recording action not admitted");
 	return Finished(controller);
 }
+
 std::string Contents(const std::filesystem::path& path)
 {
 	std::ifstream input(path, std::ios::binary);
@@ -141,10 +145,7 @@ void Replay(RecordingHost& host, const std::string& script, std::uint64_t seed, 
 	app::WorkerConnection connection(host.server->Path(), "recorded_rig_test",
 									 static_cast<std::uint64_t>(wire::Capability::SimulationCommands));
 	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
-		{
-			return connection.Exchange(opcode, std::move(fields));
-		});
+		[&](auto opcode, auto fields) { return connection.Exchange(opcode, std::move(fields)); });
 	automation::RigOptions options;
 	options.session = wire::ControlSessionId{1};
 	options.generation = host.session->Snapshot().generation.value;
@@ -153,39 +154,37 @@ void Replay(RecordingHost& host, const std::string& script, std::uint64_t seed, 
 	options.recordingArchive = archive;
 	options.deadline = std::chrono::seconds{30};
 	std::atomic<bool> stopping{false}, failed{false}, heldFrame{false}, releasedFrame{false}, bodyFrame{false};
-	std::thread application(
-		[&]
+	std::thread application([&] {
+		while (!stopping)
 		{
-			while (!stopping)
+			FramePrediction prediction;
+			auto frameResult = host.session->WaitFrame(prediction);
+			if (frameResult == XR_SUCCESS)
+				frameResult = host.session->BeginFrame();
+			if (frameResult == XR_SUCCESS)
+				frameResult = host.session->EndFrame(prediction);
+			if (frameResult != XR_SUCCESS)
 			{
-				FramePrediction prediction;
-				auto frameResult = host.session->WaitFrame(prediction);
-				if (frameResult == XR_SUCCESS)
-					frameResult = host.session->BeginFrame();
-				if (frameResult == XR_SUCCESS)
-					frameResult = host.session->EndFrame(prediction);
-				if (frameResult != XR_SUCCESS)
-				{
-					if (!stopping)
-						failed = true;
-					return;
-				}
-				const auto applied = host.session->Commands().At(prediction.id);
-				if (applied && applied->configuration.tracking.bodyObservation)
-				{
-					const auto& body = *applied->configuration.tracking.bodyObservation;
-					if (body.jointSet != BodyJointSet::FullBodyMETA || !body.returnedTime ||
-						body.returnedTime->value != applied->runtimeTime.value - Duration{20})
-						failed = true;
-					bodyFrame = true;
-				}
-				if (applied && applied->configuration.tracking.head.pose.position.x == 7)
-					heldFrame = applied->configuration.input.controllers[0].trigger == .75f;
-				if (applied && applied->configuration.tracking.head.pose.position.x == 8)
-					releasedFrame = applied->configuration.input.controllers[0].trigger == 0;
-				std::this_thread::sleep_for(std::chrono::milliseconds{1});
+				if (!stopping)
+					failed = true;
+				return;
 			}
-		});
+			const auto applied = host.session->Commands().At(prediction.id);
+			if (applied && applied->configuration.tracking.bodyObservation)
+			{
+				const auto& body = *applied->configuration.tracking.bodyObservation;
+				if (body.jointSet != BodyJointSet::FullBodyMETA || !body.returnedTime ||
+					body.returnedTime->value != applied->runtimeTime.value - Duration{20})
+					failed = true;
+				bodyFrame = true;
+			}
+			if (applied && applied->configuration.tracking.head.pose.position.x == 7)
+				heldFrame = applied->configuration.input.controllers[0].trigger == .75f;
+			if (applied && applied->configuration.tracking.head.pose.position.x == 8)
+				releasedFrame = applied->configuration.input.controllers[0].trigger == 0;
+			std::this_thread::sleep_for(std::chrono::milliseconds{1});
+		}
+	});
 	try
 	{
 		runner.Start(std::move(options));
@@ -324,6 +323,7 @@ void SaveAndReplay(bool dense = false)
 	Replay(host, Contents(app::Utf8Path(reopened.path)), reopened.seed, expected, dense);
 #endif
 }
+
 void SavedRecordingBounds()
 {
 	RecordingHost host;
@@ -341,8 +341,7 @@ void SavedRecordingBounds()
 			accepted = app::OpenSavedRecording(app::PathText(path)).seed == 73;
 		}
 		catch (const std::runtime_error&)
-		{
-		}
+		{}
 		Require(accepted == (version <= 4),
 				"Saved-take schema recognition disagrees with the supported exporter schemas");
 	}
@@ -358,16 +357,13 @@ void SavedRecordingBounds()
 	}
 	Require(rejected, "Oversized saved source bypassed the file budget");
 }
+
 app::RecordingCaptureSnapshot CaptureFinished(app::RecordingCapture& capture)
 {
-	Eventually(
-		[&]
-		{
-			return !capture.Snapshot().busy;
-		},
-		"Capture worker did not finish");
+	Eventually([&] { return !capture.Snapshot().busy; }, "Capture worker did not finish");
 	return capture.Snapshot();
 }
+
 void SustainedCapture()
 {
 	RecordingHost host;
@@ -378,12 +374,8 @@ void SustainedCapture()
 	capture.SetTarget(host.Target());
 	const auto destination = host.path / "recordings" / u8"take 日本語.simxrtake";
 	Require(capture.Start(destination), "Start sustained capture");
-	Eventually(
-		[&]
-		{
-			return capture.Snapshot().phase != app::RecordingCapturePhase::Starting;
-		},
-		"Capture did not start");
+	Eventually([&] { return capture.Snapshot().phase != app::RecordingCapturePhase::Starting; },
+			   "Capture did not start");
 	Require(capture.Snapshot().phase == app::RecordingCapturePhase::Capturing, capture.Snapshot().error.c_str());
 	Require(!capture.Start(host.path / "overlap"), "Concurrent take was admitted");
 	for (std::uint64_t frame = 1; frame <= 1281; ++frame)
@@ -392,12 +384,7 @@ void SustainedCapture()
 		Require(host.runtime.Game().Publish(game, "frame:" + std::to_string(frame)),
 				"Publish captured SDK observation");
 		if (frame % 64 == 0)
-			Eventually(
-				[&]
-				{
-					return capture.Snapshot().transactions >= frame;
-				},
-				"Capture did not drain live pages");
+			Eventually([&] { return capture.Snapshot().transactions >= frame; }, "Capture did not drain live pages");
 	}
 	capture.Stop();
 	const auto saved = CaptureFinished(capture);
@@ -443,12 +430,10 @@ void SustainedCapture()
 	Require(CaptureFinished(capture).phase == app::RecordingCapturePhase::Complete,
 			"Immediate stop failed to close an empty take");
 	app::LibraryCatalog catalog(host.path);
-	const auto catalogResult = [&]
-	{
+	const auto catalogResult = [&] {
 		std::optional<app::LibraryResult> result;
 		Eventually(
-			[&]
-			{
+			[&] {
 				result = catalog.TakeResult();
 				return result.has_value();
 			},
@@ -479,8 +464,7 @@ void SustainedCapture()
 	const auto partial = catalogResult();
 	Require(!partial.error && partial.entries && partial.entries->size() == 2 &&
 				std::ranges::any_of(*partial.entries,
-									[&](const auto& entry)
-									{
+									[&](const auto& entry) {
 										return entry.path == app::PathText(incomplete) && entry.archive &&
 											   !entry.error.empty();
 									}),
@@ -505,12 +489,14 @@ void SustainedCapture()
 	Require(catalog.ExportRange(app::PathText(destination), "editable range 日本語", 1200, 1281),
 			"Admit archive range export");
 	const auto exported = catalogResult();
-	Require(exported.changed && !exported.error && Contents(app::Utf8Path(exported.renamed)) == automation::EditableRig(range),
+	Require(exported.changed && !exported.error &&
+				Contents(app::Utf8Path(exported.renamed)) == automation::EditableRig(range),
 			"Archive range worker did not save the exact editable rig");
 	Require(catalog.ExportRange(app::PathText(destination), "editable range 日本語", 1200, 1281),
 			"Admit conflicting range export");
 	const auto conflict = catalogResult();
-	Require(conflict.error && !conflict.changed && Contents(app::Utf8Path(exported.renamed)) == automation::EditableRig(range),
+	Require(conflict.error && !conflict.changed &&
+				Contents(app::Utf8Path(exported.renamed)) == automation::EditableRig(range),
 			"Archive range export overwrote an existing file");
 	Require(range.originFrame == FrameId{1200} && range.originRuntimeTime && range.total == 81 &&
 				std::get<SetHeadPose>(range.initial.front()).value.pose.position.x == 1200,
@@ -552,13 +538,11 @@ void RejectArchive(RecordingHost& host, const std::filesystem::path& directory)
 	app::WorkerConnection connection(host.server->Path(), "archive_preflight_test",
 									 static_cast<std::uint64_t>(wire::Capability::SimulationCommands));
 	std::uint64_t mutations = 0;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
-		{
-			if (opcode != wire::OpCode::Status)
-				++mutations;
-			return connection.Exchange(opcode, std::move(fields));
-		});
+	automation::RigRunner runner([&](auto opcode, auto fields) {
+		if (opcode != wire::OpCode::Status)
+			++mutations;
+		return connection.Exchange(opcode, std::move(fields));
+	});
 	automation::RigOptions options;
 	options.session = wire::ControlSessionId{1};
 	options.generation = host.Target().generation;
@@ -580,12 +564,8 @@ void CaptureSdkClock()
 	capture.SetTarget(host.Target());
 	const auto path = host.path / "clock";
 	Require(capture.Start(path), "Start clock-correlated capture");
-	Eventually(
-		[&]
-		{
-			return capture.Snapshot().phase != app::RecordingCapturePhase::Starting;
-		},
-		"Clock capture did not start");
+	Eventually([&] { return capture.Snapshot().phase != app::RecordingCapturePhase::Starting; },
+			   "Clock capture did not start");
 	Require(capture.Snapshot().phase == app::RecordingCapturePhase::Capturing, capture.Snapshot().error.c_str());
 	host.RecordHead(2);
 	std::this_thread::sleep_for(std::chrono::milliseconds{25});
@@ -617,6 +597,7 @@ void CaptureSdkClock()
 	Require(range.originFrame == *evidence.entries[0].first,
 			"SDK-selected range did not export from its observed input boundary");
 }
+
 void CaptureSameFrameReplay()
 {
 	RecordingHost host;
@@ -624,12 +605,8 @@ void CaptureSameFrameReplay()
 	capture.SetTarget(host.Target());
 	const auto destination = host.path / "same-frame";
 	Require(capture.Start(destination), "Start same-frame capture");
-	Eventually(
-		[&]
-		{
-			return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing;
-		},
-		"Capture did not start");
+	Eventually([&] { return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing; },
+			   "Capture did not start");
 	for (std::uint64_t index = 1; index <= 17; ++index)
 	{
 		PoseSample head;
@@ -669,6 +646,7 @@ void CaptureSameFrameReplay()
 	Replay(host, {}, app::OpenSavedRecording(app::PathText(destination)).seed, 20, false, destination, false);
 #endif
 }
+
 void CaptureBodyRange()
 {
 	RecordingHost host;
@@ -676,12 +654,8 @@ void CaptureBodyRange()
 	capture.SetTarget(host.Target());
 	const auto directory = host.path / "body-range.simxrtake";
 	Require(capture.Start(directory), "Start body range capture");
-	Eventually(
-		[&]
-		{
-			return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing;
-		},
-		"Body capture did not start");
+	Eventually([&] { return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing; },
+			   "Body capture did not start");
 	BodyObservation body;
 	body.jointSet = BodyJointSet::FullBodyMETA;
 	body.located = true;
@@ -724,6 +698,7 @@ void CaptureBodyRange()
 	Require(found, "Trim rewrote body sample time or discarded its replay anchor/rest skeleton");
 	(void)automation::EditableRig(range);
 }
+
 void CaptureRetirement()
 {
 	RecordingHost host;
@@ -732,51 +707,29 @@ void CaptureRetirement()
 		app::RecordingCapture capture;
 		capture.SetTarget(host.Target());
 		Require(capture.Start(destination), "Start retirement capture");
-		Eventually(
-			[&]
-			{
-				return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing;
-			},
-			"Capture did not start");
+		Eventually([&] { return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing; },
+				   "Capture did not start");
 		host.RecordHead(1);
-		Eventually(
-			[&]
-			{
-				return capture.Snapshot().transactions == 1;
-			},
-			"Capture did not persist retirement prefix");
+		Eventually([&] { return capture.Snapshot().transactions == 1; }, "Capture did not persist retirement prefix");
 		capture.SetTarget({});
 		Require(CaptureFinished(capture).phase == app::RecordingCapturePhase::Incomplete,
 				"Retirement reported a complete take");
-		Eventually(
-			[&]
-			{
-				return !host.session->Commands().Recorder().Snapshot().active;
-			},
-			"Retirement left recording active");
+		Eventually([&] { return !host.session->Commands().Recorder().Snapshot().active; },
+				   "Retirement left recording active");
 		automation::RecordingArchiveReader reader(destination);
 		while (reader.Next())
-		{
-		}
+		{}
 		Require(!reader.State().complete && reader.State().next == 1, "Retirement prefix was not recoverable");
 #ifdef SIMXR_TEST_AUTOMATION
 		RejectArchive(host, destination);
 #endif
 		capture.SetTarget(host.Target());
 		Require(capture.Start(host.path / "destroyed"), "Rebind capture");
-		Eventually(
-			[&]
-			{
-				return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing;
-			},
-			"Rebound capture did not start");
+		Eventually([&] { return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing; },
+				   "Rebound capture did not start");
 	}
-	Eventually(
-		[&]
-		{
-			return !host.session->Commands().Recorder().Snapshot().active;
-		},
-		"Capture destruction left recording active");
+	Eventually([&] { return !host.session->Commands().Recorder().Snapshot().active; },
+			   "Capture destruction left recording active");
 }
 #ifndef _WIN32
 void CaptureWriteFailure()
@@ -792,12 +745,8 @@ void CaptureWriteFailure()
 			capture.SetTarget(host.Target());
 			const auto destination = host.path / "disk-failure";
 			Require(capture.Start(destination), "Start disk failure capture");
-			Eventually(
-				[&]
-				{
-					return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing;
-				},
-				"Capture did not start");
+			Eventually([&] { return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing; },
+					   "Capture did not start");
 			const auto length = std::filesystem::file_size(destination / "input.simxr");
 			rlimit limit{};
 			Require(::getrlimit(RLIMIT_FSIZE, &limit) == 0, "Read file limit");
@@ -811,8 +760,7 @@ void CaptureWriteFailure()
 					"Failed disk flush was acknowledged or reported complete");
 			automation::RecordingArchiveReader reader(destination);
 			while (reader.Next())
-			{
-			}
+			{}
 			Require(!reader.State().complete && reader.State().truncated && reader.State().next == 0,
 					"Failed disk write did not retain a recoverable origin");
 		}
@@ -835,12 +783,8 @@ void CaptureOverflow()
 	capture.SetTarget(host.Target());
 	const auto destination = host.path / "overflow";
 	Require(capture.Start(destination), "Start overflow capture");
-	Eventually(
-		[&]
-		{
-			return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing;
-		},
-		"Capture did not start");
+	Eventually([&] { return capture.Snapshot().phase == app::RecordingCapturePhase::Capturing; },
+			   "Capture did not start");
 	host.RecordHead(1);
 	host.session->Commands().Recorder().Fail();
 	const auto failed = CaptureFinished(capture);
@@ -848,11 +792,11 @@ void CaptureOverflow()
 			"Runtime failure lost its tail or reported a complete take");
 	automation::RecordingArchiveReader reader(destination);
 	while (reader.Next())
-	{
-	}
+	{}
 	Require(reader.State().origin.overflow && !reader.State().complete && reader.State().next == 1,
 			"Overflow state was not preserved in the archive");
 }
+
 void TargetRetirement()
 {
 	RecordingHost host;
@@ -861,26 +805,19 @@ void TargetRetirement()
 		controller.SetTarget(host.Target());
 		Require(Request(controller, app::RecordingAction::Start).error.empty(), "Start retirement fixture");
 		controller.SetTarget({});
-		Eventually(
-			[&]
-			{
-				return !host.session->Commands().Recorder().Snapshot().active;
-			},
-			"Changing target left an owned recorder active");
+		Eventually([&] { return !host.session->Commands().Recorder().Snapshot().active; },
+				   "Changing target left an owned recorder active");
 		Require(!controller.Snapshot().page && !controller.Request(app::RecordingAction::Save, 0, "unbound.luau"),
 				"Old target state survived retirement");
 		controller.SetTarget(host.Target());
 		Require(Request(controller, app::RecordingAction::Start).error.empty(),
 				"Rebind did not obtain recording rights");
 	}
-	Eventually(
-		[&]
-		{
-			return !host.session->Commands().Recorder().Snapshot().active;
-		},
-		"Controller destruction left an owned recorder active");
+	Eventually([&] { return !host.session->Commands().Recorder().Snapshot().active; },
+			   "Controller destruction left an owned recorder active");
 }
 } // namespace simxr::recording_tests
+
 int main(int argc, char** argv)
 {
 	using namespace simxr::recording_tests;

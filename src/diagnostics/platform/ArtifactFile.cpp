@@ -7,7 +7,6 @@
 #include <unistd.h>
 #endif
 
-
 namespace flicker
 {
 std::uint64_t ProcessId()

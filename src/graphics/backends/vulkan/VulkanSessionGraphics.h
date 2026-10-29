@@ -27,7 +27,7 @@ struct VulkanInspectionValidation;
 // Capabilities are immutable.
 class VulkanSessionGraphics final
 {
-  public:
+public:
 	using SwapchainRef = HandleRef<XrSwapchain, VulkanSwapchain>;
 
 	static XrResult Create(const VulkanBinding& binding, std::shared_ptr<Session> session, bool validation,
@@ -48,7 +48,7 @@ class VulkanSessionGraphics final
 	XrResult Drain(std::chrono::nanoseconds timeout = std::chrono::seconds(5));
 	XrResult FinishClose();
 
-  private:
+private:
 	class FrameBindings;
 
 	enum class CloseStage

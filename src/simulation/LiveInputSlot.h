@@ -9,6 +9,7 @@
 namespace simxr
 {
 using LiveInputClock = std::chrono::steady_clock;
+
 struct LiveInputSample
 {
 	std::uint64_t connection = 0, sequence = 0, clockRevision = 0;
@@ -29,17 +30,19 @@ enum class LiveInputPhase
 	Stale,
 	Overflow
 };
+
 struct LiveInputStatus
 {
 	std::optional<CommandSource> owner;
 	std::uint64_t connection = 0, sequence = 0, coalesced = 0, clockRevision = 0;
 	LiveInputPhase phase = LiveInputPhase::Disconnected;
 };
+
 // Scheduler-owned value: copied with the prepared boundary so failed publication
 // cannot consume an edge.
 class LiveInputSlot
 {
-  public:
+public:
 	using Channels = std::array<bool, ControlChannelCount>;
 	static bool HasChannels(const Channels& owned);
 	CommandResult Write(CommandSource source, const LiveInputSample& sample, const Channels& owned,
@@ -52,7 +55,7 @@ class LiveInputSlot
 	bool Expired(LiveInputClock::time_point now) const;
 	void Reset();
 
-  private:
+private:
 	struct Transitions
 	{
 		struct Transition
@@ -60,17 +63,20 @@ class LiveInputSlot
 			ControllerControls controls;
 			RuntimeTime observedTime;
 		};
+
 		std::array<Transition, 16> values{};
 		std::size_t first = 0, count = 0;
 		ControllerControls last, published;
 		RuntimeTime publishedTime;
 		bool awaitingSync = false;
 	};
+
 	struct TrackerTransition
 	{
 		std::vector<TrackerDevice> devices;
 		RuntimeTime observedTime;
 	};
+
 	std::array<TrackerTransition, 16> m_trackerTransitions;
 	std::size_t m_trackerFirst = 0, m_trackerCount = 0;
 	TrackerTransition m_publishedTrackers;

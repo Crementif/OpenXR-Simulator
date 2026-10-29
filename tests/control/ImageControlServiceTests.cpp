@@ -9,16 +9,19 @@ namespace
 using namespace simxr;
 namespace wire = simxr::control;
 namespace tag = wire::tag;
+
 wire::ErrorCode Error(const wire::ControlPacket& packet)
 {
 	Require(packet.message.Find(tag::Error) && packet.message.Find(tag::Error)->AsU32(), "Missing structured error");
 	return static_cast<wire::ErrorCode>(*packet.message.Find(tag::Error)->AsU32());
 }
+
 std::uint64_t Id(const wire::ControlPacket& packet, std::uint16_t field)
 {
 	Require(packet.message.Find(field) && packet.message.Find(field)->AsU64(), "Missing image identifier");
 	return *packet.message.Find(field)->AsU64();
 }
+
 void MalformedImageDescriptions()
 {
 	const auto encoded = wire::EncodeImageDescription(wire::test::Description());
@@ -57,12 +60,14 @@ void MalformedImageDescriptions()
 		}
 	}
 }
+
 struct Client
 {
 	wire::ControlService& service;
 	wire::ConnectionId connection;
 	std::uint64_t sequence = 1, session = 0, generation = 0;
 	std::uint16_t minor = wire::ProtocolMinor;
+
 	Client(wire::ControlService& service, bool native = true, std::uint16_t minor = wire::ProtocolMinor)
 		: service(service), connection(*service.Connect(native)), minor(minor)
 	{
@@ -79,6 +84,7 @@ struct Client
 				generation = *field.AsU64();
 		}
 	}
+
 	wire::ControlPacket Request(wire::OpCode op, std::vector<wire::Field> fields = {})
 	{
 		wire::ControlPacket result;
@@ -88,20 +94,24 @@ struct Client
 		result.message.fields = std::move(fields);
 		return result;
 	}
+
 	wire::ControlPacket Send(const wire::ControlPacket& request)
 	{
 		return service.HandlePacket(connection, request);
 	}
+
 	wire::ControlPacket Call(wire::OpCode op, std::vector<wire::Field> fields = {})
 	{
 		return Send(Request(op, std::move(fields)));
 	}
+
 	wire::ControlPacket Retain(CaptureId capture)
 	{
 		return Call(wire::OpCode::RetainImage,
 					{wire::Field::U64(tag::Session, session), wire::Field::U64(tag::Generation, generation),
 					 wire::Field::U64(tag::CaptureId, capture.value)});
 	}
+
 	wire::ControlPacket Share(std::uint64_t image)
 	{
 		auto description = wire::test::Description();
@@ -114,12 +124,12 @@ struct Client
 		return request;
 	}
 };
+
 void ImageLifetimesAndReplay()
 {
 	wire::test::Fixture fixture;
 	Client client(fixture.service), other(fixture.service), legacy(fixture.service, true, 1),
-		oldRegion(fixture.service, true, 15),
-		noFd(fixture.service, false);
+		oldRegion(fixture.service, true, 15), noFd(fixture.service, false);
 	Require(Error(legacy.Retain(fixture.capture)) == wire::ErrorCode::UnsupportedCommand,
 			"Old minor accessed image delivery");
 	const auto retained = client.Retain(fixture.capture);
@@ -127,12 +137,12 @@ void ImageLifetimesAndReplay()
 	const auto image = Id(retained, tag::ImageReaderId);
 	const auto oldImage = Id(oldRegion.Retain(fixture.capture), tag::ImageReaderId);
 	const auto region = wire::EncodeImageRegion({0, 0, 2, 2, 1, 1}, true);
-	Require(Error(oldRegion.Call(wire::OpCode::StartExport,
-		{wire::Field::U64(tag::ImageReaderId, oldImage), region})) == wire::ErrorCode::UnsupportedField,
-		"Old negotiated protocol accepted image region export");
-	Require(Error(client.Call(wire::OpCode::StartExport,
-		{wire::Field::U64(tag::ImageReaderId, image), region})) == wire::ErrorCode::UnsupportedCommand,
-		"Provider without image region support did not reject it explicitly");
+	Require(Error(oldRegion.Call(wire::OpCode::StartExport, {wire::Field::U64(tag::ImageReaderId, oldImage),
+															 region})) == wire::ErrorCode::UnsupportedField,
+			"Old negotiated protocol accepted image region export");
+	Require(Error(client.Call(wire::OpCode::StartExport, {wire::Field::U64(tag::ImageReaderId, image), region})) ==
+				wire::ErrorCode::UnsupportedCommand,
+			"Provider without image region support did not reject it explicitly");
 	Require(fixture.state->exports == 0, "Unsupported image region created an export");
 	Require(Id(client.Retain(fixture.capture), tag::ImageReaderId) == image && fixture.state->retains == 2,
 			"Same source did not reuse immutable reader");
@@ -173,8 +183,7 @@ void ImageLifetimesAndReplay()
 	Require(Error(started) == wire::ErrorCode::Ok && fixture.state->reads == 0,
 			"Export creation read pixels prematurely");
 	const auto exportId = Id(started, tag::ExportId);
-	auto read = [&](std::uint64_t offset, std::uint64_t length)
-	{
+	auto read = [&](std::uint64_t offset, std::uint64_t length) {
 		return client.Call(wire::OpCode::ReadExport,
 						   {wire::Field::U64(tag::ExportId, exportId), wire::Field::U64(tag::Offset, offset),
 							wire::Field::U64(tag::Length, length)});
@@ -198,8 +207,7 @@ void ImageLifetimesAndReplay()
 		Error(copied) == wire::ErrorCode::Ok && Id(copied, tag::Length) == 43 &&
 			copied.message.Find(tag::End)->AsBool() == true && fixture.state->reads == 1 &&
 			copied.message.Find(tag::Bytes)->value ==
-				[]
-				{
+				[] {
 					const auto pixels = wire::test::Pixels();
 					return std::vector<std::byte>(pixels.begin() + 53, pixels.end());
 				}(),
@@ -217,6 +225,7 @@ void ImageLifetimesAndReplay()
 				wire::ErrorCode::Ok,
 			"Release explicit export");
 }
+
 void BoundedImageReadersAndReentry()
 {
 	wire::test::Fixture fixture;
@@ -233,11 +242,11 @@ void BoundedImageReadersAndReentry()
 		fixture.session->Display().Step();
 	}
 	const auto ninth = fixture.Submit();
-	Require(Error(client.Retain(ninth)) == wire::ErrorCode::Capacity && fixture.state->retains == simxr::SnapshotBudget::Capacity(),
+	Require(Error(client.Retain(ninth)) == wire::ErrorCode::Capacity &&
+				fixture.state->retains == simxr::SnapshotBudget::Capacity(),
 			"Image reader capacity checked after provider Retain");
 	bool reentered = false;
-	fixture.state->onReaderDestroyed = [&]
-	{
+	fixture.state->onReaderDestroyed = [&] {
 		reentered =
 			Error(client.Call(wire::OpCode::ImageInfo, {wire::Field::U64(tag::ImageReaderId, readers.front())})) ==
 			wire::ErrorCode::NotFound;
@@ -249,6 +258,7 @@ void BoundedImageReadersAndReentry()
 	fixture.state->onReaderDestroyed = {};
 	Require(Error(client.Retain(ninth)) == wire::ErrorCode::Ok, "Released image reader capacity did not recover");
 }
+
 void PublicationFailureRollback()
 {
 	wire::test::Fixture fixture;
@@ -279,6 +289,7 @@ void PublicationFailureRollback()
 				"Export publication failure consumed bounded capacity");
 	}
 }
+
 void BoundedTables()
 {
 	wire::test::Fixture fixture;
@@ -294,7 +305,8 @@ void BoundedTables()
 		Require(Error(exported) == wire::ErrorCode::Ok, "Fill independent export table");
 		exports.push_back(Id(exported, tag::ExportId));
 	}
-	Require(Error(client.Send(client.Share(image))) == wire::ErrorCode::Capacity && fixture.state->shares == simxr::SnapshotBudget::Capacity() &&
+	Require(Error(client.Send(client.Share(image))) == wire::ErrorCode::Capacity &&
+				fixture.state->shares == simxr::SnapshotBudget::Capacity() &&
 				Error(client.Call(wire::OpCode::StartExport, {wire::Field::U64(tag::ImageReaderId, image)})) ==
 					wire::ErrorCode::Capacity &&
 				fixture.state->exports == simxr::SnapshotBudget::Capacity(),
@@ -308,6 +320,7 @@ void BoundedTables()
 	Require(fixture.state->reads == 0, "Metadata/share/capacity checks invoked Read");
 }
 } // namespace
+
 int main()
 {
 	try

@@ -13,6 +13,7 @@ enum class RecordingCapturePhase
 	Complete,
 	Incomplete
 };
+
 struct RecordingCaptureSnapshot
 {
 	RecordingCapturePhase phase = RecordingCapturePhase::Idle;
@@ -21,11 +22,12 @@ struct RecordingCaptureSnapshot
 	std::uint64_t identity = 0, transactions = 0;
 	std::string error;
 };
+
 // One worker drains to disk. Target retirement interrupts transport and leaves
 // a recoverable prefix; Stop drains and finalizes the current take.
 class RecordingCapture
 {
-  public:
+public:
 	RecordingCapture();
 	~RecordingCapture();
 	RecordingCapture(const RecordingCapture&) = delete;
@@ -35,12 +37,13 @@ class RecordingCapture
 	void Stop();
 	RecordingCaptureSnapshot Snapshot() const;
 
-  private:
+private:
 	struct Job
 	{
 		RecordingTarget target;
 		std::filesystem::path directory;
 	};
+
 	void Run();
 	void Capture(WorkerConnection& connection, const Job& job);
 	mutable std::mutex m_mutex;

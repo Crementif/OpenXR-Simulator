@@ -8,6 +8,7 @@
 namespace simxr::tests
 {
 using namespace headset;
+
 static void Until(const std::function<bool()>& predicate)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -17,6 +18,7 @@ static void Until(const std::function<bool()>& predicate)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
+
 static void Freshness()
 {
 	using namespace std::chrono;
@@ -39,6 +41,7 @@ static void Freshness()
 	Require(!FreshHeadsetImage(packet, milliseconds(10), packet.requestedAt - milliseconds(1)),
 			"Future request time was accepted");
 }
+
 static void DeliveryLifecycle()
 {
 	control::test::Fixture fixture;
@@ -49,28 +52,23 @@ static void DeliveryLifecycle()
 	HeadsetImageSource source{endpoint, 1, fixture.session->Snapshot().generation.value};
 	HeadsetImageBridge bridge(source);
 	auto completion = control::OwnControlFd(::memfd_create("simxr-fake-consumer", MFD_CLOEXEC));
-	const auto request = [&](std::uint64_t after = 0)
-	{
+	const auto request = [&](std::uint64_t after = 0) {
 		Require(bridge.Error().empty(), "Unexpected live image failure");
 		return bridge.Request(control::test::Description().identity, completion, after, ImageCompletionKind::Fence);
 	};
-	const auto receive = [&]
-	{
+	const auto receive = [&] {
 		std::optional<HeadsetImagePacket> packet;
-		Until(
-			[&]
-			{
-				Require(bridge.Error().empty(), bridge.Error().c_str());
-				packet = bridge.Take();
-				return packet.has_value();
-			});
+		Until([&] {
+			Require(bridge.Error().empty(), bridge.Error().c_str());
+			packet = bridge.Take();
+			return packet.has_value();
+		});
 		return std::move(*packet);
 	};
 	Require(request(), "Initial request rejected");
 	Require(receive().kind == HeadsetImageKind::Unavailable && fixture.state->shares == 0,
 			"Unselected display exposed an image");
-	const auto select = [&](CaptureId capture)
-	{
+	const auto select = [&](CaptureId capture) {
 		auto tick = fixture.session->Captures().Read(capture)->metadata->prediction.displayTick;
 		if (fixture.session->Display().NextTick() > tick)
 			tick = fixture.session->Display().NextTick();
@@ -93,11 +91,7 @@ static void DeliveryLifecycle()
 	fixture.state->consumerPhase = CompletionStatus::Complete;
 	Require(bridge.Acknowledge(first.delivery) && !bridge.Acknowledge(first.delivery),
 			"Delivery acknowledgement identity was not consumed once");
-	Until(
-		[&]
-		{
-			return request(first.imageTick);
-		});
+	Until([&] { return request(first.imageTick); });
 	const auto repeated = receive();
 	Require(repeated.session == first.session && repeated.frame == first.frame,
 			"Unchanged image reply changed its source identity");
@@ -119,12 +113,9 @@ static void DeliveryLifecycle()
 	do
 	{
 		Require(fixture.session->Display().Step().has_value(), "Select clear frame");
-	} while (fixture.session->Display().NextTick() <= prediction.displayTick);
-	Until(
-		[&]
-		{
-			return request(second.imageTick);
-		});
+	}
+	while (fixture.session->Display().NextTick() <= prediction.displayTick);
+	Until([&] { return request(second.imageTick); });
 	Require(receive().kind == HeadsetImageKind::Clear && fixture.state->shares == 2 && fixture.state->reads == 0,
 			"Clear output exposed stale image or read pixels");
 	bridge.Stop();
@@ -135,11 +126,7 @@ static void DeliveryLifecycle()
 	const auto newest = fixture.Submit();
 	select(newest);
 	Require(incompatible.Request(control::test::Description().identity, completion), "Queue incompatible primitive");
-	Until(
-		[&]
-		{
-			return !incompatible.Error().empty();
-		});
+	Until([&] { return !incompatible.Error().empty(); });
 	Require(fixture.state->shares == 2, "Incompatible completion primitive exposed native handles");
 
 	HeadsetImageBridge pending(source);
@@ -147,13 +134,11 @@ static void DeliveryLifecycle()
 	Require(pending.Request(control::test::Description().identity, completion, 0, ImageCompletionKind::Fence),
 			"Queue pending consumer");
 	std::optional<HeadsetImagePacket> outstanding;
-	Until(
-		[&]
-		{
-			Require(pending.Error().empty(), pending.Error().c_str());
-			outstanding = pending.Take();
-			return outstanding.has_value();
-		});
+	Until([&] {
+		Require(pending.Error().empty(), pending.Error().c_str());
+		outstanding = pending.Take();
+		return outstanding.has_value();
+	});
 	Require(outstanding->kind == HeadsetImageKind::Image, "Missing outstanding shutdown image");
 	pending.Stop();
 	Require(!pending.Acknowledge(outstanding->delivery) && pending.Error().empty() &&
@@ -164,14 +149,11 @@ static void DeliveryLifecycle()
 	++source.generation;
 	HeadsetImageBridge stale(source);
 	Require(stale.Request(control::test::Description().identity, completion), "Queue stale target check");
-	Until(
-		[&]
-		{
-			return !stale.Error().empty();
-		});
+	Until([&] { return !stale.Error().empty(); });
 	Require(!stale.Take() && fixture.state->shares == 3, "Stale generation exposed an image");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

@@ -15,6 +15,7 @@ struct ImageRequest
 	control::OpCode opcode;
 	std::vector<control::Field> fields;
 };
+
 struct ImageRenderRequest
 {
 	std::uint64_t ticket = 0;
@@ -23,6 +24,7 @@ struct ImageRenderRequest
 	std::uint64_t session = 0, generation = 0;
 };
 struct CachedImage;
+
 struct ImageRenderResult
 {
 	control::Message info;

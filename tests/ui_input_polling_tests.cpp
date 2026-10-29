@@ -2,7 +2,6 @@
 #include "control/legacy/WindowsRuntimeSettings.h"
 namespace settings = simxr::legacy::settings;
 
-
 static int s_failures = 0;
 
 static void Check(bool condition, const char* message)

@@ -18,6 +18,7 @@ static std::uint64_t s_space = 100;
 static bool s_trackerEnabled = false, s_attached = false;
 static std::vector<XrSpace> s_trackerSpaces;
 static std::vector<XrViveTrackerPathsHTCX> s_trackers;
+
 static XrResult XRAPI_CALL EnumerateTrackers(XrInstance, std::uint32_t capacity, std::uint32_t* count,
 											 XrViveTrackerPathsHTCX* paths)
 {
@@ -27,9 +28,11 @@ static XrResult XRAPI_CALL EnumerateTrackers(XrInstance, std::uint32_t capacity,
 	std::copy(s_trackers.begin(), s_trackers.end(), paths);
 	return XR_SUCCESS;
 }
+
 static std::vector<XrPath> s_hapticHands, s_stoppedHands;
 static XrHapticVibration s_vibration{};
 static XrResult s_hapticResult = XR_SUCCESS;
+
 static XrPath Path(const std::string& name)
 {
 	const auto found = std::find(s_paths.begin(), s_paths.end(), name);
@@ -38,20 +41,20 @@ static XrPath Path(const std::string& name)
 	s_paths.push_back(name);
 	return s_paths.size() - 1;
 }
+
 static bool Bound(const XrActionStateGetInfo& info)
 {
 	const auto prefix = s_actions.at(info.action) + ":" + s_paths.at(info.subactionPath) + "/";
 	const auto& bindings = s_bindings.at(s_profile);
 	return s_active && std::any_of(bindings.begin(), bindings.end(),
-								   [&](const auto& binding)
-								   {
-									   return binding.starts_with(prefix);
-								   });
+								   [&](const auto& binding) { return binding.starts_with(prefix); });
 }
 } // namespace simxr::headset::test
+
 namespace simxr::headset
 {
 OpenXrRuntime::~OpenXrRuntime() = default;
+
 const std::vector<XrExtensionProperties>& OpenXrRuntime::Extensions() const
 {
 	static std::vector<XrExtensionProperties> extensions;
@@ -65,25 +68,30 @@ const std::vector<XrExtensionProperties>& OpenXrRuntime::Extensions() const
 	}
 	return extensions;
 }
+
 PFN_xrVoidFunction OpenXrRuntime::Procedure(const char*) const
 {
 	Require(test::s_trackerEnabled, "Optional tracker procedure requested without support");
 	return reinterpret_cast<PFN_xrVoidFunction>(test::EnumerateTrackers);
 }
+
 XrInstance OpenXrRuntime::Instance() const
 {
 	return reinterpret_cast<XrInstance>(1);
 }
+
 bool OpenXrRuntime::ResourcesPreserved() const
 {
 	return false;
 }
+
 void CheckXr(XrResult result, const char* operation)
 {
 	if (XR_FAILED(result))
 		throw std::runtime_error(operation);
 }
 } // namespace simxr::headset
+
 using namespace simxr::headset::test;
 extern "C"
 {
@@ -96,16 +104,19 @@ extern "C"
 		s_vibration = *reinterpret_cast<const XrHapticVibration*>(feedback);
 		return s_hapticResult;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrStopHapticFeedback(XrSession, const XrHapticActionInfo* info)
 	{
 		s_stoppedHands.push_back(info->subactionPath);
 		return s_focused ? XR_SUCCESS : XR_SESSION_NOT_FOCUSED;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrStringToPath(XrInstance, const char* text, XrPath* path)
 	{
 		*path = Path(text);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrPathToString(XrInstance, XrPath path, std::uint32_t capacity, std::uint32_t* count,
 												  char* buffer)
 	{
@@ -117,17 +128,20 @@ extern "C"
 		buffer[text.size()] = '\0';
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateActionSet(XrInstance, const XrActionSetCreateInfo*, XrActionSet* set)
 	{
 		s_attached = false;
 		*set = reinterpret_cast<XrActionSet>(1);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrDestroyActionSet(XrActionSet)
 	{
 		Require(s_trackerSpaces.empty(), "Tracker spaces outlived their action set");
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateAction(XrActionSet, const XrActionCreateInfo* info, XrAction* action)
 	{
 		Require(!s_attached, "Action created after action-set attachment");
@@ -135,6 +149,7 @@ extern "C"
 		s_actions[*action] = info->actionName;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrSuggestInteractionProfileBindings(XrInstance,
 																	   const XrInteractionProfileSuggestedBinding* info)
 	{
@@ -144,6 +159,7 @@ extern "C"
 							   s_paths.at(info->suggestedBindings[i].binding));
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrAttachSessionActionSets(XrSession, const XrSessionActionSetsAttachInfo*)
 	{
 		if (s_trackerEnabled)
@@ -152,6 +168,7 @@ extern "C"
 		s_attached = true;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateActionSpace(XrSession, const XrActionSpaceCreateInfo* info, XrSpace* space)
 	{
 		*space = reinterpret_cast<XrSpace>(++s_space);
@@ -159,16 +176,19 @@ extern "C"
 			s_trackerSpaces.push_back(*space);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateReferenceSpace(XrSession, const XrReferenceSpaceCreateInfo*, XrSpace* space)
 	{
 		*space = reinterpret_cast<XrSpace>(++s_space);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrDestroySpace(XrSpace space)
 	{
 		std::erase(s_trackerSpaces, space);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrLocateSpace(XrSpace space, XrSpace, XrTime, XrSpaceLocation* location)
 	{
 		location->pose = simxr::IdentityPose();
@@ -178,15 +198,18 @@ extern "C"
 				: 0;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrSyncActions(XrSession, const XrActionsSyncInfo*)
 	{
 		return s_focused ? XR_SUCCESS : XR_SESSION_NOT_FOCUSED;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrGetCurrentInteractionProfile(XrSession, XrPath, XrInteractionProfileState* state)
 	{
 		state->interactionProfile = Path(s_profile);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrGetActionStateBoolean(XrSession, const XrActionStateGetInfo* info,
 														   XrActionStateBoolean* state)
 	{
@@ -196,6 +219,7 @@ extern "C"
 		state->currentState = s_pressed && (name != "primary" || left);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrGetActionStateFloat(XrSession, const XrActionStateGetInfo* info,
 														 XrActionStateFloat* state)
 	{
@@ -208,6 +232,7 @@ extern "C"
 														 : .75f;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrGetActionStateVector2f(XrSession, const XrActionStateGetInfo* info,
 															XrActionStateVector2f* state)
 	{
@@ -218,6 +243,7 @@ extern "C"
 														 : XrVector2f{.4f, -.2f};
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrGetActionStatePose(XrSession, const XrActionStateGetInfo*,
 														XrActionStatePose* state)
 	{
@@ -225,6 +251,7 @@ extern "C"
 		return XR_SUCCESS;
 	}
 }
+
 namespace simxr::tests
 {
 static void Trackers()
@@ -255,14 +282,14 @@ static void Trackers()
 	sample = actions.Sample(203, reinterpret_cast<XrSpace>(1));
 	Require(sample.trackers && sample.trackers->empty(), "Disconnect did not produce an explicit empty inventory");
 }
+
 static void Actions()
 {
 	headset::OpenXrRuntime runtime;
 	headset::HeadsetActions actions(runtime);
 	actions.Open(reinterpret_cast<XrSession>(1));
 	const auto& touch = s_bindings.at("/interaction_profiles/oculus/touch_controller");
-	const auto has = [&](const std::string& binding)
-	{
+	const auto has = [&](const std::string& binding) {
 		return std::find(touch.begin(), touch.end(), binding) != touch.end();
 	};
 	Require(has("primary:/user/hand/left/input/x/click") && has("primary:/user/hand/right/input/a/click") &&
@@ -290,8 +317,7 @@ static void Actions()
 		Require(std::find(indexBindings.begin(), indexBindings.end(), path) != indexBindings.end(),
 				"Index-specific component binding");
 	Require(std::none_of(indexBindings.begin(), indexBindings.end(),
-						 [](const auto& binding)
-						 {
+						 [](const auto& binding) {
 							 return binding.find("/system/") != std::string::npos ||
 									binding.find("/thumbrest/") != std::string::npos ||
 									binding.find("/trackpad/click") != std::string::npos;
@@ -327,8 +353,7 @@ static void Actions()
 		}
 		Require(bindings.size() == (vive ? 20 : 22) &&
 					std::none_of(bindings.begin(), bindings.end(),
-								 [](const auto& binding)
-								 {
+								 [](const auto& binding) {
 									 return binding.find("/system/") != std::string::npos ||
 											binding.find("/force") != std::string::npos ||
 											binding.find("/squeeze/value") != std::string::npos;
@@ -445,6 +470,7 @@ static void Actions()
 			"Zero amplitude explicitly stops the selected output");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

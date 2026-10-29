@@ -27,12 +27,11 @@ bool StereoProjectionsMatch(const Json& views)
 			if (!std::isfinite(l[i]) || !std::isfinite(r[i]))
 				return false;
 		}
-		const auto close = [](float a, float b)
-		{
+		const auto close = [](float a, float b) {
 			return std::abs(a - b) <= .0001f * std::max({1.0f, std::abs(a), std::abs(b)});
 		};
-		return l[1] > l[0] && r[1] > r[0] && l[2] > l[3] && r[2] > r[3] &&
-			close(l[1] - l[0], r[1] - r[0]) && close(l[2], r[2]) && close(l[3], r[3]);
+		return l[1] > l[0] && r[1] > r[0] && l[2] > l[3] && r[2] > r[3] && close(l[1] - l[0], r[1] - r[0]) &&
+			   close(l[2], r[2]) && close(l[3], r[3]);
 	}
 	catch (const Json::exception&)
 	{
@@ -71,7 +70,9 @@ static float Sample(const std::vector<float>& data, int width, int y, float x)
 static std::vector<float> Extreme(const std::vector<float>& input, int width, int height, int radius, bool largest)
 {
 	std::vector<float> intermediate(input.size()), result(input.size());
-	const auto pick = [largest](float a, float b) { return largest ? std::max(a, b) : std::min(a, b); };
+	const auto pick = [largest](float a, float b) {
+		return largest ? std::max(a, b) : std::min(a, b);
+	};
 	for (int y = 0; y < height; ++y)
 		for (int x = 0; x < width; ++x)
 		{
@@ -131,8 +132,8 @@ static std::vector<float> FillSurface(const StereoSurface& matches)
 	return output;
 }
 
-static float VerticalOffset(const std::vector<float>& left, const std::vector<float>& right,
-	int width, int height, std::uint32_t sourceHeight)
+static float VerticalOffset(const std::vector<float>& left, const std::vector<float>& right, int width, int height,
+							std::uint32_t sourceHeight)
 {
 	std::vector<float> rowsLeft(height), rowsRight(height);
 	const auto start = width / 4, end = width * 3 / 4;
@@ -202,35 +203,52 @@ static Json RegionJson(const StereoRegion& region, int width, int height, std::o
 {
 	const auto surfaceDistance = Distance(frusta, region.surface / width);
 	const auto shadingDistance = region.hasShading ? Distance(frusta, region.shading / width) : std::nullopt;
-	return {{"kind", region.kind}, {"nature", region.nature}, {"darker_eye", region.darkerEye},
-		{"box", {float(region.x0) / width, float(region.y0) / height, float(region.x1) / width, float(region.y1) / height}},
-		{"area_pct", region.area}, {"mean_ratio_pct", region.ratio}, {"surface_disparity_pct", 100 * region.surface / width},
+	return {
+		{"kind", region.kind},
+		{"nature", region.nature},
+		{"darker_eye", region.darkerEye},
+		{"box",
+		 {float(region.x0) / width, float(region.y0) / height, float(region.x1) / width, float(region.y1) / height}},
+		{"area_pct", region.area},
+		{"mean_ratio_pct", region.ratio},
+		{"surface_disparity_pct", 100 * region.surface / width},
 		{"shading_disparity_pct", region.hasShading ? Json(100 * region.shading / width) : Json(nullptr)},
-		{"cancel_fraction", region.cancel}, {"grey", region.grey},
+		{"cancel_fraction", region.cancel},
+		{"grey", region.grey},
 		{"surface_metres", surfaceDistance ? Json(*surfaceDistance) : Json(nullptr)},
 		{"shading_metres", shadingDistance ? Json(*shadingDistance) : Json(nullptr)}};
 }
 
 StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> left,
-	std::span<const std::uint8_t> right, std::uint32_t inputWidth, std::uint32_t inputHeight,
-	std::uint32_t sourceHeight, float threshold, std::optional<StereoFrusta> frusta,
-	bool includeImage, const std::function<void()>& check)
+												 std::span<const std::uint8_t> right, std::uint32_t inputWidth,
+												 std::uint32_t inputHeight, std::uint32_t sourceHeight, float threshold,
+												 std::optional<StereoFrusta> frusta, bool includeImage,
+												 const std::function<void()>& check)
 {
 	if (inputWidth < 16 || inputHeight < 16 || inputWidth > 480 || inputHeight > 480 || sourceHeight < inputHeight ||
 		left.size() != std::size_t(inputWidth) * inputHeight * 3 || right.size() != left.size() ||
 		!std::isfinite(threshold) || threshold <= 0 ||
-		(frusta && (!std::isfinite(frusta->infinity) || std::abs(frusta->infinity) > 4 ||
-			!std::isfinite(frusta->focal) || frusta->focal <= 0 || !std::isfinite(frusta->ipd) || frusta->ipd < 0)))
+		(frusta &&
+		 (!std::isfinite(frusta->infinity) || std::abs(frusta->infinity) > 4 || !std::isfinite(frusta->focal) ||
+		  frusta->focal <= 0 || !std::isfinite(frusta->ipd) || frusta->ipd < 0)))
 		throw std::invalid_argument("Invalid stereo consistency inputs");
 	const int width = inputWidth, height = inputHeight;
 	const auto count = std::size_t(width) * height;
 	auto leftY = Luminance(left), rightY = Luminance(right);
 	StereoConsistencyReport result;
-	result.document = {{"verdict", "INCONCLUSIVE_NO_FEATURES"}, {"score", 0}, {"highlight_score", 0},
-		{"valid_pct", 0}, {"median_disparity_pct", 0}, {"max_disparity_pct", 0}, {"behind_infinity_pct", 0},
-		{"vertical_offset_px", 0}, {"exposure_offset_pct", 0}, {"far_disparity_pct", 0},
-		{"infinity_disparity_pct", frusta ? Json(100 * frusta->infinity) : Json(nullptr)},
-		{"regions", Json::array()}, {"notes", Json::array()}};
+	result.document = {{"verdict", "INCONCLUSIVE_NO_FEATURES"},
+					   {"score", 0},
+					   {"highlight_score", 0},
+					   {"valid_pct", 0},
+					   {"median_disparity_pct", 0},
+					   {"max_disparity_pct", 0},
+					   {"behind_infinity_pct", 0},
+					   {"vertical_offset_px", 0},
+					   {"exposure_offset_pct", 0},
+					   {"far_disparity_pct", 0},
+					   {"infinity_disparity_pct", frusta ? Json(100 * frusta->infinity) : Json(nullptr)},
+					   {"regions", Json::array()},
+					   {"notes", Json::array()}};
 	if (std::max(StandardDeviation(leftY), StandardDeviation(rightY)) < .012f)
 	{
 		result.document["notes"].push_back("Both eyes are flat colour; nothing to match.");
@@ -238,7 +256,7 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 	}
 	const auto vertical = VerticalOffset(leftY, rightY, width, height, sourceHeight);
 	auto matches = MatchStereoSurface(left, right, width, height,
-		frusta ? std::optional<float>(frusta->infinity) : std::nullopt, check);
+									  frusta ? std::optional<float>(frusta->infinity) : std::nullopt, check);
 	std::vector<float> matched;
 	for (std::size_t i = 0; i < count; ++i)
 		if (matches.trusted[i])
@@ -288,8 +306,7 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 		{
 			const auto i = std::size_t(y) * width + x;
 			const auto target = x - surface[i];
-			excluded[i] = grown[i] || target < 1 || target > width - 2 ||
-				(!matches.trusted[i] && x < rowNear[y] + 2);
+			excluded[i] = grown[i] || target < 1 || target > width - 2 || (!matches.trusted[i] && x < rowNear[y] + 2);
 		}
 	const auto blurLeft = StereoBoxMean(leftY, width, height, 2, 2);
 	const auto blurRight = StereoBoxMean(rightY, width, height, 2, 2);
@@ -326,8 +343,8 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 						const auto i = std::size_t(y) * width + x;
 						const auto shiftedX = x - dx;
 						const auto shiftedY = (y - dy + height) % height;
-						const auto shifted = shiftedX < 0 || shiftedX >= width ? 0 :
-							logWarped[std::size_t(shiftedY) * width + shiftedX];
+						const auto shifted =
+							shiftedX < 0 || shiftedX >= width ? 0 : logWarped[std::size_t(shiftedY) * width + shiftedX];
 						const auto error = logLeft[i] - shifted - exposure;
 						if (std::abs(error) < std::abs(residual[i]))
 							residual[i] = error;
@@ -372,9 +389,12 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 			{
 				if (current % 4096 == 0)
 					check();
-				const auto px = static_cast<int>(pixels[current] % width), py = static_cast<int>(pixels[current] / width);
-				x0 = std::min(x0, px); x1 = std::max(x1, px + 1);
-				y0 = std::min(y0, py); y1 = std::max(y1, py + 1);
+				const auto px = static_cast<int>(pixels[current] % width),
+						   py = static_cast<int>(pixels[current] / width);
+				x0 = std::min(x0, px);
+				x1 = std::max(x1, px + 1);
+				y0 = std::min(y0, py);
+				y1 = std::max(y1, py + 1);
 				for (int dy = -1; dy <= 1; ++dy)
 					for (int dx = -1; dx <= 1; ++dx)
 					{
@@ -411,14 +431,16 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 					sumLeft += left[i * 3 + channel] / 255.0f;
 				}
 				for (int channel = 0; channel < 3; ++channel)
-					greyDifference += std::abs(left[i * 3 + channel] / 255.0f / sumLeft - channelsRight[channel] / sumRight);
+					greyDifference +=
+						std::abs(left[i * 3 + channel] / 255.0f / sumLeft - channelsRight[channel] / sumRight);
 			}
-			meanResidual /= pixels.size(); meanLeft /= pixels.size();
+			meanResidual /= pixels.size();
+			meanLeft /= pixels.size();
 			const auto surfaceMedian = Percentile(surfaceValues, .5);
 			const auto mx0 = std::max(0, x0 - 6), mx1 = std::min(width, x1 + 6);
 			const auto my0 = std::max(0, y0 - 3), my1 = std::min(height, y1 + 3);
-			regionWork += std::uint64_t(mx1 - mx0) * (my1 - my0) *
-				(matches.maximumDisparity - matches.minimumDisparity + 1);
+			regionWork +=
+				std::uint64_t(mx1 - mx0) * (my1 - my0) * (matches.maximumDisparity - matches.minimumDisparity + 1);
 			if (regions.size() >= 128 || regionWork > 80'000'000)
 				throw std::runtime_error("Stereo consistency exceeds the bounded region analysis budget");
 			double base = 0;
@@ -442,19 +464,23 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 					for (int px = mx0; px < mx1; ++px)
 					{
 						const auto difference = logLeft[std::size_t(py) * width + px] -
-							std::log(blurRight[std::size_t(py) * width + px - d] + LogFloor) - exposure;
+												std::log(blurRight[std::size_t(py) * width + px - d] + LogFloor) -
+												exposure;
 						error += difference * difference;
 					}
 				if (error < best)
 				{
-					best = error; bestShift = d; foundShift = true;
+					best = error;
+					bestShift = d;
+					foundShift = true;
 				}
 			}
 			const auto cancel = base <= 1e-9 ? 0.f : static_cast<float>(1 - best / base);
 			const bool shifted = foundShift && cancel > .75f && std::abs(bestShift - surfaceMedian) > 2.5f;
 			std::string kind = "ONE_EYE_ONLY";
 			if (shifted)
-				kind = std::abs(bestShift - infinity) <= 1.5f && surfaceMedian - infinity > 4 ? "SCREEN_LOCKED" : "WRONG_DEPTH";
+				kind = std::abs(bestShift - infinity) <= 1.5f && surfaceMedian - infinity > 4 ? "SCREEN_LOCKED"
+																							  : "WRONG_DEPTH";
 			const int rx0 = std::max(0, x0 - 8), rx1 = std::min(width, x1 + 8);
 			const int ry0 = std::max(0, y0 - 8), ry1 = std::min(height, y1 + 8);
 			const int rw = rx1 - rx0, rh = ry1 - ry0;
@@ -476,16 +502,19 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 			{
 				const auto surrounding = Percentile(around, .5);
 				const auto meanRight = meanLeft - meanResidual;
-				const auto odd = std::abs(meanLeft - surrounding) >= std::abs(meanRight - surrounding) ? meanLeft : meanRight;
+				const auto odd =
+					std::abs(meanLeft - surrounding) >= std::abs(meanRight - surrounding) ? meanLeft : meanRight;
 				if (odd > surrounding)
 					nature = "highlight";
 			}
 			regions.push_back({kind, nature, meanResidual < 0 ? "left" : "right", x0, y0, x1, y1,
-				static_cast<float>(100.0 * pixels.size() / count), static_cast<float>(100 * (1 - std::exp(-std::abs(meanResidual)))),
-				surfaceMedian, static_cast<float>(bestShift), std::max(0.f, cancel),
-				static_cast<float>(1 - std::min(1.0, greyDifference / pixels.size() / .12)), shifted});
+							   static_cast<float>(100.0 * pixels.size() / count),
+							   static_cast<float>(100 * (1 - std::exp(-std::abs(meanResidual)))), surfaceMedian,
+							   static_cast<float>(bestShift), std::max(0.f, cancel),
+							   static_cast<float>(1 - std::min(1.0, greyDifference / pixels.size() / .12)), shifted});
 		}
-	std::sort(regions.begin(), regions.end(), [](const auto& a, const auto& b) { return a.area * a.ratio > b.area * b.ratio; });
+	std::sort(regions.begin(), regions.end(),
+			  [](const auto& a, const auto& b) { return a.area * a.ratio > b.area * b.ratio; });
 	const auto validFraction = double(validCount) / count;
 	double shadowWeight = 0, highlightWeight = 0;
 	bool largeShadow = false, shiftedShadow = false, largeRegion = false;
@@ -504,19 +533,25 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 	}
 	const auto score = shadowWeight / std::max(validFraction, .001);
 	const auto highlightScore = highlightWeight / std::max(validFraction, .001);
-	std::string verdict = validFraction < .2 ? "INCONCLUSIVE_LOW_COVERAGE" :
-		(score >= 1 || largeShadow || shiftedShadow) ? "FAIL_RIVALRY" :
-		(highlightScore >= 1 || largeRegion) ? "WARN_HIGHLIGHT_RIVALRY" :
-		!regions.empty() ? "WARN_MINOR_RIVALRY" : "PASS";
-	const auto behind = frusta ? std::count_if(matched.begin(), matched.end(),
-		[&](float value) { return value < infinity - 2; }) / double(matched.size()) : 0;
+	std::string verdict = validFraction < .2							 ? "INCONCLUSIVE_LOW_COVERAGE"
+						  : (score >= 1 || largeShadow || shiftedShadow) ? "FAIL_RIVALRY"
+						  : (highlightScore >= 1 || largeRegion)		 ? "WARN_HIGHLIGHT_RIVALRY"
+						  : !regions.empty()							 ? "WARN_MINOR_RIVALRY"
+																		 : "PASS";
+	const auto behind =
+		frusta ? std::count_if(matched.begin(), matched.end(), [&](float value) { return value < infinity - 2; }) /
+					 double(matched.size())
+			   : 0;
 	Json notes = Json::array();
 	if (frusta && far < infinity - .02f * width)
-		notes.push_back("Farthest content is behind the declared frusta's infinity; check the capture crop and projection offset.");
+		notes.push_back(
+			"Farthest content is behind the declared frusta's infinity; check the capture crop and projection offset.");
 	if (behind > .05)
-		notes.push_back("More than 5% of matched pixels lie behind the declared infinity; check eye order and separation.");
+		notes.push_back(
+			"More than 5% of matched pixels lie behind the declared infinity; check eye order and separation.");
 	if (!frusta && far < -2)
-		notes.push_back("Some disparity is negative; asymmetric frusta are needed to determine whether it is behind infinity.");
+		notes.push_back(
+			"Some disparity is negative; asymmetric frusta are needed to determine whether it is behind infinity.");
 	if (std::abs(vertical) >= 2)
 		notes.push_back("The eyes have a vertical offset; parallel frusta should give zero.");
 	if (std::abs(exposure) > .05)
@@ -528,21 +563,30 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 	Json regionValues = Json::array();
 	for (std::size_t i = 0; i < std::min<std::size_t>(12, regions.size()); ++i)
 		regionValues.push_back(RegionJson(regions[i], width, height, frusta));
-	result.document = {{"verdict", verdict}, {"score", score}, {"highlight_score", highlightScore},
-		{"valid_pct", validFraction * 100}, {"median_disparity_pct", 100 * median / width},
-		{"max_disparity_pct", 100 * Percentile(matched, .99) / width}, {"behind_infinity_pct", behind * 100},
-		{"vertical_offset_px", vertical}, {"exposure_offset_pct", 100 * (std::exp(std::abs(exposure)) - 1)},
-		{"far_disparity_pct", 100 * far / width},
-		{"infinity_disparity_pct", frusta ? Json(100 * frusta->infinity) : Json(nullptr)},
-		{"regions", std::move(regionValues)}, {"notes", std::move(notes)}};
+	result.document = {{"verdict", verdict},
+					   {"score", score},
+					   {"highlight_score", highlightScore},
+					   {"valid_pct", validFraction * 100},
+					   {"median_disparity_pct", 100 * median / width},
+					   {"max_disparity_pct", 100 * Percentile(matched, .99) / width},
+					   {"behind_infinity_pct", behind * 100},
+					   {"vertical_offset_px", vertical},
+					   {"exposure_offset_pct", 100 * (std::exp(std::abs(exposure)) - 1)},
+					   {"far_disparity_pct", 100 * far / width},
+					   {"infinity_disparity_pct", frusta ? Json(100 * frusta->infinity) : Json(nullptr)},
+					   {"regions", std::move(regionValues)},
+					   {"notes", std::move(notes)}};
 	if (includeImage)
 	{
 		check();
 		result.sheetWidth = width * 2 + 4;
 		result.sheetHeight = height * 2 + 24;
-		result.sheet = StereoConsistencyImage(left, right, leftY, residual, valid, surface,
-			result.document.at("regions"), width, height, threshold, matches.maximumDisparity);
-		result.document["sheet"] = {{"top_left", "left eye"}, {"top_right", "right eye"},
+		result.sheet =
+			StereoConsistencyImage(left, right, leftY, residual, valid, surface, result.document.at("regions"), width,
+								   height, threshold, matches.maximumDisparity);
+		result.document["sheet"] = {
+			{"top_left", "left eye"},
+			{"top_right", "right eye"},
 			{"bottom_left", "residual: red left darker, blue right darker, green excluded"},
 			{"bottom_right", "surface disparity: blue far, yellow near"},
 			{"boxes", "red one eye only, amber wrong depth, magenta screen locked, pale blue highlight"}};

@@ -9,7 +9,7 @@ namespace json
 // outlive this view; omitted, malformed or incorrectly typed fields use defaults.
 class Object
 {
-  public:
+public:
 	Object() = default;
 	explicit Object(const char* text);
 	bool Valid() const;
@@ -23,7 +23,7 @@ class Object
 	std::string String(const char* key, const char* fallback = "") const;
 	Object Child(const char* key) const;
 
-  private:
+private:
 	const char* Find(const char* key) const;
 	const char* m_begin = nullptr;
 };

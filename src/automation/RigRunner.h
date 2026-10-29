@@ -13,7 +13,7 @@ void ValidateRigOptions(const RigOptions& options);
 
 class RigRunner
 {
-  public:
+public:
 	explicit RigRunner(RigExchange exchange, std::function<void()> releaseTransport = {});
 	~RigRunner();
 	// Start and Join belong to the owning controller thread; progress controls
@@ -29,7 +29,7 @@ class RigRunner
 	std::string JsonReport() const;
 	std::string JunitReport() const;
 
-  private:
+private:
 	void Run();
 	RigOptions m_options;
 	RigProgress m_progress;

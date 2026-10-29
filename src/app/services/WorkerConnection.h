@@ -20,7 +20,7 @@ namespace simxr::app
 // concurrent operation; it interrupts retry slices without changing request IDs.
 class WorkerConnection
 {
-  public:
+public:
 	WorkerConnection(std::string endpoint, std::string name, std::uint64_t required,
 					 std::optional<std::uint64_t> expectedProcess = {});
 	~WorkerConnection();
@@ -31,12 +31,13 @@ class WorkerConnection
 	// Called on the exchange worker (or after joining it) to finish native ownership.
 	void Close() noexcept;
 	bool Failed() const noexcept;
+
 	std::uint64_t Capabilities() const
 	{
 		return m_capabilities;
 	}
 
-  private:
+private:
 	control::Message Request(control::OpCode code, std::vector<control::Field> fields);
 	std::string m_endpoint, m_name;
 	std::uint64_t m_required, m_capabilities = 0;

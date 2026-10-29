@@ -13,13 +13,15 @@
 namespace simxr::tests
 {
 static constexpr CommandSource s_device{CommandSourceKind::Device, 17};
+
 class LiveFixture
 {
-  public:
+public:
 	CommandScheduler scheduler;
 	LiveInputClock::time_point now{std::chrono::seconds(1)};
 	LiveInputSample sample;
 	std::uint64_t frame = 0;
+
 	LiveFixture()
 	{
 		scheduler.Start();
@@ -38,6 +40,7 @@ class LiveFixture
 		sample.hands[0].aim = PoseSample{};
 		sample.hands[0].aim->flags = ValidPoseFlags;
 	}
+
 	CommandResult Send()
 	{
 		++sample.sequence;
@@ -45,6 +48,7 @@ class LiveFixture
 		sample.targetTime = {Duration{1000 + static_cast<std::int64_t>(sample.sequence)}};
 		return scheduler.SubmitLiveInput(s_device, sample, now);
 	}
+
 	std::shared_ptr<const AppliedCommandSnapshot> Tick()
 	{
 		++frame;
@@ -52,6 +56,7 @@ class LiveFixture
 							   {Duration{1000 + static_cast<std::int64_t>(frame)}}, {}, {}, now);
 	}
 };
+
 static void BodyObservations()
 {
 	for (const auto set :
@@ -126,6 +131,7 @@ static void BodyObservations()
 				"Release did not restore authored body baseline");
 	}
 }
+
 static void TrackerObservations()
 {
 	LiveFixture fixture;
@@ -176,6 +182,7 @@ static void TrackerObservations()
 				std::get<SetTrackers>(empty->transaction.commands.front()).value.empty(),
 			"Tracker-only empty inventory did not publish removal");
 }
+
 static void TrackerTransitions()
 {
 	LiveInputSlot slot;
@@ -186,15 +193,13 @@ static void TrackerTransitions()
 	sample.trackers = std::vector<TrackerDevice>{TrackerDevice{{71}, TrackerRole::Unassigned}};
 	sample.trackers->front().poseOverride = XrPosef{{0, 0, 0, 1}, {0, 1, 0}};
 	const auto now = LiveInputClock::time_point{std::chrono::seconds(1)};
-	const auto send = [&]
-	{
+	const auto send = [&] {
 		++sample.sequence;
 		sample.observedTime = {Duration{static_cast<std::int64_t>(sample.sequence)}};
 		sample.targetTime = sample.observedTime;
 		return slot.Write(s_device, sample, owned, now);
 	};
-	const auto read = [&]
-	{
+	const auto read = [&] {
 		return slot.Prepare({1}, {}, owned, now);
 	};
 	Require(send() == CommandResult::Queued, "Queue initial tracker connection");
@@ -236,6 +241,7 @@ static void TrackerTransitions()
 	Require(expired && std::get<SetTrackers>(expired->transaction.commands.front()).value.front().poseFlags == 0,
 			"Tracker overflow retained valid physical poses");
 }
+
 static void ReacquiredObservationChannels()
 {
 	for (const auto channel : {ControlChannel::Views, ControlChannel::Trackers})
@@ -267,10 +273,7 @@ static void ReacquiredObservationChannels()
 		const auto boundary = fixture.Tick();
 		Require(!fixture.scheduler.LiveInputState().owner &&
 					std::none_of(boundary->outcomes.begin(), boundary->outcomes.end(),
-								 [](const CommandOutcome& outcome)
-								 {
-									 return outcome.liveInput.has_value();
-								 }),
+								 [](const CommandOutcome& outcome) { return outcome.liveInput.has_value(); }),
 				"Old live observations crossed an explicit ownership release");
 		if (fixture.sample.trackers)
 			fixture.sample.trackers->front().identity.value = 702;
@@ -286,6 +289,7 @@ static void ReacquiredObservationChannels()
 					"Retired eye observation displaced fresh geometry");
 	}
 }
+
 static void EyeObservations()
 {
 	LiveFixture fixture;
@@ -306,6 +310,7 @@ static void EyeObservations()
 				stale->configuration.tracking.eyeViews->spaceRevision == 3,
 			"Stale observations clear validity while retaining their projection and calibration context");
 }
+
 static void FocusSuspension()
 {
 	LiveFixture fixture;
@@ -334,6 +339,7 @@ static void FocusSuspension()
 	Require(!fixture.Tick()->configuration.input.controllers[0].secondary,
 			"Repeated inactive samples cannot reintroduce their raw held controls");
 }
+
 static void ProfileTransitions()
 {
 	LiveFixture fixture;
@@ -353,6 +359,7 @@ static void ProfileTransitions()
 	fixture.sample.controls[0].physicalProfile = "/interaction_profiles/" + std::string(XR_MAX_PATH_LENGTH, 'a');
 	Require(fixture.Send() == CommandResult::Invalid, "Bound physical profile strings before queuing");
 }
+
 static void TriggerClickEdges()
 {
 	LiveFixture fixture;
@@ -367,6 +374,7 @@ static void TriggerClickEdges()
 	Require(fixture.Tick()->configuration.input.controllers[0].triggerClick == false,
 			"Preserve physical trigger release without analog crossing");
 }
+
 static void ObservedTap()
 {
 	LiveFixture fixture;
@@ -391,6 +399,7 @@ static void ObservedTap()
 			"Release follows acknowledged press");
 	Require(fixture.scheduler.LiveInputState().coalesced == 1, "Coalescing is observable");
 }
+
 static void Rollback()
 {
 	LiveFixture fixture;
@@ -402,12 +411,7 @@ static void Rollback()
 	try
 	{
 		fixture.scheduler.Apply(
-			{2}, {Duration{2}}, {Duration{1002}}, {},
-			[](const auto&)
-			{
-				throw std::bad_alloc{};
-			},
-			fixture.now);
+			{2}, {Duration{2}}, {Duration{1002}}, {}, [](const auto&) { throw std::bad_alloc{}; }, fixture.now);
 	}
 	catch (const std::bad_alloc&)
 	{
@@ -418,6 +422,7 @@ static void Rollback()
 	fixture.scheduler.AcknowledgeLiveInput();
 	Require(!fixture.Tick()->configuration.input.controllers[0].primary, "Rollback preserves the following release");
 }
+
 static void Faults()
 {
 	LiveFixture stale;
@@ -445,6 +450,7 @@ static void Faults()
 			"Overflow suspends and releases source");
 	Require(overflow.Send() == CommandResult::Cancelled, "Overflow cannot silently resume");
 }
+
 static void PausedExpiry()
 {
 	LiveFixture fixture;
@@ -523,6 +529,7 @@ static void PausedExpiry()
 	Require(session.SubmitLiveInput(before.generation, s_device, sample) == CommandResult::Closed,
 			"Closed session rejects samples after worker join");
 }
+
 static void ClockRevision()
 {
 	LiveFixture fixture;
@@ -538,6 +545,7 @@ static void ClockRevision()
 	fixture.sample.clockRevision = 8;
 	Require(fixture.Send() == CommandResult::Conflict, "New clock cannot silently replace old queued transitions");
 }
+
 static void IdentityAndRecording()
 {
 	LiveFixture fixture;
@@ -567,10 +575,7 @@ static void IdentityAndRecording()
 			"Native recording reader retains live source correlation");
 	const auto& recordedCommands = decoded.recording.transactions[0].commands;
 	const auto eyes = std::find_if(recordedCommands.begin(), recordedCommands.end(),
-								   [](const auto& command)
-								   {
-									   return std::holds_alternative<SetEyeViews>(command);
-								   });
+								   [](const auto& command) { return std::holds_alternative<SetEyeViews>(command); });
 	Require(eyes != recordedCommands.end() && std::get<SetEyeViews>(*eyes).value->spaceRevision == 11 &&
 				std::get<SetEyeViews>(*eyes).value->poses[0].pose.position.x == -.03f,
 			"Applied eye observations survive recording and native replay decoding");
@@ -582,6 +587,7 @@ static void IdentityAndRecording()
 	Require(fixture.Send() == CommandResult::Closed, "Closed scheduler rejects live input");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

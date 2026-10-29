@@ -8,9 +8,10 @@
 namespace simxr::windows::tests
 {
 namespace fs = std::filesystem;
+
 class Directory
 {
-  public:
+public:
 	Directory()
 		: m_path(fs::temp_directory_path() /
 				 ("simxr-windows-compatibility-" +
@@ -19,28 +20,33 @@ class Directory
 	{
 		fs::create_directories(m_path);
 	}
+
 	~Directory()
 	{
 		std::error_code ignored;
 		fs::remove_all(m_path.parent_path(), ignored);
 	}
+
 	const fs::path& Path() const
 	{
 		return m_path;
 	}
 
-  private:
+private:
 	fs::path m_path;
 };
+
 static std::string Read(const fs::path& path)
 {
 	std::ifstream file(path, std::ios::binary);
 	return {std::istreambuf_iterator<char>(file), {}};
 }
+
 static void TestClassicJson()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsRuntimeFiles>(directory.Path());
+
 	struct CommaDecimal : std::numpunct<char>
 	{
 		char do_decimal_point() const override
@@ -48,18 +54,21 @@ static void TestClassicJson()
 			return ',';
 		}
 	};
+
 	class LocaleScope
 	{
-	  public:
+	public:
 		LocaleScope() : m_previous(std::locale::global(std::locale(std::locale::classic(), new CommaDecimal))) {}
+
 		~LocaleScope()
 		{
 			std::locale::global(m_previous);
 		}
 
-	  private:
+	private:
 		std::locale m_previous;
 	} locale;
+
 	WindowsRuntimeStatus publisher(files);
 	FrameStatus status;
 	status.frame = (std::uint64_t{1} << 40) + 19;
@@ -90,11 +99,12 @@ static void TestStatusFailureRecoveryAndShutdown()
 	fs::remove(destination);
 	Require(files.PublishStatus("recovered") && files.Log("joined output"), "Accept recovery output");
 	files.Close();
-	Require(Read(destination) == "recovered" && files.Status().closed &&
-			!files.PublishStatus("late") && !files.Log("late"),
+	Require(Read(destination) == "recovered" && files.Status().closed && !files.PublishStatus("late") &&
+				!files.Log("late"),
 			"Shutdown did not drain output or reject later work");
 	Require(Read(directory.Path() / ("openxr_simulator." + std::to_string(mcp::WindowsLegacyProcessId()) + ".log"))
-			.find("joined output") != std::string::npos, "Shutdown lost accepted log");
+					.find("joined output") != std::string::npos,
+			"Shutdown lost accepted log");
 	for (const auto& entry : fs::directory_iterator(directory.Path()))
 		Require(entry.path().filename().string().find(".tmp.") == std::string::npos,
 				"Failed status publication left a temporary file");

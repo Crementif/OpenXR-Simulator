@@ -26,9 +26,12 @@ struct Fixture
 
 	Fixture()
 	{
-		validation.validSpace = [this](XrSpace value) { return value == space; };
-		validation.swapchain = [this](XrSwapchain value) -> std::optional<SwapchainDescription>
-		{ return value == image ? std::optional{SwapchainDescription{128, 64, 4, true}} : std::nullopt; };
+		validation.validSpace = [this](XrSpace value) {
+			return value == space;
+		};
+		validation.swapchain = [this](XrSwapchain value) -> std::optional<SwapchainDescription> {
+			return value == image ? std::optional{SwapchainDescription{128, 64, 4, true}} : std::nullopt;
+		};
 		validation.depthEnabled = true;
 		for (std::size_t i = 0; i < views.size(); ++i)
 		{
@@ -60,8 +63,7 @@ void CopiedMetadata()
 {
 	Fixture f;
 	std::uint32_t resolutions = 0;
-	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& result)
-	{
+	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& result) {
 		Require(space == f.space && time == RuntimeTime{Duration{1000}}, "Submission time changed during resolution");
 		++resolutions;
 		result.worldPose = {IdentityPose(), TrackedPoseFlags, time};
@@ -117,8 +119,9 @@ void HistoricalAndFourViews()
 			"Historical view space");
 	f.quad.space = f.projection.space = f.space;
 	f.validation.viewCount = f.projection.viewCount = 4;
-	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& result)
-	{ return spaces.Sample(space, time, result); };
+	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& result) {
+		return spaces.Sample(space, time, result);
+	};
 	std::shared_ptr<const FrameLayers> prepared;
 	Require(BuildLayers(f.info, f.validation, resolve, prepared) == XR_SUCCESS, "Four-view CPU metadata build");
 	const auto& projection = std::get<ProjectionLayerDescription>(prepared->layers[1]);
@@ -146,10 +149,10 @@ void HistoricalAndFourViews()
 			"Resolution failure replaced prior metadata");
 	Require(BuildLayers(
 				f.info, f.validation,
-				[](XrSpace, RuntimeTime time, SpaceSample& pose)
-				{
+				[](XrSpace, RuntimeTime time, SpaceSample& pose) {
 					pose.worldPose = {IdentityPose(),
-							XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT, time};
+									  XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT,
+									  time};
 					return XR_SUCCESS;
 				},
 				prepared) == XR_SUCCESS &&
@@ -173,8 +176,7 @@ void TransactionalSubmission()
 			"Submission frame issue");
 	const auto key = FrameKey{session.Snapshot().generation, prediction.id};
 	std::shared_ptr<const FrameLayers> prepared;
-	LayerSpaceResolver resolve = [](XrSpace, RuntimeTime time, SpaceSample& pose)
-	{
+	LayerSpaceResolver resolve = [](XrSpace, RuntimeTime time, SpaceSample& pose) {
 		pose.worldPose = {IdentityPose(), TrackedPoseFlags, time};
 		return XR_SUCCESS;
 	};
@@ -191,6 +193,7 @@ void TransactionalSubmission()
 				session.Scheduler().Snapshot().begun,
 			"Mismatched metadata consumed frame");
 	--f.info.displayTime;
+
 	struct Output final : FrameOutput
 	{
 		CompletionStatus PollCompletion() const noexcept override
@@ -198,11 +201,11 @@ void TransactionalSubmission()
 			return CompletionStatus::Pending;
 		}
 	};
+
 	const auto output = std::make_shared<Output>();
 	std::size_t nativeCalls = 0;
 	Require(session.EndFrame(prediction, &f.info, prepared, output,
-							 [&]
-							 {
+							 [&] {
 								 ++nativeCalls;
 								 return XR_ERROR_RUNTIME_FAILURE;
 							 }) == XR_ERROR_RUNTIME_FAILURE &&
@@ -210,8 +213,7 @@ void TransactionalSubmission()
 				session.Scheduler().Snapshot().begun && session.Display().Snapshot().queued.empty(),
 			"Native submit failure consumed frame or presentation reservation");
 	Require(session.EndFrame(prediction, &f.info, prepared, output,
-							 [&]
-							 {
+							 [&] {
 								 ++nativeCalls;
 								 return XR_SUCCESS;
 							 }) == XR_SUCCESS &&

@@ -15,20 +15,22 @@ static bool Same(const XrPosef& a, const XrPosef& b)
 	const auto& o = b.orientation;
 	return p.x == r.x && p.y == r.y && p.z == r.z && q.x == o.x && q.y == o.y && q.z == o.z && q.w == o.w;
 }
+
 // Sample times change every frame and are not input.
 static bool Same(const PoseSample& a, const PoseSample& b)
 {
 	return a.flags == b.flags && Same(a.pose, b.pose);
 }
+
 static bool Same(const ControllerPose& a, const ControllerPose& b)
 {
 	return a.connected == b.connected && Same(a.pose, b.pose) && a.aim.has_value() == b.aim.has_value() &&
 		   (!a.aim || Same(*a.aim, *b.aim));
 }
+
 static bool Same(const ControllerControls& a, const ControllerControls& b)
 {
-	const auto values = [](const ControllerControls& c)
-	{
+	const auto values = [](const ControllerControls& c) {
 		return std::tie(c.trigger, c.grip, c.gripForce, c.stick.x, c.stick.y, c.trackpad.x, c.trackpad.y,
 						c.trackpadForce, c.primary, c.secondary, c.menu, c.back, c.thumbClick, c.trackpadClick,
 						c.primaryTouch, c.secondaryTouch, c.triggerTouch, c.thumbTouch, c.trackpadTouch,
@@ -36,27 +38,34 @@ static bool Same(const ControllerControls& a, const ControllerControls& b)
 	};
 	return values(a) == values(b);
 }
-template <typename T> static bool Same(const std::array<T, 2>& a, const std::array<T, 2>& b)
+
+template<typename T>
+static bool Same(const std::array<T, 2>& a, const std::array<T, 2>& b)
 {
 	return Same(a[0], b[0]) && Same(a[1], b[1]);
 }
+
 static bool Same(const XrVector3f& a, const XrVector3f& b)
 {
 	return a.x == b.x && a.y == b.y && a.z == b.z;
 }
-template <typename T, typename Equal>
+
+template<typename T, typename Equal>
 static bool Same(const std::optional<T>& a, const std::optional<T>& b, Equal equal)
 {
 	return a.has_value() == b.has_value() && (!a || equal(*a, *b));
 }
+
 static bool SamePose(const XrPosef& a, const XrPosef& b)
 {
 	return Same(a, b);
 }
+
 static bool SameOffset(const XrVector3f& a, const XrVector3f& b)
 {
 	return Same(a, b);
 }
+
 static bool Same(const BodyControls& a, const BodyControls& b)
 {
 	if (a.active != b.active || a.confidence != b.confidence || a.preset != b.preset ||
@@ -67,14 +76,13 @@ static bool Same(const BodyControls& a, const BodyControls& b)
 			!Same(a.controls[index].offset, b.controls[index].offset, SameOffset))
 			return false;
 	for (std::size_t index = 0; index < a.joints.size(); ++index)
-		if (!Same(a.joints[index], b.joints[index],
-				  [](const BodyJointOverride& x, const BodyJointOverride& y)
-				  {
-					  return x.tracked == y.tracked && Same(x.pose, y.pose, SamePose);
-				  }))
+		if (!Same(a.joints[index], b.joints[index], [](const BodyJointOverride& x, const BodyJointOverride& y) {
+				return x.tracked == y.tracked && Same(x.pose, y.pose, SamePose);
+			}))
 			return false;
 	return true;
 }
+
 static bool Same(const BodyObservation& a, const BodyObservation& b)
 {
 	if (a.jointSet != b.jointSet || a.requestedTime != b.requestedTime || a.returnedTime != b.returnedTime ||
@@ -84,26 +92,25 @@ static bool Same(const BodyObservation& a, const BodyObservation& b)
 		return false;
 	for (std::size_t index = 0; index < BodyJointCount; ++index)
 	{
-		if (!Same(a.joints[index], b.joints[index],
-				  [](const ObservedBodyJoint& x, const ObservedBodyJoint& y)
-				  {
-					  return x.flags == y.flags && Same(x.pose, y.pose);
-				  }))
+		if (!Same(a.joints[index], b.joints[index], [](const ObservedBodyJoint& x, const ObservedBodyJoint& y) {
+				return x.flags == y.flags && Same(x.pose, y.pose);
+			}))
 			return false;
-		if (a.skeleton && !Same((*a.skeleton)[index], (*b.skeleton)[index],
-								[](const SkeletonJoint& x, const SkeletonJoint& y)
-								{
-									return x.joint == y.joint && x.parent == y.parent && Same(x.bindPose, y.bindPose);
-								}))
+		if (a.skeleton &&
+			!Same((*a.skeleton)[index], (*b.skeleton)[index], [](const SkeletonJoint& x, const SkeletonJoint& y) {
+				return x.joint == y.joint && x.parent == y.parent && Same(x.bindPose, y.bindPose);
+			}))
 			return false;
 	}
 	return true;
 }
+
 static bool SameObservation(const InputSample& a, const InputSample& b)
 {
 	return a.bodyObservation == b.bodyObservation ||
 		   (a.bodyObservation && b.bodyObservation && Same(*a.bodyObservation, *b.bodyObservation));
 }
+
 static SetBodyControls BodyCommand(const InputSample& sample)
 {
 	SetBodyControls result{BodyOf(sample)};
@@ -111,28 +118,30 @@ static SetBodyControls BodyCommand(const InputSample& sample)
 		result.observation = NormalizeBodyObservation(*sample.bodyObservation);
 	return result;
 }
+
 static bool Same(const TrackerDevice& a, const TrackerDevice& b)
 {
 	return a.identity == b.identity && a.sourcePath == b.sourcePath && a.poseFlags == b.poseFlags && a.role == b.role &&
 		   a.connected == b.connected && a.tracked == b.tracked && a.anchor == b.anchor &&
 		   Same(a.poseOverride, b.poseOverride, SamePose) && Same(a.jointOffset, b.jointOffset, SamePose);
 }
+
 static bool Same(const TrackerDevices& a, const TrackerDevices& b)
 {
 	return std::equal(a.begin(), a.end(), b.begin(), b.end(),
-					  [](const TrackerDevice& x, const TrackerDevice& y)
-					  {
-						  return Same(x, y);
-					  });
+					  [](const TrackerDevice& x, const TrackerDevice& y) { return Same(x, y); });
 }
+
 static bool Same(const GazeInput& a, const GazeInput& b)
 {
 	return a.yaw == b.yaw && a.pitch == b.pitch && a.available == b.available && a.tracked == b.tracked;
 }
+
 static bool Same(const std::vector<std::byte>& a, const std::vector<std::byte>& b)
 {
 	return a == b;
 }
+
 static std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
 {
 	if (!sample.context)
@@ -167,20 +176,24 @@ static std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
 		commands.push_back(SetEyeViews{});
 	return commands;
 }
+
 // Keeps one block per run of equal values; 32k frames of a still body cost one copy.
-template <typename T> static void Share(std::shared_ptr<const T>& value, const std::shared_ptr<const T>& previous)
+template<typename T>
+static void Share(std::shared_ptr<const T>& value, const std::shared_ptr<const T>& previous)
 {
 	if (!value)
 		return;
 	if (previous && previous != value && Same(*previous, *value))
 		value = previous;
 }
+
 BodyControls BodyOf(const InputSample& sample)
 {
 	auto body = *sample.body;
 	body.rootPose = sample.bodyRoot;
 	return body;
 }
+
 float Intensity(const ControllerControls& controls)
 {
 	float value = std::max({controls.trigger, controls.grip, std::hypot(controls.stick.x, controls.stick.y),
@@ -190,6 +203,7 @@ float Intensity(const ControllerControls& controls)
 		value = 1;
 	return std::clamp(value, 0.f, 1.f);
 }
+
 static std::size_t ProfileBytes(const InputSample& sample)
 {
 	std::size_t bytes = 0;
@@ -197,6 +211,7 @@ static std::size_t ProfileBytes(const InputSample& sample)
 		bytes += controls.physicalProfile.capacity() + 1;
 	return bytes;
 }
+
 InputHistory::InputHistory(std::size_t capacity, std::size_t byteBudget) : m_byteBudget(byteBudget)
 {
 	if (byteBudget < sizeof(InputSample) * 2)
@@ -205,14 +220,17 @@ InputHistory::InputHistory(std::size_t capacity, std::size_t byteBudget) : m_byt
 	m_samples.resize(std::min(std::max<std::size_t>(capacity, 1), byteBudget / (2 * sizeof(InputSample))));
 	m_bytes = m_samples.capacity() * sizeof(InputSample);
 }
+
 std::size_t InputHistory::RetainedBytes() const noexcept
 {
 	return m_bytes;
 }
+
 std::size_t InputHistory::ByteBudget() const noexcept
 {
 	return m_byteBudget;
 }
+
 void InputHistory::Retain(const void* identity, std::size_t bytes)
 {
 	if (!identity)
@@ -223,6 +241,7 @@ void InputHistory::Retain(const void* identity, std::size_t bytes)
 		m_bytes += entry->second.bytes;
 	++entry->second.references;
 }
+
 void InputHistory::Release(const void* identity) noexcept
 {
 	if (!identity)
@@ -234,6 +253,7 @@ void InputHistory::Release(const void* identity) noexcept
 		m_blocks.erase(entry);
 	}
 }
+
 void InputHistory::ReleaseSample(const InputSample& sample) noexcept
 {
 	Release(sample.body.get());
@@ -242,6 +262,7 @@ void InputHistory::ReleaseSample(const InputSample& sample) noexcept
 	Release(sample.context.get());
 	m_bytes -= ProfileBytes(sample);
 }
+
 void InputHistory::Evict() noexcept
 {
 	auto& oldest = m_samples[(m_next - m_size) % m_samples.size()];
@@ -249,6 +270,7 @@ void InputHistory::Evict() noexcept
 	oldest = {};
 	--m_size;
 }
+
 std::uint64_t InputHistory::Append(InputSample sample)
 {
 	if (sample.trackers && sample.trackers->size() > MaxTrackerDevices)
@@ -302,12 +324,14 @@ std::uint64_t InputHistory::Append(InputSample sample)
 	++m_size;
 	return sequence;
 }
+
 const InputSample* InputHistory::Find(std::uint64_t sequence) const noexcept
 {
 	if (!sequence || sequence >= m_next || m_next - sequence > m_size)
 		return nullptr;
 	return &m_samples[sequence % m_samples.size()];
 }
+
 void InputHistory::Clear() noexcept
 {
 	// Sequence numbers keep rising so stale references never resolve.
@@ -316,6 +340,7 @@ void InputHistory::Clear() noexcept
 	m_blocks.clear();
 	m_bytes = m_samples.capacity() * sizeof(InputSample);
 }
+
 automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples)
 {
 	if (samples.size() < 2)
@@ -336,13 +361,8 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 			throw std::invalid_argument("Some device input is missing. Choose a range with complete input.");
 	}
 	automation::InputRecording take;
-	take.version = std::ranges::any_of(samples,
-									   [](const InputSample* sample)
-									   {
-										   return bool(sample->bodyObservation);
-									   })
-					   ? 4
-					   : 3;
+	take.version =
+		std::ranges::any_of(samples, [](const InputSample* sample) { return bool(sample->bodyObservation); }) ? 4 : 3;
 	take.seed = origin.seed;
 	take.originFrame = FrameId{origin.identity.frame};
 	take.originRuntimeTime = origin.runtimeTime;

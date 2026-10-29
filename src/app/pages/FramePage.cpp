@@ -15,6 +15,7 @@ namespace tag = wire::tag;
 using panel::Boolean;
 using panel::Text;
 using panel::U64;
+
 static std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::string_view name)
 {
 	wire::Message node;
@@ -31,12 +32,14 @@ static std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes,
 	}
 	return {};
 }
+
 static wire::Field InspectionScalar(std::span<const std::byte> bytes, std::string_view member)
 {
 	wire::Message node;
 	node.fields = wire::DecodeFields(InspectionMember(bytes, member)).fields;
 	return node.Find(3) ? *node.Find(3) : wire::Field{};
 }
+
 static std::vector<std::vector<std::byte>> InspectionElements(std::span<const std::byte> bytes)
 {
 	wire::Message node;
@@ -48,6 +51,7 @@ static std::vector<std::vector<std::byte>> InspectionElements(std::span<const st
 				elements.push_back(item.value);
 	return elements;
 }
+
 static const char* OwnerName(const CommandSource& source)
 {
 	switch (source.kind)
@@ -62,7 +66,9 @@ static const char* OwnerName(const CommandSource& source)
 		return "MCP";
 	}
 }
+
 FramePage::FramePage(RuntimeSession& session, DocumentTree& documents) : m_session(session), m_documents(documents) {}
+
 void FramePage::Prepare(const Selection& selection, const RuntimeView& view)
 {
 	const auto selected = std::get_if<FrameSel>(&selection);
@@ -119,6 +125,7 @@ void FramePage::Prepare(const Selection& selection, const RuntimeView& view)
 		m_rigView.orbiting = m_rigView.panning = false;
 	}
 }
+
 void FramePage::DrawRig(ImVec2 size)
 {
 	if (m_rigView.drawnFrame != ImGui::GetFrameCount() - 1)
@@ -135,6 +142,7 @@ void FramePage::DrawRig(ImVec2 size)
 		ImGui::TextDisabled("%s", m_invalidPose ? "Invalid recorded pose" : "Pose not recorded for this frame");
 	}
 }
+
 void FramePage::DrawExpanded(ImVec2 size)
 {
 	const float scale = ImGui::GetFontSize() / 16;
@@ -142,10 +150,12 @@ void FramePage::DrawExpanded(ImVec2 size)
 	if (!m_scene && ImGui::Button("Back to image##Recorded rig unavailable"))
 		m_rigView.expanded = false;
 }
+
 ShellRect FramePage::RigViewRect() const
 {
 	return {m_rigView.minimum.x, m_rigView.minimum.y, m_rigView.size.x, m_rigView.size.y};
 }
+
 std::array<ShellRect, MaxTrackerDevices + 3> FramePage::RigDevicePoints() const
 {
 	std::array<ShellRect, MaxTrackerDevices + 3> result{};
@@ -153,6 +163,7 @@ std::array<ShellRect, MaxTrackerDevices + 3> FramePage::RigDevicePoints() const
 		result[device] = {m_rigView.points[device].x, m_rigView.points[device].y, 0, 0};
 	return result;
 }
+
 void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 {
 	Prepare(shell.selection, view);
@@ -163,8 +174,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 	const auto& identity = selection.identity;
 	auto& workspace = m_session.Workspace();
 	auto& preview = m_session.Preview();
-	const auto matches = [&](const PanelScope& scope, std::uint64_t frame)
-	{
+	const auto matches = [&](const PanelScope& scope, std::uint64_t frame) {
 		return scope.epoch == selection.epoch && scope.session == identity.session &&
 			   scope.generation == identity.run && frame == identity.frame;
 	};
@@ -226,7 +236,8 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			const auto& description = image->description;
 			ImGui::TextDisabled("%u x %u, %u views", description.width, description.height, description.arrayLayers);
 			ImGui::SetNextItemWidth(-1);
-			ImGui::InputTextWithHint("##Image file", "File (.png, .jpg or .rgba)", m_exportFile.data(), m_exportFile.size());
+			ImGui::InputTextWithHint("##Image file", "File (.png, .jpg or .rgba)", m_exportFile.data(),
+									 m_exportFile.size());
 			ImGui::BeginDisabled(!image->reader || image->scope.epoch != m_session.Epoch() ||
 								 m_session.Exports().Busy());
 			if (ImGui::Button("Export"))
@@ -243,8 +254,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 	{
 		if (m_scene)
 		{
-			const auto pose = [&](const char* name, std::size_t device)
-			{
+			const auto pose = [&](const char* name, std::size_t device) {
 				const auto& p = m_scene->devices[device].position;
 				if (m_scene->available[device])
 					ImGui::Text("%s  %.2f, %.2f, %.2f m", name, p.x, p.y, p.z);

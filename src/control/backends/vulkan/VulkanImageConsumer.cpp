@@ -14,10 +14,12 @@ static FramePool& ConsumerBudget(bool companion)
 	static FramePool s_companion{SnapshotBudget::MaxCapacity};
 	return companion ? s_companion : s_budget;
 }
+
 static bool Rejected(VkResult result)
 {
 	return result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY;
 }
+
 static VulkanExternalImageDescriptor NativeDescription(const ImageDescription& value)
 {
 	constexpr auto allowed = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -30,15 +32,9 @@ static VulkanExternalImageDescriptor NativeDescription(const ImageDescription& v
 		throw std::invalid_argument("Unsupported native image format, shape, usage or handoff metadata");
 	VulkanExternalImageDescriptor result;
 	std::transform(value.identity.device.begin(), value.identity.device.end(), result.identity.deviceUuid.begin(),
-				   [](auto byte)
-				   {
-					   return std::to_integer<std::uint8_t>(byte);
-				   });
+				   [](auto byte) { return std::to_integer<std::uint8_t>(byte); });
 	std::transform(value.identity.driver.begin(), value.identity.driver.end(), result.identity.driverUuid.begin(),
-				   [](auto byte)
-				   {
-					   return std::to_integer<std::uint8_t>(byte);
-				   });
+				   [](auto byte) { return std::to_integer<std::uint8_t>(byte); });
 	result.image.format = static_cast<VkFormat>(value.format);
 	result.image.extent = {value.width, value.height, 1};
 	result.image.arrayLayers = value.arrayLayers;
@@ -50,6 +46,7 @@ static VulkanExternalImageDescriptor NativeDescription(const ImageDescription& v
 	result.producerLayout = VK_IMAGE_LAYOUT_GENERAL;
 	return result;
 }
+
 // Pending native submissions preserve this entire dependent resource owner.
 struct VulkanImageConsumer::State
 {
@@ -73,6 +70,7 @@ struct VulkanImageConsumer::State
 	VkFence retirement = VK_NULL_HANDLE;
 	bool prepared = false, submitted = false, markerSubmitted = false, markerUnknown = false, idle = false,
 		 cancelled = false, failed = false, companionAdmission = false;
+
 	State(std::shared_ptr<VulkanDevice> owner, std::span<const char* const> extensions, std::uint32_t api,
 		  ImageCompletionKind kind, bool timelineEnabled, bool companion)
 		: slot(ConsumerBudget(companion).Reserve()), device(std::move(owner)),
@@ -89,6 +87,7 @@ struct VulkanImageConsumer::State
 		VkFenceCreateInfo create{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
 		CheckVulkan(vkCreateFence(device->binding.device, &create, nullptr, &retirement), "create consumer retirement");
 	}
+
 	~State()
 	{
 		for (auto view : views)
@@ -102,6 +101,7 @@ struct VulkanImageConsumer::State
 		if (retirement)
 			vkDestroyFence(device->binding.device, retirement, nullptr);
 	}
+
 	VkResult Submit(VkSubmitInfo submit)
 	{
 		if (completion)
@@ -136,6 +136,7 @@ struct VulkanImageConsumer::State
 				device->lost = true;
 		}
 	}
+
 	CompletionStatus Poll()
 	{
 		if (device->lost)
@@ -170,9 +171,10 @@ struct VulkanImageConsumer::State
 VulkanImageConsumer::VulkanImageConsumer(std::shared_ptr<VulkanDevice> device, std::span<const char* const> extensions,
 										 std::uint32_t api, ImageCompletionKind completion, bool timelineEnabled,
 										 bool companionAdmission)
-	: m_state(std::make_unique<State>(std::move(device), extensions, api, completion, timelineEnabled, companionAdmission))
-{
-}
+	: m_state(
+		  std::make_unique<State>(std::move(device), extensions, api, completion, timelineEnabled, companionAdmission))
+{}
+
 VulkanImageConsumer::~VulkanImageConsumer()
 {
 	try
@@ -188,30 +190,25 @@ VulkanImageConsumer::~VulkanImageConsumer()
 		}
 	}
 	catch (...)
-	{
-	}
+	{}
 	if (m_state->submitted && !m_state->idle)
 	{
 		std::fputs("SimXR: native consumer completion unknown; preserving bounded owners and device\n", stderr);
 		m_state->preservation.Preserve(std::move(m_state));
 	}
 }
+
 ImageDeviceIdentity VulkanImageConsumer::Identity() const
 {
 	ImageDeviceIdentity result;
 	const auto& native = m_state->external.Identity();
 	std::transform(native.deviceUuid.begin(), native.deviceUuid.end(), result.device.begin(),
-				   [](auto byte)
-				   {
-					   return static_cast<std::byte>(byte);
-				   });
+				   [](auto byte) { return static_cast<std::byte>(byte); });
 	std::transform(native.driverUuid.begin(), native.driverUuid.end(), result.driver.begin(),
-				   [](auto byte)
-				   {
-					   return static_cast<std::byte>(byte);
-				   });
+				   [](auto byte) { return static_cast<std::byte>(byte); });
 	return result;
 }
+
 std::shared_ptr<TransferHandle> VulkanImageConsumer::ConsumerFence()
 {
 	if (!m_state->offered)
@@ -221,6 +218,7 @@ std::shared_ptr<TransferHandle> VulkanImageConsumer::ConsumerFence()
 	}
 	return m_state->offered;
 }
+
 void VulkanImageConsumer::Import(const ImageDescription& description,
 								 std::span<const std::shared_ptr<TransferHandle>> handles)
 {
@@ -311,6 +309,7 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 	CheckVulkan(vkEndCommandBuffer(m_state->command), "finish consumer copy");
 	m_state->prepared = true;
 }
+
 void VulkanImageConsumer::Submit()
 {
 	if (m_state->submitted || !m_state->prepared)
@@ -333,20 +332,24 @@ void VulkanImageConsumer::Submit()
 	CheckVulkan(result, "submit native consumer copy");
 	m_state->Marker();
 }
+
 void VulkanImageConsumer::AbandonUnsent()
 {
 	if (m_state->submitted)
 		throw std::logic_error("Submitted consumer work cannot be abandoned as unsent");
 	m_state->offered.reset();
 }
+
 CompletionStatus VulkanImageConsumer::Poll()
 {
 	return m_state->Poll();
 }
+
 bool VulkanImageConsumer::NativeIdle() const
 {
 	return m_state->idle || (!m_state->submitted && !m_state->offered);
 }
+
 void VulkanImageConsumer::CancelUnused()
 {
 	if (m_state->submitted)
@@ -360,30 +363,35 @@ void VulkanImageConsumer::CancelUnused()
 	CheckVulkan(result, "acknowledge unused consumer delivery");
 	m_state->Marker();
 }
+
 VkSemaphore VulkanImageConsumer::SampleReady() const
 {
 	return m_state->sampleReady;
 }
+
 std::span<const VkImageView> VulkanImageConsumer::Views() const
 {
 	return m_state->views;
 }
+
 VkSampler VulkanImageConsumer::Sampler() const
 {
 	return m_state->sampler;
 }
+
 const ImageDescription& VulkanImageConsumer::Description() const
 {
 	return m_state->description;
 }
+
 std::uint64_t VulkanImageConsumer::AllocatedBytes() const noexcept
 {
 	const auto owned = m_state->image ? m_state->image->allocationSize : 0;
 	const auto imported = m_state->imported ? m_state->imported->Image()->allocationSize : 0;
-	return imported > std::numeric_limits<std::uint64_t>::max() - owned
-			   ? std::numeric_limits<std::uint64_t>::max()
-			   : owned + imported;
+	return imported > std::numeric_limits<std::uint64_t>::max() - owned ? std::numeric_limits<std::uint64_t>::max()
+																		: owned + imported;
 }
+
 const VulkanImage& VulkanImageConsumer::Image() const
 {
 	if (!m_state->image)

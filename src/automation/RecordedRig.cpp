@@ -31,6 +31,7 @@ static std::string Quote(std::string_view text)
 	}
 	return result + '"';
 }
+
 static std::string Number(float value)
 {
 	if (!std::isfinite(value))
@@ -42,6 +43,7 @@ static std::string Number(float value)
 		throw std::runtime_error("Cannot format recorded value");
 	return {buffer.data(), converted.ptr};
 }
+
 static std::string Vector(std::initializer_list<float> values)
 {
 	std::string result = "{";
@@ -53,14 +55,16 @@ static std::string Vector(std::initializer_list<float> values)
 	}
 	return result + '}';
 }
+
 class CommandTable
 {
-  public:
+public:
 	explicit CommandTable(std::string_view kind = {})
 	{
 		if (!kind.empty())
 			Text("kind", kind);
 	}
+
 	void Raw(std::string_view name, std::string value)
 	{
 		if (!m_fields.empty())
@@ -69,35 +73,42 @@ class CommandTable
 		m_fields += " = ";
 		m_fields += value;
 	}
+
 	void Text(std::string_view name, std::string_view value)
 	{
 		Raw(name, Quote(value));
 	}
+
 	void Float(std::string_view name, float value)
 	{
 		Raw(name, Number(value));
 	}
+
 	void Integer(std::string_view name, std::uint64_t value)
 	{
 		Text(name, std::to_string(value));
 	}
+
 	void Boolean(std::string_view name, bool value)
 	{
 		Raw(name, value ? "true" : "false");
 	}
+
 	void Pose(const XrPosef& pose)
 	{
 		Raw("position", Vector({pose.position.x, pose.position.y, pose.position.z}));
 		Raw("orientation", Vector({pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w}));
 	}
+
 	std::string Finish() const
 	{
 		return "{" + m_fields + "}";
 	}
 
-  private:
+private:
 	std::string m_fields;
 };
+
 static constexpr std::array s_channelNames{"head",			 "left_pose",	"right_pose", "left_controls",
 										   "right_controls", "body",		"gaze",		  "trackers",
 										   "views",			 "proportions", "profiles",	  "session"};
@@ -105,6 +116,7 @@ static constexpr std::array s_scenarioNames{
 	"head_untracked",	"head_unavailable",	 "body_untracked",	   "body_unavailable",		"gaze_untracked",
 	"gaze_unavailable", "left_disconnected", "right_disconnected", "trackers_disconnected", "unfocused",
 	"hidden",			"recenter",			 "session_loss"};
+
 static std::string Format(const TakeControl& command)
 {
 	CommandTable table("take_control");
@@ -112,12 +124,14 @@ static std::string Format(const TakeControl& command)
 	table.Boolean("replace", command.replace);
 	return table.Finish();
 }
+
 static std::string Format(const ReleaseControl& command)
 {
 	CommandTable table("release_control");
 	table.Text("channel", s_channelNames.at(static_cast<std::size_t>(command.channel)));
 	return table.Finish();
 }
+
 static std::string Format(const SetHeadPose& command)
 {
 	CommandTable table("head_pose");
@@ -125,6 +139,7 @@ static std::string Format(const SetHeadPose& command)
 	table.Integer("flags", command.value.flags);
 	return table.Finish();
 }
+
 static std::string Format(const SetControllerPose& command)
 {
 	CommandTable table("controller_pose");
@@ -141,6 +156,7 @@ static std::string Format(const SetControllerPose& command)
 	}
 	return table.Finish();
 }
+
 static std::string Format(const SetControllerControls& command)
 {
 	CommandTable table("controller_controls");
@@ -173,6 +189,7 @@ static std::string Format(const SetControllerControls& command)
 	table.Boolean("connected", controls.connected);
 	return table.Finish();
 }
+
 static std::string FormatObservation(const BodyObservation& source)
 {
 	const auto body = NormalizeBodyObservation(source);
@@ -218,6 +235,7 @@ static std::string FormatObservation(const BodyObservation& source)
 	}
 	return table.Finish();
 }
+
 static std::string Format(const SetBodyControls& command)
 {
 	if (command.observationOrigin && (!command.observation || command.observationOrigin->value.count() <= 0))
@@ -261,6 +279,7 @@ static std::string Format(const SetBodyControls& command)
 	table.Raw("joints", joints + '}');
 	return table.Finish();
 }
+
 static std::string Format(const SetGaze& command)
 {
 	CommandTable table("gaze");
@@ -270,6 +289,7 @@ static std::string Format(const SetGaze& command)
 	table.Boolean("tracked", command.value.tracked);
 	return table.Finish();
 }
+
 static std::string Format(const SetTracker& command)
 {
 	CommandTable table("tracker");
@@ -294,6 +314,7 @@ static std::string Format(const SetTracker& command)
 		table.Pose(*command.value.poseOverride);
 	return table.Finish();
 }
+
 static std::string Format(const SetTrackers& command)
 {
 	CommandTable table("trackers");
@@ -303,6 +324,7 @@ static std::string Format(const SetTrackers& command)
 	table.Raw("devices", entries + '}');
 	return table.Finish();
 }
+
 static std::string Format(const SetEyeViews& command)
 {
 	CommandTable table("eye_views");
@@ -322,6 +344,7 @@ static std::string Format(const SetEyeViews& command)
 	}
 	return table.Finish();
 }
+
 static std::string Format(const SetViewSettings& command)
 {
 	CommandTable table("views");
@@ -338,6 +361,7 @@ static std::string Format(const SetViewSettings& command)
 								   right.angleRight, right.angleUp, right.angleDown}));
 	return table.Finish();
 }
+
 static std::string Format(const SetBodyProportions& command)
 {
 	CommandTable table("proportions");
@@ -346,6 +370,7 @@ static std::string Format(const SetBodyProportions& command)
 	table.Float("hip_width", command.value.hipWidth);
 	return table.Finish();
 }
+
 static std::string Format(const SetControllerProfile& command)
 {
 	CommandTable table("controller_profile");
@@ -353,6 +378,7 @@ static std::string Format(const SetControllerProfile& command)
 	table.Text("path", command.path);
 	return table.Finish();
 }
+
 static std::string Format(const SetScenario& command)
 {
 	CommandTable table("scenario");
@@ -360,6 +386,7 @@ static std::string Format(const SetScenario& command)
 	table.Boolean("enabled", command.enabled);
 	return table.Finish();
 }
+
 static std::string Format(const SetReferenceSpaces& command)
 {
 	CommandTable table("reference_spaces");
@@ -379,13 +406,9 @@ static std::string Format(const SetReferenceSpaces& command)
 
 std::string EditableCommand(const SimulationCommand& command)
 {
-	return std::visit(
-		[](const auto& value)
-		{
-			return Format(value);
-		},
-		command);
+	return std::visit([](const auto& value) { return Format(value); }, command);
 }
+
 SimulationCommand ReplayCommand(SimulationCommand command, std::optional<RuntimeTime> origin)
 {
 	if (auto* body = std::get_if<SetBodyControls>(&command); body && body->observation)
@@ -398,6 +421,7 @@ SimulationCommand ReplayCommand(SimulationCommand command, std::optional<Runtime
 	}
 	return command;
 }
+
 std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recording)
 {
 	if (recording.initial.size() + s_channelNames.size() + s_scenarioNames.size() > 64)
@@ -405,14 +429,12 @@ std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recor
 	if (recording.initialScenarios[static_cast<std::size_t>(FailureScenario::SessionLoss)])
 		throw std::invalid_argument("A recording begun after session loss has no replayable live-session origin");
 	if (std::count_if(recording.initial.begin(), recording.initial.end(),
-					  [](const auto& command)
-					  {
-						  return std::holds_alternative<SetReferenceSpaces>(command);
-					  }) != 1)
+					  [](const auto& command) { return std::holds_alternative<SetReferenceSpaces>(command); }) != 1)
 		throw std::invalid_argument("Recording requires one exact reference-space origin");
 	for (const auto& command : recording.initial)
 	{
-		if (const auto* body = std::get_if<SetBodyControls>(&command); body && body->observation && recording.version < 4)
+		if (const auto* body = std::get_if<SetBodyControls>(&command);
+			body && body->observation && recording.version < 4)
 			throw std::invalid_argument("Body observations require recording schema 4");
 		if (recording.version < 3 && std::holds_alternative<SetTrackers>(command))
 			throw std::invalid_argument("Tracker collections require recording schema 3");
@@ -456,15 +478,14 @@ std::optional<FrameId> ReplayFrame(const RecordedTransaction& transaction, Frame
 	const bool released = transaction.phase == "released";
 	if ((transaction.afterFrame && !released) ||
 		(released && (version < 2 || transaction.id ||
-			!std::ranges::all_of(transaction.commands, [](const auto& command)
-			{
-				return std::holds_alternative<ReleaseControl>(command);
-			}))))
+					  !std::ranges::all_of(
+						  transaction.commands,
+						  [](const auto& command) { return std::holds_alternative<ReleaseControl>(command); }))))
 		throw std::invalid_argument("Malformed recorded release event");
 	if (transaction.phase != "applied" && !released)
 	{
-		constexpr std::array phases{"queued", "late", "rescheduled", "conflict", "cancelled",
-			"invalid", "capacity", "closed", "not_found"};
+		constexpr std::array phases{"queued",  "late",	   "rescheduled", "conflict", "cancelled",
+									"invalid", "capacity", "closed",	  "not_found"};
 		if (std::find(phases.begin(), phases.end(), transaction.phase) == phases.end())
 			throw std::invalid_argument("Unknown recorded transaction phase");
 		return {};
@@ -484,8 +505,7 @@ std::string EditableRig(const InputRecording& recording)
 		throw std::invalid_argument("Export requires a stopped, complete supported recording");
 	const auto initialCommands = ReplayInitialCommands(recording);
 	std::string script;
-	const auto line = [&](std::string value)
-	{
+	const auto line = [&](std::string value) {
 		if (value.size() >= MaxRigSourceBytes - script.size())
 			throw std::length_error("Editable rig exceeds the runner's 64-MiB source limit");
 		script += value + '\n';

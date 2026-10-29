@@ -18,7 +18,7 @@ namespace flicker
 // sampled pixels, writes diagnostic artifacts and drains accepted work on Close.
 class Diagnostics
 {
-  public:
+public:
 	explicit Diagnostics(std::filesystem::path directory);
 	~Diagnostics();
 	Diagnostics(const Diagnostics&) = delete;
@@ -33,13 +33,14 @@ class Diagnostics
 	DiagnosticsStatus Status() const;
 	void Close();
 
-  private:
+private:
 	enum class ErrorKind
 	{
 		File,
 		Observation
 	};
-	template <typename Observation> void ApplyObservation(Observation&& observation) noexcept;
+	template<typename Observation>
+	void ApplyObservation(Observation&& observation) noexcept;
 	DiagnosticsStatus Snapshot() const;
 	void Run() noexcept;
 	void TriggerCapture(uint64_t frame);

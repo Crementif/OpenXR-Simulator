@@ -72,6 +72,7 @@ struct SequenceCaptureRecord
 	SequenceCaptureIntent request;
 	CaptureReservation reservation;
 };
+
 struct FrameRecord
 {
 	FrameKey key;
@@ -93,7 +94,7 @@ struct FrameHistorySnapshot
 
 class FrameHistory
 {
-  public:
+public:
 	explicit FrameHistory(std::size_t capacity = 128, std::size_t diagnosticCapacity = 1024);
 	// Allocation-free observation, including during teardown. Native/GPU callers
 	// report only milestones they actually observe; no queue access or waits.
@@ -102,11 +103,13 @@ class FrameHistory
 						  std::string_view detail = {}) noexcept;
 	FrameDiagnostics Diagnostics(std::uint64_t after = 0, std::size_t count = 128,
 								 std::optional<FrameKey> frame = {}) const;
+
 	// GPU observers retain only this bounded journal, never the session or its images.
 	std::shared_ptr<FrameDiagnosticsJournal> DiagnosticsJournal() const
 	{
 		return m_diagnostics;
 	}
+
 	SessionGeneration StartGeneration(RuntimeTime origin = {});
 	// Reserve copied diagnostic ownership before committing issue. The callback
 	// must not reenter history. Failure rolls back insertion and eviction.
@@ -123,12 +126,13 @@ class FrameHistory
 	std::shared_ptr<const FrameRecord> CancellationRecord(FrameKey key) const;
 	FrameHistorySnapshot Snapshot() const;
 
-  private:
+private:
 	struct Entry
 	{
 		std::shared_ptr<const FrameRecord> record;
 		std::shared_ptr<const FrameRecord> cancelled;
 	};
+
 	using Records = std::deque<Entry>;
 	Records::iterator Current(FrameId frame);
 	void CancelPendingLocked() noexcept;

@@ -22,6 +22,7 @@ Field EncodeHaptics(std::span<const HapticOutput> outputs)
 	}
 	return Field::Bytes(tag::Haptics, EncodeFields(events));
 }
+
 static const Field& Required(const Message& message, std::uint16_t tag)
 {
 	const auto* field = message.Find(tag);
@@ -29,6 +30,7 @@ static const Field& Required(const Message& message, std::uint16_t tag)
 		throw std::invalid_argument("Missing haptic observation field");
 	return *field;
 }
+
 HapticObservation DecodeHaptics(const Message& message)
 {
 	HapticObservation observation;

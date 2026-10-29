@@ -12,6 +12,7 @@ static std::vector<XrViveTrackerPathsHTCX> s_devices;
 static std::vector<XrExtensionProperties> s_extensions;
 static std::size_t s_actions = 0, s_destroyed = 0;
 static std::vector<XrPath> s_observedPaths;
+
 static XrPath Path(std::string text)
 {
 	const auto found = std::find(s_paths.begin(), s_paths.end(), text);
@@ -20,6 +21,7 @@ static XrPath Path(std::string text)
 	s_paths.push_back(std::move(text));
 	return s_paths.size() - 1;
 }
+
 static XrResult XRAPI_CALL Enumerate(XrInstance, std::uint32_t capacity, std::uint32_t* count,
 									 XrViveTrackerPathsHTCX* paths)
 {
@@ -30,32 +32,40 @@ static XrResult XRAPI_CALL Enumerate(XrInstance, std::uint32_t capacity, std::ui
 	return XR_SUCCESS;
 }
 } // namespace simxr::headset::test
+
 using namespace simxr::headset::test;
+
 namespace simxr::headset
 {
 OpenXrRuntime::~OpenXrRuntime() = default;
+
 XrInstance OpenXrRuntime::Instance() const
 {
 	return reinterpret_cast<XrInstance>(1);
 }
+
 bool OpenXrRuntime::ResourcesPreserved() const
 {
 	return false;
 }
+
 const std::vector<XrExtensionProperties>& OpenXrRuntime::Extensions() const
 {
 	return s_extensions;
 }
+
 PFN_xrVoidFunction OpenXrRuntime::Procedure(const char*) const
 {
 	return reinterpret_cast<PFN_xrVoidFunction>(Enumerate);
 }
+
 void CheckXr(XrResult result, const char* operation)
 {
 	if (XR_FAILED(result))
 		throw std::runtime_error(operation);
 }
 } // namespace simxr::headset
+
 extern "C"
 {
 	XRAPI_ATTR XrResult XRAPI_CALL xrStringToPath(XrInstance, const char* text, XrPath* path)
@@ -63,6 +73,7 @@ extern "C"
 		*path = Path(text);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrPathToString(XrInstance, XrPath path, std::uint32_t capacity,
 												  std::uint32_t* length, char* text)
 	{
@@ -73,6 +84,7 @@ extern "C"
 		std::strcpy(text, value.c_str());
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateAction(XrActionSet, const XrActionCreateInfo* info, XrAction* action)
 	{
 		Require(info->actionType == XR_ACTION_TYPE_POSE_INPUT && info->countSubactionPaths == 1,
@@ -80,22 +92,26 @@ extern "C"
 		*action = reinterpret_cast<XrAction>(++s_actions);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateActionSpace(XrSession, const XrActionSpaceCreateInfo* info, XrSpace* space)
 	{
 		*space = reinterpret_cast<XrSpace>(info->action);
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrDestroySpace(XrSpace)
 	{
 		++s_destroyed;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrSuggestInteractionProfileBindings(XrInstance,
 																	   const XrInteractionProfileSuggestedBinding* info)
 	{
 		Require(info->countSuggestedBindings == s_actions, "Every tracker role needs a binding");
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrGetActionStatePose(XrSession, const XrActionStateGetInfo* info,
 														XrActionStatePose* state)
 	{
@@ -103,6 +119,7 @@ extern "C"
 		state->isActive = true;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrLocateSpace(XrSpace, XrSpace, XrTime, XrSpaceLocation* location)
 	{
 		location->pose.orientation.w = 1;
@@ -110,6 +127,7 @@ extern "C"
 		return XR_SUCCESS;
 	}
 }
+
 int main()
 {
 	try
@@ -215,8 +233,7 @@ int main()
 			Require(s_actions == MaxTrackerDevices + 17, "Startup tracker actions were truncated");
 			const auto full = provider.Sample(6, reinterpret_cast<XrSpace>(99));
 			Require(full.size() == MaxTrackerDevices && std::all_of(full.begin(), full.end(),
-																	[](const PhysicalTrackerSample& sample)
-																	{
+																	[](const PhysicalTrackerSample& sample) {
 																		return sample.location.locationFlags != 0;
 																	}),
 					"Unassigned startup trackers did not retain independent poses");

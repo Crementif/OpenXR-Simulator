@@ -24,7 +24,7 @@ struct VulkanRetainedSource
 
 class VulkanBackend
 {
-  public:
+public:
 	// Caller serializes backend operations. Frame completion observers may run concurrently.
 	explicit VulkanBackend(const VulkanBinding& binding, std::size_t frameCapacity = 8,
 						   std::span<const char* const> enabledExtensions = {},
@@ -82,7 +82,7 @@ class VulkanBackend
 	std::shared_ptr<VulkanDevice> Device() const;
 	bool Sharing() const;
 
-  private:
+private:
 	struct Pipeline;
 	static std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device,
 													bool multisampledDepth = false);

@@ -15,17 +15,19 @@ struct DebuggerOperation
 	bool polling = false;
 	std::uint64_t subject = 0;
 };
+
 struct DebuggerCaptureEvent
 {
 	std::uint64_t capture = 0, frame = 0;
 	bool released = false, refresh = false;
 	control::CommandKind kind = control::CommandKind::Pause;
 };
+
 // Owns one selected session's lease, command identity and bounded operation
 // ledger. Widgets observe const values and request transitions, never edit them.
 class DebuggerPanelController
 {
-  public:
+public:
 	explicit DebuggerPanelController(RuntimePanelRequests& transport);
 	void ResetEpoch();
 	void ChooseSession(PanelSession session);
@@ -50,7 +52,7 @@ class DebuggerPanelController
 	bool Relinquishing() const;
 	bool Pending() const;
 
-  private:
+private:
 	struct DeferredCommand
 	{
 		control::CommandKind kind;
@@ -59,6 +61,7 @@ class DebuggerPanelController
 		std::uint32_t layer;
 		std::uint32_t view;
 	};
+
 	void InterruptSession();
 	RuntimePanelRequests& m_requests;
 	std::vector<PanelSession> m_sessions;

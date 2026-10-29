@@ -30,12 +30,13 @@ std::filesystem::path IncidentDirectory(const Json& arguments)
 
 class IncidentFiles
 {
-  public:
+public:
 	explicit IncidentFiles(std::filesystem::path directory) : m_directory(std::move(directory))
 	{
 		if (!std::filesystem::create_directory(m_directory))
 			throw std::runtime_error("Incident directory already exists");
 	}
+
 	~IncidentFiles()
 	{
 		if (m_complete)
@@ -45,8 +46,8 @@ class IncidentFiles
 			std::filesystem::remove(file, ignored);
 		std::filesystem::remove(m_directory, ignored);
 	}
-	void Write(const std::filesystem::path& name, std::span<const std::byte> bytes,
-		const std::function<void()>& check)
+
+	void Write(const std::filesystem::path& name, std::span<const std::byte> bytes, const std::function<void()>& check)
 	{
 		check();
 		const auto destination = m_directory / name;
@@ -61,16 +62,21 @@ class IncidentFiles
 			throw;
 		}
 	}
-	void Complete() { m_complete = true; }
-  private:
+
+	void Complete()
+	{
+		m_complete = true;
+	}
+
+private:
 	std::filesystem::path m_directory;
 	std::vector<std::filesystem::path> m_files;
 	bool m_complete = false;
 };
 
 void SaveIncident(const std::filesystem::path& directory, Json& metadata, std::span<const std::byte> jpeg,
-	const std::vector<std::vector<std::byte>>& frames, unsigned width, unsigned height,
-	const std::function<void()>& check)
+				  const std::vector<std::vector<std::byte>>& frames, unsigned width, unsigned height,
+				  const std::function<void()>& check)
 {
 	if (frames.size() != metadata.at("window").at("entries").size() || frames.empty() || frames.size() > 24 ||
 		width != 320 || height != 104)
@@ -83,7 +89,8 @@ void SaveIncident(const std::filesystem::path& directory, Json& metadata, std::s
 		check();
 		if (frames[index].size() != std::size_t(width) * height * 4)
 			throw std::runtime_error("Invalid incident archive frame dimensions");
-		const auto image = EncodeImage(frames[index], static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), width, height, true, 85);
+		const auto image =
+			EncodeImage(frames[index], static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), width, height, true, 85);
 		const auto filename = "frame-" + std::to_string(index) + ".png";
 		files.Write(filename, image.bytes, check);
 		const auto& entry = metadata.at("window").at("entries").at(index);

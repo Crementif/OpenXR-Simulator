@@ -16,7 +16,16 @@ std::optional<LogFileSnapshot> ReadLogFile(const std::filesystem::path& path)
 			return {};
 		throw std::system_error(errno, std::generic_category(), "Cannot open runtime log");
 	}
-	struct Descriptor { int value; ~Descriptor() { ::close(value); } } descriptor{fd};
+
+	struct Descriptor
+	{
+		int value;
+
+		~Descriptor()
+		{
+			::close(value);
+		}
+	} descriptor{fd};
 	struct stat info{};
 	if (::fstat(fd, &info) != 0)
 		throw std::system_error(errno, std::generic_category(), "Cannot inspect runtime log");
@@ -31,8 +40,8 @@ std::optional<LogFileSnapshot> ReadLogFile(const std::filesystem::path& path)
 	std::size_t read = 0;
 	while (read < count)
 	{
-		const auto amount = ::pread(fd, result.bytes.data() + read, count - read,
-			static_cast<off_t>(result.size - count + read));
+		const auto amount =
+			::pread(fd, result.bytes.data() + read, count - read, static_cast<off_t>(result.size - count + read));
 		if (amount < 0 && errno == EINTR)
 			continue;
 		if (amount < 0)
@@ -47,6 +56,7 @@ std::optional<LogFileSnapshot> ReadLogFile(const std::filesystem::path& path)
 	result.changed = read != count || info.st_size < 0 || static_cast<std::uint64_t>(info.st_size) != result.size;
 	return result;
 }
+
 bool ClearLogFile(const std::filesystem::path& path)
 {
 	const auto fd = ::open(path.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
@@ -56,10 +66,16 @@ bool ClearLogFile(const std::filesystem::path& path)
 			return false;
 		throw std::system_error(errno, std::generic_category(), "Cannot open runtime log for clearing");
 	}
+
 	struct Descriptor
 	{
 		int value;
-		~Descriptor() { if (value >= 0) ::close(value); }
+
+		~Descriptor()
+		{
+			if (value >= 0)
+				::close(value);
+		}
 	} descriptor{fd};
 	struct stat info{};
 	if (::fstat(fd, &info) != 0)
@@ -67,7 +83,8 @@ bool ClearLogFile(const std::filesystem::path& path)
 	if (!S_ISREG(info.st_mode) || info.st_nlink != 1)
 		throw std::runtime_error("Runtime log must be a regular file with one link to clear it");
 	if (::ftruncate(fd, 0) != 0)
-		throw std::system_error(errno, std::generic_category(), "Log clear may have completed; cannot truncate runtime log");
+		throw std::system_error(errno, std::generic_category(),
+								"Log clear may have completed; cannot truncate runtime log");
 	descriptor.value = -1;
 	if (::close(fd) != 0)
 		throw std::system_error(errno, std::generic_category(), "Log clear completed, but closing the file failed");

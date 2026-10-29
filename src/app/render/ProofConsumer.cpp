@@ -9,8 +9,8 @@ namespace simxr::app
 {
 ProofConsumer::ProofConsumer(UiRenderer& renderer, int descriptor, bool verifyPixels)
 	: m_renderer(renderer), m_receiver(renderer.DeviceAccess(), descriptor), m_verifyPixels(verifyPixels)
-{
-}
+{}
+
 ProofConsumer::~ProofConsumer()
 {
 	try

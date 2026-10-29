@@ -86,11 +86,7 @@ static std::filesystem::path RecordedPrefix(const std::string& metadata)
 	std::uint32_t uid = 0;
 	const auto parsed = std::from_chars(lines[2].data(), lines[2].data() + lines[2].size(), uid);
 	if (!remaining.empty() || lines[0] != "SIMXR-PRIVATE-PROTON-1" || lines[1].size() != 32 ||
-		!std::ranges::all_of(lines[1],
-							 [](char c)
-							 {
-								 return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-							 }) ||
+		!std::ranges::all_of(lines[1], [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) ||
 		parsed.ec != std::errc{} || parsed.ptr != lines[2].data() + lines[2].size() || !lines[3].starts_with('/') ||
 		!lines[5].starts_with('/'))
 		throw std::runtime_error("Invalid private Proton ownership marker");

@@ -15,7 +15,7 @@ namespace simxr
 // closure can cancel it and retire image readers without invalidating its data.
 class VulkanSwapchain
 {
-  public:
+public:
 	static std::span<const std::int64_t> Formats();
 	static std::span<const std::int64_t> ColorFormats();
 	static XrResult Create(VulkanBackend& backend, const XrSwapchainCreateInfo& description,
@@ -29,12 +29,13 @@ class VulkanSwapchain
 	void MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion);
 	void Close();
 
-  private:
+private:
 	struct Image
 	{
 		std::shared_ptr<VulkanImage> resource;
 		bool initialized = false;
 	};
+
 	explicit VulkanSwapchain(XrSwapchainCreateInfo description);
 	const XrSwapchainCreateInfo m_description;
 	std::vector<Image> m_images;

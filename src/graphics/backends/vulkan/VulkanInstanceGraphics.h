@@ -21,7 +21,7 @@ std::vector<const char*> VulkanSharingExtensions(VkPhysicalDevice physicalDevice
 // instance for application-provided dispatch. No application handle is destroyed.
 class VulkanInstanceGraphics final
 {
-  public:
+public:
 	VulkanInstanceGraphics() = default;
 	VulkanInstanceGraphics(const VulkanInstanceGraphics&) = delete;
 	VulkanInstanceGraphics& operator=(const VulkanInstanceGraphics&) = delete;
@@ -34,7 +34,7 @@ class VulkanInstanceGraphics final
 	XrResult CreateDevice(const XrVulkanDeviceCreateInfoKHR* info, VkDevice* output, VkResult* result) const;
 	XrResult SessionBinding(const XrSessionCreateInfo& info, VulkanBinding& output) const;
 
-  private:
+private:
 	struct Selection
 	{
 		VkPhysicalDevice physicalDevice;

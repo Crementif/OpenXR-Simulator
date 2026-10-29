@@ -8,10 +8,10 @@ namespace simxr::windows
 // Each context/image owner keeps its dispatch and native dependency together.
 class OpenGLLibrary final
 {
-  private:
+private:
 	WindowsLibrary m_library{L"opengl32.dll"};
 
-  public:
+public:
 	OpenGLLibrary();
 	const decltype(&::glGetError) GetError;
 	const decltype(&::glGetIntegerv) GetIntegerv;

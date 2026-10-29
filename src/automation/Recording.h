@@ -18,12 +18,14 @@ struct SavedRecording
 	std::string path;
 	std::uint64_t seed = 0;
 };
+
 struct RecordedReleaseState
 {
 	std::vector<SimulationCommand> initial;
 	ScenarioState scenarios{};
 	RuntimeTime runtimeTime;
 };
+
 struct RecordedTransaction
 {
 	std::uint64_t id = 0;
@@ -35,6 +37,7 @@ struct RecordedTransaction
 	std::optional<RuntimeTime> runtimeTime;
 	std::optional<RecordedReleaseState> releaseState;
 };
+
 struct InputRecording
 {
 	std::uint64_t version = 0, seed = 0, total = 0;
@@ -46,6 +49,7 @@ struct InputRecording
 	std::vector<RecordedTransaction> transactions;
 	std::optional<RuntimeTime> originRuntimeTime;
 };
+
 struct RecordingPage
 {
 	InputRecording recording;
@@ -53,30 +57,33 @@ struct RecordingPage
 	bool drain = false;
 	bool end = false;
 };
+
 struct RecordedGamePage
 {
 	GameObservationPage journal;
 	std::uint64_t session = 0, generation = 0;
 	std::optional<FrameNativeClockMapping> clock;
 };
+
 RecordedGamePage DecodeRecordedGamePage(const control::Message& response);
 RecordingPage DecodeRecordingPage(const control::Message& response);
 
 // Collects a stopped snapshot transactionally, rejecting mixed pages or gaps.
 class RecordingCollection
 {
-  public:
+public:
 	void Append(RecordingPage page);
 	std::uint64_t Offset() const noexcept;
 	bool Complete() const noexcept;
 	const InputRecording& Recording() const;
 
-  private:
+private:
 	std::optional<InputRecording> m_recording;
 	std::vector<std::byte> m_initialIdentity;
 	std::size_t m_bytes = 0;
 	bool m_complete = false;
 };
+
 // Exact initialization shared by editable export and core replay. Persistent
 // failures are restored; consumed recenter triggers are cleared, never repeated.
 std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recording);

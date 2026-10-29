@@ -1,7 +1,6 @@
 #include "platform/Clock.h"
 #include "Pch.h"
 
-
 namespace simxr
 {
 HostTime::duration HostTimeDifference(HostTime end, HostTime begin)

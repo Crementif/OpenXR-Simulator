@@ -5,32 +5,32 @@
 namespace simxr::control
 {
 VideoExport::VideoExport(std::vector<PreviewClipFrame> frames)
-	: m_worker(
-		  [this, frames = std::move(frames)]() mutable
-		  {
-			  Run(std::move(frames));
-		  })
-{
-}
+	: m_worker([this, frames = std::move(frames)]() mutable { Run(std::move(frames)); })
+{}
+
 VideoExport::~VideoExport()
 {
 	m_stop = true;
 	m_worker.join();
 }
+
 std::string VideoExport::Error() const
 {
 	return m_phase.load() == CompletionStatus::Failed ? m_error : std::string{};
 }
+
 std::uint64_t VideoExport::ByteSize() const noexcept
 {
 	return m_phase.load() == CompletionStatus::Complete ? m_bytes.size() : 0;
 }
+
 std::span<const std::byte> VideoExport::Read()
 {
 	if (m_phase.load() != CompletionStatus::Complete)
 		throw std::runtime_error("The video is not ready.");
 	return m_bytes;
 }
+
 void VideoExport::Run(std::vector<PreviewClipFrame> frames) noexcept
 {
 	try
@@ -110,8 +110,7 @@ void VideoExport::Run(std::vector<PreviewClipFrame> frames) noexcept
 			m_error = error.what();
 		}
 		catch (...)
-		{
-		}
+		{}
 		m_phase = CompletionStatus::Failed;
 	}
 	catch (...)

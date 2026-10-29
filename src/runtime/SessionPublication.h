@@ -20,10 +20,10 @@ namespace simxr
 // mutating calls; exposed simulation services retain their own reader locks.
 class SessionPublication
 {
-  public:
+public:
 	class PreparedStart
 	{
-	  public:
+	public:
 		PreparedStart(SessionPublication& owner, RuntimeTime epoch, ViewLayout layout);
 		~PreparedStart();
 		PreparedStart(const PreparedStart&) = delete;
@@ -31,7 +31,7 @@ class SessionPublication
 		const ReferenceSpaceState& ReferenceSpaces() const;
 		void Commit();
 
-	  private:
+	private:
 		SessionPublication& m_owner;
 		CommandConfiguration m_baseline;
 		RuntimeTime m_epoch;
@@ -44,7 +44,7 @@ class SessionPublication
 	// throwing history/capture storage before command state commits.
 	class FrameBoundary
 	{
-	  public:
+	public:
 		FrameBoundary(SessionPublication& owner, bool focused, const ReferenceSpaceState& spaces);
 		FrameBoundary(const FrameBoundary&) = delete;
 		FrameBoundary& operator=(const FrameBoundary&) = delete;
@@ -54,7 +54,7 @@ class SessionPublication
 		std::optional<XrSessionState> StateTransition(XrSessionState current);
 		void Publish();
 
-	  private:
+	private:
 		SessionPublication& m_owner;
 		CommandConfiguration m_baseline;
 		RuntimeTime m_epoch;
@@ -84,13 +84,15 @@ class SessionPublication
 	PoseSample ActionPose(XrAction action, XrPath subaction, RuntimeTime time) const;
 	XrResult ValidatePoseAction(XrAction action, XrPath subaction) const;
 
-  private:
+private:
 	bool ReleaseChannels(const std::array<bool, ControlChannelCount>& channels);
+
 	struct ViewRevision
 	{
 		RuntimeTime time;
 		ViewConfiguration configuration;
 	};
+
 	void PublishEffective(RuntimeTime time, const CommandConfiguration& effective);
 	Instance& m_instance;
 	ActionSyncState& m_actions;

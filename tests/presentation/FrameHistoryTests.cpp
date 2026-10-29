@@ -17,6 +17,7 @@ namespace
 {
 thread_local bool failDiagnosticAllocation = false;
 }
+
 [[gnu::noinline]] void* operator new(std::size_t size)
 {
 	if (std::exchange(failDiagnosticAllocation, false))
@@ -25,10 +26,12 @@ thread_local bool failDiagnosticAllocation = false;
 		return memory;
 	throw std::bad_alloc{};
 }
+
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -81,15 +84,12 @@ void IndependentDiagnosticJournal()
 	FrameDiagnosticsJournal* journalPointer = nullptr;
 	bool clockFailure = false;
 	std::int64_t hostTime = 100;
-	FrameDiagnosticsJournal journal(3,
-									[&]
-									{
-										if (clockFailure)
-											throw std::runtime_error("Clock unavailable");
-										Require(journalPointer->Read(0, 0).capacity == 3,
-												"Clock callback ran under the journal mutex");
-										return Duration{hostTime++};
-									});
+	FrameDiagnosticsJournal journal(3, [&] {
+		if (clockFailure)
+			throw std::runtime_error("Clock unavailable");
+		Require(journalPointer->Read(0, 0).capacity == 3, "Clock callback ran under the journal mutex");
+		return Duration{hostTime++};
+	});
 	journalPointer = &journal;
 	const FrameKey first{{1}, {7}}, restarted{{2}, {7}};
 	failDiagnosticAllocation = true;
@@ -141,20 +141,14 @@ void ConcurrentDiagnosticJournal()
 {
 	using namespace simxr;
 	std::atomic<std::int64_t> hostTime{1};
-	FrameDiagnosticsJournal journal(17,
-									[&]
-									{
-										return Duration{hostTime.fetch_add(1)};
-									});
+	FrameDiagnosticsJournal journal(17, [&] { return Duration{hostTime.fetch_add(1)}; });
 	std::array<std::thread, 4> writers;
 	for (std::size_t index = 0; index < writers.size(); ++index)
 	{
-		writers[index] = std::thread(
-			[&, index]
-			{
-				for (std::uint64_t event = 0; event < 100; ++event)
-					journal.Trace(FrameTraceKind::WaitReturned, {{1}, {index + 1}}, {Duration{1}});
-			});
+		writers[index] = std::thread([&, index] {
+			for (std::uint64_t event = 0; event < 100; ++event)
+				journal.Trace(FrameTraceKind::WaitReturned, {{1}, {index + 1}}, {Duration{1}});
+		});
 	}
 	for (auto& writer : writers)
 		writer.join();
@@ -172,22 +166,22 @@ void DiagnosticClockLifetime()
 	using namespace simxr;
 	FrameDiagnosticsJournal* journalPointer = nullptr;
 	bool observed = false;
+
 	struct ClockOwner
 	{
 		FrameDiagnosticsJournal*& journal;
 		bool& observed;
+
 		ClockOwner(FrameDiagnosticsJournal*& owner, bool& released) : journal(owner), observed(released) {}
+
 		~ClockOwner()
 		{
 			observed = journal->Read().events.size() == 1;
 		}
 	};
+
 	auto clockOwner = std::make_shared<ClockOwner>(journalPointer, observed);
-	auto journal = std::make_unique<FrameDiagnosticsJournal>(2,
-															 [clockOwner]
-															 {
-																 return Duration{42};
-															 });
+	auto journal = std::make_unique<FrameDiagnosticsJournal>(2, [clockOwner] { return Duration{42}; });
 	clockOwner.reset();
 	journalPointer = journal.get();
 	journal->Trace(FrameTraceKind::Issued, {{1}, {1}}, {Duration{1}});
@@ -295,26 +289,24 @@ void SubmissionObserverLifetime()
 		history.Begin(prediction.id);
 		FrameSubmissionState submission;
 		submission.displayTime = prediction.displayTime;
-		const auto result = history.Submit(prediction.id, submission,
-			[&]
-			{
-				observer->Trace(FrameTraceKind::NativeSubmitted, key, prediction.displayTime);
-				failDiagnosticAllocation = true;
-				return XR_SUCCESS;
-			});
+		const auto result = history.Submit(prediction.id, submission, [&] {
+			observer->Trace(FrameTraceKind::NativeSubmitted, key, prediction.displayTime);
+			failDiagnosticAllocation = true;
+			return XR_SUCCESS;
+		});
 		const bool allocationFree = std::exchange(failDiagnosticAllocation, false);
 		const auto record = history.Find(key);
 		const auto& events = record->submission->diagnostics->events;
 		Require(result == XR_SUCCESS && allocationFree && events.size() == 4 &&
-			events[2].kind == FrameTraceKind::NativeSubmitted && events[3].kind == FrameTraceKind::Submitted,
-			"Accepted native milestone must enter immutable CPU trace without post-acceptance allocation");
+					events[2].kind == FrameTraceKind::NativeSubmitted && events[3].kind == FrameTraceKind::Submitted,
+				"Accepted native milestone must enter immutable CPU trace without post-acceptance allocation");
 		FrameDiagnostics unreserved;
 		Require(!observer->ReadInto(unreserved, 0, 16, key) && unreserved.events.empty(),
-			"Allocation-free read must reject insufficient caller storage");
+				"Allocation-free read must reject insufficient caller storage");
 	}
 	Require(observer->Trace(FrameTraceKind::ImageRetired, key, {Duration{100}}).sequence == 5 &&
-		observer->Read(0, 16, key).events.back().kind == FrameTraceKind::ImageRetired,
-		"Late native image retirement must not depend on a destroyed session/history");
+				observer->Read(0, 16, key).events.back().kind == FrameTraceKind::ImageRetired,
+			"Late native image retirement must not depend on a destroyed session/history");
 	FrameHistory crowded(2, 1024);
 	const auto crowdedObserver = crowded.DiagnosticsJournal();
 	const FrameKey crowdedKey{crowded.StartGeneration(), {1}};
@@ -323,20 +315,18 @@ void SubmissionObserverLifetime()
 	crowded.Begin(prediction.id);
 	FrameSubmissionState submission;
 	submission.displayTime = prediction.displayTime;
-	const auto result = crowded.Submit(prediction.id, std::move(submission),
-		[&]
-		{
-			for (std::size_t index = 0; index < 300; ++index)
-				crowdedObserver->Trace(FrameTraceKind::Validation, crowdedKey, prediction.displayTime);
-			failDiagnosticAllocation = true;
-			return XR_SUCCESS;
-		});
+	const auto result = crowded.Submit(prediction.id, std::move(submission), [&] {
+		for (std::size_t index = 0; index < 300; ++index)
+			crowdedObserver->Trace(FrameTraceKind::Validation, crowdedKey, prediction.displayTime);
+		failDiagnosticAllocation = true;
+		return XR_SUCCESS;
+	});
 	const bool allocationFree = std::exchange(failDiagnosticAllocation, false);
 	const auto record = crowded.Find(crowdedKey);
 	const auto& diagnostics = *record->submission->diagnostics;
 	Require(result == XR_SUCCESS && allocationFree && diagnostics.truncated && diagnostics.events.size() == 256 &&
-			diagnostics.events.back().kind == FrameTraceKind::Submitted &&
-			diagnostics.events.back().sequence == diagnostics.next - 1,
+				diagnostics.events.back().kind == FrameTraceKind::Submitted &&
+				diagnostics.events.back().sequence == diagnostics.next - 1,
 			"Bounded CPU trace lost the accepted submission milestone or allocated after native acceptance");
 }
 
@@ -350,11 +340,7 @@ void DiagnosticHistory()
 	history.Begin(prediction.id);
 	FrameSubmissionState submission;
 	submission.displayTime = prediction.displayTime;
-	Require(history.Submit(prediction.id, submission,
-						   []
-						   {
-							   return XR_ERROR_OUT_OF_MEMORY;
-						   }) == XR_ERROR_OUT_OF_MEMORY,
+	Require(history.Submit(prediction.id, submission, [] { return XR_ERROR_OUT_OF_MEMORY; }) == XR_ERROR_OUT_OF_MEMORY,
 			"Rejected native work retains begun frame");
 	auto diagnostics = history.Diagnostics();
 	Require(diagnostics.events.size() == 3 && diagnostics.events.back().kind == FrameTraceKind::ApiError &&
@@ -463,13 +449,11 @@ int main()
 	}
 	Require(rejected && history.Snapshot().frames.size() == 2, "Pending boundary frames evicted");
 	std::atomic<bool> stop = false;
-	auto reader = std::async(std::launch::async,
-							 [&]
-							 {
-								 while (!stop.load())
-									 for (const auto& frame : history.Snapshot().frames)
-										 Require(frame->prediction.id.value != 0, "Partial history record published");
-							 });
+	auto reader = std::async(std::launch::async, [&] {
+		while (!stop.load())
+			for (const auto& frame : history.Snapshot().frames)
+				Require(frame->prediction.id.value != 0, "Partial history record published");
+	});
 	for (int count = 0; count < 100; ++count)
 	{
 		history.StartGeneration();
@@ -488,18 +472,13 @@ int main()
 	other.Begin(first.id);
 	bool called = false;
 	Require(other.Submit(first.id, submission,
-						 [&]
-						 {
+						 [&] {
 							 called = true;
 							 return XR_ERROR_RUNTIME_FAILURE;
 						 }) == XR_ERROR_RUNTIME_FAILURE &&
 				called && other.Find({nativeGeneration, first.id})->stage == FrameStage::Begun,
 			"Failed native admission committed frame history");
-	Require(other.Submit(first.id, submission,
-						 []
-						 {
-							 return XR_SUCCESS;
-						 }) == XR_SUCCESS &&
+	Require(other.Submit(first.id, submission, [] { return XR_SUCCESS; }) == XR_SUCCESS &&
 				other.Find({nativeGeneration, first.id})->stage == FrameStage::Submitted,
 			"Native admission retry lost submission identity");
 	FrameHistory reserved(2);
@@ -513,11 +492,7 @@ int main()
 	bool reservationFailed = false;
 	try
 	{
-		reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}},
-					   [](auto, auto)
-					   {
-						   throw std::bad_alloc{};
-					   });
+		reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}}, [](auto, auto) { throw std::bad_alloc{}; });
 	}
 	catch (const std::bad_alloc&)
 	{
@@ -527,14 +502,11 @@ int main()
 				!reserved.Find({reservedGeneration, {3}}) && reserved.Snapshot().evicted == 0,
 			"Failed capture binding committed history insertion or eviction");
 	std::shared_ptr<const FrameRecord> cancellation;
-	reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}},
-				   [&](auto issued, auto cancelled)
-				   {
-					   Require(issued->key == FrameKey{reservedGeneration, {3}} &&
-								   cancelled->stage == FrameStage::Cancelled,
-							   "Reservation did not receive prepared immutable frame records");
-					   cancellation = std::move(cancelled);
-				   });
+	reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}}, [&](auto issued, auto cancelled) {
+		Require(issued->key == FrameKey{reservedGeneration, {3}} && cancelled->stage == FrameStage::Cancelled,
+				"Reservation did not receive prepared immutable frame records");
+		cancellation = std::move(cancelled);
+	});
 	reserved.CancelPending();
 	Require(reserved.Find({reservedGeneration, {3}}) == cancellation && reserved.Snapshot().evicted == 1,
 			"Successful reservation lost preallocated cancellation ownership");

@@ -20,7 +20,7 @@ class PlayerRig;
 // Owns authored values only. Observed runtime state never rewrites an edit in progress.
 class DeviceControlPanel
 {
-  public:
+public:
 	explicit DeviceControlPanel(PlayerRig& rig);
 	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr,
 									   const std::function<void()>& placement = {});
@@ -28,18 +28,22 @@ class DeviceControlPanel
 	bool Active() const;
 	void CancelEditing();
 	std::optional<SimulationEdit> EndInputFrame();
+
 	int SelectedTracker() const
 	{
 		return m_selectedTracker;
 	}
+
 	void SetRigPiloting(bool piloting)
 	{
 		m_rigPiloting = piloting;
 	}
+
 	void SetManualSource(std::optional<CommandSource> source)
 	{
 		m_manualSource = source;
 	}
+
 	void ObserveState(const control::Message& state);
 	void ResetObservations();
 	void ObserveDelivery(bool pending, const std::string& error);
@@ -47,7 +51,7 @@ class DeviceControlPanel
 	std::optional<SimulationEdit> DrawSessionMenu();
 	std::optional<SimulationEdit> DrawHeader(const Selection& selection, bool showState = true);
 
-  private:
+private:
 	void SelectDevice(const DeviceSel& device);
 	bool CanControl(ControlChannel channel) const;
 	bool CanReset(DevicePage page) const;
@@ -99,10 +103,12 @@ class DeviceControlPanel
 	int m_selectedTracker = 0;
 	TrackingState m_authoredTracking;
 	std::array<ControllerControls, 2> m_authoredControls;
+
 	struct PadInputs
 	{
 		bool trigger = false, grip = false, primary = false, secondary = false, menu = false, stick = false;
 	};
+
 	std::array<PadInputs, 2> m_latches{}, m_heldInputs{};
 	std::array<int, 2> m_padFrames{-1, -1};
 	std::array<unsigned, 2> m_padActiveIds{};

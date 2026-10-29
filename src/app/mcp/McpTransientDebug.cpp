@@ -8,11 +8,11 @@ namespace simxr::app::mcp
 using namespace std::chrono_literals;
 
 TransientDebug::TransientDebug(McpApplication& application, std::shared_ptr<McpCancellation> cancellation,
-	double seconds, std::string operation)
+							   double seconds, std::string operation)
 	: m_application(application), m_cancellation(std::move(cancellation)),
-	  m_deadline(std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds))),
-	  m_operation(std::move(operation)), m_monitor([this](std::stop_token stop)
-	  {
+	  m_deadline(std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+														std::chrono::duration<double>(seconds))),
+	  m_operation(std::move(operation)), m_monitor([this](std::stop_token stop) {
 		  while (!stop.stop_requested())
 		  {
 			  if (m_cancellation->Requested() || std::chrono::steady_clock::now() >= m_deadline)
@@ -31,13 +31,14 @@ TransientDebug::TransientDebug(McpApplication& application, std::shared_ptr<McpC
 			  std::this_thread::sleep_for(10ms);
 		  }
 	  })
-{
-}
+{}
+
 TransientDebug::~TransientDebug()
 {
 	m_monitor.request_stop();
 	m_monitor.join();
 }
+
 void TransientDebug::Check()
 {
 	if (m_cancellation->Requested())
@@ -45,12 +46,14 @@ void TransientDebug::Check()
 	if (std::chrono::steady_clock::now() >= m_deadline)
 		throw TransientError(m_operation + " timed out");
 }
+
 void TransientDebug::Wait()
 {
 	Check();
 	std::this_thread::sleep_for(10ms);
 	Check();
 }
+
 std::shared_ptr<McpCancellation> TransientDebug::Begin()
 {
 	Check();
@@ -64,11 +67,13 @@ std::shared_ptr<McpCancellation> TransientDebug::Begin()
 	}
 	return cancellation;
 }
+
 void TransientDebug::End() noexcept
 {
 	std::lock_guard lock(m_mutex);
 	m_active.reset();
 }
+
 McpConnection TransientDebug::Connect(const std::string& application)
 {
 	const auto cancellation = Begin();
@@ -90,7 +95,9 @@ McpConnection TransientDebug::Connect(const std::string& application)
 		throw TransientError(m_operation + " operation was interrupted");
 	return std::move(*result);
 }
-std::shared_ptr<const CachedImage> TransientDebug::Render(const std::string& connection, const ImageRenderRequest& request)
+
+std::shared_ptr<const CachedImage> TransientDebug::Render(const std::string& connection,
+														  const ImageRenderRequest& request)
 {
 	const auto cancellation = Begin();
 	ImageRenderResult result;
@@ -110,6 +117,7 @@ std::shared_ptr<const CachedImage> TransientDebug::Render(const std::string& con
 	CheckResponse(result.info);
 	return std::move(result.image);
 }
+
 ApplicationSnapshot TransientDebug::Application(const std::string& application)
 {
 	const auto cancellation = Begin();
@@ -132,7 +140,8 @@ ApplicationSnapshot TransientDebug::Application(const std::string& application)
 	return std::move(*result);
 }
 
-control::Message TransientDebug::Request(const std::string& connection, control::OpCode opcode, std::vector<control::Field> fields)
+control::Message TransientDebug::Request(const std::string& connection, control::OpCode opcode,
+										 std::vector<control::Field> fields)
 {
 	const auto cancellation = Begin();
 	control::Message response;
@@ -152,13 +161,15 @@ control::Message TransientDebug::Request(const std::string& connection, control:
 	CheckResponse(response);
 	return response;
 }
+
 void TransientDebug::CheckResponse(const control::Message& response)
 {
 	const auto code = *response.Find(control::tag::Error)->AsU32();
 	if (code)
 	{
 		const auto* detail = response.Find(control::tag::Detail);
-		throw TransientError(detail && detail->AsText() ? std::string(*detail->AsText()) : m_operation + " failed", code);
+		throw TransientError(detail && detail->AsText() ? std::string(*detail->AsText()) : m_operation + " failed",
+							 code);
 	}
 }
 

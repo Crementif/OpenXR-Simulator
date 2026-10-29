@@ -9,6 +9,7 @@
 namespace simxr::app
 {
 class UiRenderer;
+
 struct PreviewImageSummary
 {
 	std::uint64_t id = 0, reader = 0, frame = 0, capture = 0;
@@ -21,11 +22,12 @@ struct PreviewImageSummary
 	std::optional<std::uint64_t> imageTick;
 	std::shared_ptr<const control::Message> state;
 };
+
 // Owns native preview acquisition, source selection and actual GPU/UI retirement.
 // A const summary never exposes its texture or permits arbitrary native teardown.
 class PreviewImages
 {
-  public:
+public:
 	PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests);
 	~PreviewImages();
 	void SetScope(PanelScope scope);
@@ -63,23 +65,28 @@ class PreviewImages
 	std::vector<VkSemaphore> ReadyWaits() const;
 	void RecordTransfers(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);
+
 	PreviewHistory& History() noexcept
 	{
 		return m_history;
 	}
+
 	const PreviewHistory& History() const noexcept
 	{
 		return m_history;
 	}
+
 	std::string TakeError();
 
-  private:
+private:
 	struct Image;
+
 	struct PendingImage
 	{
 		control::Message message;
 		bool live = false, thumbnail = false;
 	};
+
 	std::optional<PendingImage> m_pending;
 	std::optional<std::size_t> m_capacity;
 	std::size_t Capacity() const noexcept;

@@ -10,6 +10,7 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 void RuntimePanels::Poll(bool foreground)
 {
 	m_foreground = foreground;
@@ -79,6 +80,7 @@ void RuntimePanels::Poll(bool foreground)
 	}
 	m_range.Poll();
 }
+
 RuntimeView RuntimePanels::Build() const
 {
 	RuntimeView view{m_session.View()};
@@ -106,11 +108,13 @@ RuntimeView RuntimePanels::Build() const
 		view.notice = m_lastNotice;
 	return view;
 }
+
 bool RuntimePanels::CanRecord() const
 {
 	return m_session.Connected() && m_session.Debugger().Selected().id &&
 		   m_session.Supports(wire::Capability::RecordingDrain);
 }
+
 void RuntimePanels::PollRecording()
 {
 	const auto connection = m_session.Connection();
@@ -127,6 +131,7 @@ void RuntimePanels::PollRecording()
 			m_session.Notify("Recording failed", recordingError);
 	}
 }
+
 const RuntimeView& RuntimePanels::BeginFrame()
 {
 	m_foreground = true;
@@ -146,6 +151,7 @@ const RuntimeView& RuntimePanels::BeginFrame()
 	m_session.Preview().BeginFrame();
 	return m_view;
 }
+
 void RuntimePanels::UndoChanges(std::size_t count)
 {
 	if (m_replayPreparation || m_pilot.Active() || m_spatial.Active() || m_devices.Active() || !m_view.time.following ||
@@ -162,6 +168,7 @@ void RuntimePanels::UndoChanges(std::size_t count)
 	else
 		m_session.Notify("Undo unavailable", "Release the affected devices or restore their tracking first");
 }
+
 void RuntimePanels::DrawPreview(ShellState& shell)
 {
 	m_frame.Prepare(shell.selection, m_view);
@@ -173,6 +180,7 @@ void RuntimePanels::DrawPreview(ShellState& shell)
 	if (!m_preview.Draw(shell, m_view, !m_replayPreparation && !m_headsetPreparation, !m_replayActive))
 		StopPilot();
 }
+
 void RuntimePanels::DrawHeadsetControls()
 {
 	const bool available = m_view.sessionRunning && !m_replayPreparation && !m_replayActive &&
@@ -212,6 +220,7 @@ void RuntimePanels::DrawHeadsetControls()
 		}
 	}
 }
+
 void RuntimePanels::DrawDevicePage(ShellState& shell)
 {
 	if (!m_view.connected)
@@ -246,8 +255,7 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 	}
 	if (const auto* device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Head)
 		DrawHeadsetControls();
-	const auto placement = [&]
-	{
+	const auto placement = [&] {
 		m_spatial.DrawPlacement(shell.selection);
 	};
 	if (auto edit = m_devices.Draw(!m_headsetPreparation && !m_replayPreparation && m_session.SupportsEdits(),
@@ -260,6 +268,7 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 	if (auto device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Trackers)
 		device->slot = static_cast<unsigned>(m_devices.SelectedTracker());
 }
+
 void RuntimePanels::DrawPastDevice(const Selection& selection)
 {
 	const auto* device = std::get_if<DeviceSel>(&selection);
@@ -281,6 +290,7 @@ void RuntimePanels::DrawPastDevice(const Selection& selection)
 	else
 		DrawPastTrackers(*sample, device->slot);
 }
+
 std::vector<Notice> RuntimePanels::TakeNotices()
 {
 	auto notices = m_session.TakeNotices();
@@ -288,6 +298,7 @@ std::vector<Notice> RuntimePanels::TakeNotices()
 		m_lastNotice = notices.back().title + (notices.back().detail.empty() ? "" : ": " + notices.back().detail);
 	return notices;
 }
+
 void RuntimePanels::SubmitEdit(const SimulationEdit& edit)
 {
 	if (m_headsetPreparation)
@@ -297,11 +308,13 @@ void RuntimePanels::SubmitEdit(const SimulationEdit& edit)
 		if (const auto transaction = std::get_if<ManualTransaction>(&edit); transaction && m_session.Setup())
 			m_undo.Record(*m_session.Setup(), *transaction);
 }
+
 void RuntimePanels::StopPilot()
 {
 	m_pilot.Stop(m_foreground ? m_window : nullptr, m_session.ManualInput(), true);
 	m_devices.SetRigPiloting(false);
 }
+
 void RuntimePanels::FocusLost()
 {
 	m_preview.CancelInteraction();
@@ -314,34 +327,41 @@ void RuntimePanels::FocusLost()
 	m_devices.SetRigPiloting(false);
 	m_devices.ClearHeldInputs();
 }
+
 void RuntimePanels::Deactivate()
 {
 	FocusLost();
 	m_foreground = false;
 	m_session.Preview().ReleaseInactive();
 }
+
 void RuntimePanels::BeginRetirement()
 {
 	m_session.Preview().BeginRetirement();
 }
+
 bool RuntimePanels::RetirementComplete() const
 {
 	const auto& input = m_session.Input();
 	return (!m_session.Connected() || (!input.editPending && !input.posePending)) &&
 		   m_session.Preview().RetirementComplete();
 }
+
 void RuntimePanels::PreserveUnfinished() noexcept
 {
 	m_session.Preview().PreserveUnfinished();
 }
+
 void RuntimePanels::Notify(std::string title, std::string detail)
 {
 	m_session.Notify(std::move(title), std::move(detail));
 }
+
 void RuntimePanels::CancelPreviewInteraction()
 {
 	m_preview.CancelInteraction();
 }
+
 bool RuntimePanels::ReleaseInputs()
 {
 	StopPilot();
@@ -350,6 +370,7 @@ bool RuntimePanels::ReleaseInputs()
 		return m_session.SubmitEdit(ReleaseManualInputs{});
 	return false;
 }
+
 bool RuntimePanels::RequestExport(std::string path)
 {
 	if (m_range.Exporting())
@@ -359,14 +380,17 @@ bool RuntimePanels::RequestExport(std::string path)
 	}
 	return m_session.RequestExport(std::move(path));
 }
+
 bool RuntimePanels::Exporting() const
 {
 	return m_range.Exporting() || m_session.Exports().Busy();
 }
+
 const ImageExportTask& RuntimePanels::ImageExport() const noexcept
 {
 	return m_session.Exports();
 }
+
 std::optional<automation::SavedRecording> RuntimePanels::TakeRecordingReplay()
 {
 	if (auto play = m_range.TakePlayRequest())
@@ -381,10 +405,11 @@ std::optional<automation::SavedRecording> RuntimePanels::TakeRecordingReplay()
 	}
 	return std::move(replay->saved);
 }
+
 RuntimePanels::RuntimePanels(UiRenderer& renderer, std::string endpoint, Window* window)
 	: m_session(renderer, endpoint), m_window(window), m_connection(endpoint)
-{
-}
+{}
+
 RuntimePanels::~RuntimePanels()
 {
 	m_headset.Stop();
@@ -393,41 +418,50 @@ RuntimePanels::~RuntimePanels()
 	if (m_window && m_foreground)
 		m_window->Rumble({});
 }
+
 void RuntimePanels::ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB)
 {
 	m_session.ConfigurePreviews(budgetMiB, ramMiB);
 }
+
 void RuntimePanels::ConfigureSnapshots(std::uint32_t budgetMiB)
 {
 	if (!m_replayPreparation && !m_replayActive)
 		m_session.ConfigureSnapshots(budgetMiB);
 }
+
 void RuntimePanels::ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag)
 {
 	m_pilot.Configure(keys, gamepad, remoteMouseDrag);
 }
+
 const RuntimeView& RuntimePanels::View() const
 {
 	return m_view;
 }
+
 bool RuntimePanels::PilotActive() const
 {
 	return m_pilot.Active();
 }
+
 bool& RuntimePanels::HudFolded()
 {
 	return m_pilot.HudFolded();
 }
+
 std::optional<ImVec4>& RuntimePanels::PreviewCrop()
 {
 	return m_preview.Crop();
 }
+
 void RuntimePanels::DrawFramePage(ShellState& shell)
 {
 	ImGui::BeginDisabled(m_replayPreparation.has_value());
 	m_frame.Draw(shell, m_view);
 	ImGui::EndDisabled();
 }
+
 void RuntimePanels::DrawRangePage(const RangeSel& range, ShellState& shell)
 {
 	ImGui::BeginDisabled(m_replayPreparation.has_value());
@@ -435,12 +469,14 @@ void RuntimePanels::DrawRangePage(const RangeSel& range, ShellState& shell)
 		m_recordingReplay = RecordingReplay{std::move(*replay), m_session.Debugger().Scope()};
 	ImGui::EndDisabled();
 }
+
 void RuntimePanels::DrawAdvancedPage()
 {
 	ImGui::BeginDisabled(m_replayPreparation.has_value());
 	m_advanced.Draw();
 	ImGui::EndDisabled();
 }
+
 void RuntimePanels::DrawSessionMenu()
 {
 	ImGui::BeginDisabled(m_replayPreparation.has_value() || !m_view.connected || !m_view.time.following ||
@@ -449,16 +485,19 @@ void RuntimePanels::DrawSessionMenu()
 		SubmitEdit(*edit);
 	ImGui::EndDisabled();
 }
+
 void RuntimePanels::DrawRecordingPopovers()
 {
 	m_recording.DrawPopovers(CanRecord());
 	if (auto saved = m_recording.TakeSaved())
 		m_savedTake = std::move(*saved);
 }
+
 std::optional<std::string> RuntimePanels::TakeSavedTake()
 {
 	return std::exchange(m_savedTake, {});
 }
+
 bool RuntimePanels::CanReplay() const
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -469,15 +508,17 @@ bool RuntimePanels::CanReplay() const
 	return false;
 #endif
 }
+
 void RuntimePanels::RequestReplay(automation::SavedRecording recording)
 {
 	m_recordingReplay = RecordingReplay{std::move(recording), m_session.Debugger().Scope()};
 }
+
 void RuntimePanels::DrawConnection(bool* open)
 {
-	m_connection.Draw(m_session, open,
-		[this, open](std::string endpoint)
-		{
+	m_connection.Draw(
+		m_session, open,
+		[this, open](std::string endpoint) {
 			if (!m_openEndpoint || !m_openEndpoint(endpoint))
 				ConnectEndpoint(std::move(endpoint));
 			if (open)
@@ -486,10 +527,12 @@ void RuntimePanels::DrawConnection(bool* open)
 		},
 		[this] { Disconnect(); });
 }
+
 void RuntimePanels::DrawWindows()
 {
 	m_documents.DrawWindow();
 }
+
 void RuntimePanels::EndFrame()
 {
 	m_spatial.EndFrame();
@@ -498,147 +541,181 @@ void RuntimePanels::EndFrame()
 	if (!m_spatial.Active() && !ImGui::IsAnyItemActive())
 		m_undo.FinishGesture();
 }
+
 std::uint64_t RuntimePanels::PreviewBytes() const
 {
 	return m_session.PreviewBytes();
 }
+
 std::uint64_t RuntimePanels::SnapshotChargeBytes() const
 {
 	return m_session.Preview().SnapshotChargeBytes();
 }
+
 std::uint64_t RuntimePanels::PreviewRamBytes() const
 {
 	return m_session.PreviewRamBytes();
 }
+
 std::uint64_t RuntimePanels::PreviewRamBudget() const
 {
 	return m_session.PreviewRamBudget();
 }
+
 std::string RuntimePanels::PreviewError() const
 {
 	return m_session.PreviewError();
 }
+
 std::uint64_t RuntimePanels::PreviewBudget() const
 {
 	return m_session.PreviewBudget();
 }
+
 PreviewHistory& RuntimePanels::KeptPreviews()
 {
 	return m_session.Preview().History();
 }
+
 const PreviewHistory& RuntimePanels::KeptPreviews() const
 {
 	return m_session.Preview().History();
 }
+
 void RuntimePanels::RecordTransfers(VkCommandBuffer command)
 {
 	m_session.Preview().RecordTransfers(command);
 }
+
 std::vector<VkSemaphore> RuntimePanels::ReadyWaits() const
 {
 	return m_session.Preview().ReadyWaits();
 }
+
 void RuntimePanels::Submitted(std::uint64_t serial)
 {
 	m_session.Preview().Submitted(serial);
 }
+
 RuntimeView RuntimePanels::Snapshot() const
 {
 	return Build();
 }
+
 void RuntimePanels::Command(control::CommandKind kind, std::uint64_t capture, bool raw, std::uint32_t layer,
 							std::uint32_t view)
 {
 	if (!m_replayPreparation)
 		m_session.Command(kind, capture, raw, layer, view);
 }
+
 void RuntimePanels::Pause()
 {
 	if (!m_replayPreparation)
 		m_session.Pause();
 }
+
 void RuntimePanels::Step()
 {
 	if (!m_replayPreparation)
 		m_session.Step();
 }
+
 std::optional<SteppedFrame> RuntimePanels::TakeSteppedFrame()
 {
 	return m_session.TakeSteppedFrame();
 }
+
 void RuntimePanels::TogglePin(std::size_t index)
 {
 	if (!m_replayPreparation)
 		m_session.TogglePin(index);
 }
+
 void RuntimePanels::MarkHistoryFrame(std::size_t index, bool enabled)
 {
 	m_session.MarkHistoryFrame(index, enabled);
 }
+
 void RuntimePanels::LookAt(std::size_t index)
 {
 	m_session.LookAt(index);
 }
+
 const HistoryStore& RuntimePanels::History() const
 {
 	return m_session.History();
 }
+
 const InputHistory& RuntimePanels::InputSamples() const
 {
 	return m_session.InputSamples();
 }
+
 std::vector<RuntimeFrame> RuntimePanels::TimelineFrames() const
 {
 	return m_session.TimelineFrames();
 }
+
 void RuntimePanels::SelectFrame(std::uint64_t local)
 {
 	m_session.SelectFrame(local);
 }
+
 void RuntimePanels::SelectCapture(std::uint64_t capture)
 {
 	m_session.SelectCapture(capture);
 }
+
 void RuntimePanels::ReleaseSelected()
 {
 	if (!m_replayPreparation)
 		m_session.ReleaseSelected();
 }
+
 void RuntimePanels::CancelPending()
 {
 	if (!m_replayPreparation)
 		m_session.CancelPending();
 }
+
 std::vector<UndoStack::Change> RuntimePanels::Changes() const
 {
 	return m_undo.Changes();
 }
+
 std::string RuntimePanels::Endpoint() const
 {
 	return m_session.Endpoint();
 }
+
 const std::vector<std::string>& RuntimePanels::Endpoints() const
 {
 	return m_session.Endpoints();
 }
+
 void RuntimePanels::RefreshEndpoints()
 {
 	m_session.RefreshEndpoints();
 }
+
 void RuntimePanels::ConnectEndpoint(std::string endpoint, std::optional<std::uint64_t> expectedProcess)
 {
 	DisconnectHeadset();
 	m_session.ConnectEndpoint(std::move(endpoint), expectedProcess);
 }
+
 void RuntimePanels::SetEndpointOpenHandler(std::function<bool(const std::string&)> open)
 {
 	m_openEndpoint = std::move(open);
 }
+
 void RuntimePanels::Disconnect()
 {
 	DisconnectHeadset();
 	m_session.Disconnect();
 }
+
 void RuntimePanels::ConnectHeadset(HeadsetHostOptions options)
 {
 	if (m_headsetAvailable && !m_headsetAvailable())
@@ -700,10 +777,12 @@ void RuntimePanels::ConnectHeadset(HeadsetHostOptions options)
 							   std::chrono::steady_clock::now() + std::chrono::seconds(3)};
 	}
 }
+
 void RuntimePanels::SetHeadsetAdmission(std::function<bool()> available)
 {
 	m_headsetAvailable = std::move(available);
 }
+
 void RuntimePanels::PollHeadsetPreparation()
 {
 	if (!m_headsetPreparation)
@@ -736,11 +815,13 @@ void RuntimePanels::PollHeadsetPreparation()
 		m_headsetPage.SetError(error.what());
 	}
 }
+
 void RuntimePanels::DisconnectHeadset()
 {
 	m_headsetPreparation.reset();
 	m_headset.Stop();
 }
+
 HeadsetHostSnapshot RuntimePanels::HeadsetStatus() const
 {
 	if (m_headsetPreparation || m_headset.Restarting())
@@ -751,35 +832,43 @@ HeadsetHostSnapshot RuntimePanels::HeadsetStatus() const
 	}
 	return m_headset.Snapshot();
 }
+
 void RuntimePanels::StartRecording()
 {
 	m_recording.RequestStart();
 }
+
 void RuntimePanels::StopRecording()
 {
 	m_recording.RequestStop();
 }
+
 void RuntimePanels::SetReplayActive(bool active)
 {
 	m_replayActive = active;
 }
+
 void RuntimePanels::ResumeLive()
 {
 	if (!m_replayPreparation)
 		m_session.ResumeLive();
 }
+
 void RuntimePanels::SetLive(bool enabled)
 {
 	m_session.SetLive(enabled);
 }
+
 std::vector<std::uint64_t> RuntimePanels::CaptureIds() const
 {
 	return m_session.Workspace().CaptureIds();
 }
+
 void RuntimePanels::InspectSelected()
 {
 	m_session.Workspace().InspectSelected();
 }
+
 void RuntimePanels::PrepareReplay()
 {
 	m_spatial.SetContext(false, false, {}, nullptr, 0);
@@ -789,10 +878,12 @@ void RuntimePanels::PrepareReplay()
 	m_replayPreparation->releaseQueued = ReleaseInputs();
 	m_session.Debugger().Relinquish();
 }
+
 void RuntimePanels::FinishReplayPreparation()
 {
 	m_replayPreparation.reset();
 }
+
 bool RuntimePanels::ReplayReady() const
 {
 	const auto& debugger = m_session.Debugger();
@@ -802,10 +893,8 @@ bool RuntimePanels::ReplayReady() const
 		   m_replayPreparation->scope == debugger.Scope() && m_session.Connected() && debugger.Selected().running &&
 		   input.observation > m_replayPreparation->observation && !input.editPending && !input.posePending &&
 		   input.error.empty() && setup && !debugger.Pending() && !debugger.HasLease() && !debugger.Relinquishing() &&
-		   !std::ranges::any_of(setup->owners,
-								[](const std::optional<CommandSource>& owner)
-								{
-									return owner && owner->kind == CommandSourceKind::Manual;
-								});
+		   !std::ranges::any_of(setup->owners, [](const std::optional<CommandSource>& owner) {
+			   return owner && owner->kind == CommandSourceKind::Manual;
+		   });
 }
 } // namespace simxr::app

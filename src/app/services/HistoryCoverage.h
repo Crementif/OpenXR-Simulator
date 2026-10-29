@@ -11,12 +11,12 @@ class HistoryStore;
 // Combines independently retained previews, snapshots and pins before changing timeline coverage.
 class HistoryCoverage
 {
-  public:
+public:
 	void Begin();
 	void Add(FrameIdentity identity, std::uint64_t epoch, std::uint64_t capture, std::uint32_t flags);
 	void Apply(HistoryStore& history);
 
-  private:
+private:
 	struct Entry
 	{
 		FrameIdentity identity;
@@ -24,6 +24,7 @@ class HistoryCoverage
 		std::uint32_t flags = 0;
 		bool applied = false;
 	};
+
 	static bool Less(const Entry& left, const Entry& right);
 	std::vector<Entry> m_previous, m_next;
 	const HistoryStore* m_store = nullptr;

@@ -12,6 +12,7 @@ namespace
 {
 using namespace simxr;
 using namespace simxr::app;
+
 void SamePose(XrPosef a, XrPosef b)
 {
 	const auto difference = RelativePose(a, b);
@@ -20,6 +21,7 @@ void SamePose(XrPosef a, XrPosef b)
 			"Pose position changed during round trip");
 	Require(std::abs(difference.orientation.w) > .99999f, "Pose orientation changed during round trip");
 }
+
 void RigComposition()
 {
 	ObservedSetup observed;
@@ -63,6 +65,7 @@ void RigComposition()
 	rig.SetHandWorld(0, newWorld);
 	SamePose(rig.Hand(0), newWorld);
 }
+
 void AtomicOwnership()
 {
 	ObservedSetup observed;
@@ -106,6 +109,7 @@ void AtomicOwnership()
 	SamePose(rig.Hand(1), moved.values.tracking.controllers[1].pose.pose);
 	rig.Observe(observed);
 }
+
 TrackingState Applied(const ManualTransaction& edit)
 {
 	CommandScheduler scheduler;
@@ -121,10 +125,12 @@ TrackingState Applied(const ManualTransaction& edit)
 	Require(applied != nullptr, "Rig transaction not applied");
 	return applied->configuration.tracking;
 }
+
 float Distance(XrVector3f a, XrVector3f b)
 {
 	return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
+
 void BodyPoses()
 {
 	ObservedSetup observed;
@@ -169,6 +175,7 @@ void BodyPoses()
 		}
 	}
 }
+
 void JointOffsetsFollowBody()
 {
 	ObservedSetup observed;
@@ -191,6 +198,7 @@ void JointOffsetsFollowBody()
 		SamePose(rig.Tracker(0), frame.trackers[0].pose.pose);
 	}
 }
+
 void ExpandedRig()
 {
 	ObservedSetup observed;
@@ -211,8 +219,7 @@ void ExpandedRig()
 			"Tracker attachment followed a slot instead of its identity");
 	SamePose(rig.Tracker(0), *observed.values.tracking.trackers[0].poseOverride);
 	rig.ResetTracker(63);
-	Require(rig.TrackerDeviceAt(63).sourcePath.View() == "htcx:/device/0",
-			"Reset erased physical device provenance");
+	Require(rig.TrackerDeviceAt(63).sourcePath.View() == "htcx:/device/0", "Reset erased physical device provenance");
 	const auto edit = rig.Transaction(observed, std::nullopt, true);
 	Require(edit.commands.size() < 64 && std::holds_alternative<SetTrackers>(edit.commands.back()) &&
 				std::get<SetTrackers>(edit.commands.back()).value.size() == 64,
@@ -222,12 +229,10 @@ void ExpandedRig()
 	rig.ResetAll();
 	const auto empty = rig.Transaction(observed, std::nullopt, true);
 	Require(std::none_of(empty.commands.begin(), empty.commands.end(),
-						 [](const auto& command)
-						 {
-							 return std::holds_alternative<SetTracker>(command);
-						 }),
+						 [](const auto& command) { return std::holds_alternative<SetTracker>(command); }),
 			"Empty rig retained tracker slots");
 }
+
 void TrackerCollectionUndo()
 {
 	ObservedSetup original;
@@ -281,12 +286,12 @@ void TrackerCollectionUndo()
 	Require(!undo.Undo(current, std::nullopt) && !undo.Empty(),
 			"Slot undo consumed history after the device was removed");
 }
+
 void RapidUndo()
 {
 	ObservedSetup original;
 	UndoStack undo;
-	const auto edit = [](float x)
-	{
+	const auto edit = [](float x) {
 		ManualTransaction result;
 		PoseSample pose;
 		pose.pose.position.x = x;
@@ -304,6 +309,7 @@ void RapidUndo()
 	Require(Applied(*undo.Undo(original, std::nullopt)).head.pose.position.x == 0,
 			"Edit after undo reused a stale authored state");
 }
+
 void HistoryUndo()
 {
 	ObservedSetup original;
@@ -331,15 +337,13 @@ void HistoryUndo()
 	Require(restore.has_value(), "Undo to a history entry produced nothing");
 	const auto state = Applied(*restore);
 	Require(std::none_of(restore->commands.begin(), restore->commands.end(),
-						 [](const auto& command)
-						 {
-							 return std::holds_alternative<SetHeadPose>(command);
-						 }),
+						 [](const auto& command) { return std::holds_alternative<SetHeadPose>(command); }),
 			"Undoing two steps also rewrote the step before them");
 	SamePose(state.controllers[1].pose.pose, original.values.tracking.controllers[1].pose.pose);
 	Require(undo.Changes().size() == 1 && undo.Changes()[0].label == "Head moved",
 			"Undo to an entry kept the undone changes");
 }
+
 void UndoOwnershipAndScope()
 {
 	ObservedSetup before;
@@ -428,6 +432,7 @@ void Undo()
 	Require(!undo.Undo(during, std::nullopt), "Undo past the first edit");
 }
 } // namespace
+
 int main()
 {
 	try

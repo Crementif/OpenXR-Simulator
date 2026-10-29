@@ -33,7 +33,7 @@ class ConnectionImages
 		Export
 	};
 
-  public:
+public:
 	struct RequestFailure
 	{
 		ErrorCode error;
@@ -55,14 +55,14 @@ class ConnectionImages
 	{
 		friend class ConnectionImages;
 
-	  public:
+	public:
 		Publication(ConnectionImages& owner, RetiredResource& retired);
 		~Publication();
 		Publication(const Publication&) = delete;
 		Publication& operator=(const Publication&) = delete;
 		void Commit() noexcept;
 
-	  private:
+	private:
 		void Track(ResourceKind kind, std::uint64_t id) noexcept;
 		ConnectionImages& m_owner;
 		RetiredResource& m_retired;
@@ -85,17 +85,21 @@ class ConnectionImages
 	Message Dispatch(const ControlPacket& incoming, ControlPacket& outgoing, std::uint16_t minor, bool nativeHandles,
 					 Publication& publication, RetiredResource& retired);
 
-  private:
+private:
 	std::shared_ptr<const void> Release(ResourceKind kind, std::uint64_t id) noexcept;
-	template <class Resource> struct ImageEntry
+
+	template<class Resource>
+	struct ImageEntry
 	{
 		std::uint64_t id = 0, reader = 0;
 		ImageSource source;
 		std::shared_ptr<Resource> value;
 	};
-	template <class Resource> class ImageTable
+
+	template<class Resource>
+	class ImageTable
 	{
-	  public:
+	public:
 		ImageTable();
 		void CheckCapacity() const;
 		std::shared_ptr<const ImageEntry<Resource>> Find(std::uint64_t id) const;
@@ -104,10 +108,11 @@ class ConnectionImages
 														std::uint64_t reader = 0);
 		std::shared_ptr<const ImageEntry<Resource>> Release(std::uint64_t id) noexcept;
 
-	  private:
+	private:
 		std::vector<std::shared_ptr<ImageEntry<Resource>>> m_entries;
 		std::uint64_t m_next = 1;
 	};
+
 	ImageTable<ImageReader> m_images;
 	ImageTable<ImageDelivery> m_deliveries;
 	ImageTable<ImageExport> m_exports;

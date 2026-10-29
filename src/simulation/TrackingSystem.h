@@ -11,7 +11,7 @@ namespace simxr
 {
 class TrackingSystem
 {
-  public:
+public:
 	explicit TrackingSystem(std::size_t historyCapacity = 128);
 	TrackingSnapshot Publish(RuntimeTime time, const TrackingState& state, bool replaceCurrent = false);
 	std::optional<TrackingSnapshot> Sample(RuntimeTime time) const;
@@ -19,7 +19,7 @@ class TrackingSystem
 	void Reset();
 	static TrackingSnapshot Evaluate(RuntimeTime time, const TrackingState& state, const BodyModel& body);
 
-  private:
+private:
 	mutable std::mutex m_mutex;
 	BodyModel m_body;
 	PoseHistory m_history;

@@ -54,14 +54,14 @@ struct ObservedEvent
 
 class EventQueue
 {
-  public:
+public:
 	explicit EventQueue(std::size_t capacity = 256);
 	void Push(RuntimeEvent event);
 	XrResult Poll(XrEventDataBuffer& buffer);
 	void RemoveSession(XrSession session);
 	std::vector<ObservedEvent> Observe(std::uint64_t afterSequence = 0) const;
 
-  private:
+private:
 	mutable std::mutex m_mutex;
 	const std::size_t m_capacity;
 	std::vector<RuntimeEvent> m_pending;

@@ -16,6 +16,7 @@ struct DeviceRow
 	std::optional<PilotAction> key;
 	ImU32 tint;
 };
+
 static constexpr std::array<DeviceRow, 7> s_rows{{
 	{"Player", Icon::Player, {}, PilotAction::TargetPlayer, 0},
 	{"Head", Icon::Head, ControlChannel::Head, PilotAction::TargetHead, 0},
@@ -25,15 +26,16 @@ static constexpr std::array<DeviceRow, 7> s_rows{{
 	{"Gaze", Icon::Eye, ControlChannel::Gaze, {}, 0},
 	{"Trackers", Icon::Tracker, ControlChannel::Trackers, {}, 0},
 }};
+
 static bool IsTracked(const PoseSample& pose)
 {
 	return (pose.flags & TrackedPoseFlags) == TrackedPoseFlags;
 }
+
 static std::pair<ImU32, const char*> DeviceDot(DevicePage page, const ObservedSetup& setup)
 {
 	const auto& tracking = setup.values.tracking;
-	const auto scenario = [&](FailureScenario failure)
-	{
+	const auto scenario = [&](FailureScenario failure) {
 		return setup.scenarios[static_cast<std::size_t>(failure)];
 	};
 	switch (page)
@@ -62,15 +64,9 @@ static std::pair<ImU32, const char*> DeviceDot(DevicePage page, const ObservedSe
 		if (scenario(FailureScenario::BodyUntracked))
 			return {theme::Warn, "Not tracked"};
 		if (std::ranges::any_of(tracking.body.controls,
-								[](const BodyControlOverride& control)
-								{
-									return !control.tracked;
-								}) ||
+								[](const BodyControlOverride& control) { return !control.tracked; }) ||
 			std::ranges::any_of(tracking.body.joints,
-								[](const std::optional<BodyJointOverride>& joint)
-								{
-									return joint && !joint->tracked;
-								}))
+								[](const std::optional<BodyJointOverride>& joint) { return joint && !joint->tracked; }))
 			return {theme::Warn, "Some not tracked"};
 		return {theme::Ok, "Tracked"};
 	case DevicePage::Gaze:
@@ -86,11 +82,8 @@ static std::pair<ImU32, const char*> DeviceDot(DevicePage page, const ObservedSe
 		if (scenario(FailureScenario::TrackersDisconnected))
 			return {theme::TextDim, "Off"};
 		const auto connected = std::ranges::count_if(tracking.trackers, &TrackerDevice::connected);
-		const auto lost = std::ranges::count_if(tracking.trackers,
-												[](const TrackerDevice& tracker)
-												{
-													return tracker.connected && !tracker.tracked;
-												});
+		const auto lost = std::ranges::count_if(
+			tracking.trackers, [](const TrackerDevice& tracker) { return tracker.connected && !tracker.tracked; });
 		if (!connected)
 			return {theme::TextDim, "None connected"};
 		return lost ? std::pair{theme::Warn, "Some not tracked"} : std::pair{theme::Ok, "Tracked"};
@@ -100,6 +93,7 @@ static std::pair<ImU32, const char*> DeviceDot(DevicePage page, const ObservedSe
 	}
 	return {0, nullptr};
 }
+
 static const char* OwnerBadge(const std::optional<CommandSource>& owner)
 {
 	if (!owner)
@@ -117,10 +111,12 @@ static const char* OwnerBadge(const std::optional<CommandSource>& owner)
 	}
 	return nullptr;
 }
+
 struct DeviceTabStatus
 {
 	RailStatus status;
 	std::string key, tooltip;
+
 	RailStatus View() const
 	{
 		auto result = status;
@@ -129,6 +125,7 @@ struct DeviceTabStatus
 		return result;
 	}
 };
+
 static DeviceTabStatus ReadTabStatus(std::size_t index, const RuntimeView& view, const CompanionSettings& settings)
 {
 	DeviceTabStatus result;
@@ -157,19 +154,23 @@ static DeviceTabStatus ReadTabStatus(std::size_t index, const RuntimeView& view,
 	result.status.tint = row.tint;
 	return result;
 }
+
 static bool IsSelected(std::size_t index, const Selection& selection)
 {
 	const auto device = std::get_if<DeviceSel>(&selection);
 	return device && index == static_cast<std::size_t>(device->page);
 }
+
 float RailWidth()
 {
 	return 34 * ImGui::GetFontSize() / 17 + ImGui::GetStyle().WindowPadding.x * 2;
 }
+
 float DeviceTabsHeight()
 {
 	return 40 * ImGui::GetFontSize() / 17;
 }
+
 std::optional<Selection> DrawDeviceRail(const Selection& selection, const RuntimeView& view,
 										const CompanionSettings& settings)
 {
@@ -187,6 +188,7 @@ std::optional<Selection> DrawDeviceRail(const Selection& selection, const Runtim
 	}
 	return picked;
 }
+
 std::optional<Selection> DrawDeviceTabs(const Selection& selection, const RuntimeView& view,
 										const CompanionSettings& settings)
 {

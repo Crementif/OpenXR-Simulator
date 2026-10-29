@@ -13,10 +13,11 @@ struct SimulationRequest
 	control::OpCode opcode;
 	std::vector<control::Field> fields;
 };
+
 bool SimulationHandles(const std::string& name);
 nlohmann::json SimulationDefinitions();
-SimulationRequest PrepareSimulation(const std::string& name, const nlohmann::json& arguments,
-									std::uint64_t session, std::uint64_t generation);
+SimulationRequest PrepareSimulation(const std::string& name, const nlohmann::json& arguments, std::uint64_t session,
+									std::uint64_t generation);
 nlohmann::json SimulationReply(const control::Message& message);
 nlohmann::json SimulationDocument(const control::Message& message);
 SimulationCommand SimulationCommandFromJson(const nlohmann::json& command);

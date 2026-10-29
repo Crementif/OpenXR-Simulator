@@ -8,11 +8,13 @@ namespace simxr::headset
 {
 class OpenXrRuntime;
 struct HeadsetInputSample;
+
 struct HeadsetNativeTimes
 {
 	std::int64_t predicted = 0;
 	std::optional<std::int64_t> bodyReturned;
 };
+
 HeadsetNativeTimes RuntimeInputTimes(const OpenXrRuntime& runtime, const HeadsetInputSample& input);
 // Converts through the vendor extension into the simulator native OS clock domain.
 // Frame-timeline mapping after pause/resume is a separate runtime contract.

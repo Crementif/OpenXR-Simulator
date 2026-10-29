@@ -1,7 +1,6 @@
 #include "presentation/FrameHistory.h"
 #include "Pch.h"
 
-
 namespace simxr
 {
 static SessionGeneration NextGeneration()
@@ -53,11 +52,8 @@ SessionGeneration FrameHistory::StartGeneration(RuntimeTime origin)
 FrameHistory::Records::iterator FrameHistory::Current(FrameId frame)
 {
 	const FrameKey key{m_generation, frame};
-	auto found = std::find_if(m_records.begin(), m_records.end(),
-							  [&](const auto& value)
-							  {
-								  return value.record->key == key;
-							  });
+	auto found =
+		std::find_if(m_records.begin(), m_records.end(), [&](const auto& value) { return value.record->key == key; });
 	if (found == m_records.end())
 		throw std::logic_error("Unknown frame history identity");
 	return found;
@@ -74,11 +70,7 @@ void FrameHistory::Issue(
 	if (!m_generation.value)
 		throw std::logic_error("Frame history is not running");
 	const FrameKey key{m_generation, prediction.id};
-	if (std::any_of(m_records.begin(), m_records.end(),
-					[&](const auto& value)
-					{
-						return value.record->key == key;
-					}))
+	if (std::any_of(m_records.begin(), m_records.end(), [&](const auto& value) { return value.record->key == key; }))
 		throw std::logic_error("Frame identity already issued");
 	if (sequenceCapture && (!sequenceCapture->request.sequence || !sequenceCapture->request.owner.id ||
 							sequenceCapture->request.frame != prediction.id ||
@@ -92,10 +84,7 @@ void FrameHistory::Issue(
 	if (m_records.size() == m_capacity)
 	{
 		auto retired = std::find_if(m_records.begin(), m_records.end(),
-									[](const auto& value)
-									{
-										return !Pending(value.record->stage);
-									});
+									[](const auto& value) { return !Pending(value.record->stage); });
 		if (retired == m_records.end())
 			throw std::length_error("Frame history pipeline capacity exhausted");
 		const auto index = static_cast<std::size_t>(retired - m_records.begin());
@@ -198,11 +187,9 @@ XrResult FrameHistory::Submit(FrameId frame, FrameSubmissionState state, const s
 	}
 	const auto submitted = Trace(FrameTraceKind::Submitted, record->key, record->submission->displayTime);
 	const bool refreshed = m_diagnostics->ReadInto(*diagnostics, 0, 256, record->key);
-	const bool recorded = submitted.sequence && std::any_of(diagnostics->events.begin(), diagnostics->events.end(),
-															[&](const auto& event)
-															{
-																return event.sequence == submitted.sequence;
-															});
+	const bool recorded =
+		submitted.sequence && std::any_of(diagnostics->events.begin(), diagnostics->events.end(),
+										  [&](const auto& event) { return event.sequence == submitted.sequence; });
 	if (!refreshed || !recorded)
 	{
 		if (diagnostics->events.size() == 256)
@@ -238,11 +225,8 @@ void FrameHistory::CancelPending() noexcept
 std::shared_ptr<const FrameRecord> FrameHistory::Find(FrameKey key) const
 {
 	std::lock_guard lock(m_mutex);
-	auto found = std::find_if(m_records.begin(), m_records.end(),
-							  [&](const auto& value)
-							  {
-								  return value.record->key == key;
-							  });
+	auto found =
+		std::find_if(m_records.begin(), m_records.end(), [&](const auto& value) { return value.record->key == key; });
 	return found == m_records.end() ? nullptr : found->record;
 }
 
@@ -260,11 +244,8 @@ FrameHistorySnapshot FrameHistory::Snapshot() const
 std::shared_ptr<const FrameRecord> FrameHistory::CancellationRecord(FrameKey key) const
 {
 	std::lock_guard lock(m_mutex);
-	const auto found = std::find_if(m_records.begin(), m_records.end(),
-									[&](const auto& value)
-									{
-										return value.record->key == key;
-									});
+	const auto found =
+		std::find_if(m_records.begin(), m_records.end(), [&](const auto& value) { return value.record->key == key; });
 	return found == m_records.end() ? nullptr : found->cancelled;
 }
 } // namespace simxr

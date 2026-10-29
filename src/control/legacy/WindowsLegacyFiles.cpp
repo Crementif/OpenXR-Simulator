@@ -129,8 +129,7 @@ void WindowsLegacyOutput::Abort() noexcept
 			m_stream.close();
 	}
 	catch (...)
-	{
-	}
+	{}
 	std::error_code ignored;
 	std::filesystem::remove(m_temporary, ignored);
 }

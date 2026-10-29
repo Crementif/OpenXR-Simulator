@@ -34,16 +34,14 @@ void CheckVideoExport(Interaction& test)
 	const auto directory = QaDirectory("SIMXR_UI_QA_DIR");
 	Require(!directory.empty(), "Video QA needs an output directory");
 	Eventually(
-		[&]
-		{
+		[&] {
 			test.Frame();
 			return test.runtime.History().Size() >= 32;
 		},
 		"Video history did not arrive");
 	test.runtime.Pause();
 	Eventually(
-		[&]
-		{
+		[&] {
 			test.Frame();
 			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
 		},
@@ -92,8 +90,7 @@ void CheckPreviewHistory(Interaction& test)
 {
 	const auto& history = test.runtime.History();
 	Eventually(
-		[&]
-		{
+		[&] {
 			test.Frame();
 			std::size_t covered = 0;
 			for (std::size_t index = 0; index < history.Size(); ++index)
@@ -103,8 +100,7 @@ void CheckPreviewHistory(Interaction& test)
 		"Continuous runtime history did not populate the Images lane");
 	test.runtime.Pause();
 	Eventually(
-		[&]
-		{
+		[&] {
 			test.Frame();
 			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
 		},
@@ -120,28 +116,27 @@ void CheckPreviewHistory(Interaction& test)
 	for (std::size_t index = 0; index < frames.size(); index += std::max<std::size_t>(1, frames.size() / 12))
 		if (history.At(frames[index]).identity.frame >= 3)
 			thumbnails.push_back(history.At(frames[index]));
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		auto& previews = test.runtime.KeptPreviews();
 		previews.BeginThumbnails();
 		for (const auto& frame : thumbnails)
 			previews.RequestThumbnail(frame.identity, frame.epoch);
 	};
-	Eventually([&]
-	{
-		test.Frame();
-		for (const auto& frame : thumbnails)
-		{
-			const auto shot = test.runtime.KeptPreviews().Nearest(frame.identity, frame.epoch);
-			if (!shot || shot->frame != frame.identity)
-				return false;
-		}
-		return true;
-	}, "Timeline thumbnails did not load across retained history");
+	Eventually(
+		[&] {
+			test.Frame();
+			for (const auto& frame : thumbnails)
+			{
+				const auto shot = test.runtime.KeptPreviews().Nearest(frame.identity, frame.epoch);
+				if (!shot || shot->frame != frame.identity)
+					return false;
+			}
+			return true;
+		},
+		"Timeline thumbnails did not load across retained history");
 	TimelineCanvas overview;
 	overview.Fit();
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::SetNextWindowPos({20, 480}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({1200, 280}, ImGuiCond_Always);
 		ImGui::Begin("Retained timeline thumbnails");
@@ -150,11 +145,12 @@ void CheckPreviewHistory(Interaction& test)
 		ImGui::End();
 	};
 	test.Frame();
-	Eventually([&]
-	{
-		test.Frame();
-		return !test.runtime.KeptPreviews().MissingThumbnail();
-	}, "Fitted timeline thumbnails did not finish loading");
+	Eventually(
+		[&] {
+			test.Frame();
+			return !test.runtime.KeptPreviews().MissingThumbnail();
+		},
+		"Fitted timeline thumbnails did not finish loading");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "timeline-thumbnails.bmp");
@@ -174,8 +170,7 @@ void CheckPreviewHistory(Interaction& test)
 		previous = identity.frame;
 		test.runtime.LookAt(index);
 		Eventually(
-			[&]
-			{
+			[&] {
 				test.Frame();
 				const auto view = test.runtime.Snapshot();
 				const auto* inspector = FindPanel("Inspector");
@@ -202,8 +197,7 @@ void CheckPreviewHistory(Interaction& test)
 	}
 	const auto final = history.At(frames.back()).identity;
 	Eventually(
-		[&]
-		{
+		[&] {
 			test.Frame();
 			const auto view = test.runtime.Snapshot();
 			return view.selectedReady && view.selectedIdentity == final;
@@ -225,8 +219,7 @@ void CheckPreviewHistory(Interaction& test)
 
 void CheckSnapshotRetention(Interaction& test)
 {
-	const auto wait = [&](const auto& ready, const char* failure)
-	{
+	const auto wait = [&](const auto& ready, const char* failure) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 		for (;;)
 		{
@@ -239,34 +232,21 @@ void CheckSnapshotRetention(Interaction& test)
 										 state.error);
 		}
 	};
-	wait(
-		[](const auto& state)
-		{
-			return !state.operationPending;
-		},
-		"Initial retention configuration");
+	wait([](const auto& state) { return !state.operationPending; }, "Initial retention configuration");
 	test.runtime.Command(simxr::control::CommandKind::Pause);
-	wait(
-		[](const auto& state)
-		{
-			return state.manual && !state.operationPending && state.selectedReady;
-		},
-		"Pause for retention");
+	wait([](const auto& state) { return state.manual && !state.operationPending && state.selectedReady; },
+		 "Pause for retention");
 	test.runtime.Command(simxr::control::CommandKind::Step);
-	wait([](const auto& state)
-	{
-		return !state.operationPending && state.selectedReady && state.selectedCapture &&
-			state.selectedImageCapture == state.selectedCapture;
-	}, "Initial exact snapshot");
+	wait(
+		[](const auto& state) {
+			return !state.operationPending && state.selectedReady && state.selectedCapture &&
+				   state.selectedImageCapture == state.selectedCapture;
+		},
+		"Initial exact snapshot");
 	const auto pinned = test.runtime.Snapshot().selectedCapture;
 	Require(pinned != 0, "Pause did not retain a boundary snapshot");
 	test.runtime.Command(simxr::control::CommandKind::PinSnapshot, pinned);
-	wait(
-		[](const auto& state)
-		{
-			return !state.operationPending && state.selectedPinned;
-		},
-		"Pin boundary snapshot");
+	wait([](const auto& state) { return !state.operationPending && state.selectedPinned; }, "Pin boundary snapshot");
 	for (int index = 0; index < 200; ++index)
 	{
 		const auto previous = test.runtime.Snapshot().selectedCapture;
@@ -275,8 +255,7 @@ void CheckSnapshotRetention(Interaction& test)
 		ImGui::ActivateItemByID(timeline->GetID("Step forward"));
 		test.Frame();
 		wait(
-			[&](const auto& state)
-			{
+			[&](const auto& state) {
 				return !state.operationPending && state.selectedReady && state.selectedCapture != previous &&
 					   state.selectedImageCapture == state.selectedCapture;
 			},
@@ -286,16 +265,12 @@ void CheckSnapshotRetention(Interaction& test)
 			std::cout << "Retention QA " << index + 1 << "/200 frames\n" << std::flush;
 	}
 	const auto frames = test.runtime.TimelineFrames();
-	const auto saved = std::find_if(frames.begin(), frames.end(),
-									[&](const auto& frame)
-									{
-										return frame.capture == pinned;
-									});
+	const auto saved =
+		std::find_if(frames.begin(), frames.end(), [&](const auto& frame) { return frame.capture == pinned; });
 	Require(saved != frames.end(), "Pinned snapshot disappeared from the catalog");
 	test.runtime.SelectFrame(saved->local);
 	wait(
-		[&](const auto& state)
-		{
+		[&](const auto& state) {
 			return state.selectedReady && state.selectedImageCapture == pinned && state.selectedPinned;
 		},
 		"Pinned image did not survive 200 steps");
@@ -331,40 +306,41 @@ void CheckAppPicker(const char* executable)
 		::close(descriptor);
 	}
 	Require(::setenv("SIMXR_RECENT_CUSTOM", "literal value ; $()", 1) == 0 &&
-			::setenv("SIMXR_RECENT_EMPTY", "", 1) == 0, "Set launch environment fixtures");
+				::setenv("SIMXR_RECENT_EMPTY", "", 1) == 0,
+			"Set launch environment fixtures");
 	pid_t probe = 0;
 	char* arguments[] = {const_cast<char*>(executable), nullptr};
 	Require(::posix_spawn(&probe, executable, nullptr, nullptr, arguments, environ) == 0, "Start the orphan app");
 	::unsetenv("SIMXR_RECENT_CUSTOM");
 	::unsetenv("SIMXR_RECENT_EMPTY");
+
 	struct StopProbe
 	{
 		pid_t pid;
+
 		~StopProbe()
 		{
 			::kill(pid, SIGTERM);
 			::waitpid(pid, nullptr, 0);
 		}
 	} stopProbe{probe};
+
 	const auto endpoint = (directory / ("control." + std::to_string(probe) + ".sock")).string();
 	Eventually([&] { return std::filesystem::is_socket(endpoint); }, "Orphan app exposed no control socket");
 
 	Interaction test(true);
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 			test.Frame();
 	};
-	const auto shot = [&](const char* name)
-	{
+	const auto shot = [&](const char* name) {
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 		{
 			test.renderer.RequestScreenshot(std::filesystem::path(qa) / name);
 			pump(1);
 		}
 	};
-	const auto openPicker = [&]
-	{
+	const auto openPicker = [&] {
 		pump(2);
 		const auto* toolbar = FindPanel("##Workspace toolbar");
 		Require(toolbar != nullptr, "Top bar absent");
@@ -374,8 +350,7 @@ void CheckAppPicker(const char* executable)
 		pump(1);
 		return popups.back().Window->ID;
 	};
-	const auto closeEditor = [&]
-	{
+	const auto closeEditor = [&] {
 		auto* editor = ImGui::FindWindowByName("Launch profiles");
 		Require(editor != nullptr, "Profile editor did not open");
 		ImGui::ActivateItemByID(ImHashStr("#CLOSE", 0, editor->ID));
@@ -383,17 +358,19 @@ void CheckAppPicker(const char* executable)
 	};
 
 	const auto running = DiscoverRunningApps();
-	Require(running.size() == 1 && running.front().endpoint == endpoint && running.front().process == std::uint64_t(probe) &&
-				running.front().name == "xr_probe_linux" && running.front().started,
+	Require(running.size() == 1 && running.front().endpoint == endpoint &&
+				running.front().process == std::uint64_t(probe) && running.front().name == "xr_probe_linux" &&
+				running.front().started,
 			"Running did not list exactly the orphan app with its PID and start time");
 	const auto alias = std::filesystem::path(endpoint).parent_path() / "control.18446744073709551615.sock";
 	std::filesystem::create_symlink(endpoint, alias);
 	const auto aliased = DiscoverRunningApps();
 	std::filesystem::remove(alias);
-	const auto foundAlias = std::find_if(aliased.begin(), aliased.end(),
-		[&](const auto& app) { return app.endpoint == alias.string(); });
+	const auto foundAlias =
+		std::find_if(aliased.begin(), aliased.end(), [&](const auto& app) { return app.endpoint == alias.string(); });
 	Require(foundAlias != aliased.end() && foundAlias->process == std::uint64_t(probe) &&
-		foundAlias->name == "xr_probe_linux", "Discovery trusted the socket filename instead of its peer");
+				foundAlias->name == "xr_probe_linux",
+			"Discovery trusted the socket filename instead of its peer");
 	auto picker = openPicker();
 	pump(10);
 	Require(!test.runtime.Snapshot().connected, "Discovery attached to a running app");
@@ -407,8 +384,7 @@ void CheckAppPicker(const char* executable)
 	picker = openPicker();
 	ImGui::ActivateItemByID(ImHashStr("Connect", 0, ImHashStr(endpoint.c_str(), 0, picker)));
 	Eventually(
-		[&]
-		{
+		[&] {
 			pump(1);
 			const auto state = test.runtime.Snapshot();
 			return state.connected && state.endpoint == endpoint && state.selectedReady;
@@ -419,10 +395,11 @@ void CheckAppPicker(const char* executable)
 			"The connected app is not a recent entry");
 	const auto& environment = stored.recent.front().launch.environment;
 	Require(std::find(environment.begin(), environment.end(),
-		std::pair<std::string, std::string>{"SIMXR_RECENT_CUSTOM", "literal value ; $()"}) != environment.end() &&
-		std::find(environment.begin(), environment.end(),
-		std::pair<std::string, std::string>{"SIMXR_RECENT_EMPTY", ""}) != environment.end(),
-		"Recent launch dropped custom or empty environment entries");
+					  std::pair<std::string, std::string>{"SIMXR_RECENT_CUSTOM", "literal value ; $()"}) !=
+					environment.end() &&
+				std::find(environment.begin(), environment.end(),
+						  std::pair<std::string, std::string>{"SIMXR_RECENT_EMPTY", ""}) != environment.end(),
+			"Recent launch dropped custom or empty environment entries");
 	std::cout << "PASS orphan app listed under Running, not attached until Connect, then connected " << endpoint
 			  << '\n';
 
@@ -443,6 +420,7 @@ void CheckAppPicker(const char* executable)
 		{
 			std::filesystem::path path, backup;
 			bool moved = false;
+
 			~RestoreSettings()
 			{
 				if (!moved)
@@ -452,6 +430,7 @@ void CheckAppPicker(const char* executable)
 				std::filesystem::rename(backup, path, error);
 			}
 		} restore{settingsPath, directory / "companion.settings.before-failure"};
+
 		std::filesystem::rename(restore.path, restore.backup);
 		restore.moved = true;
 		Require(std::filesystem::create_directory(settingsPath), "Could not block the settings file commit");
@@ -466,7 +445,8 @@ void CheckAppPicker(const char* executable)
 				"Settings save failure changed the connected workspace into a failed run");
 		const auto* errorDetails = ImGui::FindWindowByName("Error details");
 		Require(!errorDetails || !errorDetails->Active, "Settings save failure opened the launch-error modal");
-		Require(std::filesystem::is_directory(settingsPath), "Settings failure fixture did not preserve its blocked path");
+		Require(std::filesystem::is_directory(settingsPath),
+				"Settings failure fixture did not preserve its blocked path");
 		const auto layoutPath = settingsPath.parent_path() / "companion-v2.ini";
 		std::filesystem::remove(layoutPath);
 		bool finishFailed = false;
@@ -495,8 +475,7 @@ void CheckAppPicker(const char* executable)
 	AppPickerChoice namedChoice;
 	bool openNamed = false;
 	test.live = false;
-	test.extraDraw = [&]
-	{
+	test.extraDraw = [&] {
 		ImGui::Begin("Named profile picker");
 		const auto choice =
 			namedPicker.Draw(namedSettings, connectedView, "Apps", 0, "", std::exchange(openNamed, false), {});
@@ -504,8 +483,7 @@ void CheckAppPicker(const char* executable)
 			namedChoice = choice;
 		ImGui::End();
 	};
-	const auto openNamedPicker = [&]
-	{
+	const auto openNamedPicker = [&] {
 		namedChoice = {};
 		openNamed = true;
 		pump(2);
@@ -544,36 +522,31 @@ void CheckBodyRig(Interaction& test)
 	ManualInputController observer;
 	observer.SetTarget({target.endpoint, target.session, target.generation});
 	const auto qa = std::getenv("SIMXR_UI_QA_DIR");
-	const auto pump = [&](int count)
-	{
+	const auto pump = [&](int count) {
 		for (int index = 0; index < count; ++index)
 		{
 			test.Frame();
 			SDL_Delay(10);
 		}
 	};
-	const auto observe = [&]
-	{
+	const auto observe = [&] {
 		const auto previous = observer.Snapshot().observation;
 		observer.Refresh();
 		Eventually(
-			[&]
-			{
+			[&] {
 				pump(1);
 				return observer.Snapshot().observation > previous;
 			},
 			"Body observation stalled");
 		return ReadObservedSetup(observer.Snapshot().state);
 	};
-	const auto screenshot = [&](const std::string& name)
-	{
+	const auto screenshot = [&](const std::string& name) {
 		if (!qa)
 			return;
 		test.renderer.RequestScreenshot(std::filesystem::path(qa) / (name + ".bmp"));
 		pump(1);
 	};
-	const auto activate = [&](std::initializer_list<const char*> path)
-	{
+	const auto activate = [&](std::initializer_list<const char*> path) {
 		const auto inspector = FindPanel("Inspector");
 		Require(inspector, "Inspector missing");
 		ImGuiID id = inspector->ID;
@@ -582,8 +555,7 @@ void CheckBodyRig(Interaction& test)
 		ImGui::ActivateItemByID(id);
 		pump(6);
 	};
-	const auto near = [](XrVector3f a, XrVector3f b, float tolerance)
-	{
+	const auto near = [](XrVector3f a, XrVector3f b, float tolerance) {
 		return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z) < tolerance;
 	};
 	SDL_ShowWindow(test.window.Native());
@@ -609,7 +581,7 @@ void CheckBodyRig(Interaction& test)
 		Require(state.boundTrackers[slot] || markers[slot + 3].width == 0, "Unbound tracker has a marker");
 	if (std::getenv("SIMXR_PROBE_DEVICES"))
 		Require(std::count(state.boundTrackers.begin(), state.boundTrackers.end(), true) == 1 && trackerMarkers == 1,
-			"Probe's one bound tracker did not produce exactly one clickable marker");
+				"Probe's one bound tracker did not produce exactly one clickable marker");
 	if (trackerMarkers)
 	{
 		int device = 3;
@@ -692,8 +664,7 @@ void CheckBodyRig(Interaction& test)
 	const auto standing = observe();
 	activate({"Body pose", "T-pose"});
 	state = observe();
-	const auto evaluate = [](const ObservedSetup& observed)
-	{
+	const auto evaluate = [](const ObservedSetup& observed) {
 		return TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, observed.values.tracking,
 										BodyModel{observed.values.proportions});
 	};
@@ -715,8 +686,9 @@ void CheckBodyRig(Interaction& test)
 	}
 	for (std::size_t slot = 0; slot < 4; ++slot)
 		Require(near(posed.trackers[slot].pose.pose.position,
-					 posed.body.joints[static_cast<std::size_t>(
-										   BodyModel::TrackerJoint(state.values.tracking.trackers[slot].role))]
+					 posed.body
+						 .joints[static_cast<std::size_t>(
+							 BodyModel::TrackerJoint(state.values.tracking.trackers[slot].role))]
 						 .pose.position,
 					 .001f),
 				"Tracker left its joint in T-pose");
@@ -790,8 +762,7 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 	std::mt19937 random(seed);
 	std::deque<std::string> recent;
 	unsigned actions = 0;
-	const auto trace = [&](const std::string& action)
-	{
+	const auto trace = [&](const std::string& action) {
 		recent.push_back(std::to_string(++actions) + " " + action);
 		if (recent.size() > 20)
 			recent.pop_front();
@@ -800,23 +771,20 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 		for (const auto& entry : recent)
 			output << entry << '\n';
 	};
-	const auto pump = [&]
-	{
+	const auto pump = [&] {
 		for (int frame = 0; frame < 3; ++frame)
 			test.Frame();
 		Require(test.validation->errors.load() == 0, "Vulkan validation error during soak");
 		Require(test.runtime.Snapshot().connected && test.runtime.Snapshot().sessionAvailable,
 				"Soak lost its probe session");
 	};
-	const auto activate = [&](const char* region, const char* label)
-	{
+	const auto activate = [&](const char* region, const char* label) {
 		trace(std::string(region) + ": " + label);
 		if (auto* panel = FindPanel(region); panel && panel->Active)
 			ImGui::ActivateItemByID(panel->GetID(label));
 		pump();
 	};
-	const auto pointer = [&](ImVec2 point, std::optional<bool> down)
-	{
+	const auto pointer = [&](ImVec2 point, std::optional<bool> down) {
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -838,15 +806,14 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 		}
 		pump();
 	};
-	const auto drag = [&](const char* region)
-	{
+	const auto drag = [&](const char* region) {
 		if (auto* panel = FindPanel(region); panel && panel->Active)
 		{
 			const ImVec2 start{panel->Pos.x + panel->Size.x * (.2f + random() % 60 / 100.f),
 							   panel->Pos.y + panel->Size.y * (.2f + random() % 60 / 100.f)};
 			const ImVec2 end{start.x + int(random() % 81) - 40, start.y + int(random() % 61) - 30};
-			trace(std::string(region) + " drag " + std::to_string(start.x) + "," + std::to_string(start.y) +
-				  " -> " + std::to_string(end.x) + "," + std::to_string(end.y));
+			trace(std::string(region) + " drag " + std::to_string(start.x) + "," + std::to_string(start.y) + " -> " +
+				  std::to_string(end.x) + "," + std::to_string(end.y));
 			pointer(start, true);
 			pointer(end, std::nullopt);
 			pointer(end, false);
@@ -887,7 +854,8 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 				const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 				if (!popups.empty() && popups.back().Window)
 				{
-					static constexpr const char* choices[]{"Left", "Right", "Both", "Fit", "1:1", "2:1", "4:1", "Pick region"};
+					static constexpr const char* choices[]{"Left", "Right", "Both", "Fit",
+														   "1:1",  "2:1",	"4:1",	"Pick region"};
 					const auto* choice = choices[random() % std::size(choices)];
 					trace(std::string("View: ") + choice);
 					ImGui::ActivateItemByID(popups.back().Window->GetID(choice));
@@ -963,18 +931,19 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path& directory)
 {
 	const auto original = test.runtime.Snapshot();
-	const auto processFor = [&](const std::string& endpoint)
-	{
+	const auto processFor = [&](const std::string& endpoint) {
 		Require(std::filesystem::path(endpoint).parent_path() == directory,
 				"Restart escaped its isolated endpoint directory");
 		const auto name = std::filesystem::path(endpoint).filename().string();
 		Require(name.starts_with("control.") && name.ends_with(".sock"), "Unexpected restart endpoint name");
 		return static_cast<pid_t>(std::stoi(name.substr(8, name.size() - 13)));
 	};
+
 	struct ProbeCleanup
 	{
 		std::filesystem::path directory;
 		std::vector<pid_t> processes;
+
 		~ProbeCleanup()
 		{
 			try
@@ -987,8 +956,7 @@ void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path&
 				}
 			}
 			catch (...)
-			{
-			}
+			{}
 			std::ranges::sort(processes);
 			processes.erase(std::unique(processes.begin(), processes.end()), processes.end());
 			for (const auto process : processes)
@@ -1005,34 +973,28 @@ void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path&
 					}
 				}
 				catch (...)
-				{
-				}
+				{}
 		}
 	} cleanup{directory, {processFor(original.endpoint)}};
-	const auto pumpUntil = [&](auto condition, const char* message)
-	{
+
+	const auto pumpUntil = [&](auto condition, const char* message) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 		do
 		{
 			test.Frame();
 			Require(std::chrono::steady_clock::now() < deadline, message);
-		} while (!condition());
+		}
+		while (!condition());
 	};
-	const auto detect = [&]
-	{
+	const auto detect = [&] {
 		HeadsetHostOptions options;
 		options.executable = Utf8Path(SDL_GetBasePath()) / "headset_host_service_tests";
 		options.discover = true;
 		test.runtime.ConnectHeadset(std::move(options));
-		pumpUntil(
-			[&]
-			{
-				return test.runtime.HeadsetStatus().recommendedEyes.has_value();
-			},
-			"Restart fixture did not detect headset dimensions");
+		pumpUntil([&] { return test.runtime.HeadsetStatus().recommendedEyes.has_value(); },
+				  "Restart fixture did not detect headset dimensions");
 	};
-	const auto reviewRestart = [&]
-	{
+	const auto reviewRestart = [&] {
 		ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("##App picker"));
 		test.Frame();
 		test.Frame();
@@ -1059,12 +1021,8 @@ void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path&
 	test.runtime.Disconnect();
 	test.Frame();
 	test.Frame();
-	pumpUntil(
-		[&]
-		{
-			return test.runtime.HeadsetStatus().phase == HeadsetHostPhase::Exited;
-		},
-		"Cancelled restart did not stop its discovery host");
+	pumpUntil([&] { return test.runtime.HeadsetStatus().phase == HeadsetHostPhase::Exited; },
+			  "Cancelled restart did not stop its discovery host");
 	Require(::kill(cleanup.processes.front(), 0) == 0, "Target change closed the original game");
 	auto* error = FindPanel("Error details");
 	Require(error && error->Active, "Target-change cancellation did not explain why restart stopped");
@@ -1073,20 +1031,14 @@ void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path&
 	test.Frame();
 	ImGui::ClosePopupToLevel(0, true);
 	test.runtime.ConnectEndpoint(original.endpoint);
-	pumpUntil(
-		[&]
-		{
-			return test.runtime.Snapshot().selectedReady;
-		},
-		"Cancelled restart lost the original session");
+	pumpUntil([&] { return test.runtime.Snapshot().selectedReady; }, "Cancelled restart lost the original session");
 	Require(test.runtime.Snapshot().session == original.session &&
 				test.runtime.Snapshot().generation == original.generation,
 			"Cancelled restart replaced the application session");
 	detect();
 	reviewRestart();
 	pumpUntil(
-		[&]
-		{
+		[&] {
 			const auto state = test.runtime.Snapshot();
 			if (state.endpoint == original.endpoint || !state.connected || !state.selectedReady)
 				return false;
@@ -1116,8 +1068,7 @@ void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path&
 	Require(::kill(stoppedProcess, SIGSTOP) == 0, "Cannot gate the isolated replacement's exit");
 	reviewRestart();
 	pumpUntil(
-		[&]
-		{
+		[&] {
 			std::ifstream status(std::filesystem::path("/proc") / std::to_string(stoppedProcess) / "status");
 			for (std::string line; std::getline(status, line);)
 				if (line.starts_with("ShdPnd:") || line.starts_with("SigPnd:"))
@@ -1142,12 +1093,8 @@ void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path&
 	test.Frame();
 	ImGui::ClosePopupToLevel(0, true);
 	Require(::kill(stoppedProcess, SIGCONT) == 0, "Cannot release isolated application exit gate");
-	pumpUntil(
-		[&]
-		{
-			return ::kill(stoppedProcess, 0) != 0 && errno == ESRCH;
-		},
-		"Cancelled restart did not observe original close completion");
+	pumpUntil([&] { return ::kill(stoppedProcess, 0) != 0 && errno == ESRCH; },
+			  "Cancelled restart did not observe original close completion");
 	for (unsigned frame = 0; frame < 50; ++frame)
 		test.Frame();
 	Require(test.runtime.Endpoint() == changedEndpoint,

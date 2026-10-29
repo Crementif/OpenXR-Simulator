@@ -25,34 +25,32 @@ static void Write(const std::filesystem::path& path, const std::string& source)
 	file.close();
 	Require(bool(file), "Write rig fixture");
 }
+
 static std::string Read(const std::filesystem::path& path)
 {
 	std::ifstream file(path, std::ios::binary);
 	Require(bool(file), "Read saved report");
 	return {std::istreambuf_iterator<char>(file), {}};
 }
+
 static automation::RigSnapshot Finished(app::RigController& rigs)
 {
-	Eventually(
-		[&]
-		{
-			return !rigs.IsActive();
-		},
-		"Rig controller did not settle");
+	Eventually([&] { return !rigs.IsActive(); }, "Rig controller did not settle");
 	return rigs.Snapshot();
 }
+
 static app::RigReportResult Report(app::RigController& rigs)
 {
 	std::optional<app::RigReportResult> result;
 	Eventually(
-		[&]
-		{
+		[&] {
 			result = rigs.TakeReportResult();
 			return result.has_value();
 		},
 		"Report worker did not settle");
 	return std::move(*result);
 }
+
 static void Check(const std::filesystem::path& root, const std::string& endpoint)
 {
 	simxr::Runtime runtime{simxr::ExtensionRegistry{std::span<const simxr::ExtensionDefinition>{}}};
@@ -145,27 +143,31 @@ static void Check(const std::filesystem::path& root, const std::string& endpoint
 	owner->active.store(false);
 	rigs.CancelDisconnected();
 	Require(Finished(rigs).phase == automation::RigPhase::Cancelled, "Disconnected owner left a running rig");
-	const auto wrongPeer = rigs.RunSource(target, "simxr.checkpoint('wrong peer', true)", "wrong.luau", {},
-		other, process + 1);
+	const auto wrongPeer =
+		rigs.RunSource(target, "simxr.checkpoint('wrong peer', true)", "wrong.luau", {}, other, process + 1);
 	const auto rejected = Finished(rigs);
 	Require(rigs.OwnedBy(other, wrongPeer) && rejected.phase == automation::RigPhase::Failed &&
-		rejected.error.find("different process") != std::string::npos,
-		"Rig worker accepted a different runtime endpoint process");
+				rejected.error.find("different process") != std::string::npos,
+			"Rig worker accepted a different runtime endpoint process");
 }
+
 int main()
 {
 	const auto name =
 		"simxr-rig-controller-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
 	const auto root = std::filesystem::temp_directory_path() / name;
+
 	struct Cleanup
 	{
 		std::filesystem::path path;
+
 		~Cleanup()
 		{
 			std::error_code error;
 			std::filesystem::remove_all(path, error);
 		}
 	} cleanup{root};
+
 	try
 	{
 		std::filesystem::create_directory(root);

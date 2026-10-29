@@ -11,15 +11,18 @@ static bool Active(const DebugOperation& operation)
 {
 	return operation.phase == DebugPhase::Queued || operation.phase == DebugPhase::Pending;
 }
+
 static bool Admission(DebugCommand command)
 {
 	return command == DebugCommand::Step || command == DebugCommand::StrictAdmission;
 }
+
 static bool Settled(SnapshotPhase phase)
 {
 	return phase != SnapshotPhase::Reserved && phase != SnapshotPhase::Issued && phase != SnapshotPhase::Begun &&
 		   phase != SnapshotPhase::GpuPending;
 }
+
 static bool After(const SnapshotRecord& record, const std::optional<FrameKey>& cursor)
 {
 	return !record.frame || !cursor || *record.frame > *cursor;
@@ -73,8 +76,7 @@ void DebugController::Close(bool resume) noexcept
 			ResumeSession();
 	}
 	catch (...)
-	{
-	}
+	{}
 	RetireOwned();
 	m_manual = false;
 	m_boundaryCaptured = false;
@@ -88,13 +90,7 @@ std::optional<DebugLease> DebugController::Acquire(SessionGeneration expected)
 	{
 		std::lock_guard execute(m_execute);
 		std::optional<DebugLease> result;
-		m_session->WithDebugGeneration(
-			expected,
-			[&]
-			{
-				result = Acquire();
-			},
-			false);
+		m_session->WithDebugGeneration(expected, [&] { result = Acquire(); }, false);
 		return result;
 	}
 	const auto now = m_clock->Now();
@@ -114,13 +110,7 @@ bool DebugController::Renew(DebugLeaseId lease, SessionGeneration expected)
 	{
 		std::lock_guard execute(m_execute);
 		bool result = false;
-		m_session->WithDebugGeneration(
-			expected,
-			[&]
-			{
-				result = Renew(lease);
-			},
-			false);
+		m_session->WithDebugGeneration(expected, [&] { result = Renew(lease); }, false);
 		return result;
 	}
 	const auto now = m_clock->Now();
@@ -139,13 +129,7 @@ bool DebugController::Relinquish(DebugLeaseId lease, SessionGeneration expected)
 	{
 		std::lock_guard execute(m_execute);
 		bool result = false;
-		m_session->WithDebugGeneration(
-			expected,
-			[&]
-			{
-				result = Relinquish(lease);
-			},
-			false);
+		m_session->WithDebugGeneration(expected, [&] { result = Relinquish(lease); }, false);
 		return result;
 	}
 	std::lock_guard lock(m_state);
@@ -162,11 +146,9 @@ DebugSubmission DebugController::Submit(DebugLeaseId lease, const DebugRequest& 
 	std::lock_guard lock(m_state);
 	if (m_stopping)
 		return {DebugAdmission::Closed, {}};
-	const auto previous = std::find_if(m_operations.begin(), m_operations.end(),
-									   [&](const auto& operation)
-									   {
-										   return operation.lease == lease && operation.request.id == request.id;
-									   });
+	const auto previous = std::find_if(m_operations.begin(), m_operations.end(), [&](const auto& operation) {
+		return operation.lease == lease && operation.request.id == request.id;
+	});
 	if (previous != m_operations.end())
 		return {previous->request == request ? DebugAdmission::Duplicate : DebugAdmission::Conflict, previous->id};
 	if (!m_lease || m_lease->id != lease || now >= m_lease->expires || m_recovering)
@@ -224,44 +206,30 @@ bool DebugController::Acknowledge(DebugLeaseId lease, DebugCommandId through, st
 	bool accepted = false;
 	{
 		std::lock_guard execute(m_execute);
-		const auto mutate = [&]
-		{
+		const auto mutate = [&] {
 			std::lock_guard lock(m_state);
 			if (!lease.value || !through.value ||
-				std::any_of(m_operations.begin(), m_operations.end(),
-							[&](const auto& operation)
-							{
-								return operation.lease == lease && operation.request.id <= through && Active(operation);
-							}))
+				std::any_of(m_operations.begin(), m_operations.end(), [&](const auto& operation) {
+					return operation.lease == lease && operation.request.id <= through && Active(operation);
+				}))
 				return false;
 			const bool current = m_lease && m_lease->id == lease;
 			if (!current && std::none_of(m_operations.begin(), m_operations.end(),
-										 [&](const auto& operation)
-										 {
-											 return operation.lease == lease;
-										 }))
+										 [&](const auto& operation) { return operation.lease == lease; }))
 				return false;
 			retired.reserve(m_operations.size());
 			for (auto& operation : m_operations)
 				if (operation.lease == lease && operation.request.id <= through)
 					retired.push_back(std::move(operation));
-			std::erase_if(m_operations,
-						  [&](const auto& operation)
-						  {
-							  return operation.lease == lease && operation.request.id <= through;
-						  });
+			std::erase_if(m_operations, [&](const auto& operation) {
+				return operation.lease == lease && operation.request.id <= through;
+			});
 			if (current)
 				m_retiredFloor = std::max(m_retiredFloor, through);
 			return true;
 		};
 		if (expected.value)
-			m_session->WithDebugGeneration(
-				expected,
-				[&]
-				{
-					accepted = mutate();
-				},
-				false);
+			m_session->WithDebugGeneration(expected, [&] { accepted = mutate(); }, false);
 		else
 			accepted = mutate();
 	}
@@ -276,10 +244,7 @@ std::optional<DebugOperation> DebugController::Read(DebugOperationId operation) 
 {
 	std::lock_guard lock(m_state);
 	const auto entry = std::find_if(m_operations.begin(), m_operations.end(),
-									[&](const auto& value)
-									{
-										return value.id == operation;
-									});
+									[&](const auto& value) { return value.id == operation; });
 	return entry == m_operations.end() ? std::nullopt : std::optional{*entry};
 }
 
@@ -323,10 +288,7 @@ void DebugController::Publish(DebugOperation operation)
 {
 	std::lock_guard lock(m_state);
 	const auto entry = std::find_if(m_operations.begin(), m_operations.end(),
-									[&](const auto& value)
-									{
-										return value.id == operation.id;
-									});
+									[&](const auto& value) { return value.id == operation.id; });
 	if (entry != m_operations.end())
 		*entry = std::move(operation);
 }
@@ -373,11 +335,7 @@ void DebugController::Poll() noexcept
 	try
 	{
 		m_session->Captures().Poll();
-		std::erase_if(m_owned,
-					  [&](const auto& owned)
-					  {
-						  return !m_session->Captures().Read(owned.capture);
-					  });
+		std::erase_if(m_owned, [&](const auto& owned) { return !m_session->Captures().Read(owned.capture); });
 		std::optional<DebugLeaseId> expired;
 		bool recovering;
 		std::size_t count;
@@ -432,11 +390,7 @@ void DebugController::Poll() noexcept
 			{
 				if (operation.request.generation.value)
 				{
-					if (!m_session->WithDebugGeneration(operation.request.generation,
-														[&]
-														{
-															Process(operation);
-														}))
+					if (!m_session->WithDebugGeneration(operation.request.generation, [&] { Process(operation); }))
 						Fail(operation, DebugProgress::SessionEnded, XR_ERROR_SESSION_NOT_RUNNING);
 				}
 				else
@@ -478,12 +432,9 @@ void DebugController::Fail(DebugOperation& operation, DebugProgress progress, Xr
 bool DebugController::OtherAdmission(DebugOperationId current) const
 {
 	std::lock_guard lock(m_state);
-	return std::any_of(m_operations.begin(), m_operations.end(),
-					   [&](const auto& value)
-					   {
-						   return value.id != current && value.phase == DebugPhase::Pending &&
-								  Admission(value.request.command);
-					   });
+	return std::any_of(m_operations.begin(), m_operations.end(), [&](const auto& value) {
+		return value.id != current && value.phase == DebugPhase::Pending && Admission(value.request.command);
+	});
 }
 
 std::vector<SnapshotRecord> DebugController::OrderedCaptures(CaptureTarget target) const
@@ -497,15 +448,13 @@ std::vector<SnapshotRecord> DebugController::OrderedCaptures(CaptureTarget targe
 		if (auto record = m_session->Captures().Read(id);
 			record && record->generation == m_generation && record->target == target && After(*record, cursor))
 			records.push_back(std::move(*record));
-	std::sort(records.begin(), records.end(),
-			  [](const auto& left, const auto& right)
-			  {
-				  if (left.frame && right.frame)
-					  return *left.frame < *right.frame;
-				  if (left.frame != right.frame)
-					  return left.frame.has_value();
-				  return left.id < right.id;
-			  });
+	std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
+		if (left.frame && right.frame)
+			return *left.frame < *right.frame;
+		if (left.frame != right.frame)
+			return left.frame.has_value();
+		return left.id < right.id;
+	});
 	return records;
 }
 
@@ -513,42 +462,26 @@ std::vector<SnapshotRecord> DebugController::Candidates(DebugOperation& operatio
 {
 	auto records = OrderedCaptures(operation.request.target);
 	if (!operation.request.additionalTargets.empty())
-		std::erase_if(records,
-					  [&](const auto& record)
-					  {
-						  return !record.frame ||
-								 std::any_of(operation.request.additionalTargets.begin(),
-											 operation.request.additionalTargets.end(),
-											 [&](const auto target)
-											 {
-												 return !m_session->Captures().Find(*record.frame, target);
-											 });
-					  });
-	std::erase_if(records,
-				  [&](const auto& record)
-				  {
-					  if (record.phase != SnapshotPhase::Discarded && record.phase != SnapshotPhase::Cancelled)
-						  return false;
-					  if (std::find(operation.diagnostics.begin(), operation.diagnostics.end(), record.id) ==
-						  operation.diagnostics.end())
-						  operation.diagnostics.push_back(record.id);
-					  return true;
-				  });
+		std::erase_if(records, [&](const auto& record) {
+			return !record.frame ||
+				   std::any_of(operation.request.additionalTargets.begin(), operation.request.additionalTargets.end(),
+							   [&](const auto target) { return !m_session->Captures().Find(*record.frame, target); });
+		});
+	std::erase_if(records, [&](const auto& record) {
+		if (record.phase != SnapshotPhase::Discarded && record.phase != SnapshotPhase::Cancelled)
+			return false;
+		if (std::find(operation.diagnostics.begin(), operation.diagnostics.end(), record.id) ==
+			operation.diagnostics.end())
+			operation.diagnostics.push_back(record.id);
+		return true;
+	});
 	return records;
 }
 
 void DebugController::Own(DebugLeaseId lease, CaptureId capture)
 {
-	std::erase_if(m_owned,
-				  [&](const auto& owned)
-				  {
-					  return !m_session->Captures().Read(owned.capture);
-				  });
-	if (std::none_of(m_owned.begin(), m_owned.end(),
-					 [&](const auto& owned)
-					 {
-						 return owned.capture == capture;
-					 }))
+	std::erase_if(m_owned, [&](const auto& owned) { return !m_session->Captures().Read(owned.capture); });
+	if (std::none_of(m_owned.begin(), m_owned.end(), [&](const auto& owned) { return owned.capture == capture; }))
 	{
 		if (m_owned.size() == m_owned.capacity())
 			throw std::logic_error("Capture ownership exceeded snapshot capacity");
@@ -569,11 +502,7 @@ void DebugController::RetireOwned(std::optional<DebugLeaseId> lease)
 			m_session->Captures().Release(owned.capture);
 			m_session->RefillImageRecording(owned.capture);
 		}
-	std::erase_if(m_owned,
-				  [&](const auto& owned)
-				  {
-					  return !lease || owned.lease == *lease;
-				  });
+	std::erase_if(m_owned, [&](const auto& owned) { return !lease || owned.lease == *lease; });
 	for (std::size_t index = 0;; ++index)
 	{
 		std::shared_ptr<const FrameOutput> retired;
@@ -631,25 +560,16 @@ void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& r
 	// Raw requests only target future submissions. Once their retained records
 	// are gone, no historical composed image can recreate an old raw cursor.
 	const auto retained = m_session->Captures().Snapshot().captures;
-	std::erase_if(m_cursors,
-				  [&](const auto& cursor)
-				  {
-					  return cursor.target.IsLayerImage() &&
-							 std::none_of(retained.begin(), retained.end(),
-										  [&](auto id)
-										  {
-											  const auto value = m_session->Captures().Read(id);
-											  return value && value->generation == m_generation &&
-													 value->target == cursor.target;
-										  });
-				  });
+	std::erase_if(m_cursors, [&](const auto& cursor) {
+		return cursor.target.IsLayerImage() && std::none_of(retained.begin(), retained.end(), [&](auto id) {
+				   const auto value = m_session->Captures().Read(id);
+				   return value && value->generation == m_generation && value->target == cursor.target;
+			   });
+	});
 	if (record.frame)
 	{
 		auto cursor = std::find_if(m_cursors.begin(), m_cursors.end(),
-								   [&](const auto& value)
-								   {
-									   return value.target == record.target;
-								   });
+								   [&](const auto& value) { return value.target == record.target; });
 		if (cursor != m_cursors.end())
 			cursor->frame = *record.frame;
 		else
@@ -858,11 +778,7 @@ void DebugController::Process(DebugOperation& operation)
 		{
 			operation.phase = DebugPhase::Complete;
 			operation.progress = DebugProgress::Released;
-			std::erase_if(m_owned,
-						  [&](const auto& owned)
-						  {
-							  return owned.capture == operation.request.capture;
-						  });
+			std::erase_if(m_owned, [&](const auto& owned) { return owned.capture == operation.request.capture; });
 			if (const auto replacement = m_session->RefillImageRecording(operation.request.capture); replacement.value)
 				Own(operation.lease, replacement);
 		}
@@ -954,14 +870,9 @@ void DebugController::Process(DebugOperation& operation)
 			Fail(operation, DebugProgress::RetentionFailure, XR_ERROR_LIMIT_REACHED);
 			return;
 		}
-		const auto release = [&]
-		{
+		const auto release = [&] {
 			m_session->Captures().Release(capture.id);
-			std::erase_if(m_owned,
-						  [&](const auto& owned)
-						  {
-							  return owned.capture == capture.id;
-						  });
+			std::erase_if(m_owned, [&](const auto& owned) { return owned.capture == capture.id; });
 		};
 		std::optional<PresentationTick> tick;
 		try

@@ -41,10 +41,13 @@ constexpr ImU32 Fade(ImU32 color, float opacity)
 																		  : alpha)
 										 << IM_COL32_A_SHIFT);
 }
+
 ImU32 Mix(ImU32 from, ImU32 to, float t);
+
 inline ImVec4 Vec(ImU32 color)
 {
 	return ImGui::ColorConvertU32ToFloat4(color);
 }
+
 void Apply(ImGuiStyle& style);
 } // namespace simxr::app::theme

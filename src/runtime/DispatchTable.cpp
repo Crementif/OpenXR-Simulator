@@ -5,18 +5,14 @@ namespace simxr
 {
 DispatchTable::DispatchTable(std::span<const DispatchEntry> entries, const ExtensionRegistry& extensions)
 	: m_entries(entries), m_extensions(extensions)
-{
-}
+{}
 
 XrResult DispatchTable::Resolve(std::string_view name, const EnabledExtensions* enabled,
 								PFN_xrVoidFunction& function) const
 {
 	function = nullptr;
-	auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-							  [&](const auto& value)
-							  {
-								  return value.name == name;
-							  });
+	auto entry =
+		std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.name == name; });
 	if (entry == m_entries.end() || !entry->function)
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	if (!enabled && !entry->global)
@@ -32,10 +28,7 @@ bool DispatchTable::CoversAdvertisedCommands() const
 	for (const auto& extension : m_extensions.Definitions())
 		for (auto command : extension.commands)
 			if (std::none_of(m_entries.begin(), m_entries.end(),
-							 [&](const auto& entry)
-							 {
-								 return entry.name == command && entry.function;
-							 }))
+							 [&](const auto& entry) { return entry.name == command && entry.function; }))
 				return false;
 	return true;
 }

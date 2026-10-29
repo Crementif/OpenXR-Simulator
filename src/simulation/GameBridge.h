@@ -21,6 +21,7 @@ enum class GameCommandPhase
 	Cancelled,
 	Interrupted
 };
+
 struct GameCommandRecord
 {
 	std::uint64_t id = 0, source = 0, clientId = 0;
@@ -29,6 +30,7 @@ struct GameCommandRecord
 	GameCommandPhase phase = GameCommandPhase::Queued;
 	bool sourceDisconnected = false;
 };
+
 struct GameBridgeSnapshot
 {
 	std::uint64_t game = 0, revision = 0;
@@ -43,6 +45,7 @@ enum class GameObservationKind
 	Unregistered,
 	Closed
 };
+
 struct GameObservation
 {
 	std::uint64_t sequence = 0, game = 0, revision = 0;
@@ -51,6 +54,7 @@ struct GameObservation
 	std::optional<NativeClockSample> time;
 	std::string payload;
 };
+
 struct GameObservationPage
 {
 	std::uint64_t floor = 0, offset = 0, next = 0, total = 0;
@@ -58,9 +62,10 @@ struct GameObservationPage
 	std::vector<GameObservation> observations;
 	GameBridgeSnapshot state;
 };
+
 class GameBridge
 {
-  public:
+public:
 	explicit GameBridge(std::size_t observationCapacity = 1024);
 	GameObservationPage Observations(std::optional<std::uint64_t> offset = {}, std::size_t count = 16) const;
 	std::uint64_t Register(std::uint32_t capabilities);
@@ -76,7 +81,7 @@ class GameBridge
 	GameBridgeSnapshot Snapshot() const;
 	bool FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcept;
 
-  private:
+private:
 	void Observe(GameObservation observation) noexcept;
 	std::vector<std::optional<GameObservation>> m_observations;
 	std::uint64_t m_observationNext = 0;
@@ -85,10 +90,12 @@ class GameBridge
 	GameBridgeSnapshot m_state;
 	bool m_closed = false;
 	std::uint64_t m_nextGame = 1, m_nextCommand = 1, m_lastGame = 0;
+
 	struct SourceCursor
 	{
 		std::uint64_t source = 0, last = 0;
 	};
+
 	std::vector<SourceCursor> m_sources;
 	std::vector<GameCommandRecord> m_commands;
 };

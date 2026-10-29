@@ -14,6 +14,7 @@ struct LogFileSnapshot
 	std::uint64_t size = 0;
 	bool truncated = false, changed = false;
 };
+
 std::optional<LogFileSnapshot> ReadLogFile(const std::filesystem::path& path);
 bool ClearLogFile(const std::filesystem::path& path);
 }

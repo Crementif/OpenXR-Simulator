@@ -178,20 +178,24 @@ static std::string DecodeString(const char* cursor)
 }
 
 Object::Object(const char* text) : m_begin(text ? std::strchr(text, '{') : nullptr) {}
+
 bool Object::Valid() const
 {
 	return m_begin != nullptr;
 }
+
 bool Object::Has(const char* key) const
 {
 	return Find(key) != nullptr;
 }
+
 std::string_view Object::Raw(const char* key) const
 {
 	const auto* value = Find(key);
 	const auto* end = value ? SkipValue(value) : nullptr;
 	return end ? std::string_view(value, static_cast<std::size_t>(end - value)) : std::string_view{};
 }
+
 double Object::Number(const char* key, double fallback) const
 {
 	const auto text = Raw(key);
@@ -203,6 +207,7 @@ double Object::Number(const char* key, double fallback) const
 		return std::numeric_limits<double>::quiet_NaN();
 	return result.ec == std::errc{} ? value : fallback;
 }
+
 float Object::Number(const char* key, float fallback) const
 {
 	const double value = Number(key, static_cast<double>(fallback));
@@ -211,6 +216,7 @@ float Object::Number(const char* key, float fallback) const
 		return fallback;
 	return static_cast<float>(value);
 }
+
 int Object::Number(const char* key, int fallback) const
 {
 	const double value = std::trunc(Number(key, static_cast<double>(fallback)));
@@ -218,6 +224,7 @@ int Object::Number(const char* key, int fallback) const
 		return fallback;
 	return static_cast<int>(value);
 }
+
 bool Object::Boolean(const char* key, bool fallback) const
 {
 	const auto* value = Find(key);
@@ -229,11 +236,13 @@ bool Object::Boolean(const char* key, bool fallback) const
 		return false;
 	return fallback;
 }
+
 std::string Object::String(const char* key, const char* fallback) const
 {
 	const auto* value = Find(key);
 	return value && *value == '"' ? DecodeString(value) : std::string(fallback);
 }
+
 Object Object::Child(const char* key) const
 {
 	Object child;
@@ -242,6 +251,7 @@ Object Object::Child(const char* key) const
 		child.m_begin = value;
 	return child;
 }
+
 const char* Object::Find(const char* key) const
 {
 	if (!m_begin || !key)

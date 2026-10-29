@@ -24,7 +24,7 @@ struct VulkanReadbackRegion
 // queue-access permit during Submit and must close borrowed work before device teardown.
 class VulkanReadbackBatch final : public GpuCompletion
 {
-  public:
+public:
 	static std::shared_ptr<VulkanReadbackBatch> Prepare(std::shared_ptr<VulkanDevice> device,
 														std::span<const VulkanReadbackRegion> regions);
 	~VulkanReadbackBatch();
@@ -34,7 +34,7 @@ class VulkanReadbackBatch final : public GpuCompletion
 	VkResult Wait(std::uint64_t timeout) const noexcept;
 	std::vector<std::vector<std::uint8_t>> ReadPixels() const;
 
-  private:
+private:
 	enum class Phase
 	{
 		Prepared,

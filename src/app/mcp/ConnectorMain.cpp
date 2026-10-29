@@ -25,21 +25,25 @@ static int ConnectorMain(int argc, char** argv)
 #endif
 	if (argc == 2 && std::string_view(argv[1]) == "--version")
 	{
-		if (std::printf("OpenXR Simulator MCP connector %s (connector protocol %u)\n",
-			simxr::Version, static_cast<unsigned>(simxr::app::McpConnectorProtocolVersion)) < 0 || std::fflush(stdout) != 0)
+		if (std::printf("OpenXR Simulator MCP connector %s (connector protocol %u)\n", simxr::Version,
+						static_cast<unsigned>(simxr::app::McpConnectorProtocolVersion)) < 0 ||
+			std::fflush(stdout) != 0)
 			return 1;
 		return 0;
 	}
 	if (argc == 2 && std::string_view(argv[1]) == "--help")
 	{
 #ifdef SIMXR_MCP_DISCOVERY
-		std::fputs("Usage: simxr_mcp_connector [--app ABSOLUTE_PATH] [--windowless] [--print-config [--client generic|codex]] | --port PORT\n"
+		std::fputs("Usage: simxr_mcp_connector [--app ABSOLUTE_PATH] [--windowless] [--print-config [--client "
+				   "generic|codex]] | --port PORT\n"
 				   "--print-config writes JSON (generic) or TOML (codex) without starting the simulator.\n"
 				   "--version prints the connector build and compatibility protocol.\n"
-				   "The development --port mode reads its credential from SIMXR_MCP_TOKEN.\n", stderr);
+				   "The development --port mode reads its credential from SIMXR_MCP_TOKEN.\n",
+				   stderr);
 #else
 		std::fputs("Usage: simxr_mcp_connector --port PORT\n"
-				   "The development --port mode reads its credential from SIMXR_MCP_TOKEN.\n", stderr);
+				   "The development --port mode reads its credential from SIMXR_MCP_TOKEN.\n",
+				   stderr);
 #endif
 		return 0;
 	}
@@ -76,18 +80,21 @@ static int ConnectorMain(int argc, char** argv)
 			}
 			if (client && !printConfig)
 				throw std::invalid_argument("--client requires --print-config");
-			const auto executable = selected ? *selected : simxr::app::McpOwnExecutable().parent_path() /
+			const auto executable = selected ? *selected
+											 : simxr::app::McpOwnExecutable().parent_path() /
 #ifdef _WIN32
-				"simxr_companion.exe";
+												   "simxr_companion.exe";
 #else
-				"simxr_companion";
+												   "simxr_companion";
 #endif
 			if (!executable.is_absolute())
 				throw std::invalid_argument("The selected MCP app path must be absolute");
 			if (printConfig)
 			{
-				const auto output = simxr::app::McpConfiguration(simxr::app::McpOwnExecutable(), selected, windowless,
-					client.value_or(simxr::app::McpConfigurationClient::Generic)) + '\n';
+				const auto output =
+					simxr::app::McpConfiguration(simxr::app::McpOwnExecutable(), selected, windowless,
+												 client.value_or(simxr::app::McpConfigurationClient::Generic)) +
+					'\n';
 				if (std::fwrite(output.data(), 1, output.size(), stdout) != output.size() || std::fflush(stdout) != 0)
 					throw std::runtime_error("Cannot write MCP configuration");
 				return 0;

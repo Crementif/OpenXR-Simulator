@@ -19,7 +19,7 @@ namespace simxr::windows
 // Image IDs are borrowed by the application; this owner alone deletes them.
 class OpenGLSwapchain final
 {
-  public:
+public:
 	static std::span<const std::int64_t> Formats() noexcept;
 	static XrResult MaxSampleCount(std::uint32_t& output);
 	// Output must be empty; every failure leaves it unchanged.
@@ -34,7 +34,7 @@ class OpenGLSwapchain final
 	// Context acquisition failure keeps every image owned for a later Close retry.
 	bool Close() noexcept;
 
-  private:
+private:
 	OpenGLSwapchain(HDC device, HGLRC context, GLenum format);
 	XrResult Allocate(const XrSwapchainCreateInfo& description);
 

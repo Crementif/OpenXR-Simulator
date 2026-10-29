@@ -3,7 +3,8 @@
 
 namespace simxr
 {
-template <class Event> static void WriteEvent(const Event& event, XrEventDataBuffer& output)
+template<class Event>
+static void WriteEvent(const Event& event, XrEventDataBuffer& output)
 {
 	static_assert(std::is_trivially_copyable_v<Event>);
 	static_assert(sizeof(Event) <= sizeof(output));
@@ -47,6 +48,7 @@ static void EncodeEvent(const TrackerConnectedEvent& value, XrEventDataBuffer& o
 		XrEventDataViveTrackerConnectedHTCX event;
 		XrViveTrackerPathsHTCX paths;
 	};
+
 	static_assert(alignof(TrackerConnectedPayload) <= alignof(XrEventDataBuffer));
 	// The pointer must address the caller's final buffer, never this local value.
 	auto* outputPaths = reinterpret_cast<XrViveTrackerPathsHTCX*>(reinterpret_cast<std::byte*>(&output) +
@@ -95,12 +97,7 @@ XrResult EventQueue::Poll(XrEventDataBuffer& buffer)
 	}
 	if (m_pending.empty())
 		return XR_EVENT_UNAVAILABLE;
-	std::visit(
-		[&buffer](const auto& event)
-		{
-			EncodeEvent(event, buffer);
-		},
-		m_pending.front());
+	std::visit([&buffer](const auto& event) { EncodeEvent(event, buffer); }, m_pending.front());
 	m_pending.erase(m_pending.begin());
 	return XR_SUCCESS;
 }
@@ -108,18 +105,15 @@ XrResult EventQueue::Poll(XrEventDataBuffer& buffer)
 void EventQueue::RemoveSession(XrSession session)
 {
 	std::lock_guard lock(m_mutex);
-	std::erase_if(m_pending,
-				  [session](const RuntimeEvent& event)
-				  {
-					  return std::visit(
-						  [session](const auto& value)
-						  {
-							  if constexpr (requires { value.session; })
-								  return value.session == session;
-							  return false;
-						  },
-						  event);
-				  });
+	std::erase_if(m_pending, [session](const RuntimeEvent& event) {
+		return std::visit(
+			[session](const auto& value) {
+				if constexpr (requires { value.session; })
+					return value.session == session;
+				return false;
+			},
+			event);
+	});
 }
 
 std::vector<ObservedEvent> EventQueue::Observe(std::uint64_t afterSequence) const

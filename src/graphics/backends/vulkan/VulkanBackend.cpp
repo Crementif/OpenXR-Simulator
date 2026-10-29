@@ -6,7 +6,6 @@
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "shaders/generated/CompositorSpirv.h"
 
-
 namespace simxr
 {
 XrResult VulkanGraphicsFailure(VkResult result)
@@ -42,6 +41,7 @@ struct VulkanBackend::Pipeline
 	VkSampler nearestSampler = VK_NULL_HANDLE;
 	VkShaderModule vertex = VK_NULL_HANDLE;
 	VkShaderModule pixel = VK_NULL_HANDLE;
+
 	~Pipeline()
 	{
 		const auto native = device->binding.device;
@@ -191,15 +191,18 @@ struct VulkanBackend::State
 {
 	VulkanNativePreservation<State, 64>::Reservation preservation{
 		"Sixty-four native Vulkan backend owners are retained"};
+
 	struct Pending
 	{
 		std::shared_ptr<VulkanSubmission> submission;
 		std::shared_ptr<VulkanFrame> frame;
 	};
+
 	struct Retirement
 	{
 		std::mutex mutex;
 		std::vector<Pending> pending;
+
 		void Poll()
 		{
 			std::array<Pending, 64> retired;
@@ -209,16 +212,13 @@ struct VulkanBackend::State
 				for (auto& entry : pending)
 					if (entry.submission->NativeIdle())
 						retired.at(count++) = std::move(entry);
-				std::erase_if(pending,
-							  [](const auto& entry)
-							  {
-								  return !entry.submission;
-							  });
+				std::erase_if(pending, [](const auto& entry) { return !entry.submission; });
 			}
 			for (std::size_t index = 0; index < count; ++index)
 				retired[index].submission->ReleaseSources();
 		}
 	};
+
 	std::shared_ptr<VulkanDevice> device;
 	std::shared_ptr<Pipeline> pipeline;
 	std::shared_ptr<Pipeline> depthMultisamplePipeline;
@@ -227,31 +227,24 @@ struct VulkanBackend::State
 	std::shared_ptr<VulkanImagePool> imagePool;
 	std::array<std::shared_ptr<VulkanImage>, 8> localOutputs;
 	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
+
 	State(std::size_t capacity, std::size_t liveCapacity)
-		: reservations(
-			  [capacity]
-			  {
-				  return capacity ? capacity : SnapshotBudget::Capacity();
-			  },
-			  [weak = std::weak_ptr<Retirement>(retirement)]
-			  {
-				  if (const auto retained = weak.lock())
-					  retained->Poll();
-			  }),
+		: reservations([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); },
+					   [weak = std::weak_ptr<Retirement>(retirement)] {
+						   if (const auto retained = weak.lock())
+							   retained->Poll();
+					   }),
 		  liveReservations(liveCapacity,
-						   [weak = std::weak_ptr<Retirement>(retirement)]
-						   {
+						   [weak = std::weak_ptr<Retirement>(retirement)] {
 							   if (const auto retained = weak.lock())
 								   retained->Poll();
 						   }),
-		  historyReservations(6,
-							  [weak = std::weak_ptr<Retirement>(retirement)]
-							  {
-								  if (const auto retained = weak.lock())
-									  retained->Poll();
-							  })
-	{
-	}
+		  historyReservations(6, [weak = std::weak_ptr<Retirement>(retirement)] {
+			  if (const auto retained = weak.lock())
+				  retained->Poll();
+		  })
+	{}
+
 	FramePool reservations;
 	FramePool liveReservations;
 	FramePool historyReservations;
@@ -268,13 +261,9 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 	: m_state(std::make_unique<State>(frameCapacity, liveCapacity))
 {
 	m_state->device = std::make_shared<VulkanDevice>(binding);
-	const auto enabled = [&](const char* name)
-	{
+	const auto enabled = [&](const char* name) {
 		return std::any_of(enabledExtensions.begin(), enabledExtensions.end(),
-						   [&](const auto* value)
-						   {
-							   return value && std::strcmp(value, name) == 0;
-						   });
+						   [&](const auto* value) { return value && std::strcmp(value, name) == 0; });
 	};
 	if (enabled(VulkanExternalMemoryExtension) && enabled(VulkanExternalSemaphoreExtension))
 		m_state->external =
@@ -356,16 +345,8 @@ FramePool VulkanBackend::LiveReservations() const
 void VulkanBackend::RetireCompleted()
 {
 	m_state->retirement->Poll();
-	std::erase_if(m_state->submissions,
-				  [](const auto& entry)
-				  {
-					  return entry.expired();
-				  });
-	std::erase_if(m_state->images,
-				  [](const auto& entry)
-				  {
-					  return entry.expired();
-				  });
+	std::erase_if(m_state->submissions, [](const auto& entry) { return entry.expired(); });
+	std::erase_if(m_state->images, [](const auto& entry) { return entry.expired(); });
 }
 
 std::shared_ptr<VulkanSubmission> VulkanBackend::InitializeImage(std::shared_ptr<VulkanImage> image)
@@ -449,11 +430,9 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		return XR_ERROR_LIMIT_REACHED;
 	const bool multisampledDepth = !plan.draws.empty() && plan.draws.front().constants.control[0] == 2 &&
 								   plan.draws.front().constants.control[2] != 0;
-	if (multisampledDepth && std::any_of(plan.draws.begin(), plan.draws.end(),
-										 [](const auto& draw)
-										 {
-											 return draw.constants.control[0] != 2 || !draw.constants.control[2];
-										 }))
+	if (multisampledDepth && std::any_of(plan.draws.begin(), plan.draws.end(), [](const auto& draw) {
+			return draw.constants.control[0] != 2 || !draw.constants.control[2];
+		}))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (multisampledDepth && !m_state->depthMultisamplePipeline)
 		m_state->depthMultisamplePipeline = CreatePipeline(m_state->device, true);
@@ -558,11 +537,8 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		{
 			if (!resolve || !(image->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
 				return XR_ERROR_FEATURE_UNSUPPORTED;
-			const auto found = std::find_if(resolved.begin(), resolved.end(),
-											[&](const auto& entry)
-											{
-												return entry.first == image;
-											});
+			const auto found =
+				std::find_if(resolved.begin(), resolved.end(), [&](const auto& entry) { return entry.first == image; });
 			if (found != resolved.end())
 				image = found->second;
 			else

@@ -41,6 +41,7 @@ static void Mapping()
 			"Incomplete stereo metadata accepted");
 }
 } // namespace simxr::headset::tests
+
 int main()
 {
 	try

@@ -8,6 +8,7 @@ std::string PilotBindingLabel(const PilotBinding& binding)
 	return (binding.modifiers & 1 ? std::string{"Ctrl+"} : std::string{}) + (binding.modifiers & 2 ? "Shift+" : "") +
 		   (binding.modifiers & 4 ? "Alt+" : "") + (binding.modifiers & 8 ? "Super+" : "") + binding.key;
 }
+
 PilotBindings DefaultPilotBindings()
 {
 	return {{{"MouseRight"}, {"W"},		   {"S"},		{"A"},		 {"D"},			{"Q"},		   {"E"},

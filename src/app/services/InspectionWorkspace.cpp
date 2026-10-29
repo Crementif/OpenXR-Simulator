@@ -7,10 +7,12 @@ namespace simxr::app
 namespace wire = control;
 namespace tag = wire::tag;
 using namespace panel;
+
 InspectionWorkspace::InspectionWorkspace(RuntimePanelRequests& requests) : m_requests(requests)
 {
 	m_captures.reserve(SnapshotBudget::Capacity());
 }
+
 void InspectionWorkspace::SetScope(PanelScope scope, bool clearSelection)
 {
 	if (m_scope.epoch != scope.epoch)
@@ -19,19 +21,19 @@ void InspectionWorkspace::SetScope(PanelScope scope, bool clearSelection)
 	if (clearSelection)
 		m_selectedLocal = m_selectedId = 0;
 }
+
 void InspectionWorkspace::SetCapacity(std::size_t capacity) noexcept
 {
 	m_capacity = capacity;
 }
+
 InspectionCapture* InspectionWorkspace::Find(std::uint64_t id)
 {
 	const auto found = std::find_if(m_captures.begin(), m_captures.end(),
-									[&](const auto& capture)
-									{
-										return capture.id == id && capture.scope == m_scope;
-									});
+									[&](const auto& capture) { return capture.id == id && capture.scope == m_scope; });
 	return found == m_captures.end() ? nullptr : &*found;
 }
+
 bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 {
 	if (!id)
@@ -45,19 +47,14 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 	}
 	if (m_captures.size() >= m_capacity.value_or(SnapshotBudget::Capacity()))
 	{
-		const auto oldest = std::find_if(m_captures.begin(), m_captures.end(),
-										 [&](const auto& capture)
-										 {
-											 return capture.local != m_selectedLocal &&
-													(capture.released || !Boolean(capture.metadata, tag::Pinned));
-										 });
+		const auto oldest = std::find_if(m_captures.begin(), m_captures.end(), [&](const auto& capture) {
+			return capture.local != m_selectedLocal && (capture.released || !Boolean(capture.metadata, tag::Pinned));
+		});
 		if (oldest == m_captures.end())
 		{
-			if (std::all_of(m_captures.begin(), m_captures.end(),
-							[](const auto& capture)
-							{
-								return !capture.released && Boolean(capture.metadata, tag::Pinned);
-							}))
+			if (std::all_of(m_captures.begin(), m_captures.end(), [](const auto& capture) {
+					return !capture.released && Boolean(capture.metadata, tag::Pinned);
+				}))
 				m_error = "History is full. Unpin a snapshot to free space.";
 			return false;
 		}
@@ -73,11 +70,13 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 	m_captures.push_back(std::move(capture));
 	return true;
 }
+
 void InspectionWorkspace::MarkUnavailable(std::uint64_t capture)
 {
 	if (auto current = Find(capture))
 		current->released = true;
 }
+
 void InspectionWorkspace::MarkReleased(std::uint64_t capture)
 {
 	if (auto current = Find(capture))
@@ -86,6 +85,7 @@ void InspectionWorkspace::MarkReleased(std::uint64_t capture)
 		current->released = true;
 	}
 }
+
 bool InspectionWorkspace::Select(std::uint64_t id)
 {
 	const auto capture = Find(id);
@@ -95,6 +95,7 @@ bool InspectionWorkspace::Select(std::uint64_t id)
 	m_selectedLocal = capture->local;
 	return !capture->released;
 }
+
 void InspectionWorkspace::SelectLocal(std::uint64_t local)
 {
 	for (const auto& capture : m_captures)
@@ -105,6 +106,7 @@ void InspectionWorkspace::SelectLocal(std::uint64_t local)
 			return;
 		}
 }
+
 void InspectionWorkspace::SelectImage(PanelScope scope, std::uint64_t id)
 {
 	m_selectedId = id;
@@ -113,10 +115,12 @@ void InspectionWorkspace::SelectImage(PanelScope scope, std::uint64_t id)
 		if (capture.scope == scope && capture.id == id)
 			m_selectedLocal = capture.local;
 }
+
 std::uint64_t InspectionWorkspace::SelectedId() const noexcept
 {
 	return m_selectedId;
 }
+
 const InspectionCapture* InspectionWorkspace::Selected() const
 {
 	for (const auto& capture : m_captures)
@@ -124,10 +128,12 @@ const InspectionCapture* InspectionWorkspace::Selected() const
 			return &capture;
 	return nullptr;
 }
+
 std::span<const InspectionCapture> InspectionWorkspace::Captures() const noexcept
 {
 	return m_captures;
 }
+
 std::vector<std::uint64_t> InspectionWorkspace::CaptureIds() const
 {
 	std::vector<std::uint64_t> result;
@@ -136,6 +142,7 @@ std::vector<std::uint64_t> InspectionWorkspace::CaptureIds() const
 			result.push_back(capture.id);
 	return result;
 }
+
 void InspectionWorkspace::ReleaseInspection(InspectionCapture& capture)
 {
 	if (capture.inspection && capture.scope.epoch == m_scope.epoch)
@@ -143,6 +150,7 @@ void InspectionWorkspace::ReleaseInspection(InspectionCapture& capture)
 	capture.inspection = 0;
 	capture.document = {};
 }
+
 void InspectionWorkspace::ReleaseSelected()
 {
 	for (auto& capture : m_captures)
@@ -153,6 +161,7 @@ void InspectionWorkspace::ReleaseSelected()
 				capture.released = true;
 		}
 }
+
 void InspectionWorkspace::InspectSelected()
 {
 	const auto capture = Selected();
@@ -166,6 +175,7 @@ void InspectionWorkspace::InspectSelected()
 					 wire::Field::U64(tag::CaptureId, capture->id, true)},
 					capture->id);
 }
+
 bool InspectionWorkspace::Handle(const PanelTask& task, const wire::Message& message)
 {
 	switch (task.kind)
@@ -220,12 +230,14 @@ bool InspectionWorkspace::Handle(const PanelTask& task, const wire::Message& mes
 	}
 	return true;
 }
+
 void InspectionWorkspace::RequestRevision(std::uint64_t id, std::uint64_t documentEpoch)
 {
 	if (documentEpoch == m_scope.epoch && m_revisions.size() < 64 && !m_requests.Has(PanelWork::Revision, id))
 		m_requests.Send(wire::OpCode::FeatureRevision, PanelWork::Revision,
 						{wire::Field::U64(tag::RevisionId, id, true)}, id);
 }
+
 const wire::Message* InspectionWorkspace::Revision(std::uint64_t id, std::uint64_t documentEpoch) const
 {
 	if (documentEpoch != m_scope.epoch)
@@ -233,6 +245,7 @@ const wire::Message* InspectionWorkspace::Revision(std::uint64_t id, std::uint64
 	const auto found = m_revisions.find(id);
 	return found == m_revisions.end() ? nullptr : &found->second;
 }
+
 std::string InspectionWorkspace::TakeError()
 {
 	return std::exchange(m_error, {});

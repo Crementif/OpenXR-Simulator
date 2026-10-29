@@ -39,11 +39,13 @@ void VirtualDisplay::ConfigurePolicy(PresentationPolicy policy, HeadSampler samp
 	std::lock_guard lock(m_mutex);
 	m_policy = policy;
 }
+
 PresentationPolicy VirtualDisplay::Policy() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_policy;
 }
+
 std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
 															std::optional<SessionGeneration> generation, bool exact,
 															const std::function<bool()>& current)
@@ -51,8 +53,7 @@ std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
 	if (m_policy == PresentationPolicy::Repeat)
 		return exact ? m_controller.AdvanceExternal(time, *generation, {}, current)
 					 : m_controller.Advance(time, generation);
-	const auto reproject = [this](const PresentationTick& baseline)
-	{
+	const auto reproject = [this](const PresentationTick& baseline) {
 		PoseSample head;
 		try
 		{
@@ -348,14 +349,12 @@ void VirtualDisplay::Run() noexcept
 					if (m_clock->Now() >= m_external->targetHost)
 						continue;
 					lock.unlock();
-					AdvanceTick(target, generation, true,
-								[&]
-								{
-									std::lock_guard state(m_mutex);
-									return m_active && !m_paused && m_generation == generation && m_external &&
-										   m_external->attachment == pulse.attachment &&
-										   m_external->sequence == pulse.sequence && m_clock->Now() < pulse.targetHost;
-								});
+					AdvanceTick(target, generation, true, [&] {
+						std::lock_guard state(m_mutex);
+						return m_active && !m_paused && m_generation == generation && m_external &&
+							   m_external->attachment == pulse.attachment && m_external->sequence == pulse.sequence &&
+							   m_clock->Now() < pulse.targetHost;
+					});
 					lock.lock();
 					continue;
 				}

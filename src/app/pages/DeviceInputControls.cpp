@@ -20,6 +20,7 @@ void DeviceControlPanel::ClearHeldInputs()
 	m_padFrames = {-1, -1};
 	m_padActiveIds = {};
 }
+
 std::optional<SimulationEdit> DeviceControlPanel::EndInputFrame()
 {
 	if (m_fieldFrame != ImGui::GetFrameCount() || !Active())
@@ -71,6 +72,7 @@ std::optional<SimulationEdit> DeviceControlPanel::EndInputFrame()
 		return {};
 	return release;
 }
+
 void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 {
 	auto& controller = m_authoredTracking.controllers[hand];
@@ -103,8 +105,7 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 		m_padFrames[hand] = ImGui::GetFrameCount();
 		m_padActiveIds[hand] = 0;
 	}
-	const auto held = [&](bool& value)
-	{
+	const auto held = [&](bool& value) {
 		if (enabled)
 		{
 			value = ImGui::IsItemActive() && ImGui::GetCurrentContext()->ActiveIdMouseButton == ImGuiMouseButton_Left &&
@@ -178,6 +179,7 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 		(previous.menu && !controls.menu) || (previous.thumbClick && !controls.thumbClick) ||
 		(previous.trigger != 0 && controls.trigger == 0) || (previous.grip != 0 && controls.grip == 0) || stickReleased;
 }
+
 void DeviceControlPanel::DrawController(std::uint32_t hand, const std::function<void()>& placement)
 {
 	const auto channel = hand ? ControlChannel::RightPose : ControlChannel::LeftPose;

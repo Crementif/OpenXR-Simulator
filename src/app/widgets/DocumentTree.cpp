@@ -8,23 +8,27 @@ namespace simxr::app
 namespace wire = control;
 namespace tag = wire::tag;
 static constexpr std::uint32_t s_maximumNodes = 2048;
+
 void DocumentTree::Begin(std::uint64_t documentEpoch)
 {
 	m_nodesDrawn = 0;
 	m_documentEpoch = documentEpoch;
 }
+
 void DocumentTree::Draw(const char* id, std::span<const std::byte> bytes)
 {
 	ImGui::PushID(id);
 	Node(bytes, 0);
 	ImGui::PopID();
 }
+
 void DocumentTree::OpenWindow(std::span<const std::byte> bytes, std::uint64_t documentEpoch)
 {
 	m_windowDocument.assign(bytes.begin(), bytes.end());
 	m_windowEpoch = documentEpoch;
 	m_windowOpen = true;
 }
+
 void DocumentTree::DrawWindow()
 {
 	if (!m_windowOpen)
@@ -37,6 +41,7 @@ void DocumentTree::DrawWindow()
 	}
 	ImGui::End();
 }
+
 void DocumentTree::Node(std::span<const std::byte> bytes, unsigned depth)
 {
 	if (bytes.empty())

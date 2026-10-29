@@ -18,23 +18,27 @@ struct TimeCursor
 	FrameIdentity cursor;
 	std::uint64_t epoch = 0;
 };
+
 struct RuntimeFrameRun
 {
 	std::uint64_t epoch = 0, session = 0, generation = 0;
 	bool operator==(const RuntimeFrameRun&) const = default;
 };
+
 struct RuntimeFrame
 {
 	RuntimeFrameRun run;
 	std::uint64_t local = 0, capture = 0, frame = 0;
 	bool selected = false, imageReady = false, stateReady = false, remoteAvailable = false;
 };
+
 struct SteppedFrame
 {
 	FrameIdentity frame;
 	std::uint64_t epoch = 0;
 	bool requested = false;
 };
+
 struct SessionView
 {
 	TimeCursor time;

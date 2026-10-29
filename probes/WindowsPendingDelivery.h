@@ -17,17 +17,19 @@
 namespace simxr
 {
 class VulkanDevice;
+
 namespace control
 {
 class VulkanImageConsumer;
 }
+
 namespace probe
 {
 int RunWindowsPendingConsumer(bool gated, std::uint32_t runtimeProcess);
 
 class WindowsPendingDelivery
 {
-  public:
+public:
 	explicit WindowsPendingDelivery(bool gated = false, std::uint32_t runtimeProcess = 0);
 	~WindowsPendingDelivery();
 	WindowsPendingDelivery(const WindowsPendingDelivery&) = delete;
@@ -38,7 +40,7 @@ class WindowsPendingDelivery
 	void ReleaseAndVerify();
 	void CheckWatchdog() const;
 
-  private:
+private:
 	static constexpr std::size_t DeliveryCount = 8;
 	const bool m_gated;
 	const std::uint32_t m_runtimeProcess;

@@ -85,8 +85,7 @@ static void ActionPoses()
 {
 	Instance instance(reinterpret_cast<XrInstance>(951), {}, XR_MAKE_VERSION(1, 0, 0));
 	auto& registry = instance.Actions();
-	const auto path = [&](const char* text)
-	{
+	const auto path = [&](const char* text) {
 		XrPath value = XR_NULL_PATH;
 		Require(registry.StringToPath(text, value) == XR_SUCCESS, "Intern controller path");
 		return value;
@@ -147,6 +146,7 @@ static void ActionPoses()
 			"Legacy controller action retains grip-as-aim behavior");
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

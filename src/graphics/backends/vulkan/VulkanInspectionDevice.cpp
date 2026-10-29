@@ -69,6 +69,7 @@ struct VulkanInspectionDevice::Native
 	VkDevice device = VK_NULL_HANDLE;
 	VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
 	std::shared_ptr<VulkanInspectionValidation> validation;
+
 	~Native()
 	{
 		if (device)
@@ -149,13 +150,10 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 			continue;
 		const auto extensions = InspectionExtensions(physical);
 		const auto fenceCaps = VulkanExternalDevice::QueryFence(physical, VK_API_VERSION_1_1);
-		const bool fences =
-			!requireTimeline && fenceCaps.CanImport() && fenceCaps.CanExport() &&
-			std::any_of(extensions.begin(), extensions.end(),
-						[](const auto& extension)
-						{
-							return std::strcmp(extension.extensionName, VulkanExternalFenceExtension) == 0;
-						});
+		const bool fences = !requireTimeline && fenceCaps.CanImport() && fenceCaps.CanExport() &&
+							std::any_of(extensions.begin(), extensions.end(), [](const auto& extension) {
+								return std::strcmp(extension.extensionName, VulkanExternalFenceExtension) == 0;
+							});
 		const auto timelineCaps = VulkanExternalDevice::QueryTimeline(physical, VK_API_VERSION_1_1);
 		const bool timeline = !fences && timelineCaps.CanImportSemaphore() && timelineCaps.CanExportSemaphore();
 		if (requireTimeline && !timeline)
@@ -172,10 +170,7 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 		bool video = application.apiVersion >= VK_API_VERSION_1_3 && properties.apiVersion >= VK_API_VERSION_1_3;
 		for (const auto name : videoExtensions)
 			video &= std::any_of(extensions.begin(), extensions.end(),
-								 [name](const auto& entry)
-								 {
-									 return std::strcmp(entry.extensionName, name) == 0;
-								 });
+								 [name](const auto& entry) { return std::strcmp(entry.extensionName, name) == 0; });
 		if (video)
 		{
 			std::vector<VkQueueFamilyVideoPropertiesKHR> codecs(count,
@@ -206,11 +201,9 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 			std::vector<VkDeviceQueueCreateInfo> queues{queue};
 			if (video)
 				for (const auto videoFamily : {encodeFamily, decodeFamily})
-					if (std::none_of(queues.begin(), queues.end(),
-									 [videoFamily](const auto& entry)
-									 {
-										 return entry.queueFamilyIndex == videoFamily;
-									 }))
+					if (std::none_of(queues.begin(), queues.end(), [videoFamily](const auto& entry) {
+							return entry.queueFamilyIndex == videoFamily;
+						}))
 					{
 						auto videoQueue = queue;
 						videoQueue.queueFamilyIndex = videoFamily;
@@ -250,14 +243,17 @@ const std::shared_ptr<VulkanDevice>& VulkanInspectionDevice::Device() const noex
 {
 	return m_device;
 }
+
 std::span<const char* const> VulkanInspectionDevice::EnabledExtensions() const noexcept
 {
 	return m_extensions;
 }
+
 bool VulkanInspectionDevice::ConsumerFencesEnabled() const noexcept
 {
 	return m_consumerFences;
 }
+
 bool VulkanInspectionDevice::ConsumerTimelineEnabled() const noexcept
 {
 	return m_consumerTimeline;

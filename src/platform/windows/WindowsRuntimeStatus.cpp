@@ -19,11 +19,13 @@ static void WriteJsonString(std::ostream& output, std::string_view text)
 	}
 	output << '"';
 }
+
 WindowsRuntimeStatus::WindowsRuntimeStatus(std::shared_ptr<WindowsRuntimeFiles> files) : m_files(std::move(files))
 {
 	if (!m_files)
 		throw std::invalid_argument("Runtime status requires an output worker");
 }
+
 void WindowsRuntimeStatus::PublishStatus(FrameStatus status)
 {
 	{

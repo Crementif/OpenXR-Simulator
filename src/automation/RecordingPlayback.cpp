@@ -12,6 +12,7 @@ static std::uint64_t AddFrame(std::uint64_t frame, std::uint64_t offset)
 		throw std::overflow_error("Recording exceeds the replay frame range");
 	return frame + offset;
 }
+
 static RecordingArchiveState Validate(const std::filesystem::path& directory, RigProgress& progress)
 {
 	RecordingArchiveReader reader(directory);
@@ -41,6 +42,7 @@ static RecordingArchiveState Validate(const std::filesystem::path& directory, Ri
 		throw std::runtime_error("Replay requires a complete recording archive");
 	return reader.State();
 }
+
 void ReplayRecordingArchive(const std::filesystem::path& directory, std::uint64_t seed, RigRuntime& runtime,
 							RigProgress& progress)
 {
@@ -59,8 +61,7 @@ void ReplayRecordingArchive(const std::filesystem::path& directory, std::uint64_
 	std::vector<std::uint64_t> pending;
 	pending.reserve(256);
 	std::uint64_t target = base;
-	const auto finishFrame = [&]
-	{
+	const auto finishFrame = [&] {
 		if (pending.empty())
 			return;
 		runtime.AdvanceToFrame(FrameId{target});

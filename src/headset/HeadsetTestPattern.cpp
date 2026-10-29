@@ -211,6 +211,7 @@ XrSwapchain HeadsetTestPattern::Swapchain() const
 {
 	return m_swapchain;
 }
+
 XrExtent2Di HeadsetTestPattern::Extent() const
 {
 	return {s_size, s_size};

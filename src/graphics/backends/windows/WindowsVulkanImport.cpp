@@ -7,8 +7,7 @@ namespace simxr
 {
 WindowsVulkanImport::WindowsVulkanImport(std::shared_ptr<VulkanDevice> device, std::shared_ptr<const FrameOutput> owner)
 	: m_device(std::move(device)), m_owner(std::move(owner))
-{
-}
+{}
 
 WindowsVulkanImport::~WindowsVulkanImport()
 {
@@ -20,6 +19,7 @@ const std::shared_ptr<VulkanImage>& WindowsVulkanImport::Image() const noexcept
 {
 	return m_image;
 }
+
 VkSemaphore WindowsVulkanImport::Ready() const noexcept
 {
 	return m_ready;

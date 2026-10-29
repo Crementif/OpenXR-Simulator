@@ -19,7 +19,7 @@ enum class TransferHandleKind : std::uint32_t
 // interprets their values, and a copied packet shares ownership safely.
 class TransferHandle
 {
-  public:
+public:
 	virtual ~TransferHandle() = default;
 	virtual TransferHandleKind Kind() const noexcept = 0;
 	virtual std::intptr_t Value() const noexcept = 0;
@@ -28,7 +28,7 @@ class TransferHandle
 
 class PacketExposure
 {
-  public:
+public:
 	virtual ~PacketExposure() = default;
 	// The transport invokes this when native handles become visible, or before
 	// an asynchronous send whose failed wait cannot rule out peer exposure.

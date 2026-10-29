@@ -9,6 +9,7 @@
 namespace simxr::automation::script
 {
 namespace wire = control;
+
 std::uint64_t Integer(lua_State* state, int index)
 {
 	if (lua_type(state, index) == LUA_TSTRING)
@@ -28,6 +29,7 @@ std::uint64_t Integer(lua_State* state, int index)
 	}
 	throw std::invalid_argument("Expected an exact unsigned integer or canonical decimal string");
 }
+
 std::string String(lua_State* state, int index)
 {
 	if (lua_type(state, index) != LUA_TSTRING)
@@ -38,6 +40,7 @@ std::string String(lua_State* state, int index)
 		throw std::invalid_argument("Invalid bounded string");
 	return {value, length};
 }
+
 static float FiniteFloat(double value)
 {
 	if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
@@ -55,6 +58,7 @@ static float FloatField(lua_State* state, int table, const char* key, float fall
 		throw std::invalid_argument("Expected a finite number");
 	return FiniteFloat(value);
 }
+
 static bool BoolField(lua_State* state, int table, const char* key, bool fallback)
 {
 	lua_getfield(state, table, key);
@@ -65,6 +69,7 @@ static bool BoolField(lua_State* state, int table, const char* key, bool fallbac
 		throw std::invalid_argument("Expected a boolean");
 	return value;
 }
+
 std::uint64_t IntegerField(lua_State* state, int table, const char* key, std::uint64_t fallback)
 {
 	lua_getfield(state, table, key);
@@ -72,6 +77,7 @@ std::uint64_t IntegerField(lua_State* state, int table, const char* key, std::ui
 	lua_pop(state, 1);
 	return value;
 }
+
 std::uint32_t IndexField(lua_State* state, int table, const char* key, std::uint32_t fallback)
 {
 	const auto value = IntegerField(state, table, key, fallback);
@@ -79,6 +85,7 @@ std::uint32_t IndexField(lua_State* state, int table, const char* key, std::uint
 		throw std::invalid_argument("Index exceeds uint32");
 	return static_cast<std::uint32_t>(value);
 }
+
 std::string StringField(lua_State* state, int table, const char* key, std::string fallback)
 {
 	lua_getfield(state, table, key);
@@ -86,6 +93,7 @@ std::string StringField(lua_State* state, int table, const char* key, std::strin
 	lua_pop(state, 1);
 	return value;
 }
+
 ScriptCaptureTarget CaptureTarget(lua_State* state, int index)
 {
 	if (!lua_istable(state, index))
@@ -114,6 +122,7 @@ ScriptCaptureTarget CaptureTarget(lua_State* state, int index)
 		throw std::invalid_argument("Composed capture cannot select a source layer/view");
 	return target;
 }
+
 wire::TargetKind HistoryTarget(lua_State* state, int index)
 {
 	const auto target = lua_isnoneornil(state, index) ? ScriptCaptureTarget{} : CaptureTarget(state, index);
@@ -121,6 +130,7 @@ wire::TargetKind HistoryTarget(lua_State* state, int index)
 		throw std::invalid_argument("History target must be composed or quad_layers");
 	return target.kind;
 }
+
 std::optional<std::uint32_t> HistorySlice(lua_State* state, int index)
 {
 	if (lua_isnoneornil(state, index))
@@ -130,6 +140,7 @@ std::optional<std::uint32_t> HistorySlice(lua_State* state, int index)
 		throw std::invalid_argument("Historical eye slice must be 0 or 1");
 	return static_cast<std::uint32_t>(slice);
 }
+
 static std::vector<float> Vector(lua_State* state, int table, const char* key, std::initializer_list<float> fallback)
 {
 	lua_getfield(state, table, key);
@@ -150,6 +161,7 @@ static std::vector<float> Vector(lua_State* state, int table, const char* key, s
 	lua_pop(state, 1);
 	return values;
 }
+
 static PoseSample Pose(lua_State* state, int table)
 {
 	const auto position = Vector(state, table, "position", {0, 0, 0});
@@ -157,6 +169,7 @@ static PoseSample Pose(lua_State* state, int table)
 	return {{{orientation[0], orientation[1], orientation[2], orientation[3]}, {position[0], position[1], position[2]}},
 			IntegerField(state, table, "flags", TrackedPoseFlags)};
 }
+
 static constexpr std::array s_channelNames{"head",			 "left_pose",	"right_pose", "left_controls",
 										   "right_controls", "body",		"gaze",		  "trackers",
 										   "views",			 "proportions", "profiles",	  "session"};
@@ -164,7 +177,9 @@ static constexpr std::array s_scenarioNames{
 	"head_untracked",	"head_unavailable",	 "body_untracked",	   "body_unavailable",		"gaze_untracked",
 	"gaze_unavailable", "left_disconnected", "right_disconnected", "trackers_disconnected", "unfocused",
 	"hidden",			"recenter",			 "session_loss"};
-template <class Names> static std::uint32_t Named(lua_State* state, int table, const char* key, const Names& names)
+
+template<class Names>
+static std::uint32_t Named(lua_State* state, int table, const char* key, const Names& names)
 {
 	lua_getfield(state, table, key);
 	std::uint64_t value;
@@ -183,6 +198,7 @@ template <class Names> static std::uint32_t Named(lua_State* state, int table, c
 		throw std::invalid_argument("Command enum is out of range");
 	return static_cast<std::uint32_t>(value);
 }
+
 static ControllerControls ReadControls(lua_State* state, int table)
 {
 	ControllerControls controls;
@@ -214,6 +230,7 @@ static ControllerControls ReadControls(lua_State* state, int table)
 	controls.physicalProfile = StringField(state, table, "physical_profile", "");
 	return controls;
 }
+
 static BodyControls ReadBody(lua_State* state, int table)
 {
 	BodyControls body;
@@ -279,6 +296,7 @@ static BodyControls ReadBody(lua_State* state, int table)
 	lua_pop(state, 1);
 	return body;
 }
+
 static bool HasField(lua_State* state, int table, const char* key)
 {
 	lua_getfield(state, table, key);
@@ -286,6 +304,7 @@ static bool HasField(lua_State* state, int table, const char* key)
 	lua_pop(state, 1);
 	return present;
 }
+
 static RuntimeTime BodyTime(lua_State* state, int table, const char* key)
 {
 	const auto value = IntegerField(state, table, key, 0);
@@ -293,6 +312,7 @@ static RuntimeTime BodyTime(lua_State* state, int table, const char* key)
 		throw std::invalid_argument("Observed body time exceeds signed nanoseconds");
 	return {Duration{static_cast<std::int64_t>(value)}};
 }
+
 static int BodyArraySize(lua_State* state, int table)
 {
 	if (!lua_istable(state, table))
@@ -315,6 +335,7 @@ static int BodyArraySize(lua_State* state, int table)
 		throw std::invalid_argument("Observed body joint array contains holes");
 	return count;
 }
+
 static BodyObservation ReadObservation(lua_State* state, int table)
 {
 	if (!lua_istable(state, table) || !HasField(state, table, "joint_set") ||
@@ -384,6 +405,7 @@ static BodyObservation ReadObservation(lua_State* state, int table)
 	}
 	return NormalizeBodyObservation(std::move(body));
 }
+
 static TrackerDevice ReadTracker(lua_State* state, int table)
 {
 	TrackerDevice tracker{{IntegerField(state, table, "identity", 0)},
@@ -415,6 +437,7 @@ static TrackerDevice ReadTracker(lua_State* state, int table)
 	lua_pop(state, 1);
 	return tracker;
 }
+
 static ViewSettings ReadViews(lua_State* state, int table)
 {
 	ViewSettings settings;
@@ -429,6 +452,7 @@ static ViewSettings ReadViews(lua_State* state, int table)
 						  {fovAngles[4], fovAngles[5], fovAngles[6], fovAngles[7]}}};
 	return settings;
 }
+
 SimulationCommand Command(lua_State* state, int index)
 {
 	if (lua_type(state, index) == LUA_TSTRING)
@@ -572,16 +596,19 @@ SimulationCommand Command(lua_State* state, int index)
 	}
 	throw std::invalid_argument("Unknown simulation command kind");
 }
+
 void PushInteger(lua_State* state, std::uint64_t value)
 {
 	const auto text = std::to_string(value);
 	lua_pushlstring(state, text.data(), text.size());
 }
+
 void PushIntegerField(lua_State* state, const char* name, std::uint64_t value)
 {
 	PushInteger(state, value);
 	lua_setfield(state, -2, name);
 }
+
 static void PushNode(lua_State* state, std::span<const std::byte> bytes, unsigned depth, bool named)
 {
 	if (depth > 32)
@@ -673,6 +700,7 @@ static void PushNode(lua_State* state, std::span<const std::byte> bytes, unsigne
 		throw std::runtime_error("Unknown inspection value type");
 	}
 }
+
 void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned depth)
 {
 	PushNode(state, bytes, depth, false);

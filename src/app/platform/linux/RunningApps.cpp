@@ -32,6 +32,7 @@ static std::optional<std::string> ReadFile(const std::filesystem::path& path)
 		return {};
 	return text;
 }
+
 static std::optional<std::vector<std::string>> NulSeparated(const std::string& text, std::size_t limit)
 {
 	if (!text.empty() && text.back() != '\0')
@@ -47,34 +48,40 @@ static std::optional<std::vector<std::string>> NulSeparated(const std::string& t
 	}
 	return values;
 }
+
 static std::string Link(const std::filesystem::path& path)
 {
 	std::error_code error;
 	const auto target = std::filesystem::read_symlink(path, error);
 	return error ? std::string{} : target.string();
 }
+
 class ProbeSocket
 {
-  public:
+public:
 	ProbeSocket() : m_descriptor(::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0))
 	{
 		if (m_descriptor < 0)
 			throw std::system_error(errno, std::generic_category(), "Cannot probe runtime endpoint");
 	}
+
 	~ProbeSocket()
 	{
 		::close(m_descriptor);
 	}
+
 	ProbeSocket(const ProbeSocket&) = delete;
 	ProbeSocket& operator=(const ProbeSocket&) = delete;
+
 	int Get() const noexcept
 	{
 		return m_descriptor;
 	}
 
-  private:
+private:
 	int m_descriptor;
 };
+
 static bool Answers(const std::string& endpoint, std::chrono::milliseconds timeout, std::uint64_t& process)
 {
 	sockaddr_un address{};
@@ -99,7 +106,8 @@ static bool Answers(const std::string& endpoint, std::chrono::milliseconds timeo
 			const auto remaining =
 				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
 			ready = ::poll(&wait, 1, static_cast<int>(std::max<std::int64_t>(0, remaining.count())));
-		} while (ready < 0 && errno == EINTR && std::chrono::steady_clock::now() < deadline);
+		}
+		while (ready < 0 && errno == EINTR && std::chrono::steady_clock::now() < deadline);
 		int error = 0;
 		socklen_t size = sizeof(error);
 		alive = ready == 1 && ::getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0;
@@ -113,6 +121,7 @@ static bool Answers(const std::string& endpoint, std::chrono::milliseconds timeo
 	}
 	return alive;
 }
+
 static std::optional<std::chrono::system_clock::time_point> ProcessStart(std::uint64_t process)
 {
 	const auto stat = ReadFile(std::filesystem::path("/proc") / std::to_string(process) / "stat");
@@ -125,8 +134,7 @@ static std::optional<std::chrono::system_clock::time_point> ProcessStart(std::ui
 	std::istringstream fields(stat->substr(name + 1));
 	std::string field;
 	for (int index = 3; index < 22 && fields >> field; ++index)
-	{
-	}
+	{}
 	std::uint64_t ticks = 0;
 	if (!(fields >> ticks))
 		return {};
@@ -150,6 +158,7 @@ static std::optional<std::chrono::system_clock::time_point> ProcessStart(std::ui
 		}
 	return {};
 }
+
 static std::string ProcessName(const std::filesystem::path& base)
 {
 	if (const auto arguments = ReadFile(base / "cmdline"); arguments && !arguments->empty())
@@ -163,6 +172,7 @@ static std::string ProcessName(const std::filesystem::path& base)
 		name.pop_back();
 	return name;
 }
+
 std::optional<RunningApp> ProbeRunningApp(const std::string& endpoint, std::chrono::milliseconds timeout)
 {
 	RunningApp app;
@@ -177,6 +187,7 @@ std::optional<RunningApp> ProbeRunningApp(const std::string& endpoint, std::chro
 	}
 	return app;
 }
+
 std::optional<LaunchProfile> ReadProcessLaunch(std::uint64_t process)
 {
 	if (!process || process > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max()))

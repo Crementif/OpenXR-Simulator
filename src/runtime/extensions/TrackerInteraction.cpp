@@ -40,11 +40,8 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 	for (const auto& sample : snapshot.trackers)
 	{
 		TrackerPathState paths{sample.device.identity, XR_NULL_PATH, XR_NULL_PATH, sample.device.connected};
-		if (!paths.identity.value || std::any_of(next.begin(), next.end(),
-												 [&](const auto& value)
-												 {
-													 return value.identity == paths.identity;
-												 }))
+		if (!paths.identity.value ||
+			std::any_of(next.begin(), next.end(), [&](const auto& value) { return value.identity == paths.identity; }))
 			return XR_ERROR_VALIDATION_FAILURE;
 		try
 		{
@@ -67,10 +64,7 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 		next.push_back(paths);
 	}
 	std::sort(next.begin(), next.end(),
-			  [](const auto& a, const auto& b)
-			  {
-				  return a.identity.value < b.identity.value;
-			  });
+			  [](const auto& a, const auto& b) { return a.identity.value < b.identity.value; });
 	std::vector<TrackerConnectedEvent> connected;
 	connected.reserve(next.size());
 	std::lock_guard lock(m_mutex);
@@ -78,8 +72,7 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 		return XR_ERROR_TIME_INVALID;
 	std::vector<XrPath> changed;
 	// Stage notifications while changed-path storage can still allocate.
-	auto remember = [&](const TrackerPathState& paths)
-	{
+	auto remember = [&](const TrackerPathState& paths) {
 		for (auto path : {paths.persistentPath, paths.rolePath})
 			if (path && std::find(changed.begin(), changed.end(), path) == changed.end())
 				changed.push_back(path);
@@ -87,10 +80,7 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 	for (const auto& paths : next)
 	{
 		auto previous = std::find_if(m_paths.begin(), m_paths.end(),
-									 [&](const auto& value)
-									 {
-										 return value.identity == paths.identity;
-									 });
+									 [&](const auto& value) { return value.identity == paths.identity; });
 		bool metadataChanged = previous == m_paths.end()
 								   ? paths.connected
 								   : previous->connected != paths.connected || previous->rolePath != paths.rolePath;
@@ -104,10 +94,7 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 	}
 	for (const auto& previous : m_paths)
 		if (std::none_of(next.begin(), next.end(),
-						 [&](const auto& paths)
-						 {
-							 return paths.identity == previous.identity;
-						 }))
+						 [&](const auto& paths) { return paths.identity == previous.identity; }))
 			remember(previous);
 	m_paths = std::move(next);
 	m_time = snapshot.time;
@@ -126,11 +113,8 @@ XrResult TrackerInteraction::Enumerate(std::uint32_t capacity, std::uint32_t* co
 	if (!count || (capacity && !paths))
 		return XR_ERROR_VALIDATION_FAILURE;
 	std::lock_guard lock(m_mutex);
-	*count = static_cast<std::uint32_t>(std::count_if(m_paths.begin(), m_paths.end(),
-													  [](const auto& value)
-													  {
-														  return value.connected;
-													  }));
+	*count = static_cast<std::uint32_t>(
+		std::count_if(m_paths.begin(), m_paths.end(), [](const auto& value) { return value.connected; }));
 	if (!capacity)
 		return XR_SUCCESS;
 	if (capacity < *count)
@@ -171,21 +155,16 @@ void TrackerInteraction::ContributeInput(const TrackingSnapshot& snapshot, Input
 						   {}};
 		auto role = BodyModel::TrackerRolePath(sample.device.role);
 		// A shared role selects one connected device; persistent paths remain independent.
-		const bool selected = sample.device.connected &&
-							  std::none_of(snapshot.trackers.begin(), snapshot.trackers.end(),
-										   [&](const TrackerSample& other)
-										   {
-											   return other.device.connected &&
-													  other.device.role == sample.device.role &&
-													  other.device.identity.value < sample.device.identity.value;
-										   });
+		const bool selected =
+			sample.device.connected &&
+			std::none_of(snapshot.trackers.begin(), snapshot.trackers.end(), [&](const TrackerSample& other) {
+				return other.device.connected && other.device.role == sample.device.role &&
+					   other.device.identity.value < sample.device.identity.value;
+			});
 		if (!role.empty() && selected)
 			device.userPaths.emplace_back(role);
 		if (auto old = std::find_if(previous.begin(), previous.end(),
-									[&](const auto& value)
-									{
-										return value.identity == device.identity;
-									});
+									[&](const auto& value) { return value.identity == device.identity; });
 			old != previous.end())
 			device.controls = old->controls;
 		input.devices.push_back(std::move(device));

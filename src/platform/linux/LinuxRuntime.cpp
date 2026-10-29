@@ -48,8 +48,7 @@ const ExtensionRegistry& LinuxRuntime::Extensions()
 		"xrGetVulkanGraphicsRequirements2KHR"};
 	static constexpr std::array<std::string_view, 2> s_timeCommands{"xrConvertTimespecTimeToTimeKHR",
 																	"xrConvertTimeToTimespecTimeKHR"};
-	static const std::vector<ExtensionDefinition> s_definitions = []
-	{
+	static const std::vector<ExtensionDefinition> s_definitions = [] {
 		std::vector<ExtensionDefinition> result{
 			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, s_vulkanCommands},
 			{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
@@ -85,59 +84,72 @@ LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::filesyste
 		views.outerHeight = ParseLaunchRenderExtent(value);
 	m_input.SetViews(views);
 }
+
 LinuxInstance::~LinuxInstance()
 {
 	Close();
 }
+
 const LegacyInput& LinuxInstance::Input() const noexcept
 {
 	return m_input;
 }
+
 void LinuxInstance::Log(const std::string& message)
 {
 	m_log.Log(message);
 }
+
 void LinuxInstance::Close()
 {
 	m_log.Close();
 }
+
 LinuxRuntime::SessionBinding::SessionBinding(InstanceRef instance, Runtime::SessionRef session,
 											 std::unique_ptr<VulkanSessionGraphics> native)
 	: owner(std::move(instance)), core(std::move(session)), graphics(std::move(native))
-{
-}
+{}
+
 LinuxRuntime::LinuxRuntime() : m_core(Extensions()) {}
+
 LinuxRuntime::~LinuxRuntime()
 {
 	CloseControlEndpoint();
 	m_core.Close();
 }
+
 Runtime& LinuxRuntime::Core() noexcept
 {
 	return m_core;
 }
+
 std::recursive_mutex& LinuxRuntime::Mutex() noexcept
 {
 	return m_mutex;
 }
+
 LinuxRuntime::InstanceRef LinuxRuntime::FindInstance(XrInstance handle) const
 {
 	return m_instances.Find(m_core.FindInstance(handle));
 }
+
 LinuxRuntime::SessionRef LinuxRuntime::FindSession(XrSession handle) const
 {
 	return m_sessions.Find(m_core.FindSession(handle));
 }
+
 LinuxRuntime::InstanceRef LinuxRuntime::CurrentInstance() const
 {
 	std::lock_guard lock(m_mutex);
 	return FindInstance(m_currentInstance);
 }
+
 LinuxRuntime::SessionRef LinuxRuntime::CurrentSession() const
 {
 	std::lock_guard lock(m_mutex);
 	return FindSession(m_currentSession);
 }
+
 XrResult LinuxRuntime::CreateInstance(const XrInstanceCreateInfo* info, XrInstance* output)
 {
 	std::lock_guard lifecycle(m_lifecycleMutex);
@@ -147,17 +159,20 @@ XrResult LinuxRuntime::CreateInstance(const XrInstanceCreateInfo* info, XrInstan
 	const auto result = m_core.CreateInstance(info, core);
 	if (XR_FAILED(result))
 		return result;
+
 	struct Creation
 	{
 		Runtime& runtime;
 		Runtime::InstanceRef core;
 		bool committed = false;
+
 		~Creation()
 		{
 			if (!committed)
 				runtime.DestroyInstance(core);
 		}
 	} creation{m_core, core};
+
 	const auto* deterministic = std::getenv("SIMXR_DETERMINISTIC");
 	const auto mode =
 		deterministic && std::strcmp(deterministic, "0") != 0 ? ExecutionMode::Deterministic : ExecutionMode::RealTime;
@@ -171,6 +186,7 @@ XrResult LinuxRuntime::CreateInstance(const XrInstanceCreateInfo* info, XrInstan
 	creation.committed = true;
 	return XR_SUCCESS;
 }
+
 XrResult LinuxRuntime::CreateSession(XrInstance handle, const XrSessionCreateInfo* info, XrSession* output)
 {
 	std::lock_guard lifecycle(m_lifecycleMutex);
@@ -197,17 +213,20 @@ XrResult LinuxRuntime::CreateSession(XrInstance handle, const XrSessionCreateInf
 	if (XR_FAILED(result))
 		return result;
 	lock.unlock();
+
 	struct Creation
 	{
 		Runtime& runtime;
 		Runtime::SessionRef core;
 		bool committed = false;
+
 		~Creation()
 		{
 			if (!committed)
 				runtime.DestroySession(core);
 		}
 	} creation{m_core, core};
+
 	std::unique_ptr<VulkanSessionGraphics> graphics;
 	const auto* requestedValidation = std::getenv("SIMXR_VULKAN_VALIDATION");
 	const bool validation = requestedValidation && std::strcmp(requestedValidation, "1") == 0;
@@ -228,6 +247,7 @@ XrResult LinuxRuntime::CreateSession(XrInstance handle, const XrSessionCreateInf
 	creation.committed = true;
 	return XR_SUCCESS;
 }
+
 XrResult LinuxRuntime::BeginSession(XrSession handle, const XrSessionBeginInfo* info)
 {
 	auto session = FindSession(handle);
@@ -347,34 +367,30 @@ XrResult LinuxRuntime::DestroyInstance(XrInstance handle)
 	instance->Close();
 	return XR_SUCCESS;
 }
+
 RuntimeTime LinuxRuntime::SessionTime(const SessionBinding& session)
 {
 	if (session.owner->mode == ExecutionMode::Deterministic)
 		return session.core->Snapshot().time;
 	return {Duration{MonotonicTime()}};
 }
+
 const std::filesystem::path& LinuxRuntime::DataDirectory()
 {
-	std::call_once(m_dataDirectoryOnce,
-				   [this]
-				   {
-					   m_dataDirectory = ReadDataDirectory();
-				   });
+	std::call_once(m_dataDirectoryOnce, [this] { m_dataDirectory = ReadDataDirectory(); });
 	return m_dataDirectory;
 }
+
 void LinuxRuntime::StartControlEndpoint()
 {
 	std::lock_guard lock(m_endpointMutex);
 	if (m_endpointStarted || m_closed)
 		return;
-	m_control = std::make_unique<control::ControlService>(m_core, 16,
-														  control::CreateVulkanImageInspectionProvider(
-															  [this](XrSession handle)
-															  {
-																  const auto native = FindSession(handle);
-																  return native ? native->graphics->Capabilities()
-																				: control::ImageCapabilities{};
-															  }));
+	m_control = std::make_unique<control::ControlService>(
+		m_core, 16, control::CreateVulkanImageInspectionProvider([this](XrSession handle) {
+			const auto native = FindSession(handle);
+			return native ? native->graphics->Capabilities() : control::ImageCapabilities{};
+		}));
 	m_endpointStarted = true;
 	try
 	{
@@ -389,6 +405,7 @@ void LinuxRuntime::StartControlEndpoint()
 		std::fprintf(stderr, "SimXR: local control endpoint unavailable: %s\n", error.what());
 	}
 }
+
 void LinuxRuntime::CloseControlEndpoint() noexcept
 {
 	std::lock_guard lock(m_endpointMutex);
@@ -398,6 +415,7 @@ void LinuxRuntime::CloseControlEndpoint() noexcept
 	if (m_control)
 		m_control->Close();
 }
+
 bool LinuxRuntime::Shutdown()
 {
 	std::lock_guard lifecycle(m_lifecycleMutex);

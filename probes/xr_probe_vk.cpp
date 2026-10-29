@@ -45,16 +45,19 @@ static void Ok(const char* what)
 {
 	printf("  [ ok ] %s\n", what);
 }
+
 [[noreturn]] static void Fail(const char* what, XrResult r)
 {
 	printf("  [FAIL] %s -> XrResult %d\n", what, static_cast<int>(r));
 	throw std::runtime_error(what);
 }
+
 static void Warn(const char* what)
 {
 	printf("  [warn] %s\n", what);
 	s_warn++;
 }
+
 static void Step(const char* what)
 {
 	printf("\n== %s\n", what);
@@ -77,6 +80,7 @@ static void CheckVulkan(VkResult result, const char* operation)
 }
 
 static XrInstance s_instance = XR_NULL_HANDLE;
+
 static XrPath Path(const char* value)
 {
 	XrPath path = XR_NULL_PATH;
@@ -86,7 +90,8 @@ static XrPath Path(const char* value)
 	return path;
 }
 
-template <typename T> static bool XrFn(const char* name, T& out)
+template<typename T>
+static bool XrFn(const char* name, T& out)
 {
 	if (XR_FAILED(xrGetInstanceProcAddr(s_instance, name, reinterpret_cast<PFN_xrVoidFunction*>(&out))) || !out)
 	{
@@ -371,11 +376,7 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 			const std::string_view name(extension.extensionName);
 			if ((name == "XR_KHR_D3D11_enable" || name == "XR_KHR_D3D12_enable" || name == "XR_KHR_opengl_enable" ||
 				 name == XR_KHR_VULKAN_ENABLE_EXTENSION_NAME || name == XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME) &&
-				std::none_of(enabled.begin(), enabled.end(),
-							 [&](const char* value)
-							 {
-								 return name == value;
-							 }))
+				std::none_of(enabled.begin(), enabled.end(), [&](const char* value) { return name == value; }))
 			{
 				enabled.push_back(extension.extensionName);
 				nativeGraphicsQueries |=
@@ -879,8 +880,7 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 				   viewRect.offset.y, viewRect.extent.width, viewRect.extent.height);
 
 		Step("swapchains (VkImages from the runtime, with views and framebuffers over them)");
-		auto makeChain = [&](VkFormat fmt, bool depth, Chain& c, const char* label) -> bool
-		{
+		auto makeChain = [&](VkFormat fmt, bool depth, Chain& c, const char* label) -> bool {
 			c.m_depth = depth;
 			XrSwapchainCreateInfo ci = {XR_TYPE_SWAPCHAIN_CREATE_INFO};
 			ci.width = width;
@@ -1042,8 +1042,7 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 		bool sawSaneFov = true;
 		for (int f = 0; f < totalFrames; ++f)
 		{
-			PollXrEvents(s_instance, [&](const XrEventDataBuffer& event)
-			{
+			PollXrEvents(s_instance, [&](const XrEventDataBuffer& event) {
 				if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 					state = reinterpret_cast<const XrEventDataSessionStateChanged&>(event).state;
 			});
@@ -1125,8 +1124,7 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 			// Acquire, render, release. Exactly the shape BetterVR's Layer3D::RecordRender will
 			// have on Vulkan: a render pass straight onto the acquired image and no transition
 			// in either direction, because the runtime owes the app the attachment layout.
-			auto cycle = [&](Chain& c, int eye = -1) -> bool
-			{
+			auto cycle = [&](Chain& c, int eye = -1) -> bool {
 				std::uint32_t idx = 0;
 				if (XR_FAILED(xrAcquireSwapchainImage(c.m_handle, nullptr, &idx)))
 					return false;
@@ -1167,8 +1165,7 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 					const VkRect2D declared = {{viewRect.offset.x, viewRect.offset.y},
 											   {static_cast<std::uint32_t>(viewRect.extent.width),
 												static_cast<std::uint32_t>(viewRect.extent.height)}};
-					auto clearRect = [&](const float rgba[4], VkRect2D rect)
-					{
+					auto clearRect = [&](const float rgba[4], VkRect2D rect) {
 						VkClearAttachment ca{};
 						ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 						ca.colorAttachment = 0;
@@ -1199,16 +1196,20 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 								{
 									const auto seed = static_cast<unsigned>(row * 31 + column * 73 + 11);
 									const float color[4] = {.15f + ((seed * 17) % 65) / 100.f,
-										.15f + ((seed * 37) % 65) / 100.f, .15f + ((seed * 53) % 65) / 100.f, 1.f};
-									clearRect(color, VkRect2D{{declared.offset.x + column * tileWidth + (eye == 0 ? 10 : -10),
-										declared.offset.y + row * tileHeight}, {static_cast<std::uint32_t>(tileWidth),
-										static_cast<std::uint32_t>(tileHeight)}});
+															.15f + ((seed * 37) % 65) / 100.f,
+															.15f + ((seed * 53) % 65) / 100.f, 1.f};
+									clearRect(color,
+											  VkRect2D{{declared.offset.x + column * tileWidth + (eye == 0 ? 10 : -10),
+														declared.offset.y + row * tileHeight},
+													   {static_cast<std::uint32_t>(tileWidth),
+														static_cast<std::uint32_t>(tileHeight)}});
 								}
 						}
 						else
 						{
 							const float mark[4] = {0.95f, 0.9f, 0.25f, 1.0f};
-							const std::int32_t cx = declared.offset.x + viewRect.extent.width / 2 + (eye == 0 ? 10 : -10);
+							const std::int32_t cx =
+								declared.offset.x + viewRect.extent.width / 2 + (eye == 0 ? 10 : -10);
 							const std::int32_t cy = declared.offset.y + viewRect.extent.height / 2;
 							clearRect(mark, VkRect2D{{cx - 100, cy - 100}, {200, 200}});
 						}

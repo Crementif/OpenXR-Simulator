@@ -14,18 +14,21 @@ namespace
 namespace wire = simxr::control;
 namespace native = simxr::control::windows;
 using namespace std::chrono_literals;
+
 std::string Path()
 {
 	static std::atomic<unsigned> serial{0};
 	return std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId()) + ".test." +
 		   std::to_string(++serial);
 }
+
 wire::ControlPacket Request(wire::OpCode code)
 {
 	wire::ControlPacket result;
 	result.message.opcode = static_cast<std::uint16_t>(code);
 	return result;
 }
+
 wire::ControlPacket Finish(wire::LocalControlClient& client, wire::ControlPacket packet)
 {
 	bool retry = false;
@@ -43,6 +46,7 @@ wire::ControlPacket Finish(wire::LocalControlClient& client, wire::ControlPacket
 		}
 	}
 }
+
 void ServiceLifecycle()
 {
 	simxr::ExtensionRegistry extensions({});
@@ -111,6 +115,7 @@ void ServiceLifecycle()
 	Require(Finish(next, Request(wire::OpCode::Hello)).message.Find(wire::tag::Error)->AsU32() == 0,
 			"Endpoint can restart after actual native closure");
 }
+
 struct Mock
 {
 	std::string path = Path();
@@ -120,6 +125,7 @@ struct Mock
 	std::thread thread;
 	std::exception_ptr failure;
 	std::atomic<bool> received{false};
+
 	Mock()
 	{
 		const auto wide = native::PipePath(path);
@@ -130,12 +136,14 @@ struct Mock
 		Require(handle.value != INVALID_HANDLE_VALUE, "Create private native mock pipe");
 		channel = std::make_unique<native::Channel>(std::move(handle));
 	}
+
 	~Mock()
 	{
 		SetEvent(stop.value);
 		if (thread.joinable())
 			thread.join();
 	}
+
 	wire::Message Read()
 	{
 		channel->Connect(native::Clock::time_point::max(), stop.value);
@@ -158,6 +166,7 @@ struct Mock
 		}
 	}
 };
+
 void Transfer(native::Channel& channel, bool write, std::span<std::byte> bytes)
 {
 	std::size_t offset = 0;
@@ -165,6 +174,7 @@ void Transfer(native::Channel& channel, bool write, std::span<std::byte> bytes)
 	while (offset < bytes.size())
 		offset += channel.Transfer(write, bytes.subspan(offset), deadline, nullptr);
 }
+
 int HandleChild(const std::string& path, bool abandon)
 {
 	native::Security security;
@@ -222,14 +232,17 @@ int HandleChild(const std::string& path, bool abandon)
 	channel.AcknowledgeOffer();
 	return 0;
 }
+
 struct TransferExposure final : wire::PacketExposure
 {
 	bool transferred = false;
+
 	void MarkTransferred() noexcept override
 	{
 		transferred = true;
 	}
 };
+
 void NativeHandlesAcrossProcesses(bool abandon = false)
 {
 	wchar_t executable[32768]{};
@@ -266,8 +279,7 @@ void NativeHandlesAcrossProcesses(bool abandon = false)
 				client.Request(std::move(packet));
 			}
 			catch (const wire::ControlExchangeTimeout&)
-			{
-			}
+			{}
 			Require(client.Pending().has_value(), "Unacknowledged request stays pending");
 			Require(exposure->transferred, "Timed-out native handle offer reports possible peer exposure");
 			client.Close();
@@ -305,35 +317,33 @@ void NativeHandlesAcrossProcesses(bool abandon = false)
 void RetryAndPartialBytes()
 {
 	Mock mock;
-	mock.thread = std::thread(
-		[&]
+	mock.thread = std::thread([&] {
+		try
 		{
-			try
-			{
-				auto request = mock.Read();
-				WaitForSingleObject(mock.stop.value, 75);
-				DWORD available = 0;
-				Require(PeekNamedPipe(mock.channel->Value(), nullptr, 0, nullptr, &available, nullptr) && !available,
-						"Timeout retries do not retransmit another request");
-				wire::Message response;
-				response.flags = 1;
-				response.opcode = request.opcode;
-				response.requestId = request.requestId;
-				response.fields = {wire::Field::U32(wire::tag::Error, 0),
-								   wire::Field::Text(wire::tag::Detail, std::string(170000, 'x'))};
-				auto bytes = wire::Encode(response);
-				std::size_t sent = mock.channel->Transfer(true, std::span<std::byte>{bytes}.first(3),
-														  native::Clock::now() + 3s, mock.stop.value);
-				WaitForSingleObject(mock.stop.value, 30);
-				while (sent < bytes.size())
-					sent += mock.channel->Transfer(true, std::span<std::byte>{bytes}.subspan(sent),
-												   native::Clock::now() + 3s, mock.stop.value);
-			}
-			catch (...)
-			{
-				mock.failure = std::current_exception();
-			}
-		});
+			auto request = mock.Read();
+			WaitForSingleObject(mock.stop.value, 75);
+			DWORD available = 0;
+			Require(PeekNamedPipe(mock.channel->Value(), nullptr, 0, nullptr, &available, nullptr) && !available,
+					"Timeout retries do not retransmit another request");
+			wire::Message response;
+			response.flags = 1;
+			response.opcode = request.opcode;
+			response.requestId = request.requestId;
+			response.fields = {wire::Field::U32(wire::tag::Error, 0),
+							   wire::Field::Text(wire::tag::Detail, std::string(170000, 'x'))};
+			auto bytes = wire::Encode(response);
+			std::size_t sent = mock.channel->Transfer(true, std::span<std::byte>{bytes}.first(3),
+													  native::Clock::now() + 3s, mock.stop.value);
+			WaitForSingleObject(mock.stop.value, 30);
+			while (sent < bytes.size())
+				sent += mock.channel->Transfer(true, std::span<std::byte>{bytes}.subspan(sent),
+											   native::Clock::now() + 3s, mock.stop.value);
+		}
+		catch (...)
+		{
+			mock.failure = std::current_exception();
+		}
+	});
 	wire::LocalControlClient client(mock.path, 10ms);
 	bool timedOut = false;
 	try
@@ -378,36 +388,33 @@ void RetryAndPartialBytes()
 	if (mock.failure)
 		std::rethrow_exception(mock.failure);
 }
+
 void InterruptClientClose()
 {
 	Mock mock;
-	mock.thread = std::thread(
-		[&]
+	mock.thread = std::thread([&] {
+		try
 		{
-			try
-			{
-				mock.Read();
-				WaitForSingleObject(mock.stop.value, 5000);
-			}
-			catch (...)
-			{
-				mock.failure = std::current_exception();
-			}
-		});
+			mock.Read();
+			WaitForSingleObject(mock.stop.value, 5000);
+		}
+		catch (...)
+		{
+			mock.failure = std::current_exception();
+		}
+	});
 	wire::LocalControlClient client(mock.path, 30s);
-	auto waiting = std::async(std::launch::async,
-							  [&]
-							  {
-								  try
-								  {
-									  client.Request(Request(wire::OpCode::Hello));
-									  return false;
-								  }
-								  catch (const std::exception&)
-								  {
-									  return true;
-								  }
-							  });
+	auto waiting = std::async(std::launch::async, [&] {
+		try
+		{
+			client.Request(Request(wire::OpCode::Hello));
+			return false;
+		}
+		catch (const std::exception&)
+		{
+			return true;
+		}
+	});
 	Eventually([&] { return mock.received.load(); }, "Mock receives the admitted request");
 	const auto start = native::Clock::now();
 	client.Close();
@@ -415,6 +422,7 @@ void InterruptClientClose()
 			"Close interrupts a long pending operation without freeing an active OVERLAPPED");
 }
 } // namespace
+
 int main(int argc, char** argv)
 {
 	try

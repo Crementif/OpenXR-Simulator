@@ -3,7 +3,6 @@
 
 #include "math/Math.h"
 
-
 namespace simxr
 {
 static bool FovTangents(const XrFovf& fov, std::array<float, 4>& output)
@@ -17,6 +16,7 @@ static bool FovTangents(const XrFovf& fov, std::array<float, 4>& output)
 	}
 	return output[0] != output[1] && output[2] != output[3];
 }
+
 static bool ValidLayerFlags(XrCompositionLayerFlags flags)
 {
 	constexpr auto known = XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
@@ -24,6 +24,7 @@ static bool ValidLayerFlags(XrCompositionLayerFlags flags)
 						   XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
 	return !(flags & ~known);
 }
+
 static XrResult ImageConstants(const LayerImageDescription& image, const CompositionExtentResolver& resolve,
 							   LayerConstants& constants)
 {
@@ -42,6 +43,7 @@ static XrResult ImageConstants(const LayerImageDescription& image, const Composi
 		static_cast<float>(rect.extent.width) / extent->width, static_cast<float>(rect.extent.height) / extent->height};
 	return XR_SUCCESS;
 }
+
 static bool SourceFromEye(const PoseSample& source, const PoseSample& eye, LayerConstants& constants)
 {
 	const auto eyePose = NormalizedPose(eye.pose);
@@ -56,11 +58,13 @@ static bool SourceFromEye(const PoseSample& source, const PoseSample& eye, Layer
 	constants.sourceFromEyePosition = {relative.position.x, relative.position.y, relative.position.z, 0};
 	return true;
 }
+
 static std::uint32_t AlphaFlags(XrCompositionLayerFlags flags)
 {
 	return ((flags & XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT) ? 1u : 0u) |
 		   ((flags & XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT) ? 2u : 0u);
 }
+
 static bool EmptyImage(const LayerImageDescription& image)
 {
 	return image.rectangle.extent.width == 0 || image.rectangle.extent.height == 0;
@@ -227,6 +231,7 @@ std::optional<XrVector2f> EvaluateCompositionSample(const LayerConstants& consta
 	return XrVector2f{constants.imageRectangle[0] + sourceUV.x * constants.imageRectangle[2],
 					  constants.imageRectangle[1] + sourceUV.y * constants.imageRectangle[3]};
 }
+
 XrColor4f CompositeReferenceColor(XrColor4f source, XrColor4f destination, std::uint32_t alphaFlags)
 {
 	if (!(alphaFlags & 1))

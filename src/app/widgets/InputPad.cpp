@@ -10,11 +10,13 @@ static float Unit()
 {
 	return ImGui::GetFontSize() / 17;
 }
+
 static bool Holding()
 {
 	return ImGui::IsItemActive() && ImGui::GetCurrentContext()->ActiveIdMouseButton == ImGuiMouseButton_Left &&
 		   ImGui::IsMouseDown(ImGuiMouseButton_Left);
 }
+
 static bool WasHolding(ImGuiID item, bool holding)
 {
 	auto* storage = ImGui::GetStateStorage();
@@ -26,6 +28,7 @@ static bool WasHolding(ImGuiID item, bool holding)
 	storage->SetInt(frameKey, frame);
 	return previous;
 }
+
 // A per-item display value that eases toward target, so presses and releases animate.
 static float Ease(ImGuiID item, const char* name, float target, float speed)
 {
@@ -35,6 +38,7 @@ static float Ease(ImGuiID item, const char* name, float target, float speed)
 		value = target;
 	return value;
 }
+
 bool TriggerBar(const char* id, const char* label, float& value, bool& latched, ImU32 color, float width)
 {
 	const float unit = Unit(), height = 24 * unit;
@@ -88,6 +92,7 @@ bool TriggerBar(const char* id, const char* label, float& value, bool& latched, 
 	ImGui::SetItemTooltip("%s: hold or drag. Right-click %s", label, latched ? "releases" : "keeps it held");
 	return value != previous || latched != wasLatched;
 }
+
 bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched, ImU32 color)
 {
 	const float unit = Unit(), size = 34 * unit;
@@ -127,6 +132,7 @@ bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched,
 	ImGui::SetItemTooltip("%s: hold to press. Right-click %s", name.c_str(), latched ? "releases" : "keeps it pressed");
 	return pressed != previous || latched != wasLatched;
 }
+
 bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, ImU32 color)
 {
 	constexpr float pi = std::numbers::pi_v<float>;
@@ -143,8 +149,7 @@ bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, Im
 	const auto& io = ImGui::GetIO();
 	// OpenXR stick Y is up; screen Y is down.
 	const float pointerX = io.MousePos.x - center.x, pointerY = center.y - io.MousePos.y;
-	const auto arrowAt = [&]
-	{
+	const auto arrowAt = [&] {
 		if (std::hypot(pointerX, pointerY) <= knob + 4 * unit)
 			return -1;
 		return static_cast<int>(std::lround(std::atan2(pointerY, pointerX) / (pi / 2))) & 3;

@@ -21,7 +21,7 @@ namespace fs = std::filesystem;
 
 class Directory
 {
-  public:
+public:
 	Directory()
 		: m_path(fs::temp_directory_path() /
 				 ("simxr-flicker-" + std::to_string(ProcessId()) + "-" +
@@ -29,17 +29,19 @@ class Directory
 	{
 		fs::create_directories(m_path);
 	}
+
 	~Directory()
 	{
 		std::error_code ignored;
 		fs::remove_all(m_path, ignored);
 	}
+
 	const fs::path& Path() const
 	{
 		return m_path;
 	}
 
-  private:
+private:
 	fs::path m_path;
 };
 
@@ -75,22 +77,22 @@ void SamplePixelOrders()
 			rgba[offset + 2] = bgra[offset] = x < width / 2 ? 0 : 255;
 			rgba[offset + 3] = bgra[offset + 3] = static_cast<uint8_t>(x);
 		}
-	const auto compare = [](const Sample& first, const Sample& second)
-	{
+	const auto compare = [](const Sample& first, const Sample& second) {
 		Require(first.frame == second.frame && first.width == second.width && first.height == second.height &&
-			*first.pixels == *second.pixels, "RGBA and BGRA produce identical retained samples including alpha");
+					*first.pixels == *second.pixels,
+				"RGBA and BGRA produce identical retained samples including alpha");
 		Require(first.metrics.mean == second.metrics.mean && first.metrics.meanLeft == second.metrics.meanLeft &&
-			first.metrics.meanRight == second.metrics.meanRight &&
-			first.metrics.brightFractionLeft == second.metrics.brightFractionLeft &&
-			first.metrics.brightFractionRight == second.metrics.brightFractionRight,
-			"Channel conversion preserves brightness metrics");
+					first.metrics.meanRight == second.metrics.meanRight &&
+					first.metrics.brightFractionLeft == second.metrics.brightFractionLeft &&
+					first.metrics.brightFractionRight == second.metrics.brightFractionRight,
+				"Channel conversion preserves brightness metrics");
 		Require(first.metrics.meanLeft > first.metrics.meanRight, "Red is brighter than blue in sampled luminance");
 	};
 	compare(Downsample(rgba.data(), width, height, pitch, 7, PixelOrder::Rgba),
-		Downsample(bgra.data(), width, height, pitch, 7));
+			Downsample(bgra.data(), width, height, pitch, 7));
 	const int32_t rectangles[2][4]{{-10, 20, 300, 160}, {330, 20, 320, 160}};
 	compare(CropUi(rgba.data(), width, height, pitch, rectangles, 9, PixelOrder::Rgba),
-		CropUi(bgra.data(), width, height, pitch, rectangles, 9));
+			CropUi(bgra.data(), width, height, pitch, rectangles, 9));
 }
 
 void ClassificationAndDrain()
@@ -180,16 +182,15 @@ void ProjectionAndUiSignals()
 			"Separated UI failures inflated the consecutive maximum or lost the cumulative count");
 	Require(!preview.Submission(306, 1, 1).incident, "Restored projection is not anomalous");
 	Require(preview.Submission(307, 0, 1).incident.has_value(),
-		"Projection monitoring recovers without CPU preview samples");
+			"Projection monitoring recovers without CPU preview samples");
 	Require(ui.Observe(nullptr, 0, 0, 0, 0, 309, info).incident.has_value(),
-		"UI monitoring recovers without CPU samples");
+			"UI monitoring recovers without CPU samples");
 
 	UiMonitor absent("absent");
 	const auto fullFrame = Gray(8, 4, 80);
 	for (uint64_t frame = 1; frame <= 12; ++frame)
 		absent.Observe(fullFrame.data(), 8, 4, 32, frame, frame, {});
-	Require(absent.Snapshot().uiSamples == 0,
-			"Missing UI rectangles do not fabricate samples");
+	Require(absent.Snapshot().uiSamples == 0, "Missing UI rectangles do not fabricate samples");
 
 	UiMonitor cropped("cropped");
 	info.composed = true;
@@ -218,8 +219,7 @@ void StreamingAnalysis()
 	IncidentAnalysis analysis(false);
 	auto pixels = Gray(8, 4, 80);
 	auto bytes = std::as_bytes(std::span(pixels));
-	auto observe = [&](uint64_t frame)
-	{
+	auto observe = [&](uint64_t frame) {
 		return analysis.Observe(frame, bytes, 8, 4, 0, PixelOrder::Rgba);
 	};
 	observe(1);
@@ -229,8 +229,8 @@ void StreamingAnalysis()
 	observe(6);
 	observe(7);
 	Require(analysis.Counts().observations == 5 && analysis.Counts().skipped == 1 &&
-		analysis.Counts().temporalPairs == 2 && analysis.Counts().gaps == 1,
-		"Unavailable frames and gaps must break temporal comparisons");
+				analysis.Counts().temporalPairs == 2 && analysis.Counts().gaps == 1,
+			"Unavailable frames and gaps must break temporal comparisons");
 	bool rejected = false;
 	try
 	{
@@ -243,7 +243,7 @@ void StreamingAnalysis()
 	Require(rejected && analysis.Counts().observations == 5, "Truncated images must not advance analysis");
 	observe(8);
 	Require(analysis.Counts().temporalPairs == 3 && analysis.Counts().gaps == 1,
-		"Rejected input must not break frame continuity");
+			"Rejected input must not break frame continuity");
 	bool detected = false;
 	for (uint64_t frame = 9; frame < 80; ++frame)
 	{
@@ -255,11 +255,11 @@ void StreamingAnalysis()
 	IncidentAnalysis ui(true);
 	const auto missing = ui.Observe(1, bytes, 8, 4, 32, PixelOrder::Rgba);
 	Require(missing.skipped && missing.reason == "missing_eye" && ui.Counts().observations == 0,
-		"UI analysis must report absent eye rectangles");
+			"UI analysis must report absent eye rectangles");
 	const std::array<std::array<int32_t, 4>, 2> rectangles{{{0, 0, 4, 4}, {4, 0, 4, 4}}};
 	ui.Observe(2, bytes, 8, 4, 32, PixelOrder::Rgba, rectangles);
 	Require(ui.Counts().observations == 1 && ui.Counts().temporalPairs == 0 && ui.Counts().skipped == 1,
-		"A missing eye must not become a temporal sample");
+			"A missing eye must not become a temporal sample");
 }
 
 void AnalysisWithoutArtifacts()
@@ -276,12 +276,13 @@ void AnalysisWithoutArtifacts()
 		const auto composed = preview.Preview(Downsample(pixels.data(), 8, 4, 32, frame), frame);
 		const auto overlay = ui.Observe(pixels.data(), 8, 4, 32, frame, frame, info);
 		Require(!composed.incident && !composed.sample && !overlay.incident && !overlay.sample,
-			"Analysis without an artifact directory does not construct discarded captures");
+				"Analysis without an artifact directory does not construct discarded captures");
 	}
 	Require(preview.Snapshot().incidents.anomalyCount > 0 && ui.Snapshot().incidents.anomalyCount > 0,
-		"Analysis still detects flicker without artifact capture");
+			"Analysis still detects flicker without artifact capture");
 	Require(preview.Snapshot().incidents.lastReason == "ALTERNATING_VISIBLE_FRAMES" &&
-		ui.Snapshot().incidents.lastReason == "ALTERNATING_UI_REGION", "Analysis preserves anomaly reasons");
+				ui.Snapshot().incidents.lastReason == "ALTERNATING_UI_REGION",
+			"Analysis preserves anomaly reasons");
 }
 
 void BoundedArtifacts()
@@ -367,8 +368,7 @@ void IncidentLimits()
 void IncidentRecovery()
 {
 	Directory directory;
-	const auto capture = [&]
-	{
+	const auto capture = [&] {
 		Diagnostics diagnostics(directory.Path());
 		for (uint64_t frame = 1; frame <= 5; ++frame)
 			diagnostics.ObserveSubmission(frame, 1, 1);
@@ -376,8 +376,9 @@ void IncidentRecovery()
 		diagnostics.Close();
 		const auto incident = diagnostics.Status().preview.incidents;
 		Require(incident.incidentCount == 1 &&
-			json::Object(ReadJson(incident.lastDirectory / "incident.json").c_str()).String("reason") ==
-				"MISSING_PROJECTION_LAYER", "Close drains an automatic incident without pixel readback");
+					json::Object(ReadJson(incident.lastDirectory / "incident.json").c_str()).String("reason") ==
+						"MISSING_PROJECTION_LAYER",
+				"Close drains an automatic incident without pixel readback");
 		return incident.lastDirectory;
 	};
 	const auto first = capture();
@@ -390,12 +391,8 @@ void IncidentRecovery()
 	}
 	Diagnostics failing(blocked);
 	failing.ObserveSubmission(1, 0, 0);
-	Eventually(
-		[&]
-		{
-			return failing.Status().fileErrors != 0;
-		},
-		"I/O failure is observable and does not terminate the worker");
+	Eventually([&] { return failing.Status().fileErrors != 0; },
+			   "I/O failure is observable and does not terminate the worker");
 	fs::remove(blocked);
 	fs::create_directory(blocked);
 	for (uint64_t frame = 2; frame < 20; ++frame)
@@ -454,12 +451,7 @@ void ArtifactFilesAndPruning()
 		fs::last_write_time(logs[index], now - std::chrono::seconds(index));
 	}
 	Diagnostics diagnostics(directory.Path());
-	Eventually(
-		[&]
-		{
-			return diagnostics.Status().fileErrors != 0;
-		},
-		"Prune enumeration failure was silently ignored");
+	Eventually([&] { return diagnostics.Status().fileErrors != 0; }, "Prune enumeration failure was silently ignored");
 	diagnostics.Close();
 	for (const auto& log : logs)
 		Require(fs::exists(log), "Pruning continued after a failed artifact enumeration");
@@ -476,17 +468,11 @@ void ConcurrentCloseAndIndependentLifetime()
 	Diagnostics first(directory.Path() / "first");
 	Diagnostics second(directory.Path() / "second");
 	std::atomic<bool> running{true};
-	std::thread observer(
-		[&]
-		{
-			for (uint64_t frame = 1; running; ++frame)
-				first.ObserveSubmission(frame, 1, 1);
-		});
-	std::thread close(
-		[&]
-		{
-			first.Close();
-		});
+	std::thread observer([&] {
+		for (uint64_t frame = 1; running; ++frame)
+			first.ObserveSubmission(frame, 1, 1);
+	});
+	std::thread close([&] { first.Close(); });
 	first.Close();
 	close.join();
 	running = false;

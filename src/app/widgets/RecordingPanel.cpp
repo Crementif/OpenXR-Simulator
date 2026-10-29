@@ -20,6 +20,7 @@ RecordingPanel::RecordingPanel()
 		m_error = error.what();
 	}
 }
+
 void RecordingPanel::SetTarget(RecordingTarget target)
 {
 	if (target == m_target)
@@ -30,6 +31,7 @@ void RecordingPanel::SetTarget(RecordingTarget target)
 	m_target = std::move(target);
 	m_startRequested = m_stopRequested = false;
 }
+
 RecordingCaptureSnapshot RecordingPanel::Snapshot() const
 {
 	auto state = m_capture.Snapshot();
@@ -37,6 +39,7 @@ RecordingCaptureSnapshot RecordingPanel::Snapshot() const
 		state.error = m_error;
 	return state;
 }
+
 void RecordingPanel::Poll(bool supported)
 {
 	if (std::exchange(m_stopRequested, false))
@@ -56,8 +59,8 @@ void RecordingPanel::Poll(bool supported)
 				std::strftime(name.data(), name.size(), "Take %Y-%m-%d %H-%M-%S", local);
 			const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 			if (m_capture.Start(m_directory / Utf8Path(std::string(name.data()) + "-" +
-																   std::to_string(1000 + stamp % 1000).substr(1) + "-" +
-																   std::to_string(AllocateProcessIdentity()) + ".simxrtake")))
+													   std::to_string(1000 + stamp % 1000).substr(1) + "-" +
+													   std::to_string(AllocateProcessIdentity()) + ".simxrtake")))
 			{
 				m_error.clear();
 				m_retired = false;
@@ -79,6 +82,7 @@ void RecordingPanel::Poll(bool supported)
 			m_saved = PathText(state.directory);
 	}
 }
+
 void RecordingPanel::DrawPopovers(bool supported)
 {
 	(void)supported;

@@ -16,6 +16,7 @@ namespace
 {
 thread_local bool refusePresentationAllocation = false;
 }
+
 [[gnu::noinline]] void* operator new(std::size_t size)
 {
 	if (std::exchange(refusePresentationAllocation, false))
@@ -24,10 +25,12 @@ thread_local bool refusePresentationAllocation = false;
 		return memory;
 	throw std::bad_alloc{};
 }
+
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 [[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -39,14 +42,17 @@ using namespace simxr;
 
 class Output final : public FrameOutput
 {
-  public:
+public:
 	explicit Output(CompletionStatus status = CompletionStatus::Pending) : state(status) {}
+
 	~Output() override
 	{
 		if (destroy)
 			destroy();
 	}
+
 	std::function<void()> destroy;
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		++polls;
@@ -54,6 +60,7 @@ class Output final : public FrameOutput
 			inspect->Snapshot();
 		return state.load();
 	}
+
 	std::atomic<CompletionStatus> state;
 	mutable std::atomic<int> polls{0};
 	PresentationController* inspect = nullptr;
@@ -67,15 +74,17 @@ PresentationSubmission Submission(std::uint64_t frame, std::int64_t target,
 
 class RetainedSource final : public RotationalSource
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	PoseSample SubmittedHead() const noexcept override
 	{
 		return {};
 	}
+
 	XrResult Reproject(const PoseSample&, std::shared_ptr<const FrameOutput>&) const override
 	{
 		return XR_ERROR_FEATURE_UNSUPPORTED;
@@ -139,11 +148,11 @@ void DisplayHistory()
 	controller.Advance({Duration{170}});
 	const auto events = history.Diagnostics().events;
 	Require(events.size() == 6 && events[2].kind == FrameTraceKind::DisplaySelected &&
-			events[2].frame == FrameKey{{1}, {1}} && events[2].related == 2 &&
-			events[3].kind == FrameTraceKind::DisplayRepeated && events[3].related == 5 &&
-			events[3].Detail() == "skipped_ticks=2; content=image" &&
-			events[4].kind == FrameTraceKind::DisplayCleared && events[4].frame == FrameKey{{1}, {2}} &&
-			events[5].Detail() == "skipped_ticks=0; content=clear",
+				events[2].frame == FrameKey{{1}, {1}} && events[2].related == 2 &&
+				events[3].kind == FrameTraceKind::DisplayRepeated && events[3].related == 5 &&
+				events[3].Detail() == "skipped_ticks=2; content=image" &&
+				events[4].kind == FrameTraceKind::DisplayCleared && events[4].frame == FrameKey{{1}, {2}} &&
+				events[5].Detail() == "skipped_ticks=0; content=clear",
 			"Display journal lost actual selection, repeat, clear or skipped-tick identity");
 	image.reset();
 	Require(lifetime.expired(), "Display history retained a GPU image after clear");
@@ -155,7 +164,8 @@ void DisplayHistory()
 	for (int tick = 1; tick < 12; ++tick)
 		controller.Advance({Duration{200 + tick * 10}});
 	Require(history.Diagnostics().events.size() == 8 && history.Diagnostics().dropped > 0 &&
-			events[2].frame == FrameKey{{1}, {1}}, "Display history was unbounded or mutated a reader");
+				events[2].frame == FrameKey{{1}, {1}},
+			"Display history was unbounded or mutated a reader");
 }
 
 void Selection()
@@ -302,16 +312,14 @@ void PhaseAndConcurrency()
 	tick = controller.Advance({Duration{160}});
 	Require(tick && tick->tick == DisplayTick{6} && tick->skippedTicks == 0, "Display caught up after stall");
 	std::atomic<bool> stop = false;
-	auto reader = std::async(std::launch::async,
-							 [&]
-							 {
-								 while (!stop.load())
-								 {
-									 const auto snapshot = controller.Snapshot();
-									 Require(snapshot.queued.size() + snapshot.retiring.size() <= snapshot.capacity,
-											 "Partial or unbounded queue snapshot");
-								 }
-							 });
+	auto reader = std::async(std::launch::async, [&] {
+		while (!stop.load())
+		{
+			const auto snapshot = controller.Snapshot();
+			Require(snapshot.queued.size() + snapshot.retiring.size() <= snapshot.capacity,
+					"Partial or unbounded queue snapshot");
+		}
+	});
 	for (std::uint64_t frame = 1; frame <= 100; ++frame)
 	{
 		auto output = std::make_shared<Output>();
@@ -337,25 +345,17 @@ void FailedQueueAllocationReleasesOutsideLock()
 	PresentationController controller(64);
 	controller.Start({1}, {{Duration{100}}, Duration{10}});
 	std::atomic<bool> inspect = false;
-	auto observer = std::async(std::launch::async,
-							   [&]
-							   {
-								   Eventually(
-									   [&]
-									   {
-										   return inspect.load();
-									   },
-									   "Destructor observation was not requested");
-								   return controller.Snapshot();
-							   });
+	auto observer = std::async(std::launch::async, [&] {
+		Eventually([&] { return inspect.load(); }, "Destructor observation was not requested");
+		return controller.Snapshot();
+	});
 	bool failed = false, outsideLock = false;
 	std::uint64_t identity = 1;
 	for (; identity <= 64; ++identity)
 	{
 		auto output = std::make_shared<Output>();
 		const auto raw = output.get();
-		output->destroy = [&]
-		{
+		output->destroy = [&] {
 			inspect = true;
 			outsideLock = observer.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
 		};
@@ -381,6 +381,7 @@ void FailedQueueAllocationReleasesOutsideLock()
 				controller.Submit(Submission(identity, 100)) == PresentationAdmission::Accepted,
 			"Failed queue allocation changed history or prevented retry");
 }
+
 void Reservation()
 {
 	PresentationController controller(1);
@@ -406,6 +407,7 @@ void Reservation()
 			"Capacity rejection consumed frame state");
 	Require(controller.Advance({Duration{100}})->source == FrameKey{{1}, {1}}, "Committed frame was not published");
 }
+
 void MetadataReplacementReleasesOutsideLock()
 {
 	for (const bool mailbox : {false, true})
@@ -415,16 +417,13 @@ void MetadataReplacementReleasesOutsideLock()
 			controller.Start({1}, {{Duration{100}}, Duration{10}});
 			unsigned releases = 0;
 			auto submission = Submission(1, 100);
-			submission.metadata = std::shared_ptr<const FrameRecord>(new FrameRecord{},
-																	 [&](const FrameRecord* record)
-																	 {
-																		 controller.Snapshot();
-																		 ++releases;
-																		 delete record;
-																	 });
+			submission.metadata = std::shared_ptr<const FrameRecord>(new FrameRecord{}, [&](const FrameRecord* record) {
+				controller.Snapshot();
+				++releases;
+				delete record;
+			});
 			const auto replacement = std::make_shared<const FrameRecord>();
-			const auto commit = [&]() -> std::shared_ptr<const FrameRecord>
-			{
+			const auto commit = [&]() -> std::shared_ptr<const FrameRecord> {
 				if (fail)
 					throw std::bad_alloc{};
 				return replacement;
@@ -461,13 +460,11 @@ void LiveClearMailbox()
 	Require(controller.Submit(Submission(1, 100, pending)) == PresentationAdmission::Accepted, "Fill live-clear queue");
 	unsigned metadataReleases = 0;
 	auto clearSubmission = Submission(2, 120);
-	clearSubmission.metadata = std::shared_ptr<const FrameRecord>(new FrameRecord{},
-																  [&](const FrameRecord* record)
-																  {
-																	  controller.Snapshot();
-																	  ++metadataReleases;
-																	  delete record;
-																  });
+	clearSubmission.metadata = std::shared_ptr<const FrameRecord>(new FrameRecord{}, [&](const FrameRecord* record) {
+		controller.Snapshot();
+		++metadataReleases;
+		delete record;
+	});
 	const auto firstClear = controller.SubmitLiveClearWithMetadata(std::move(clearSubmission), {});
 	Require(firstClear == PresentationAdmission::Accepted && controller.Snapshot().queued.size() == 1 &&
 				controller.Snapshot().liveClear == FrameKey{{1}, {2}} && controller.Retain().size() == 2,
@@ -511,8 +508,7 @@ void LiveClearMailbox()
 			"Mailbox state survived generation restart");
 	bool destroyed = false;
 	auto invalid = std::make_shared<Output>();
-	invalid->destroy = [&]
-	{
+	invalid->destroy = [&] {
 		controller.Snapshot();
 		destroyed = true;
 	};
@@ -526,12 +522,12 @@ void CompletionFeedback()
 	unsigned reports = 0;
 	PresentationController* reader = nullptr;
 	PresentationController controller(8, nullptr,
-		[&](FrameKey key, const FramePrediction& prediction, RuntimeTime observed)
-		{
-			Require(key.frame == prediction.id && observed == RuntimeTime{Duration{110}}, "Completion feedback identity/time");
-			reader->Snapshot(); // Callback must be outside the presentation lock.
-			++reports;
-		});
+									  [&](FrameKey key, const FramePrediction& prediction, RuntimeTime observed) {
+										  Require(key.frame == prediction.id && observed == RuntimeTime{Duration{110}},
+												  "Completion feedback identity/time");
+										  reader->Snapshot(); // Callback must be outside the presentation lock.
+										  ++reports;
+									  });
 	reader = &controller;
 	controller.Start({1}, {{Duration{100}}, Duration{10}});
 	auto output = std::make_shared<Output>();

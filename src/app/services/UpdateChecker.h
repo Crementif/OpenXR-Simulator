@@ -18,23 +18,26 @@ enum class UpdateStatus
 	Available,
 	Unavailable
 };
+
 struct UpdateResult
 {
 	UpdateStatus status = UpdateStatus::Idle;
 	std::string version, releaseUrl, error;
 };
+
 struct UpdateUiState
 {
 	UpdateResult result;
 	bool checkRequested = false;
 };
+
 bool ValidReleaseRepository(std::string_view repository);
 UpdateResult ParseRelease(std::string_view repository, std::string_view current, std::string_view response);
 std::string FetchLatestRelease(std::string_view repository);
 
 class UpdateChecker
 {
-  public:
+public:
 	using Fetch = std::function<std::string(std::string_view)>;
 	UpdateChecker(std::string repository, std::string version, Fetch fetch = FetchLatestRelease);
 	~UpdateChecker();
@@ -45,7 +48,7 @@ class UpdateChecker
 	bool Poll();
 	const UpdateResult& State() const noexcept;
 
-  private:
+private:
 	std::string m_repository, m_version;
 	Fetch m_fetch;
 	UpdateResult m_state;

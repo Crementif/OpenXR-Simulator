@@ -12,7 +12,8 @@
 
 namespace simxr
 {
-template <typename Function> static Function Procedure(const windows::OpenGLLibrary& gl, const char* name)
+template<typename Function>
+static Function Procedure(const windows::OpenGLLibrary& gl, const char* name)
 {
 	const auto address = gl.GetProcAddress(name);
 	const auto value = std::bit_cast<std::uintptr_t>(address);
@@ -59,8 +60,7 @@ static void RequireApplicationCapabilities(const windows::OpenGLLibrary& gl, HDC
 	if (count < 0)
 		throw std::runtime_error("Invalid application OpenGL extension count");
 	const auto getString = Procedure<PFNGLGETSTRINGIPROC>(gl, "glGetStringi");
-	const auto supports = [&](std::string_view required)
-	{
+	const auto supports = [&](std::string_view required) {
 		for (GLint index = 0; index < count; ++index)
 		{
 			const auto extension = getString(GL_EXTENSIONS, index);
@@ -71,8 +71,7 @@ static void RequireApplicationCapabilities(const windows::OpenGLLibrary& gl, HDC
 		}
 		return false;
 	};
-	const auto require = [&](GLint coreMajor, GLint coreMinor, const char* extension)
-	{
+	const auto require = [&](GLint coreMajor, GLint coreMinor, const char* extension) {
 		if (major > coreMajor || (major == coreMajor && minor >= coreMinor) || supports(extension))
 			return;
 		throw std::runtime_error(std::string("Application OpenGL context requires ") + extension);
@@ -104,18 +103,15 @@ static void RequireApplicationCapabilities(const windows::OpenGLLibrary& gl, HDC
 // context lifetime and isolates every framebuffer, program and binding mutation.
 class OpenGLContext final
 {
-  public:
+public:
 	static std::shared_ptr<OpenGLContext> Create(HDC applicationDevice, HGLRC applicationContext)
 	{
-		auto context = std::shared_ptr<OpenGLContext>(
-			new OpenGLContext,
-			[](OpenGLContext* context)
-			{
-				if (context->Close())
-					delete context;
-				else
-					std::fputs("SimXR: preserving OpenGL context after native cleanup failure\n", stderr);
-			});
+		auto context = std::shared_ptr<OpenGLContext>(new OpenGLContext, [](OpenGLContext* context) {
+			if (context->Close())
+				delete context;
+			else
+				std::fputs("SimXR: preserving OpenGL context after native cleanup failure\n", stderr);
+		});
 		context->Initialize(applicationDevice, applicationContext);
 		return context;
 	}
@@ -133,7 +129,7 @@ class OpenGLContext final
 	PFNGLDELETESEMAPHORESEXTPROC m_deleteSemaphores = nullptr;
 	PFNGLCLIENTWAITSYNCPROC m_wait = nullptr;
 
-  private:
+private:
 	OpenGLContext()
 	{
 		static const FramePool s_owners{64};
@@ -237,8 +233,7 @@ class OpenGLContext final
 		const auto attachShader = Procedure<PFNGLATTACHSHADERPROC>(gl, "glAttachShader");
 		const auto linkProgram = Procedure<PFNGLLINKPROGRAMPROC>(gl, "glLinkProgram");
 		const auto getProgram = Procedure<PFNGLGETPROGRAMIVPROC>(gl, "glGetProgramiv");
-		const auto compile = [&](GLenum stage, const char* source)
-		{
+		const auto compile = [&](GLenum stage, const char* source) {
 			const auto shader = createShader(stage);
 			shaderSource(shader, 1, &source, nullptr);
 			compileShader(shader);
@@ -335,7 +330,7 @@ class OpenGLContext final
 
 class OpenGLSharedImage final
 {
-  public:
+public:
 	std::shared_ptr<OpenGLContext> context;
 	std::shared_ptr<VulkanExternalImage> image;
 	GLuint texture = 0, memory = 0, framebuffer = 0;
@@ -344,20 +339,17 @@ class OpenGLSharedImage final
 
 	static std::shared_ptr<OpenGLSharedImage> Create(std::shared_ptr<OpenGLContext> context)
 	{
-		auto result = std::shared_ptr<OpenGLSharedImage>(
-			new OpenGLSharedImage,
-			[](OpenGLSharedImage* image)
-			{
-				if (image->Close())
-					delete image;
-				else
-					std::fputs("SimXR: preserving shared OpenGL image after native cleanup failure\n", stderr);
-			});
+		auto result = std::shared_ptr<OpenGLSharedImage>(new OpenGLSharedImage, [](OpenGLSharedImage* image) {
+			if (image->Close())
+				delete image;
+			else
+				std::fputs("SimXR: preserving shared OpenGL image after native cleanup failure\n", stderr);
+		});
 		result->context = std::move(context);
 		return result;
 	}
 
-  private:
+private:
 	bool Close() noexcept
 	{
 		if (!texture && !memory && !framebuffer)
@@ -496,6 +488,7 @@ struct OpenGLBackend::PendingFrames
 	windows::ModuleReference m_module;
 	std::shared_ptr<FrameReservation> preservation;
 	std::vector<std::shared_ptr<OpenGLFrame>> frames;
+
 	explicit PendingFrames(std::size_t capacity)
 	{
 		static const FramePool s_owners{64};
@@ -529,10 +522,7 @@ OpenGLBackend::~OpenGLBackend()
 			m_context->m_wait(completion, GL_SYNC_FLUSH_COMMANDS_BIT, 5000000000ULL);
 	}
 	if (std::any_of(m_pending->frames.begin(), m_pending->frames.end(),
-					[](const auto& frame)
-					{
-						return frame->PollCompletion() == CompletionStatus::Pending;
-					}))
+					[](const auto& frame) { return frame->PollCompletion() == CompletionStatus::Pending; }))
 		m_pending.release(); // Preserve the process-wide reservation with unfinished native work.
 }
 
@@ -611,10 +601,7 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 									 std::shared_ptr<OpenGLFrame>& output)
 {
 	std::erase_if(m_pending->frames,
-				  [](const auto& frame)
-				  {
-					  return frame->PollCompletion() != CompletionStatus::Pending;
-				  });
+				  [](const auto& frame) { return frame->PollCompletion() != CompletionStatus::Pending; });
 	auto& pool = retained ? m_retainedFrames : m_frames;
 	auto reservation = pool.Reserve();
 	if (!reservation)
@@ -668,8 +655,7 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 				description.arrayLayers, resources.storage->memory, 0);
 		}
 
-		const auto import = [&](const std::shared_ptr<VulkanExternalSemaphore>& source, GLuint& target)
-		{
+		const auto import = [&](const std::shared_ptr<VulkanExternalSemaphore>& source, GLuint& target) {
 			auto handle = source->ExportOnce();
 			Procedure<PFNGLGENSEMAPHORESEXTPROC>(gl, "glGenSemaphoresEXT")(1, &target);
 			Procedure<PFNGLIMPORTSEMAPHOREWIN32HANDLEEXTPROC>(gl, "glImportSemaphoreWin32HandleEXT")(
@@ -897,12 +883,10 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 											 : m_context->m_program;
 					Procedure<PFNGLUSEPROGRAMPROC>(gl, "glUseProgram")(program);
 					Procedure<PFNGLBINDTEXTUREUNITPROC>(gl, "glBindTextureUnit")(0, resources.copies[index]);
-					const auto location = [&](const char* name)
-					{
+					const auto location = [&](const char* name) {
 						return Procedure<PFNGLGETUNIFORMLOCATIONPROC>(gl, "glGetUniformLocation")(program, name);
 					};
-					const auto set = [&](const char* name, const auto& value)
-					{
+					const auto set = [&](const char* name, const auto& value) {
 						Procedure<PFNGLUNIFORM4FVPROC>(gl, "glUniform4fv")(location(name), 1, value.data());
 					};
 					set("layer.eyeTangents", draw.constants.eyeTangents);

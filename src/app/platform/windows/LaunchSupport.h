@@ -17,21 +17,23 @@ std::string Environment(const char* key);
 std::wstring LoaderManifestPath(const std::wstring& path);
 std::wstring Quote(std::wstring_view argument);
 std::runtime_error Error(const char* operation, DWORD code = GetLastError());
+
 class Handle
 {
-  public:
+public:
 	explicit Handle(HANDLE handle = nullptr);
 	~Handle();
 	Handle(const Handle&) = delete;
 	Handle& operator=(const Handle&) = delete;
 	Handle(Handle&& other) noexcept;
 	Handle& operator=(Handle&& other) noexcept;
+
 	HANDLE Get() const noexcept
 	{
 		return m_value;
 	}
 
-  private:
+private:
 	HANDLE m_value = nullptr;
 };
 } // namespace simxr::app::windows

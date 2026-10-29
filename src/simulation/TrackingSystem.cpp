@@ -101,7 +101,8 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 	for (auto& joint : trackerControls.joints)
 		if (joint)
 			joint->tracked = true;
-	auto trackerBody = state.bodyObservation ? snapshot.body : body.Evaluate(trackerHead, trackerControls, time, state.focused);
+	auto trackerBody =
+		state.bodyObservation ? snapshot.body : body.Evaluate(trackerHead, trackerControls, time, state.focused);
 	for (std::size_t index = 0; index < snapshot.trackers.size(); ++index)
 	{
 		const auto& device = state.trackers[index];

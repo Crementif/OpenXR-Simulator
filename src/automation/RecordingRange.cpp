@@ -8,10 +8,12 @@
 namespace simxr::automation
 {
 static constexpr CommandSource s_source{CommandSourceKind::Rig, 1};
+
 static RuntimeTime Anchor(const std::optional<RuntimeTime>& time)
 {
 	return time.value_or(RuntimeTime{Duration{1}});
 }
+
 InputRecording ReadRecordingRange(const std::filesystem::path& directory, FrameId first, FrameId last,
 								  std::stop_token stop)
 {
@@ -74,11 +76,9 @@ InputRecording ReadRecordingRange(const std::filesystem::path& directory, FrameI
 				}
 				else
 				{
-					if (std::ranges::any_of(transaction.commands,
-											[](const auto& command)
-											{
-												return std::holds_alternative<ReleaseControl>(command);
-											}))
+					if (std::ranges::any_of(transaction.commands, [](const auto& command) {
+							return std::holds_alternative<ReleaseControl>(command);
+						}))
 						throw std::runtime_error(
 							"Cannot trim past a released channel without its recorded fallback state");
 					CommandTransaction apply{

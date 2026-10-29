@@ -26,6 +26,7 @@ enum class RuntimeConnectionState
 	Connected,
 	Failed
 };
+
 struct RuntimeConnectionConfig
 {
 	// Admission includes queued, active and unpolled requests together.
@@ -34,6 +35,7 @@ struct RuntimeConnectionConfig
 	std::chrono::milliseconds retrySlice{50};
 	std::chrono::milliseconds exchangeDeadline{2000};
 };
+
 struct RuntimeReply
 {
 	std::uint64_t ticket = 0, epoch = 0;
@@ -42,6 +44,7 @@ struct RuntimeReply
 	std::string error;
 	bool timedOut = false;
 };
+
 struct RuntimeConnectionSnapshot
 {
 	RuntimeConnectionState state = RuntimeConnectionState::Disconnected;
@@ -51,11 +54,12 @@ struct RuntimeConnectionSnapshot
 	bool inFlight = false;
 	control::ControlPacket hello;
 };
+
 // A separately owned transport worker. UI calls never perform socket I/O or
 // wait for a server. Poll transfers response/FD ownership to its caller.
 class RuntimeConnection
 {
-  public:
+public:
 	explicit RuntimeConnection(const RuntimeConnectionConfig& configuration = {});
 	~RuntimeConnection();
 	RuntimeConnection(const RuntimeConnection&) = delete;
@@ -68,12 +72,13 @@ class RuntimeConnection
 	RuntimeConnectionSnapshot Snapshot() const;
 	void Close() noexcept;
 
-  private:
+private:
 	struct Queued
 	{
 		std::uint64_t ticket = 0, epoch = 0;
 		control::ControlPacket packet;
 	};
+
 	bool Current(std::uint64_t epoch);
 	void ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
 						 std::optional<control::ControlPacket> hello = {}, std::string appName = {},

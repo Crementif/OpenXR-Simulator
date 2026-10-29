@@ -30,6 +30,7 @@ static void Require(bool value, const char* message)
 	if (!value)
 		throw std::runtime_error(message);
 }
+
 [[noreturn]] static void UnknownCompletion(const char* operation)
 {
 	std::fprintf(stderr, "FAIL: %s; GPU completion unknown, preserving process-owned resources\n", operation);
@@ -47,11 +48,13 @@ struct CompositorDevice
 	VkQueue m_queue = VK_NULL_HANDLE;
 	std::uint32_t m_family = 0;
 	std::uint32_t m_index = 0;
+
 	~CompositorDevice()
 	{
 		if (m_native)
 			vkDestroyDevice(m_native, nullptr);
 	}
+
 	bool Create(VkInstance instance)
 	{
 		Require(!m_native, "Probe device was already created");
@@ -106,9 +109,12 @@ struct CompositorCommandResources
 	std::vector<VkImageView> m_views;
 	bool m_submitted = false;
 	bool m_complete = false;
+
 	explicit CompositorCommandResources(VkDevice owner) : m_device(owner) {}
+
 	CompositorCommandResources(const CompositorCommandResources&) = delete;
 	CompositorCommandResources& operator=(const CompositorCommandResources&) = delete;
+
 	~CompositorCommandResources()
 	{
 		if (m_submitted && !m_complete)
@@ -125,9 +131,10 @@ struct CompositorCommandResources
 			vkDestroyFence(m_device, m_fence, nullptr);
 	}
 };
+
 class CompositorCommands
 {
-  public:
+public:
 	explicit CompositorCommands(CompositorDevice& owner) : m_device(owner), m_resources(owner.m_native)
 	{
 		VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -145,6 +152,7 @@ class CompositorCommands
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		Check(vkBeginCommandBuffer(m_resources.m_command, &begin), "begin probe commands");
 	}
+
 	void Finish()
 	{
 		Require(!m_resources.m_submitted, "Probe commands were already submitted");
@@ -161,6 +169,7 @@ class CompositorCommands
 			UnknownCompletion("probe fence wait failed");
 		m_resources.m_complete = true;
 	}
+
 	CompositorDevice& m_device;
 	CompositorCommandResources m_resources;
 };
@@ -170,11 +179,13 @@ struct CompositorSource
 	XrSwapchain identity;
 	std::shared_ptr<VulkanImage> image;
 	std::array<XrColor4f, 4> colors;
+
 	LayerImageDescription Description(std::uint32_t slice = 0) const
 	{
 		return {identity, {{4, 4}, {8, 8}}, slice};
 	}
 };
+
 using CompositorPalette = std::vector<std::pair<XrSwapchain, std::array<XrColor4f, 4>>>;
 
 static void Paint(CompositorDevice& device, const CompositorSource& source)
@@ -251,9 +262,12 @@ struct CompositorReadback
 	VkBuffer m_buffer = VK_NULL_HANDLE;
 	VkDeviceMemory m_memory = VK_NULL_HANDLE;
 	bool m_coherent = false;
+
 	explicit CompositorReadback(VkDevice owner) : m_device(owner) {}
+
 	CompositorReadback(const CompositorReadback&) = delete;
 	CompositorReadback& operator=(const CompositorReadback&) = delete;
+
 	~CompositorReadback()
 	{
 		if (m_buffer)
@@ -262,6 +276,7 @@ struct CompositorReadback
 			vkFreeMemory(m_device, m_memory, nullptr);
 	}
 };
+
 static std::vector<std::uint8_t> Pixels(CompositorDevice& device, const VulkanFrame& frame)
 {
 	const auto& image = frame.Image();
@@ -342,6 +357,7 @@ static float Srgb(float value)
 	value = std::clamp(value, 0.0f, 1.0f);
 	return value <= 0.0031308f ? 12.92f * value : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
 }
+
 static std::uint8_t Byte(float value)
 {
 	return static_cast<std::uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255));
@@ -356,15 +372,13 @@ static XrColor4f Expected(const CompositionPlan& plan, const CompositorPalette& 
 		if (draw.eye != eye || !EvaluateCompositionSample(draw, uv))
 			continue;
 		const auto source = std::find_if(palette.begin(), palette.end(),
-										 [&](const auto& entry)
-										 {
-											 return entry.first == draw.source.source;
-										 });
+										 [&](const auto& entry) { return entry.first == draw.source.source; });
 		Require(source != palette.end() && draw.source.arraySlice < 4, "Missing expected source color");
 		result = CompositeReferenceColor(source->second[draw.source.arraySlice], result, draw.constants.control[1]);
 	}
 	return result;
 }
+
 static void Verify(CompositorDevice& device, const VulkanFrame& frame, const CompositionPlan& plan,
 				   const CompositorPalette& palette, const char* name)
 {
@@ -392,14 +406,17 @@ static XrFovf Fov(float left = -1, float right = 1, float up = 1, float down = -
 {
 	return {std::atan(left), std::atan(right), std::atan(up), std::atan(down)};
 }
+
 static PoseSample Pose(XrVector3f position = {})
 {
 	return {{{0, 0, 0, 1}, position}, TrackedPoseFlags, {Duration{1000}}};
 }
+
 static CompositionTarget Target(std::uint32_t width = 32, std::uint32_t height = 24)
 {
 	return {width, height, {{{Pose({-0.032f, 0, 0}), Fov()}, {Pose({0.032f, 0, 0}), Fov()}}}};
 }
+
 static ProjectionLayerDescription Projection(const CompositorSource& source, std::size_t count = 2)
 {
 	ProjectionLayerDescription layer;
@@ -408,11 +425,13 @@ static ProjectionLayerDescription Projection(const CompositorSource& source, std
 			{IdentityPose(), Pose(), Fov(), source.Description(static_cast<std::uint32_t>(index)), {}});
 	return layer;
 }
+
 static QuadLayerDescription Quad(const CompositorSource& source, XrCompositionLayerFlags flags, XrEyeVisibility eyes)
 {
 	return {{XR_NULL_HANDLE, flags, Pose()}, eyes,			 IdentityPose(),
 			Pose({0.13f, -0.07f, -2}),		 {1.73f, 1.31f}, source.Description()};
 }
+
 static FrameLayers Frame(std::vector<LayerDescription> layers)
 {
 	return {{Duration{1000}}, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, std::move(layers)};
@@ -420,11 +439,11 @@ static FrameLayers Frame(std::vector<LayerDescription> layers)
 
 class CompositorExercise
 {
-  public:
+public:
 	CompositorExercise(CompositorDevice& native, VulkanBackend& graphics, bool analysis)
 		: m_device(native), m_backend(graphics), m_verify(analysis)
-	{
-	}
+	{}
+
 	CompositorPalette Colors() const
 	{
 		CompositorPalette colors;
@@ -432,11 +451,11 @@ class CompositorExercise
 			colors.emplace_back(source.identity, source.colors);
 		return colors;
 	}
+
 	std::shared_ptr<VulkanFrame> Render(const FrameLayers& frame, const CompositionTarget& target,
 										CompositionPlan& plan)
 	{
-		const auto extent = [&](XrSwapchain identity) -> std::optional<XrExtent2Di>
-		{
+		const auto extent = [&](XrSwapchain identity) -> std::optional<XrExtent2Di> {
 			const auto source = Find(identity);
 			if (!source)
 				return {};
@@ -447,8 +466,7 @@ class CompositorExercise
 		std::shared_ptr<VulkanFrame> output;
 		Require(m_backend.Prepare(
 					plan,
-					[&](XrSwapchain identity)
-					{
+					[&](XrSwapchain identity) {
 						const auto source = Find(identity);
 						return source ? source->image : nullptr;
 					},
@@ -463,20 +481,20 @@ class CompositorExercise
 				"Production output completion or dimensions invalid");
 		return output;
 	}
+
 	void Drain()
 	{
 		if (m_backend.Drain(s_timeout) != VK_SUCCESS)
 			UnknownCompletion("production backend drain");
 	}
+
 	CompositorSource* Find(XrSwapchain identity)
 	{
 		const auto found = std::find_if(m_sources.begin(), m_sources.end(),
-										[&](const auto& source)
-										{
-											return source.identity == identity;
-										});
+										[&](const auto& source) { return source.identity == identity; });
 		return found == m_sources.end() ? nullptr : &*found;
 	}
+
 	void Add(std::uintptr_t identity, std::array<XrColor4f, 4> colors)
 	{
 		auto image = m_backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 4, s_sourceUsage);
@@ -554,19 +572,14 @@ class CompositorExercise
 		auto original = Render(Frame({Projection(m_sources[0])}), Target(), plan);
 		Require(reservation && pool.InUse() == 2 && !pool.Reserve(),
 				"Explicit reservation failed to protect native capacity");
-		const auto resolve = [&](XrSwapchain identity)
-		{
+		const auto resolve = [&](XrSwapchain identity) {
 			const auto source = Find(identity);
 			return source ? source->image : nullptr;
 		};
 		auto unchanged = original;
 		Require(m_backend.Prepare(
-					plan,
-					[](XrSwapchain)
-					{
-						return std::shared_ptr<VulkanImage>{};
-					},
-					unchanged, reservation) == XR_ERROR_LAYER_INVALID &&
+					plan, [](XrSwapchain) { return std::shared_ptr<VulkanImage>{}; }, unchanged, reservation) ==
+						XR_ERROR_LAYER_INVALID &&
 					unchanged == original && !reservation->Consumed() && pool.InUse() == 2,
 				"Failed preparation consumed reservation or replaced output");
 		FramePool foreign(1);
@@ -607,8 +620,7 @@ class CompositorExercise
 		CompositionPlan plan;
 		Require(PrepareComposition(
 					Frame({Projection(m_sources[0])}), Target(),
-					[&](XrSwapchain identity) -> std::optional<XrExtent2Di>
-					{
+					[&](XrSwapchain identity) -> std::optional<XrExtent2Di> {
 						return Find(identity) ? std::optional{XrExtent2Di{16, 16}} : std::nullopt;
 					},
 					plan) == XR_SUCCESS,
@@ -616,8 +628,7 @@ class CompositorExercise
 		std::shared_ptr<VulkanFrame> output;
 		Require(m_backend.Prepare(
 					plan,
-					[&](XrSwapchain identity)
-					{
+					[&](XrSwapchain identity) {
 						const auto source = Find(identity);
 						return source ? source->image : nullptr;
 					},
@@ -654,14 +665,12 @@ class CompositorExercise
 		std::unique_ptr<DebugController> debugger;
 		DebugLeaseId lease;
 		std::uint64_t nextCommand = 1;
-		auto command = [&](DebugCommand kind, DebugOperationId operation = {}, CaptureId id = {})
-		{
+		auto command = [&](DebugCommand kind, DebugOperationId operation = {}, CaptureId id = {}) {
 			const auto submitted = debugger->Submit(lease, {{nextCommand++}, kind, 1, {}, operation, id});
 			Require(submitted.result == DebugAdmission::Accepted, "Production debug command admission");
 			return submitted.operation;
 		};
-		auto await = [&](DebugOperationId id)
-		{
+		auto await = [&](DebugOperationId id) {
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 			for (;;)
 			{
@@ -675,8 +684,7 @@ class CompositorExercise
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			}
 		};
-		auto admit = [&](DebugOperationId operation)
-		{
+		auto admit = [&](DebugOperationId operation) {
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 			for (;;)
 			{
@@ -720,19 +728,16 @@ class CompositorExercise
 		XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, prediction.displayTime.value.count(),
 							XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,	   layers};
 		LayerValidationContext validation;
-		validation.validSpace = [&](XrSpace space)
-		{
+		validation.validSpace = [&](XrSpace space) {
 			return session.Spaces().Owns(space);
 		};
-		validation.swapchain = [&](XrSwapchain identity) -> std::optional<SwapchainDescription>
-		{
+		validation.swapchain = [&](XrSwapchain identity) -> std::optional<SwapchainDescription> {
 			return Find(identity) ? std::optional{SwapchainDescription{16, 16, 4, true}} : std::nullopt;
 		};
 		std::shared_ptr<const FrameLayers> prepared;
 		Require(BuildLayers(
 					info, validation,
-					[&](XrSpace space, RuntimeTime time, SpaceSample& pose)
-					{
+					[&](XrSpace space, RuntimeTime time, SpaceSample& pose) {
 						return session.Spaces().Sample(space, time, pose);
 					},
 					prepared) == XR_SUCCESS,
@@ -740,8 +745,7 @@ class CompositorExercise
 		CompositionPlan plan;
 		Require(PrepareComposition(
 					*prepared, Target(),
-					[&](XrSwapchain identity) -> std::optional<XrExtent2Di>
-					{
+					[&](XrSwapchain identity) -> std::optional<XrExtent2Di> {
 						return Find(identity) ? std::optional{XrExtent2Di{16, 16}} : std::nullopt;
 					},
 					plan) == XR_SUCCESS,
@@ -749,8 +753,7 @@ class CompositorExercise
 		std::shared_ptr<VulkanFrame> output;
 		Require(m_backend.Prepare(
 					plan,
-					[&](XrSwapchain identity)
-					{
+					[&](XrSwapchain identity) {
 						const auto source = Find(identity);
 						return source ? source->image : nullptr;
 					},
@@ -760,11 +763,8 @@ class CompositorExercise
 						: nullptr) == XR_SUCCESS,
 				"GPU worker private output preparation");
 		Require(output->PollCompletion() == CompletionStatus::Pending, "Unsubmitted worker output completed");
-		Require(session.EndFrame(prediction, &info, prepared, output,
-								 [&]
-								 {
-									 return m_backend.Submit(output);
-								 }) == XR_SUCCESS,
+		Require(session.EndFrame(prediction, &info, prepared, output, [&] { return m_backend.Submit(output); }) ==
+					XR_SUCCESS,
 				"GPU worker transactional submission");
 		const auto key = FrameKey{session.Snapshot().generation, prediction.id};
 		std::optional<SnapshotRecord> retainedCapture;
@@ -879,6 +879,7 @@ class CompositorExercise
 						  : "case=core-session-worker-real-fence XRcallsAfterEndFrame=none producer=complete "
 							"selection=independent PASS");
 	}
+
 	void Run()
 	{
 		Add(1, {{{1, 0, 0, 1}, {0, 1, 0, 1}, {0, 1, 1, 1}, {1, 0, 1, 1}}});
@@ -965,8 +966,7 @@ class CompositorExercise
 			Verify(m_device, *resized, plan, Colors(), "new-source-resized-output");
 		}
 		std::shared_ptr<VulkanFrame> rejected;
-		const auto resolve = [&](XrSwapchain identity)
-		{
+		const auto resolve = [&](XrSwapchain identity) {
 			const auto source = Find(identity);
 			return source ? source->image : nullptr;
 		};
@@ -998,6 +998,7 @@ class CompositorExercise
 		Require(m_backend.Close() == XR_SUCCESS, "Close did not drain released native owners");
 		std::puts("case=retention-resize-capacity-close privateOutput=stable readers=required-released PASS");
 	}
+
 	CompositorDevice& m_device;
 	VulkanBackend& m_backend;
 	bool m_verify;
@@ -1041,11 +1042,9 @@ static bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 	Check(vkEnumerateInstanceLayerProperties(&count, nullptr), "query depth closure validation");
 	std::vector<VkLayerProperties> layers(count);
 	Check(vkEnumerateInstanceLayerProperties(&count, layers.data()), "query depth closure validation");
-	if (!instance.messenger || std::none_of(layers.begin(), layers.end(),
-											[](const auto& layer)
-											{
-												return std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0;
-											}))
+	if (!instance.messenger || std::none_of(layers.begin(), layers.end(), [](const auto& layer) {
+			return std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0;
+		}))
 	{
 		std::puts("SKIP: depth pipeline closure requires Vulkan validation");
 		return false;
@@ -1087,12 +1086,7 @@ static bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 	const LayerDepthDescription depth{{reinterpret_cast<XrSwapchain>(902), {{0, 0}, {8, 8}}, 0}, 0, 1, 0.1f, 100};
 	std::shared_ptr<VulkanFrame> frame;
 	Require(backend->PrepareDepthCapture(
-				depth, false,
-				[&](XrSwapchain)
-				{
-					return image;
-				},
-				frame) == XR_SUCCESS,
+				depth, false, [&](XrSwapchain) { return image; }, frame) == XR_SUCCESS,
 			"Prepare multisample depth pipeline closure");
 	frame.reset();
 	image.reset();
@@ -1121,12 +1115,7 @@ static void ReservedClosure(const VulkanBinding& binding)
 	CompositionPlan clear{16, 16, {}};
 	std::shared_ptr<VulkanFrame> output;
 	Require(backend.Prepare(
-				clear,
-				[](XrSwapchain)
-				{
-					return std::shared_ptr<VulkanImage>{};
-				},
-				output, reservation) == XR_SUCCESS &&
+				clear, [](XrSwapchain) { return std::shared_ptr<VulkanImage>{}; }, output, reservation) == XR_SUCCESS &&
 				reservation->Consumed() && backend.Submit(output) == XR_SUCCESS,
 			"Admission closure invalidated already reserved production work");
 	if (backend.Drain(s_timeout) != VK_SUCCESS)
@@ -1137,12 +1126,8 @@ static void ReservedClosure(const VulkanBinding& binding)
 	Require(pool.InUse() == 1 && backend.Close() == XR_SUCCESS,
 			"A capacity-only reader prevented closure after every borrowed resource was released");
 	Require(backend.Prepare(
-				clear,
-				[](XrSwapchain)
-				{
-					return std::shared_ptr<VulkanImage>{};
-				},
-				output, reader) == XR_ERROR_SESSION_LOST,
+				clear, [](XrSwapchain) { return std::shared_ptr<VulkanImage>{}; }, output, reader) ==
+				XR_ERROR_SESSION_LOST,
 			"Closed backend accepted production from a retained capacity token");
 	reader.reset();
 	Require(pool.InUse() == 0 && backend.Close() == XR_SUCCESS && !pool.Reserve(),
@@ -1157,12 +1142,7 @@ static void CompletedProducerReclamation(const VulkanBinding& binding)
 	CompositionPlan plan{8, 8, {}};
 	std::shared_ptr<VulkanFrame> output;
 	Require(backend.Prepare(
-				plan,
-				[](XrSwapchain)
-				{
-					return std::shared_ptr<VulkanImage>{};
-				},
-				output) == XR_SUCCESS &&
+				plan, [](XrSwapchain) { return std::shared_ptr<VulkanImage>{}; }, output) == XR_SUCCESS &&
 				backend.Submit(output) == XR_SUCCESS,
 			"Submit capacity-one GPU producer");
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -1178,11 +1158,7 @@ static void CompletedProducerReclamation(const VulkanBinding& binding)
 	}
 	output.reset();
 	Require(pool.InUse() == 1, "Capacity-one producer did not retain its native reservation");
-	auto reservation = std::async(std::launch::async,
-								  [pool]
-								  {
-									  return pool.Reserve();
-								  });
+	auto reservation = std::async(std::launch::async, [pool] { return pool.Reserve(); });
 	if (reservation.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
 		UnknownCompletion("control-side reservation blocked while reclaiming an already complete producer");
 	auto replacement = reservation.get();
@@ -1316,20 +1292,14 @@ static void LocalOutputReuse(const VulkanBinding& binding)
 			plan.width = 32;
 		std::shared_ptr<VulkanFrame> frame;
 		Require(backend.Prepare(
-					plan,
-					[](XrSwapchain)
-					{
-						return std::shared_ptr<VulkanImage>{};
-					},
-					frame) == XR_SUCCESS,
+					plan, [](XrSwapchain) { return std::shared_ptr<VulkanImage>{}; }, frame) == XR_SUCCESS,
 				"Prepare reusable local output");
 		Require(frame->Image().extent.width == plan.width, "Local output reused the wrong extent");
 		if (!iteration)
 		{
 			held = frame->RetainImage();
 			original = held->image;
-			held->retired = [&retired]
-			{
+			held->retired = [&retired] {
 				++retired;
 			};
 		}
@@ -1362,11 +1332,7 @@ static void Benchmark(CompositorDevice& device, const VulkanBinding& binding)
 		CompositionPlan plan;
 		Require(PrepareComposition(
 					Frame({Projection(source)}), Target(1280, 720),
-					[](XrSwapchain) -> std::optional<XrExtent2Di>
-					{
-						return XrExtent2Di{16, 16};
-					},
-					plan) == XR_SUCCESS,
+					[](XrSwapchain) -> std::optional<XrExtent2Di> { return XrExtent2Di{16, 16}; }, plan) == XR_SUCCESS,
 				"Prepare benchmark plan");
 		auto preview = plan;
 		preview.width = 640;
@@ -1379,8 +1345,7 @@ static void Benchmark(CompositorDevice& device, const VulkanBinding& binding)
 			const auto start = std::chrono::steady_clock::now();
 			{
 				std::array<std::shared_ptr<VulkanFrame>, 2> frames;
-				const auto resolve = [&](XrSwapchain)
-				{
+				const auto resolve = [&](XrSwapchain) {
 					return source.image;
 				};
 				Require(backend.Prepare(plan, resolve, frames[0]) == XR_SUCCESS &&
@@ -1397,8 +1362,7 @@ static void Benchmark(CompositorDevice& device, const VulkanBinding& binding)
 				total.push_back(
 					std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
 		}
-		const auto report = [](const char* name, std::vector<double>& samples)
-		{
+		const auto report = [](const char* name, std::vector<double>& samples) {
 			std::sort(samples.begin(), samples.end());
 			std::printf("benchmark=%s samples=%zu p50_us=%.2f p95_us=%.2f p99_us=%.2f\n", name, samples.size(),
 						samples[samples.size() / 2], samples[samples.size() * 95 / 100],

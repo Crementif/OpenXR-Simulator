@@ -18,15 +18,13 @@ namespace simxr::probe
 {
 ConsumerUnavailable::ConsumerUnavailable()
 	: std::runtime_error("Consumer display is unavailable; qualification skipped")
-{
-}
+{}
 
 ConsumerProcess::ConsumerProcess(bool verifyPixels, bool disconnect, const std::string& companion,
 								 const std::string& screenshot)
 	: ConsumerProcess(companion.empty() ? "/proc/self/exe" : companion,
 					  Arguments(verifyPixels, disconnect, companion, screenshot))
-{
-}
+{}
 
 ConsumerProcess::ConsumerProcess(const std::string& executable, std::vector<std::string> options)
 {
@@ -38,14 +36,17 @@ ConsumerProcess::ConsumerProcess(const std::string& executable, std::vector<std:
 	posix_spawn_file_actions_t actions;
 	if (const auto error = posix_spawn_file_actions_init(&actions))
 		throw std::system_error(error, std::generic_category(), "Initialize consumer launch");
+
 	struct Actions
 	{
 		posix_spawn_file_actions_t* value;
+
 		~Actions()
 		{
 			posix_spawn_file_actions_destroy(value);
 		}
 	} actionGuard{&actions};
+
 	if (const auto error = posix_spawn_file_actions_addclose(&actions, sockets[0]))
 		throw std::system_error(error, std::generic_category(), "Close consumer parent channel");
 	if (const auto error = posix_spawn_file_actions_adddup2(&actions, sockets[1], 3))
@@ -75,8 +76,7 @@ ConsumerProcess::~ConsumerProcess()
 		kill(m_pid, SIGKILL);
 		int status;
 		while (waitpid(m_pid, &status, 0) < 0 && errno == EINTR)
-		{
-		}
+		{}
 	}
 }
 
@@ -103,8 +103,7 @@ void ConsumerProcess::Receive(void* data, std::size_t size, sharing::Descriptors
 			throw;
 		}
 		catch (...)
-		{
-		}
+		{}
 		std::rethrow_exception(failure);
 	}
 }
@@ -124,7 +123,8 @@ void ConsumerProcess::ObserveClosed()
 			break;
 		}
 		status = poll(&connection, 1, static_cast<int>(remaining.count()));
-	} while (status < 0 && errno == EINTR);
+	}
+	while (status < 0 && errno == EINTR);
 	if (status < 0)
 		throw std::system_error(errno, std::generic_category(), "Observe consumer close");
 	char unexpected;

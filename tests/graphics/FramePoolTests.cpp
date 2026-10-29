@@ -22,12 +22,14 @@
 namespace
 {
 thread_local int failAllocationAfter = -1;
+
 struct AllocationFailure
 {
 	explicit AllocationFailure(int after)
 	{
 		failAllocationAfter = after;
 	}
+
 	~AllocationFailure()
 	{
 		failAllocationAfter = -1;
@@ -48,22 +50,27 @@ void* operator new(std::size_t size)
 		return result;
 	throw std::bad_alloc{};
 }
+
 void* operator new[](std::size_t size)
 {
 	return ::operator new(size);
 }
+
 void operator delete(void* memory) noexcept
 {
 	std::free(memory);
 }
+
 void operator delete[](void* memory) noexcept
 {
 	std::free(memory);
 }
+
 void operator delete(void* memory, std::size_t) noexcept
 {
 	std::free(memory);
 }
+
 void operator delete[](void* memory, std::size_t) noexcept
 {
 	std::free(memory);
@@ -74,6 +81,7 @@ void operator delete[](void* memory, std::size_t) noexcept
 namespace
 {
 using namespace simxr;
+
 void OwnershipAndReaders()
 {
 	bool invalid = false;
@@ -157,14 +165,12 @@ void CompletedOwnerReclamation()
 	FramePool* observed = nullptr;
 	std::shared_ptr<FrameReservation> retired;
 	unsigned polls = 0;
-	FramePool pool(1,
-				   [&]
-				   {
-					   ++polls;
-					   if (observed)
-						   observed->InUse();
-					   retired.reset();
-				   });
+	FramePool pool(1, [&] {
+		++polls;
+		if (observed)
+			observed->InUse();
+		retired.reset();
+	});
 	observed = &pool;
 	retired = pool.Reserve();
 	Require(retired && pool.InUse() == 1 && polls == 1, "Initial reserve did not collect outside its mutex");
@@ -186,12 +192,10 @@ void ConcurrentConsumptionAndBudget()
 	std::atomic<unsigned> winners = 0;
 	std::vector<std::future<void>> operations;
 	for (unsigned i = 0; i < 16; ++i)
-		operations.push_back(std::async(std::launch::async,
-										[pool, token, &winners]
-										{
-											if (pool.Consume(token))
-												++winners;
-										}));
+		operations.push_back(std::async(std::launch::async, [pool, token, &winners] {
+			if (pool.Consume(token))
+				++winners;
+		}));
 	for (auto& operation : operations)
 		operation.get();
 	Require(winners == 1 && token->Consumed() && pool.InUse() == 1, "Concurrent consumption won multiple times");
@@ -199,41 +203,36 @@ void ConcurrentConsumptionAndBudget()
 	token.reset();
 	std::atomic<unsigned> acquired = 0;
 	for (unsigned worker = 0; worker < 8; ++worker)
-		operations.push_back(
-			std::async(std::launch::async,
-					   [pool, &acquired]
-					   {
-						   for (unsigned attempt = 0; attempt < 1000; ++attempt)
-						   {
-							   auto reserved = pool.Reserve();
-							   if (!reserved)
-							   {
-								   std::this_thread::yield();
-								   continue;
-							   }
-							   ++acquired;
-							   Require(pool.InUse() <= pool.Capacity(), "Concurrent reserves exceeded pool budget");
-							   auto reader = reserved;
-							   Require(pool.Consume(reserved), "Fresh concurrent reservation was consumed");
-							   reserved.reset();
-							   std::this_thread::yield();
-						   }
-					   }));
+		operations.push_back(std::async(std::launch::async, [pool, &acquired] {
+			for (unsigned attempt = 0; attempt < 1000; ++attempt)
+			{
+				auto reserved = pool.Reserve();
+				if (!reserved)
+				{
+					std::this_thread::yield();
+					continue;
+				}
+				++acquired;
+				Require(pool.InUse() <= pool.Capacity(), "Concurrent reserves exceeded pool budget");
+				auto reader = reserved;
+				Require(pool.Consume(reserved), "Fresh concurrent reservation was consumed");
+				reserved.reset();
+				std::this_thread::yield();
+			}
+		}));
 	for (auto& operation : operations)
 		operation.get();
 	Require(acquired > 0 && pool.InUse() == 0, "Concurrent reservation readers leaked capacity");
 	auto beforeClosure = pool.Reserve();
 	operations.clear();
 	for (unsigned worker = 0; worker < 8; ++worker)
-		operations.push_back(std::async(std::launch::async,
-										[pool]
-										{
-											for (unsigned i = 0; i < 100; ++i)
-											{
-												auto token = pool.Reserve();
-												std::this_thread::yield();
-											}
-										}));
+		operations.push_back(std::async(std::launch::async, [pool] {
+			for (unsigned i = 0; i < 100; ++i)
+			{
+				auto token = pool.Reserve();
+				std::this_thread::yield();
+			}
+		}));
 	pool.CloseAdmission();
 	for (auto& operation : operations)
 		operation.get();
@@ -243,6 +242,7 @@ void ConcurrentConsumptionAndBudget()
 	Require(pool.InUse() == 0, "Concurrent closure leaked budget");
 }
 } // namespace
+
 int main()
 {
 	OwnershipAndReaders();

@@ -29,8 +29,7 @@ XrResult PrepareHeadsetProjection(std::span<const FrameView> views, XrExtent2Di 
 	const FrameLayers frame{{Duration{1}}, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, {std::move(projection)}};
 	return PrepareComposition(
 		frame, target,
-		[=](XrSwapchain source) -> std::optional<XrExtent2Di>
-		{
+		[=](XrSwapchain source) -> std::optional<XrExtent2Di> {
 			return source == image ? std::optional{sourceExtent} : std::nullopt;
 		},
 		plan);

@@ -13,7 +13,8 @@ static constexpr unsigned MaxManifestFiles = 256;
 
 static bool AsciiPath(const std::filesystem::path& path)
 {
-	return path.is_absolute() && std::ranges::all_of(path.native(), [](wchar_t character) { return character <= 0x7f; });
+	return path.is_absolute() &&
+		   std::ranges::all_of(path.native(), [](wchar_t character) { return character <= 0x7f; });
 }
 
 static std::filesystem::path CacheDirectory()
@@ -33,8 +34,8 @@ static std::filesystem::path CacheDirectory()
 		if (!CreateDirectoryW(directory.c_str(), security.Attributes()) && GetLastError() != ERROR_ALREADY_EXISTS)
 			continue;
 		Handle handle(CreateFileW(directory.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
-			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+								  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+								  FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
 		if (handle.Get() == INVALID_HANDLE_VALUE)
 			continue;
 		BY_HANDLE_FILE_INFORMATION info{};
@@ -57,13 +58,13 @@ static std::filesystem::path CacheDirectory()
 static bool ExistingMatches(const std::filesystem::path& path, std::string_view content)
 {
 	Handle handle(CreateFileW(path.c_str(), GENERIC_READ | READ_CONTROL | FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
-		nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+							  nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
 	if (handle.Get() == INVALID_HANDLE_VALUE)
 		return false;
 	BY_HANDLE_FILE_INFORMATION info{};
 	if (!GetFileInformationByHandle(handle.Get(), &info) ||
-		(info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
-		info.nFileSizeHigh || info.nFileSizeLow != content.size())
+		(info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) || info.nFileSizeHigh ||
+		info.nFileSizeLow != content.size())
 		return false;
 	try
 	{
@@ -76,7 +77,7 @@ static bool ExistingMatches(const std::filesystem::path& path, std::string_view 
 	std::string bytes(content.size(), '\0');
 	DWORD read = 0;
 	return ReadFile(handle.Get(), bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) &&
-		read == bytes.size() && bytes == content;
+		   read == bytes.size() && bytes == content;
 }
 
 static std::filesystem::path StoreManifest(const std::filesystem::path& directory, std::string_view content)
@@ -86,7 +87,7 @@ static std::filesystem::path StoreManifest(const std::filesystem::path& director
 	{
 		const auto path = directory / (L"manifest-" + std::to_wstring(slot) + L".json");
 		const auto file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, security.Attributes(), CREATE_NEW,
-			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+									  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
 		if (file == INVALID_HANDLE_VALUE)
 		{
 			if ((GetLastError() == ERROR_FILE_EXISTS || GetLastError() == ERROR_ALREADY_EXISTS) &&
@@ -96,7 +97,7 @@ static std::filesystem::path StoreManifest(const std::filesystem::path& director
 		}
 		DWORD written = 0;
 		const bool success = WriteFile(file, content.data(), static_cast<DWORD>(content.size()), &written, nullptr) &&
-			written == content.size() && FlushFileBuffers(file);
+							 written == content.size() && FlushFileBuffers(file);
 		const bool closed = CloseHandle(file) != FALSE;
 		if (success && closed)
 			return path;

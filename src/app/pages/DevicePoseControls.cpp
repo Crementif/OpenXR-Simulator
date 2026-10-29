@@ -25,6 +25,7 @@ void DeviceControlPanel::DrawHead()
 	DrawExactPose(0);
 	ImGui::EndDisabled();
 }
+
 void DeviceControlPanel::DrawExactPose(int device)
 {
 	const float scale = ImGui::GetFontSize() / 16;
@@ -60,8 +61,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 	ImGui::SetItemTooltip("%s", m_exactAnchor ? "Click for world coordinates"
 											  : "Click for coordinates relative to what the device follows");
 	bool& quaternion = m_quaternionView[static_cast<std::size_t>(device)];
-	const auto worldPose = [device](const PlayerRig& rig)
-	{
+	const auto worldPose = [device](const PlayerRig& rig) {
 		return device == 0	? rig.Head()
 			   : device < 3 ? rig.Hand(static_cast<std::size_t>(device - 1))
 							: rig.Tracker(static_cast<std::size_t>(device - 3));
@@ -77,15 +77,13 @@ void DeviceControlPanel::DrawExactPose(int device)
 		defaults.SnapTracker(static_cast<std::size_t>(device - 3));
 	const auto fallback = RelativePose(worldPose(defaults), base);
 	constexpr float degrees = 180 / std::numbers::pi_v<float>;
-	const auto toDegrees = [](XrQuaternionf orientation)
-	{
+	const auto toDegrees = [](XrQuaternionf orientation) {
 		const auto radians = YawPitchRoll(orientation);
 		return std::array<float, 3>{radians.x * degrees, radians.y * degrees, radians.z * degrees};
 	};
 	auto angles = toDegrees(pose.orientation);
 	const auto fallbackAngles = toDegrees(fallback.orientation);
-	const auto reset = [this, device]
-	{
+	const auto reset = [this, device] {
 		if (device == 0)
 			m_playerRig.ResetHead();
 		else if (device < 3)
@@ -104,8 +102,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 	std::snprintf(quaternionText, sizeof(quaternionText), "Quaternion: x %.4f, y %.4f, z %.4f, w %.4f", q.x, q.y, q.z,
 				  q.w);
 	const float width = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3;
-	const auto value = [&](float& number, float fallbackNumber, float step, float limit, const char* format)
-	{
+	const auto value = [&](float& number, float fallbackNumber, float step, float limit, const char* format) {
 		auto result = NumberValue(number, fallbackNumber, step, -limit, limit, format);
 		result.group = "pose";
 		result.resetGroup = reset;
@@ -126,8 +123,8 @@ void DeviceControlPanel::DrawExactPose(int device)
 		ImGui::PushStyleColor(ImGuiCol_Text, axisColors[axis]);
 		const bool moved = ImGui::DragFloat(positionIds[axis], positions[axis], .005f, 0, 0, positionFormats[axis]);
 		ImGui::PopStyleColor();
-		edited |= Field(positionIds[axis], moved, true,
-						value(*positions[axis], fallbackPositions[axis], .01f, 100, "%.4f"));
+		edited |=
+			Field(positionIds[axis], moved, true, value(*positions[axis], fallbackPositions[axis], .01f, 100, "%.4f"));
 		ImGui::SetItemTooltip("X right, Y up, Z back.\nShift+right-click resets. "
 							  "Wheel adjusts, Shift faster, Ctrl slower.");
 	}
@@ -141,7 +138,8 @@ void DeviceControlPanel::DrawExactPose(int device)
 		const float spacing = ImGui::GetStyle().ItemSpacing.x;
 		const float minimumWidth = ImGui::CalcTextSize("x -0.0000").x + ImGui::GetStyle().FramePadding.x * 2;
 		const int columns = available >= minimumWidth * 4 + spacing * 3 ? 4
-						  : available >= minimumWidth * 2 + spacing ? 2 : 1;
+							: available >= minimumWidth * 2 + spacing	? 2
+																		: 1;
 		const float componentWidth = (available - spacing * (columns - 1)) / columns;
 		for (int component = 0; component < 4; ++component)
 		{
@@ -180,7 +178,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 			angleValue.quaternionView = &quaternion;
 			ImGui::PushStyleColor(ImGuiCol_Text, rotationColors[axis]);
 			const bool rotated = ImGui::DragFloat(angleIds[axis], &angle, .5f, -limit, limit, angleFormats[axis],
-												 ImGuiSliderFlags_AlwaysClamp);
+												  ImGuiSliderFlags_AlwaysClamp);
 			ImGui::PopStyleColor();
 			turned |= Field(angleIds[axis], rotated, true, angleValue);
 			ImGui::SetItemTooltip("%s\nShift+right-click resets. Wheel adjusts, Shift faster, Ctrl slower.",
@@ -202,10 +200,12 @@ void DeviceControlPanel::DrawExactPose(int device)
 	}
 	ImGui::EndDisabled();
 }
+
 ManualTransaction DeviceControlPanel::PlayerEdit(bool includeWorld) const
 {
 	return m_observed ? m_playerRig.Transaction(*m_observed, m_manualSource, includeWorld) : ManualTransaction{};
 }
+
 void DeviceControlPanel::ApplyRig(std::vector<SimulationCommand> extra, std::string label)
 {
 	auto commands = PlayerEdit(true).commands;
@@ -214,6 +214,7 @@ void DeviceControlPanel::ApplyRig(std::vector<SimulationCommand> extra, std::str
 	m_continuousEdit = false;
 	Apply(std::move(commands), std::move(label));
 }
+
 void DeviceControlPanel::DrawBodyPoses()
 {
 	ImGui::BeginDisabled(!CanControl(ControlChannel::Body) || ScenarioActive(ControlChannel::Body) ||
@@ -234,6 +235,7 @@ void DeviceControlPanel::DrawBodyPoses()
 	ImGui::PopID();
 	ImGui::EndDisabled();
 }
+
 void DeviceControlPanel::DrawPlayer()
 {
 	DrawOwner(ControlChannel::Body);
@@ -254,8 +256,7 @@ void DeviceControlPanel::DrawPlayer()
 			  true, NumberValue(m_playerRig.height, defaultHeight, .01f, .4f, 2.2f));
 	FieldLabel("Floor (m)");
 	FieldValue floor;
-	floor.reset = [&]
-	{
+	floor.reset = [&] {
 		m_playerRig.position = {};
 	};
 	const auto& position = m_playerRig.position;
@@ -288,6 +289,7 @@ void DeviceControlPanel::DrawPlayer()
 		Apply(PlayerEdit().commands);
 	ImGui::EndDisabled();
 }
+
 void DeviceControlPanel::DrawAnchor(std::size_t hand)
 {
 	int anchor = static_cast<int>(m_playerRig.HandAnchor(hand));
@@ -304,11 +306,11 @@ void DeviceControlPanel::DrawAnchor(std::size_t hand)
 	if (changed)
 		m_playerRig.SetHandAnchor(hand, static_cast<Anchor>(anchor));
 }
+
 void DeviceControlPanel::DrawHandPresets(std::size_t hand)
 {
 	static constexpr const char* names[] = {"Rest", "Forward", "Up"};
-	static constexpr const char* tips[] = {"Hold this hand low in front.",
-										   "Reach forward at eye level with this hand.",
+	static constexpr const char* tips[] = {"Hold this hand low in front.", "Reach forward at eye level with this hand.",
 										   "Point this hand straight up."};
 	ImGui::PushID("Hand presets");
 	const int preset = Segmented(names, -1, ImGui::GetContentRegionAvail().x, tips);

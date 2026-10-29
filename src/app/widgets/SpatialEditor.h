@@ -14,9 +14,10 @@ namespace simxr::app
 class ManualInputController;
 class PlayerRig;
 struct ManualInputSnapshot;
+
 class SpatialEditor
 {
-  public:
+public:
 	SpatialEditor(PlayerRig& rig, ManualInputController& input, UndoStack& undo);
 	void Observe(const ManualInputSnapshot& snapshot, bool piloting);
 	void SetContext(bool editable, bool lookingBack, std::span<const FrameView> eyes,
@@ -32,36 +33,45 @@ class SpatialEditor
 	void DrawRig(Selection& selection, ImVec2 size);
 	bool DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 maximum, const FrameView& camera, unsigned eye);
 	void DrawExpanded(Selection& selection, ImVec2 size);
+
 	ShellRect RotationBallRect() const
 	{
 		return m_rotationBallRect;
 	}
+
 	const std::array<ShellRect, MaxTrackerDevices + 3>& MarkerRects() const
 	{
 		return m_markerRects;
 	}
+
 	ShellRect RigViewRect() const;
 	std::array<ShellRect, MaxTrackerDevices + 3> RigDevicePoints() const;
+
 	bool Expanded() const
 	{
 		return m_view.expanded;
 	}
+
 	void SetExpanded(bool expanded)
 	{
 		m_view.expanded = expanded;
 	}
+
 	bool Active() const;
+
 	std::uint64_t ObservedFrame() const
 	{
 		return m_observed ? m_observed->frame : 0;
 	}
+
 	bool Editable() const
 	{
 		return m_editable && m_observed.has_value();
 	}
+
 	void DrawSpaceToggle();
 
-  private:
+private:
 	static int SelectedDevice(const Selection& selection);
 	static void SelectDevice(Selection& selection, int device);
 	static ControlChannel DeviceChannel(int device);

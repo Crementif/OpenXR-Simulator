@@ -25,7 +25,7 @@ struct CompanionProofFrame
 // destroying registered views. Producer waits use only the separate IO queue.
 class CompanionFrameReceiver
 {
-  public:
+public:
 	explicit CompanionFrameReceiver(VulkanDeviceAccess access, int channel = 3);
 	~CompanionFrameReceiver();
 	CompanionFrameReceiver(const CompanionFrameReceiver&) = delete;
@@ -36,13 +36,14 @@ class CompanionFrameReceiver
 	void MarkSampled(std::uint32_t id);
 	void Finish(bool verifyPixels = false);
 
-  private:
+private:
 	struct Image
 	{
 		VkImage image = VK_NULL_HANDLE;
 		VkDeviceMemory memory = VK_NULL_HANDLE;
 		VkImageView view = VK_NULL_HANDLE;
 	};
+
 	struct Frame
 	{
 		Image output;
@@ -52,6 +53,7 @@ class CompanionFrameReceiver
 		bool copied = false;
 		bool sampled = false;
 	};
+
 	void Drain() noexcept;
 	void Destroy(Image& image);
 	void CreateImage(Image& image, VkImageUsageFlags usage, bool external);

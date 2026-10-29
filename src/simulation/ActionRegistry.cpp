@@ -77,7 +77,8 @@ static bool ValidUtf8(std::string_view text)
 	return true;
 }
 
-template <std::size_t Size> static std::string_view BoundedString(const char (&text)[Size])
+template<std::size_t Size>
+static std::string_view BoundedString(const char (&text)[Size])
 {
 	return {text, static_cast<std::size_t>(std::find(text, text + Size, '\0') - text)};
 }
@@ -103,11 +104,9 @@ static bool UserAllowed(std::string_view path, const EnabledExtensions& enabled)
 		return true;
 	if (PersistentTrackerPath(path))
 		return enabled.Contains(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
-	return std::any_of(std::begin(s_components), std::end(s_components),
-					   [&](const auto& entry)
-					   {
-						   return entry.user == path && (entry.extension.empty() || enabled.Contains(entry.extension));
-					   });
+	return std::any_of(std::begin(s_components), std::end(s_components), [&](const auto& entry) {
+		return entry.user == path && (entry.extension.empty() || enabled.Contains(entry.extension));
+	});
 }
 
 struct DeviceView
@@ -123,13 +122,11 @@ struct DeviceView
 static bool SetSelected(const ActionDefinition& action, const DeviceView& device,
 						const std::vector<XrActiveActionSet>& sets)
 {
-	return std::any_of(sets.begin(), sets.end(),
-					   [&](const auto& set)
-					   {
-						   return set.actionSet == action.set && (set.subactionPath == XR_NULL_PATH ||
-																  std::find(device.users.begin(), device.users.end(),
-																			set.subactionPath) != device.users.end());
-					   });
+	return std::any_of(sets.begin(), sets.end(), [&](const auto& set) {
+		return set.actionSet == action.set &&
+			   (set.subactionPath == XR_NULL_PATH ||
+				std::find(device.users.begin(), device.users.end(), set.subactionPath) != device.users.end());
+	});
 }
 
 static std::string SourceKey(const ActionBinding& binding, InputDeviceId device)
@@ -268,8 +265,7 @@ static void Compare(ActionStateValue& value, const ActionStateValue& before, XrA
 }
 
 ActionRegistry::ActionRegistry(XrInstance owner, const EnabledExtensions& enabled) : m_owner(owner), m_enabled(enabled)
-{
-}
+{}
 
 XrResult ActionRegistry::StringToPath(std::string_view text, XrPath& path)
 {
@@ -343,12 +339,10 @@ XrResult ActionRegistry::CreateSet(const XrActionSetCreateInfo& info, XrActionSe
 		if (set->localizedName == localized)
 			return XR_ERROR_LOCALIZED_NAME_DUPLICATED;
 	}
-	auto set = m_sets.Create(m_owner,
-							 [&](XrActionSet identity)
-							 {
-								 return std::make_unique<ActionSetDefinition>(ActionSetDefinition{
-									 identity, std::string(name), std::string(localized), info.priority, false});
-							 });
+	auto set = m_sets.Create(m_owner, [&](XrActionSet identity) {
+		return std::make_unique<ActionSetDefinition>(
+			ActionSetDefinition{identity, std::string(name), std::string(localized), info.priority, false});
+	});
 	handle = set;
 	return XR_SUCCESS;
 }
@@ -407,20 +401,17 @@ XrResult ActionRegistry::CreateAction(XrActionSet setHandle, const XrActionCreat
 		if (action->localizedName == localized)
 			return XR_ERROR_LOCALIZED_NAME_DUPLICATED;
 	}
-	auto action = m_actions.Create(setHandle,
-								   [&](XrAction identity)
-								   {
-									   auto definition = std::make_unique<ActionDefinition>();
-									   definition->handle = identity;
-									   definition->set = setHandle;
-									   definition->name = name;
-									   definition->localizedName = localized;
-									   definition->type = info.actionType;
-									   if (info.countSubactionPaths)
-										   definition->subactionPaths.assign(
-											   info.subactionPaths, info.subactionPaths + info.countSubactionPaths);
-									   return definition;
-								   });
+	auto action = m_actions.Create(setHandle, [&](XrAction identity) {
+		auto definition = std::make_unique<ActionDefinition>();
+		definition->handle = identity;
+		definition->set = setHandle;
+		definition->name = name;
+		definition->localizedName = localized;
+		definition->type = info.actionType;
+		if (info.countSubactionPaths)
+			definition->subactionPaths.assign(info.subactionPaths, info.subactionPaths + info.countSubactionPaths);
+		return definition;
+	});
 	handle = action;
 	return XR_SUCCESS;
 }
@@ -464,11 +455,7 @@ std::optional<ActionSetDefinition> ActionRegistry::SetResource(XrActionSet handl
 std::vector<ActionDefinition> ActionRegistry::Actions() const
 {
 	auto resources = Resources();
-	std::erase_if(resources,
-				  [](const auto& resource)
-				  {
-					  return !resource.live;
-				  });
+	std::erase_if(resources, [](const auto& resource) { return !resource.live; });
 	return resources;
 }
 
@@ -479,31 +466,20 @@ std::vector<ActionDefinition> ActionRegistry::Resources() const
 	for (auto set : m_sets.Children(m_owner))
 		for (auto action : m_actions.Children(set))
 			result.push_back(*m_actions.Find(action).operator->());
-	std::sort(result.begin(), result.end(),
-			  [](const auto& a, const auto& b)
-			  {
-				  return a.name < b.name;
-			  });
+	std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
 	return result;
 }
 
 const ActionSetDefinition* ActionInspectionDictionary::FindSet(XrActionSet handle) const noexcept
 {
-	const auto found = std::find_if(sets.begin(), sets.end(),
-									[&](const auto& set)
-									{
-										return set.handle == handle;
-									});
+	const auto found = std::find_if(sets.begin(), sets.end(), [&](const auto& set) { return set.handle == handle; });
 	return found == sets.end() ? nullptr : &*found;
 }
 
 const ActionDefinition* ActionInspectionDictionary::FindAction(XrAction handle) const noexcept
 {
-	const auto found = std::find_if(actions.begin(), actions.end(),
-									[&](const auto& action)
-									{
-										return action.handle == handle;
-									});
+	const auto found =
+		std::find_if(actions.begin(), actions.end(), [&](const auto& action) { return action.handle == handle; });
 	return found == actions.end() ? nullptr : &*found;
 }
 
@@ -511,11 +487,7 @@ std::optional<std::string_view> ActionInspectionDictionary::PathName(XrPath path
 {
 	if (path == XR_NULL_PATH)
 		return std::string_view{};
-	const auto found = std::find_if(paths.begin(), paths.end(),
-									[&](const auto& value)
-									{
-										return value.path == path;
-									});
+	const auto found = std::find_if(paths.begin(), paths.end(), [&](const auto& value) { return value.path == path; });
 	return found == paths.end() ? std::nullopt : std::optional<std::string_view>{found->name};
 }
 
@@ -536,31 +508,23 @@ XrResult ActionRegistry::BuildInspectionDictionary(std::span<const XrActionSet> 
 		for (const auto action : m_actions.Children(handle))
 			prepared->actions.push_back(*m_actions.Find(action).operator->());
 	}
-	std::sort(prepared->sets.begin(), prepared->sets.end(),
-			  [](const auto& left, const auto& right)
-			  {
-				  return left.name != right.name ? left.name < right.name
-												 : std::less<XrActionSet>{}(left.handle, right.handle);
-			  });
-	const auto actionName = [&](XrAction handle)
-	{
+	std::sort(prepared->sets.begin(), prepared->sets.end(), [](const auto& left, const auto& right) {
+		return left.name != right.name ? left.name < right.name : std::less<XrActionSet>{}(left.handle, right.handle);
+	});
+	const auto actionName = [&](XrAction handle) {
 		const auto* action = prepared->FindAction(handle);
 		const auto* set = action ? prepared->FindSet(action->set) : nullptr;
 		return std::pair{set ? std::string_view{set->name} : std::string_view{},
 						 action ? std::string_view{action->name} : std::string_view{}};
 	};
-	std::sort(prepared->actions.begin(), prepared->actions.end(),
-			  [&](const auto& left, const auto& right)
-			  {
-				  const auto leftName =
-					  std::pair{std::string_view{prepared->FindSet(left.set)->name}, std::string_view{left.name}};
-				  const auto rightName =
-					  std::pair{std::string_view{prepared->FindSet(right.set)->name}, std::string_view{right.name}};
-				  return leftName != rightName ? leftName < rightName
-											   : std::less<XrAction>{}(left.handle, right.handle);
-			  });
-	const auto appendBinding = [&](const ActionBinding& binding)
-	{
+	std::sort(prepared->actions.begin(), prepared->actions.end(), [&](const auto& left, const auto& right) {
+		const auto leftName =
+			std::pair{std::string_view{prepared->FindSet(left.set)->name}, std::string_view{left.name}};
+		const auto rightName =
+			std::pair{std::string_view{prepared->FindSet(right.set)->name}, std::string_view{right.name}};
+		return leftName != rightName ? leftName < rightName : std::less<XrAction>{}(left.handle, right.handle);
+	});
+	const auto appendBinding = [&](const ActionBinding& binding) {
 		if (prepared->FindAction(binding.action) &&
 			std::find(prepared->bindings.begin(), prepared->bindings.end(), binding) == prepared->bindings.end())
 			prepared->bindings.push_back(binding);
@@ -575,13 +539,11 @@ XrResult ActionRegistry::BuildInspectionDictionary(std::span<const XrActionSet> 
 				appendBinding(binding);
 		}
 	std::vector<XrPath> requiredPaths;
-	const auto path = [&](XrPath value)
-	{
+	const auto path = [&](XrPath value) {
 		if (value != XR_NULL_PATH)
 			requiredPaths.push_back(value);
 	};
-	const auto bindingPaths = [&](const ActionBinding& binding)
-	{
+	const auto bindingPaths = [&](const ActionBinding& binding) {
 		path(binding.profile);
 		path(binding.source);
 		path(binding.userPath);
@@ -632,23 +594,18 @@ XrResult ActionRegistry::BuildInspectionDictionary(std::span<const XrActionSet> 
 			return XR_ERROR_PATH_INVALID;
 		prepared->paths.push_back({required, found->second});
 	}
-	std::sort(prepared->paths.begin(), prepared->paths.end(),
-			  [](const auto& left, const auto& right)
-			  {
-				  return left.name != right.name ? left.name < right.name : left.path < right.path;
-			  });
-	std::sort(prepared->bindings.begin(), prepared->bindings.end(),
-			  [&](const auto& left, const auto& right)
-			  {
-				  const auto key = [&](const auto& binding)
-				  {
-					  return std::tuple{actionName(binding.action),			 *prepared->PathName(binding.profile),
-										*prepared->PathName(binding.source), *prepared->PathName(binding.userPath),
-										std::string_view{binding.component}, binding.sourceType};
-				  };
-				  const auto leftKey = key(left), rightKey = key(right);
-				  return leftKey != rightKey ? leftKey < rightKey : std::less<XrAction>{}(left.action, right.action);
-			  });
+	std::sort(prepared->paths.begin(), prepared->paths.end(), [](const auto& left, const auto& right) {
+		return left.name != right.name ? left.name < right.name : left.path < right.path;
+	});
+	std::sort(prepared->bindings.begin(), prepared->bindings.end(), [&](const auto& left, const auto& right) {
+		const auto key = [&](const auto& binding) {
+			return std::tuple{actionName(binding.action),		   *prepared->PathName(binding.profile),
+							  *prepared->PathName(binding.source), *prepared->PathName(binding.userPath),
+							  std::string_view{binding.component}, binding.sourceType};
+		};
+		const auto leftKey = key(left), rightKey = key(right);
+		return leftKey != rightKey ? leftKey < rightKey : std::less<XrAction>{}(left.action, right.action);
+	});
 	dictionary = std::move(prepared);
 	return XR_SUCCESS;
 }
@@ -662,10 +619,7 @@ XrResult ActionRegistry::SuggestBindings(const XrInteractionProfileSuggestedBind
 	if (!profileText)
 		return XR_ERROR_PATH_INVALID;
 	auto component = std::find_if(std::begin(s_components), std::end(s_components),
-								  [&](const auto& entry)
-								  {
-									  return entry.profile == *profileText;
-								  });
+								  [&](const auto& entry) { return entry.profile == *profileText; });
 	if (component == std::end(s_components) ||
 		(!component->extension.empty() && !m_enabled.Contains(component->extension)))
 		return XR_ERROR_PATH_UNSUPPORTED;
@@ -708,11 +662,9 @@ XrResult ActionRegistry::SuggestBindings(const XrInteractionProfileSuggestedBind
 				}
 			}
 		}
-		auto match = std::find_if(std::begin(s_components), std::end(s_components),
-								  [&](const auto& entry)
-								  {
-									  return entry.profile == *profileText && entry.component == componentPath;
-								  });
+		auto match = std::find_if(std::begin(s_components), std::end(s_components), [&](const auto& entry) {
+			return entry.profile == *profileText && entry.component == componentPath;
+		});
 		if (user.empty() || match == std::end(s_components) || !Compatible(action->type, match->type))
 			return XR_ERROR_PATH_UNSUPPORTED;
 		XrPath userPath;
@@ -795,20 +747,16 @@ XrPath ActionRegistry::SelectProfile(std::string_view preferred, XrPath userPath
 {
 	std::lock_guard lock(m_mutex);
 	auto user = m_paths.find(userPath);
-	auto compatible = [&](XrPath profile)
-	{
+	auto compatible = [&](XrPath profile) {
 		if (!userPath)
 			return true;
 		if (user == m_paths.end())
 			return false;
-		return std::any_of(std::begin(s_components), std::end(s_components),
-						   [&](const auto& entry)
-						   {
-							   return entry.profile == m_paths.at(profile) &&
-									  (entry.user == user->second ||
-									   (entry.profile == "/interaction_profiles/htc/vive_tracker_htcx" &&
-										PersistentTrackerPath(user->second)));
-						   });
+		return std::any_of(std::begin(s_components), std::end(s_components), [&](const auto& entry) {
+			return entry.profile == m_paths.at(profile) &&
+				   (entry.user == user->second || (entry.profile == "/interaction_profiles/htc/vive_tracker_htcx" &&
+												   PersistentTrackerPath(user->second)));
+		});
 	};
 	for (auto profile : m_profiles)
 		if (m_paths.at(profile) == preferred && compatible(profile))
@@ -848,22 +796,17 @@ XrResult ActionRegistry::LocalizedName(XrPath source, XrPath profile, XrInputSou
 		return XR_ERROR_PATH_INVALID;
 	if (!profilePath)
 		return XR_ERROR_PATH_UNSUPPORTED;
-	auto component = std::find_if(
-		std::begin(s_components), std::end(s_components),
-		[&](const auto& entry)
-		{
-			return entry.profile == *profilePath &&
-				   ((path->starts_with(entry.user) &&
-					 std::string_view(*path).substr(entry.user.size()) == entry.component) ||
-					(entry.profile == "/interaction_profiles/htc/vive_tracker_htcx" &&
-					 path->ends_with(entry.component) &&
-					 PersistentTrackerPath(std::string_view(*path).substr(0, path->size() - entry.component.size()))));
-		});
+	auto component = std::find_if(std::begin(s_components), std::end(s_components), [&](const auto& entry) {
+		return entry.profile == *profilePath &&
+			   ((path->starts_with(entry.user) &&
+				 std::string_view(*path).substr(entry.user.size()) == entry.component) ||
+				(entry.profile == "/interaction_profiles/htc/vive_tracker_htcx" && path->ends_with(entry.component) &&
+				 PersistentTrackerPath(std::string_view(*path).substr(0, path->size() - entry.component.size()))));
+	});
 	if (component == std::end(s_components))
 		return XR_ERROR_PATH_UNSUPPORTED;
 	name.clear();
-	auto append = [&](std::string_view value)
-	{
+	auto append = [&](std::string_view value) {
 		if (!name.empty())
 			name += " / ";
 		name += value;
@@ -974,13 +917,11 @@ XrResult ActionSyncState::Sync(const XrActionsSyncInfo& info, const InputSnapsho
 		{
 			if (!m_registry.PathString(active.subactionPath))
 				return XR_ERROR_PATH_INVALID;
-			bool used = std::any_of(definitions.begin(), definitions.end(),
-									[&](const auto& action)
-									{
-										return action.set == active.actionSet &&
-											   std::find(action.subactionPaths.begin(), action.subactionPaths.end(),
-														 active.subactionPath) != action.subactionPaths.end();
-									});
+			bool used = std::any_of(definitions.begin(), definitions.end(), [&](const auto& action) {
+				return action.set == active.actionSet &&
+					   std::find(action.subactionPaths.begin(), action.subactionPaths.end(), active.subactionPath) !=
+						   action.subactionPaths.end();
+			});
 			if (!used)
 				return XR_ERROR_PATH_UNSUPPORTED;
 		}
@@ -1057,11 +998,9 @@ XrResult ActionSyncState::Sync(const XrActionsSyncInfo& info, const InputSnapsho
 			Combine(aggregate, value);
 		}
 		action.values[XR_NULL_PATH] = aggregate;
-		auto previous = std::find_if(m_snapshot.actions.begin(), m_snapshot.actions.end(),
-									 [&](const auto& before)
-									 {
-										 return before.definition.handle == action.definition.handle;
-									 });
+		auto previous = std::find_if(m_snapshot.actions.begin(), m_snapshot.actions.end(), [&](const auto& before) {
+			return before.definition.handle == action.definition.handle;
+		});
 		for (auto& [path, value] : action.values)
 		{
 			ActionStateValue before;
@@ -1103,10 +1042,7 @@ XrResult ActionSyncState::Value(const XrActionStateGetInfo& info, XrActionType t
 	if (std::find(m_sets.begin(), m_sets.end(), definition->set) == m_sets.end())
 		return XR_ERROR_ACTIONSET_NOT_ATTACHED;
 	auto action = std::find_if(m_snapshot.actions.begin(), m_snapshot.actions.end(),
-							   [&](const auto& state)
-							   {
-								   return state.definition.handle == info.action;
-							   });
+							   [&](const auto& state) { return state.definition.handle == info.action; });
 	value = {};
 	if (action != m_snapshot.actions.end())
 	{

@@ -58,18 +58,13 @@ static bool SupportedShape(const VulkanExternalImageSpec& image)
 static bool HasName(std::span<const char* const> extensions, const char* name)
 {
 	return std::any_of(extensions.begin(), extensions.end(),
-					   [&](const char* candidate)
-					   {
-						   return candidate && std::strcmp(candidate, name) == 0;
-					   });
+					   [&](const char* candidate) { return candidate && std::strcmp(candidate, name) == 0; });
 }
+
 static bool HasNames(std::span<const char* const> extensions)
 {
 	return std::all_of(s_sharingNames.begin(), s_sharingNames.end(),
-					   [&](const char* name)
-					   {
-						   return HasName(extensions, name);
-					   });
+					   [&](const char* name) { return HasName(extensions, name); });
 }
 
 static VkResult PhysicalExtensions(VkPhysicalDevice physical, std::span<const char* const> required = s_sharingNames)
@@ -91,13 +86,9 @@ static VkResult PhysicalExtensions(VkPhysicalDevice physical, std::span<const ch
 		}
 		if (result != VK_SUCCESS)
 			return result;
-		const auto contains = [&](const char* name)
-		{
+		const auto contains = [&](const char* name) {
 			return std::any_of(extensions.begin(), extensions.begin() + count,
-							   [&](const auto& candidate)
-							   {
-								   return std::strcmp(candidate.extensionName, name) == 0;
-							   });
+							   [&](const auto& candidate) { return std::strcmp(candidate.extensionName, name) == 0; });
 		};
 		return std::all_of(required.begin(), required.end(), contains) ? VK_SUCCESS : VK_ERROR_EXTENSION_NOT_PRESENT;
 	}
@@ -141,14 +132,16 @@ static void PreventInheritance(const VulkanExternalHandle& handle)
 	do
 	{
 		flags = fcntl(handle.Get(), F_GETFD);
-	} while (flags < 0 && errno == EINTR);
+	}
+	while (flags < 0 && errno == EINTR);
 	if (flags < 0)
 		throw std::system_error(errno, std::generic_category(), "Query exported native-handle flags");
 	int result;
 	do
 	{
 		result = fcntl(handle.Get(), F_SETFD, flags | FD_CLOEXEC);
-	} while (result < 0 && errno == EINTR);
+	}
+	while (result < 0 && errno == EINTR);
 	if (result < 0)
 		throw std::system_error(errno, std::generic_category(), "Set exported native-handle close-on-exec");
 #endif
@@ -181,21 +174,26 @@ static std::uint32_t MemoryType(VkPhysicalDevice physical, std::uint32_t bits)
 }
 
 VulkanExternalHandle::VulkanExternalHandle(VulkanNativeHandle descriptor) noexcept : m_descriptor(descriptor) {}
+
 VulkanExternalHandle::~VulkanExternalHandle()
 {
 	Reset();
 }
+
 VulkanExternalHandle::VulkanExternalHandle(VulkanExternalHandle&& other) noexcept : m_descriptor(other.Release()) {}
+
 VulkanExternalHandle& VulkanExternalHandle::operator=(VulkanExternalHandle&& other) noexcept
 {
 	if (this != &other)
 		Reset(other.Release());
 	return *this;
 }
+
 VulkanNativeHandle VulkanExternalHandle::Get() const noexcept
 {
 	return m_descriptor;
 }
+
 VulkanExternalHandle::operator bool() const noexcept
 {
 #ifdef _WIN32
@@ -204,10 +202,12 @@ VulkanExternalHandle::operator bool() const noexcept
 	return m_descriptor >= 0;
 #endif
 }
+
 VulkanNativeHandle VulkanExternalHandle::Release() noexcept
 {
 	return std::exchange(m_descriptor, InvalidVulkanHandle);
 }
+
 void VulkanExternalHandle::Reset(VulkanNativeHandle descriptor) noexcept
 {
 	if (m_descriptor == descriptor)
@@ -227,6 +227,7 @@ void VulkanExternalHandle::Reset(VulkanNativeHandle descriptor) noexcept
 	}
 #endif
 }
+
 VulkanExternalHandle VulkanExternalHandle::Duplicate() const
 {
 	if (!*this)
@@ -241,7 +242,8 @@ VulkanExternalHandle VulkanExternalHandle::Duplicate() const
 	do
 	{
 		result = fcntl(m_descriptor, F_DUPFD_CLOEXEC, 0);
-	} while (result < 0 && errno == EINTR);
+	}
+	while (result < 0 && errno == EINTR);
 	if (result < 0)
 		throw std::system_error(errno, std::generic_category(), "Duplicate external descriptor");
 #endif
@@ -253,16 +255,19 @@ bool VulkanExternalCapabilities::CanExportImage() const noexcept
 	return result == VK_SUCCESS && (memory.compatibleHandleTypes & s_memoryHandle) &&
 		   (memory.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT);
 }
+
 bool VulkanExternalCapabilities::CanImportImage() const noexcept
 {
 	return result == VK_SUCCESS && (memory.compatibleHandleTypes & s_memoryHandle) &&
 		   (memory.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT);
 }
+
 bool VulkanExternalCapabilities::CanExportSemaphore() const noexcept
 {
 	return result == VK_SUCCESS && (semaphore.compatibleHandleTypes & s_semaphoreHandle) &&
 		   (semaphore.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT);
 }
+
 bool VulkanExternalCapabilities::CanImportSemaphore() const noexcept
 {
 	return result == VK_SUCCESS && (semaphore.compatibleHandleTypes & s_semaphoreHandle) &&
@@ -274,6 +279,7 @@ bool VulkanExternalFenceCapabilities::CanExport() const noexcept
 	return result == VK_SUCCESS && (fence.compatibleHandleTypes & s_fenceHandle) &&
 		   (fence.externalFenceFeatures & VK_EXTERNAL_FENCE_FEATURE_EXPORTABLE_BIT);
 }
+
 bool VulkanExternalFenceCapabilities::CanImport() const noexcept
 {
 	return result == VK_SUCCESS && (fence.compatibleHandleTypes & s_fenceHandle) &&
@@ -283,25 +289,29 @@ bool VulkanExternalFenceCapabilities::CanImport() const noexcept
 VulkanExternalFence::VulkanExternalFence(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
 										 VulkanGetFenceHandle getFenceHandle, bool exportable)
 	: m_device(std::move(device)), m_identity(identity), m_getFenceHandle(getFenceHandle), m_exportable(exportable)
-{
-}
+{}
+
 VulkanExternalFence::~VulkanExternalFence()
 {
 	if (m_fence)
 		vkDestroyFence(m_device->binding.device, m_fence, nullptr);
 }
+
 VkFence VulkanExternalFence::Get() const noexcept
 {
 	return m_fence;
 }
+
 std::shared_ptr<VulkanDevice> VulkanExternalFence::Device() const noexcept
 {
 	return m_device;
 }
+
 const VulkanExternalIdentity& VulkanExternalFence::Identity() const noexcept
 {
 	return m_identity;
 }
+
 VulkanExternalHandle VulkanExternalFence::ExportOnce()
 {
 	std::lock_guard lock(m_exportMutex);
@@ -324,6 +334,7 @@ VulkanExternalHandle VulkanExternalFence::ExportOnce()
 	m_exported = true;
 	return result;
 }
+
 CompletionStatus VulkanExternalFence::PollCompletion() const noexcept
 {
 	auto status = m_status.load();
@@ -363,22 +374,24 @@ VulkanExternalFenceCapabilities VulkanExternalDevice::QueryFence(VkPhysicalDevic
 VulkanExternalImage::VulkanExternalImage(std::shared_ptr<VulkanImage> image, VulkanExternalImageDescriptor descriptor,
 										 VulkanGetMemoryHandle getMemoryHandle, bool exportable)
 	: m_image(std::move(image)), m_descriptor(descriptor), m_getMemoryHandle(getMemoryHandle), m_exportable(exportable)
-{
-}
+{}
+
 VulkanExternalImage::VulkanExternalImage(std::shared_ptr<VulkanImage> image,
 										 std::shared_ptr<const VulkanExternalImage> allocation)
 	: m_image(std::move(image)), m_descriptor(allocation->Descriptor()), m_getMemoryHandle(nullptr),
 	  m_exportable(false), m_allocation(std::move(allocation))
-{
-}
+{}
+
 std::shared_ptr<VulkanImage> VulkanExternalImage::Image() const noexcept
 {
 	return m_image;
 }
+
 const VulkanExternalImageDescriptor& VulkanExternalImage::Descriptor() const noexcept
 {
 	return m_descriptor;
 }
+
 VulkanExternalHandle VulkanExternalImage::ExportMemory() const
 {
 	if (m_allocation)
@@ -417,25 +430,29 @@ VulkanExternalSemaphore::VulkanExternalSemaphore(std::shared_ptr<VulkanDevice> d
 												 VulkanGetSemaphoreHandle getSemaphoreHandle, bool exportable)
 	: m_device(std::move(device)), m_identity(identity), m_getSemaphoreHandle(getSemaphoreHandle),
 	  m_exportable(exportable)
-{
-}
+{}
+
 VulkanExternalSemaphore::~VulkanExternalSemaphore()
 {
 	if (m_semaphore)
 		vkDestroySemaphore(m_device->binding.device, m_semaphore, nullptr);
 }
+
 VkSemaphore VulkanExternalSemaphore::Get() const noexcept
 {
 	return m_semaphore;
 }
+
 std::shared_ptr<VulkanDevice> VulkanExternalSemaphore::Device() const noexcept
 {
 	return m_device;
 }
+
 const VulkanExternalIdentity& VulkanExternalSemaphore::Identity() const noexcept
 {
 	return m_identity;
 }
+
 VulkanExternalHandle VulkanExternalSemaphore::ExportOnce()
 {
 	std::lock_guard lock(m_exportMutex);
@@ -573,10 +590,12 @@ VulkanExternalDevice::VulkanExternalDevice(std::shared_ptr<VulkanDevice> device,
 			throw VulkanError(VK_ERROR_EXTENSION_NOT_PRESENT, "Timeline completion command unavailable");
 	}
 }
+
 const VulkanExternalIdentity& VulkanExternalDevice::Identity() const noexcept
 {
 	return m_identity;
 }
+
 std::shared_ptr<VulkanDevice> VulkanExternalDevice::Device() const noexcept
 {
 	return m_device;
@@ -709,6 +728,7 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateExportableS
 {
 	return CreateSemaphore(false);
 }
+
 std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateSemaphore(bool timeline) const
 {
 	RequireLive(*m_device);
@@ -738,6 +758,7 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(c
 {
 	return ImportSemaphore(identity, handle, false);
 }
+
 std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(const VulkanExternalIdentity& identity,
 																			   VulkanExternalHandle& handle,
 																			   bool timeline) const
@@ -780,6 +801,7 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(c
 	handle.Reset();
 	return result;
 }
+
 VulkanExternalCapabilities VulkanExternalDevice::QueryTimeline(VkPhysicalDevice physical, std::uint32_t api)
 {
 	VulkanExternalCapabilities result;
@@ -812,14 +834,17 @@ VulkanExternalCapabilities VulkanExternalDevice::QueryTimeline(VkPhysicalDevice 
 	vkGetPhysicalDeviceExternalSemaphoreProperties(physical, &info, &result.semaphore);
 	return result;
 }
+
 bool VulkanExternalDevice::TimelineCommandsEnabled() const noexcept
 {
 	return m_counter != nullptr;
 }
+
 std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::CreateExportableTimeline() const
 {
 	return std::shared_ptr<VulkanExternalTimeline>(new VulkanExternalTimeline(CreateSemaphore(true), m_counter));
 }
+
 std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::ImportTimeline(const VulkanExternalIdentity& identity,
 																			 VulkanExternalHandle& handle) const
 {
@@ -830,19 +855,22 @@ std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::ImportTimeline(con
 	handle.Reset();
 	return result;
 }
+
 VulkanExternalTimeline::VulkanExternalTimeline(std::shared_ptr<VulkanExternalSemaphore> semaphore,
 											   PFN_vkGetSemaphoreCounterValueKHR counter)
 	: m_semaphore(std::move(semaphore)), m_counter(counter)
-{
-}
+{}
+
 VkSemaphore VulkanExternalTimeline::Get() const noexcept
 {
 	return m_semaphore->Get();
 }
+
 VulkanExternalHandle VulkanExternalTimeline::ExportOnce()
 {
 	return m_semaphore->ExportOnce();
 }
+
 CompletionStatus VulkanExternalTimeline::PollCompletion() const noexcept
 {
 	auto status = m_status.load();
@@ -864,6 +892,7 @@ bool VulkanExternalDevice::FenceCommandsEnabled() const noexcept
 {
 	return m_getFenceHandle && m_importFenceHandle;
 }
+
 std::shared_ptr<VulkanExternalFence> VulkanExternalDevice::CreateExportableFence() const
 {
 	RequireLive(*m_device);
@@ -882,6 +911,7 @@ std::shared_ptr<VulkanExternalFence> VulkanExternalDevice::CreateExportableFence
 	CheckVulkan(vkCreateFence(m_device->binding.device, &info, nullptr, &result->m_fence), "Create exportable fence");
 	return result;
 }
+
 std::shared_ptr<VulkanExternalFence> VulkanExternalDevice::ImportFence(const VulkanExternalIdentity& identity,
 																	   VulkanExternalHandle& handle) const
 {

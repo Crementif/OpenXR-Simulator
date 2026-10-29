@@ -11,6 +11,7 @@ void ValidateHostControlPipe()
 	if (!input || input == INVALID_HANDLE_VALUE || GetFileType(input) != FILE_TYPE_PIPE)
 		throw std::invalid_argument("Parent control requires a standard-input pipe");
 }
+
 bool HostStopRequested()
 {
 	DWORD available = 0;

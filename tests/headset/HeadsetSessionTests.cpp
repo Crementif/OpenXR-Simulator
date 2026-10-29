@@ -28,11 +28,14 @@ struct State
 	XrPosef outputTransform{};
 	XrReferenceSpaceType createdReference = XR_REFERENCE_SPACE_TYPE_MAX_ENUM;
 };
+
 static State s_state;
+
 static XrSession Session()
 {
 	return reinterpret_cast<XrSession>(std::uintptr_t{2});
 }
+
 static XrSpace Space()
 {
 	return reinterpret_cast<XrSpace>(std::uintptr_t{3});
@@ -44,19 +47,25 @@ namespace simxr
 struct VulkanBackend::State
 {
 };
+
 VulkanBackend::~VulkanBackend() = default;
 } // namespace simxr
+
 namespace simxr::control
 {
 struct VulkanImageConsumer::State
 {
 };
+
 VulkanImageConsumer::~VulkanImageConsumer() = default;
 } // namespace simxr::control
+
 namespace simxr::headset
 {
 HeadsetImageBridge::HeadsetImageBridge(HeadsetImageSource source) : m_source(std::move(source)) {}
+
 HeadsetImageBridge::~HeadsetImageBridge() = default;
+
 HeadsetImages::HeadsetImages(HeadsetGraphics& graphics, HeadsetImageSource source, std::shared_ptr<VulkanDevice>)
 	: m_graphics(graphics), m_bridge(std::move(source))
 {
@@ -67,48 +76,62 @@ HeadsetImages::HeadsetImages(HeadsetGraphics& graphics, HeadsetImageSource sourc
 	m_current->metadata.description.width = 800;
 	m_current->metadata.description.height = 600;
 }
+
 HeadsetImages::~HeadsetImages() = default;
+
 std::optional<std::chrono::nanoseconds> HeadsetImages::Age(std::chrono::steady_clock::time_point) const
 {
 	return std::chrono::milliseconds(7);
 }
+
 bool HeadsetImages::Fresh(std::chrono::nanoseconds) const
 {
 	return tests::s_state.waits != 5;
 }
+
 void HeadsetImages::Tick()
 {
 	++tests::s_state.imageTicks;
 }
+
 std::shared_ptr<const HeadsetImageFrame> HeadsetImages::Current() const
 {
 	return m_current;
 }
+
 HeadsetOutput::HeadsetOutput(HeadsetGraphics& graphics) : m_graphics(graphics) {}
+
 HeadsetOutput::~HeadsetOutput() = default;
 HeadsetOutputResources::~HeadsetOutputResources() = default;
+
 void HeadsetOutput::Open(OpenXrRuntime&, XrSession)
 {
 	tests::s_state.live = true;
 }
+
 void HeadsetOutput::Poll() {}
+
 bool HeadsetOutput::DrawScreen(std::shared_ptr<const HeadsetImageFrame>)
 {
 	++tests::s_state.screenDraws;
 	return true;
 }
+
 XrSwapchain HeadsetOutput::Swapchain() const
 {
 	return reinterpret_cast<XrSwapchain>(4);
 }
+
 XrExtent2Di HeadsetOutput::Extent() const
 {
 	return {800, 600};
 }
+
 std::shared_ptr<VulkanDevice> HeadsetOutput::Device() const
 {
 	return {};
 }
+
 bool HeadsetOutput::Draw(std::shared_ptr<const HeadsetImageFrame> source, XrPosef transform,
 						 const std::array<XrFovf, 2>&)
 {
@@ -124,11 +147,14 @@ bool HeadsetOutput::Draw(std::shared_ptr<const HeadsetImageFrame> source, XrPose
 	}
 	return true;
 }
+
 const std::array<XrCompositionLayerProjectionView, 2>& HeadsetOutput::Projection() const
 {
 	return m_projection;
 }
+
 HeadsetBody::HeadsetBody(OpenXrRuntime& runtime) : m_runtime(runtime) {}
+
 HeadsetBody::~HeadsetBody()
 {
 	if (tests::s_state.bodyOpen && !tests::s_state.preserved)
@@ -138,6 +164,7 @@ HeadsetBody::~HeadsetBody()
 		++tests::s_state.destroyedBody;
 	}
 }
+
 void HeadsetBody::Open(XrSession session, BodyJointSet set)
 {
 	Require(session == tests::Session(), "Body belongs to selected native session");
@@ -146,6 +173,7 @@ void HeadsetBody::Open(XrSession session, BodyJointSet set)
 	tests::s_state.bodyOpen = true;
 	tests::s_state.bodySet = set;
 }
+
 PhysicalBodySample HeadsetBody::Sample(XrTime time, XrSpace space, bool locate)
 {
 	Require(tests::s_state.bodyOpen && space == tests::Space(), "Sample body in the shared native base space");
@@ -156,10 +184,14 @@ PhysicalBodySample HeadsetBody::Sample(XrTime time, XrSpace space, bool locate)
 	sample.located = locate;
 	return sample;
 }
+
 HeadsetActions::HeadsetActions(OpenXrRuntime& runtime) : m_runtime(runtime) {}
+
 HeadsetActions::~HeadsetActions() = default;
 HeadsetTrackers::~HeadsetTrackers() = default;
+
 void HeadsetActions::Open(XrSession, bool) {}
+
 bool HeadsetActions::ApplyHaptic(std::uint32_t hand, float amplitude, float frequency, XrDuration duration)
 {
 	Require(hand == 0 && amplitude == .5f && frequency == 80 && duration == 1000,
@@ -167,11 +199,13 @@ bool HeadsetActions::ApplyHaptic(std::uint32_t hand, float amplitude, float freq
 	++tests::s_state.vibrations;
 	return true;
 }
+
 bool HeadsetActions::StopHaptic(std::uint32_t)
 {
 	++tests::s_state.hapticStops;
 	return true;
 }
+
 HeadsetInputSample HeadsetActions::Sample(XrTime time, XrSpace)
 {
 	HeadsetInputSample sample;
@@ -182,67 +216,86 @@ HeadsetInputSample HeadsetActions::Sample(XrTime time, XrSpace)
 	sample.head.pose.position.x = tests::s_state.waits;
 	return sample;
 }
+
 OpenXrRuntime::~OpenXrRuntime() = default;
+
 XrInstance OpenXrRuntime::Instance() const
 {
 	return reinterpret_cast<XrInstance>(std::uintptr_t{1});
 }
+
 XrSystemId OpenXrRuntime::System() const
 {
 	return 1;
 }
+
 void OpenXrRuntime::PreserveNativeResources()
 {
 	tests::s_state.preserved = true;
 }
+
 void CheckXr(XrResult result, const char* operation)
 {
 	if (XR_FAILED(result))
 		throw std::runtime_error(operation);
 }
+
 HeadsetGraphics::~HeadsetGraphics() = default;
+
 VkInstance HeadsetGraphics::Instance() const
 {
 	return VK_NULL_HANDLE;
 }
+
 VkPhysicalDevice HeadsetGraphics::PhysicalDevice() const
 {
 	return VK_NULL_HANDLE;
 }
+
 VkDevice HeadsetGraphics::Device() const
 {
 	return VK_NULL_HANDLE;
 }
+
 std::uint32_t HeadsetGraphics::QueueFamily() const
 {
 	return 0;
 }
+
 bool HeadsetGraphics::Drain()
 {
 	if (tests::s_state.failDrain)
 		m_preserved = true;
 	return !m_preserved;
 }
+
 void HeadsetGraphics::PreserveNativeResources()
 {
 	m_preserved = true;
 }
+
 bool HeadsetGraphics::ResourcesPreserved() const
 {
 	return m_preserved;
 }
+
 HeadsetTestPattern::HeadsetTestPattern(HeadsetGraphics& graphics) : m_graphics(graphics) {}
+
 HeadsetTestPattern::~HeadsetTestPattern() = default;
+
 void HeadsetTestPattern::Open(XrSession) {}
+
 bool HeadsetTestPattern::Draw()
 {
 	++tests::s_state.draws;
 	return true;
 }
+
 XrSwapchain HeadsetTestPattern::Swapchain() const
 {
 	return reinterpret_cast<XrSwapchain>(std::uintptr_t{4});
 }
+
 XrExtent2Di HeadsetTestPattern::Extent() const
 {
 	return {256, 256};
@@ -260,16 +313,19 @@ extern "C"
 			modes[0] = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateSession(XrInstance, const XrSessionCreateInfo*, XrSession* session)
 	{
 		*session = simxr::headset::tests::Session();
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrDestroySession(XrSession)
 	{
 		++simxr::headset::tests::s_state.destroyedSession;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrEnumerateReferenceSpaces(XrSession, std::uint32_t capacity, std::uint32_t* count,
 															  XrReferenceSpaceType* spaces)
 	{
@@ -287,6 +343,7 @@ extern "C"
 		}
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrCreateReferenceSpace(XrSession, const XrReferenceSpaceCreateInfo* create,
 														  XrSpace* space)
 	{
@@ -295,11 +352,13 @@ extern "C"
 		*space = simxr::headset::tests::Space();
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrDestroySpace(XrSpace)
 	{
 		++simxr::headset::tests::s_state.destroyedSpace;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrPollEvent(XrInstance, XrEventDataBuffer* buffer)
 	{
 		using namespace simxr::headset::tests;
@@ -333,6 +392,7 @@ extern "C"
 																	  Session(), value, 1};
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrBeginSession(XrSession, const XrSessionBeginInfo* begin)
 	{
 		auto& state = simxr::headset::tests::s_state;
@@ -341,6 +401,7 @@ extern "C"
 		state.running = true;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrEndSession(XrSession)
 	{
 		auto& state = simxr::headset::tests::s_state;
@@ -348,6 +409,7 @@ extern "C"
 		state.running = false;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrRequestExitSession(XrSession)
 	{
 		auto& state = simxr::headset::tests::s_state;
@@ -355,6 +417,7 @@ extern "C"
 		state.stop = true;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrWaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* frame)
 	{
 		auto& state = simxr::headset::tests::s_state;
@@ -365,6 +428,7 @@ extern "C"
 		frame->shouldRender = state.waits != 1;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrBeginFrame(XrSession, const XrFrameBeginInfo*)
 	{
 		auto& state = simxr::headset::tests::s_state;
@@ -372,6 +436,7 @@ extern "C"
 		++state.begins;
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrLocateViews(XrSession, const XrViewLocateInfo* locate, XrViewState* state,
 												 std::uint32_t capacity, std::uint32_t* count, XrView* views)
 	{
@@ -391,6 +456,7 @@ extern "C"
 		}
 		return XR_SUCCESS;
 	}
+
 	XRAPI_ATTR XrResult XRAPI_CALL xrEndFrame(XrSession, const XrFrameEndInfo* end)
 	{
 		auto& state = simxr::headset::tests::s_state;
@@ -450,30 +516,27 @@ static void Run()
 		HeadsetSession session(runtime, graphics);
 		session.Open();
 		unsigned observations = 0;
-		session.Run(
-			2,
-			[&](const HeadsetInputSample& input)
-			{
-				++observations;
-				Require(!input.body, "Unselected body provider must not open or sample");
-				Require(input.space.revision == (observations < 3 ? 1u : 2u) &&
-							input.space.initialFromCurrent.position.x == (observations < 3 ? 0.f : 2.f),
-						"Runtime origin event updates the sampled calibration only at the target prediction");
-				if (observations == 1)
-					session.ApplyHaptics({HeadsetVibration{.5f, 80, 1000}, std::nullopt});
-				Require(input.time == s_state.waits * 10000000, "Input and views share the predicted time");
-				Require(s_state.ends + 1 == s_state.waits && s_state.draws == (s_state.waits > 3 ? 1 : 0),
-						"Publish coherent tracking before drawing and ending the physical frame");
-				Require(input.eyes[0].location.pose.position.x == -0.03f &&
-							input.eyes[1].location.pose.position.x == 0.03f && input.eyes[0].fov.angleLeft == -0.7f,
-						"Input observation retains the physical eye geometry");
-				const auto flags = s_state.waits == 2 ? 0
-													  : XR_SPACE_LOCATION_POSITION_VALID_BIT |
-															XR_SPACE_LOCATION_ORIENTATION_VALID_BIT |
-															XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
-				Require(input.eyes[0].location.locationFlags == flags && input.eyes[1].location.locationFlags == flags,
-						"View validity maps explicitly without inventing positional tracking");
-			});
+		session.Run(2, [&](const HeadsetInputSample& input) {
+			++observations;
+			Require(!input.body, "Unselected body provider must not open or sample");
+			Require(input.space.revision == (observations < 3 ? 1u : 2u) &&
+						input.space.initialFromCurrent.position.x == (observations < 3 ? 0.f : 2.f),
+					"Runtime origin event updates the sampled calibration only at the target prediction");
+			if (observations == 1)
+				session.ApplyHaptics({HeadsetVibration{.5f, 80, 1000}, std::nullopt});
+			Require(input.time == s_state.waits * 10000000, "Input and views share the predicted time");
+			Require(s_state.ends + 1 == s_state.waits && s_state.draws == (s_state.waits > 3 ? 1 : 0),
+					"Publish coherent tracking before drawing and ending the physical frame");
+			Require(input.eyes[0].location.pose.position.x == -0.03f &&
+						input.eyes[1].location.pose.position.x == 0.03f && input.eyes[0].fov.angleLeft == -0.7f,
+					"Input observation retains the physical eye geometry");
+			const auto flags = s_state.waits == 2
+								   ? 0
+								   : XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT |
+										 XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+			Require(input.eyes[0].location.locationFlags == flags && input.eyes[1].location.locationFlags == flags,
+					"View validity maps explicitly without inventing positional tracking");
+		});
 		Require(s_state.vibrations == 1 && s_state.hapticStops == 2,
 				"Dispatch output and stop both hands before session exit");
 		Require(observations == 4, "Tracking is observed even when rendering or eye tracking is unavailable");
@@ -497,14 +560,11 @@ static void Run()
 		HeadsetGraphics graphics;
 		HeadsetSession session(runtime, graphics);
 		session.Open({}, false, set);
-		session.Run(2,
-					[&](const HeadsetInputSample& input)
-					{
-						Require(input.body && input.body->jointSet == set && input.body->requestedTime == input.time,
-								"Selected body observations travel with the predicted native input batch");
-						Require(input.body->located == input.focused,
-								"Unfocused session suppresses native body locate");
-					});
+		session.Run(2, [&](const HeadsetInputSample& input) {
+			Require(input.body && input.body->jointSet == set && input.body->requestedTime == input.time,
+					"Selected body observations travel with the predicted native input batch");
+			Require(input.body->located == input.focused, "Unfocused session suppresses native body locate");
+		});
 		Require(s_state.bodySamples == 4 && session.Close() && session.Close() && s_state.destroyedBody == 1,
 				"Body lifetime follows the native session with idempotent cleanup");
 	}
@@ -535,15 +595,7 @@ static void Run()
 		session.Open();
 		unsigned observations = 0;
 		session.Run(
-			1000,
-			[&](const HeadsetInputSample&)
-			{
-				++observations;
-			},
-			[&]
-			{
-				return observations == stopAfter;
-			});
+			1000, [&](const HeadsetInputSample&) { ++observations; }, [&] { return observations == stopAfter; });
 		Require(observations == stopAfter && s_state.waits == s_state.ends && s_state.stopped && !s_state.running,
 				"Lost target cancels before the test limit without abandoning an open frame");
 		Require(s_state.hapticStops == 2 && session.Close(),
@@ -557,15 +609,7 @@ static void Run()
 		session.Open();
 		unsigned observations = 0;
 		session.Run(
-			std::nullopt,
-			[&](const HeadsetInputSample&)
-			{
-				++observations;
-			},
-			[&]
-			{
-				return observations >= 7;
-			});
+			std::nullopt, [&](const HeadsetInputSample&) { ++observations; }, [&] { return observations >= 7; });
 		Require(observations == 7 && s_state.stopped && s_state.waits == s_state.ends && session.Close(),
 				"Continuous session keeps presenting until its owner requests stop");
 	}
@@ -580,8 +624,7 @@ static void Run()
 		unsigned observations = 0;
 		session.Run(
 			std::nullopt,
-			[&](const HeadsetInputSample&)
-			{
+			[&](const HeadsetInputSample&) {
 				++observations;
 				const auto previous = session.OutputState();
 				if (observations == 2)
@@ -601,10 +644,7 @@ static void Run()
 				if (observations == 6)
 					session.SetCalibration({});
 			},
-			[&]
-			{
-				return observations >= 7;
-			});
+			[&] { return observations >= 7; });
 		const auto timing = session.Timing();
 		Require(timing.sourceSession == 42 && timing.sourceFrame == FrameKey{{3}, {9}} && timing.imageTick == 1 &&
 					timing.sourceAge == std::chrono::milliseconds(7) && timing.physicalPrediction > 0,
@@ -630,12 +670,10 @@ static void Run()
 		session.Open();
 		const auto expected = stage ? XR_REFERENCE_SPACE_TYPE_STAGE : XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT;
 		Require(s_state.createdReference == expected, "Prefer floor-based origins, with Stage before Local Floor");
-		session.Run(1,
-					[&](const HeadsetInputSample& input)
-					{
-						Require(input.referenceType == expected && input.space.revision == 1,
-								"Sample identifies selected origin and ignores unrelated LOCAL recenter events");
-					});
+		session.Run(1, [&](const HeadsetInputSample& input) {
+			Require(input.referenceType == expected && input.space.revision == 1,
+					"Sample identifies selected origin and ignores unrelated LOCAL recenter events");
+		});
 	}
 
 	{

@@ -11,7 +11,7 @@ enum class CompletionStatus
 
 class GpuCompletion
 {
-  public:
+public:
 	virtual ~GpuCompletion() = default;
 	// Observation is thread-safe and nonblocking, with terminal Complete/Failed.
 	// A failure does not establish GPU idleness or authorize native destruction.

@@ -11,6 +11,7 @@ static bool IsSrgb(VkFormat format)
 {
 	return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_R8G8B8A8_SRGB;
 }
+
 void UiRenderer::CreateSwapchain()
 {
 	auto& gpu = *m_resources;

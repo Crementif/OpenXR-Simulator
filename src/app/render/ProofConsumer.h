@@ -9,9 +9,10 @@
 namespace simxr::app
 {
 class UiRenderer;
+
 class ProofConsumer
 {
-  public:
+public:
 	ProofConsumer(UiRenderer& renderer, int descriptor, bool verifyPixels);
 	~ProofConsumer();
 	ProofConsumer(const ProofConsumer&) = delete;
@@ -23,13 +24,14 @@ class ProofConsumer
 	bool FinishIfReady();
 	bool ReadyForScreenshot() const;
 
-  private:
+private:
 	struct Texture
 	{
 		CompanionProofFrame frame;
 		VkDescriptorSet descriptor;
 		bool consumed = false;
 	};
+
 	UiRenderer& m_renderer;
 	CompanionFrameReceiver m_receiver;
 	std::map<std::uint32_t, Texture> m_textures;

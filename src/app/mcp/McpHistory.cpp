@@ -14,6 +14,7 @@ static Json Result(const Json& value, bool error = false)
 {
 	return {{"content", Json::array({{{"type", "text"}, {"text", value.dump()}}})}, {"isError", error}};
 }
+
 static void Keys(const Json& value, std::initializer_list<std::string_view> allowed)
 {
 	if (!value.is_object())
@@ -22,6 +23,7 @@ static void Keys(const Json& value, std::initializer_list<std::string_view> allo
 		if (std::find(allowed.begin(), allowed.end(), it.key()) == allowed.end())
 			throw std::invalid_argument("Unknown argument: " + it.key());
 }
+
 static std::uint64_t Number(const Json& object, const char* key)
 {
 	const auto& value = object.at(key);
@@ -37,6 +39,7 @@ static std::uint64_t Number(const Json& object, const char* key)
 		throw std::invalid_argument(std::string(key) + " requires a canonical unsigned decimal integer");
 	return result;
 }
+
 static wire::Message Nested(const wire::Field* field)
 {
 	if (!field)
@@ -48,6 +51,7 @@ static wire::Message Nested(const wire::Field* field)
 	result.fields = std::move(decoded.fields);
 	return result;
 }
+
 static std::uint64_t U64(const wire::Message& message, std::uint16_t tagValue)
 {
 	const auto* field = message.Find(tagValue);
@@ -56,6 +60,7 @@ static std::uint64_t U64(const wire::Message& message, std::uint16_t tagValue)
 		throw std::runtime_error("Runtime omitted a historical identifier");
 	return *value;
 }
+
 static std::int64_t I64(const wire::Message& message, std::uint16_t tagValue)
 {
 	const auto* field = message.Find(tagValue);
@@ -64,6 +69,7 @@ static std::int64_t I64(const wire::Message& message, std::uint16_t tagValue)
 		throw std::runtime_error("Runtime omitted historical timing");
 	return *value;
 }
+
 static std::uint32_t U32(const wire::Message& message, std::uint16_t tagValue)
 {
 	const auto* field = message.Find(tagValue);
@@ -72,6 +78,7 @@ static std::uint32_t U32(const wire::Message& message, std::uint16_t tagValue)
 		throw std::runtime_error("Runtime omitted a historical value");
 	return *value;
 }
+
 static std::string Text(const wire::Message& message, std::uint16_t tagValue)
 {
 	const auto* field = message.Find(tagValue);
@@ -80,6 +87,7 @@ static std::string Text(const wire::Message& message, std::uint16_t tagValue)
 		throw std::runtime_error("Runtime omitted historical text");
 	return std::string(*value);
 }
+
 static Json EncodedCommand(const wire::Field& field, const SimulationCommand& command)
 {
 	if (wire::EncodeSimulationCommand(command).value != field.value)
@@ -95,13 +103,15 @@ static Json EncodedCommand(const wire::Field& field, const SimulationCommand& co
 	}
 	return {{"encoding", "simxr-command-v1-hex"}, {"data", std::move(hex)}};
 }
+
 static Json AppliedInput(const wire::Field& field)
 {
 	const auto input = Nested(&field);
-	static constexpr std::array known{std::uint16_t{1}, std::uint16_t{2}, std::uint16_t{3}, std::uint16_t{4},
-		std::uint16_t{5}, std::uint16_t{6}, std::uint16_t{7}, std::uint16_t{8}, std::uint16_t{9},
-		std::uint16_t{10}, std::uint16_t{11}, tag::TrackerCollection, tag::InputContext, tag::Seed, tag::Scenario,
-		tag::Ownership, tag::ActiveActions};
+	static constexpr std::array known{std::uint16_t{1},	 std::uint16_t{2},	std::uint16_t{3},  std::uint16_t{4},
+									  std::uint16_t{5},	 std::uint16_t{6},	std::uint16_t{7},  std::uint16_t{8},
+									  std::uint16_t{9},	 std::uint16_t{10}, std::uint16_t{11}, tag::TrackerCollection,
+									  tag::InputContext, tag::Seed,			tag::Scenario,	   tag::Ownership,
+									  tag::ActiveActions};
 	if (input.ValidateFields(known))
 		throw std::runtime_error("Runtime returned an unsupported required historical input field");
 	CommandConfiguration config;
@@ -127,7 +137,8 @@ static Json AppliedInput(const wire::Field& field)
 			bit = 2u << pose->hand;
 		}
 		else if (const auto* controls = std::get_if<SetControllerControls>(&command);
-				 item.tag >= 4 && item.tag <= 5 && controls && controls->hand == static_cast<std::uint32_t>(item.tag - 4))
+				 item.tag >= 4 && item.tag <= 5 && controls &&
+				 controls->hand == static_cast<std::uint32_t>(item.tag - 4))
 		{
 			config.input.controllers[controls->hand] = controls->value;
 			bit = 8u << controls->hand;
@@ -144,7 +155,8 @@ static Json AppliedInput(const wire::Field& field)
 			bit = 64;
 		}
 		else if (const auto* tracker = std::get_if<SetTracker>(&command);
-				 item.tag >= 8 && item.tag <= 11 && tracker && tracker->index == static_cast<std::uint32_t>(item.tag - 8) && !collection)
+				 item.tag >= 8 && item.tag <= 11 && tracker &&
+				 tracker->index == static_cast<std::uint32_t>(item.tag - 8) && !collection)
 		{
 			config.tracking.trackers[tracker->index] = tracker->value;
 			trackers |= 1u << tracker->index;
@@ -176,7 +188,8 @@ static Json AppliedInput(const wire::Field& field)
 			else if (const auto* proportions = std::get_if<SetBodyProportions>(&command); item.tag == 2 && proportions)
 				config.proportions = proportions->value;
 			else if (const auto* profile = std::get_if<SetControllerProfile>(&command);
-					 item.tag >= 3 && item.tag <= 4 && profile && profile->hand == static_cast<std::uint32_t>(item.tag - 3))
+					 item.tag >= 3 && item.tag <= 4 && profile &&
+					 profile->hand == static_cast<std::uint32_t>(item.tag - 3))
 				config.input.preferredProfiles[profile->hand] = profile->path;
 			else if (const auto* spaces = std::get_if<SetReferenceSpaces>(&command); item.tag == 5 && spaces)
 				config.referenceSpaces = spaces->value;
@@ -205,16 +218,21 @@ static Json AppliedInput(const wire::Field& field)
 		for (auto& controller : state.at("controllers"))
 			controller.erase("profile");
 	}
-	return {{"seed", std::to_string(seed)}, {"scenario_mask", U32(input, tag::Scenario)},
-		{"ownership_mask", U32(input, tag::Ownership)}, {"active_actions", U32(input, tag::ActiveActions)},
-		{"configuration", std::move(state)}, {"commands", std::move(commands)}, {"context", std::move(context)},
-		{"context_available", contextSeen != 0}};
+	return {{"seed", std::to_string(seed)},
+			{"scenario_mask", U32(input, tag::Scenario)},
+			{"ownership_mask", U32(input, tag::Ownership)},
+			{"active_actions", U32(input, tag::ActiveActions)},
+			{"configuration", std::move(state)},
+			{"commands", std::move(commands)},
+			{"context", std::move(context)},
+			{"context_available", contextSeen != 0}};
 }
+
 static Json Frame(const wire::Field& field, std::uint64_t generation, std::uint64_t after)
 {
 	const auto frame = Nested(&field);
-	static constexpr std::array known{tag::Generation, tag::FrameId, tag::Prediction, tag::Stage, tag::Submission,
-		tag::CpuFrameTime, tag::CompositorGpuTime, tag::AppliedInput};
+	static constexpr std::array known{tag::Generation, tag::FrameId,	  tag::Prediction,		  tag::Stage,
+									  tag::Submission, tag::CpuFrameTime, tag::CompositorGpuTime, tag::AppliedInput};
 	if (frame.ValidateFields(known))
 		throw std::runtime_error("Runtime returned an unsupported required historical frame field");
 	const auto identity = U64(frame, tag::FrameId);
@@ -226,22 +244,28 @@ static Json Frame(const wire::Field& field, std::uint64_t generation, std::uint6
 		throw std::runtime_error("Runtime returned an unsupported required prediction field");
 	if (U64(prediction, tag::FrameId) != identity || I64(prediction, tag::Period) <= 0)
 		throw std::runtime_error("Runtime returned inconsistent historical prediction");
-	Json value = {{"frame_id", std::to_string(identity)}, {"generation", std::to_string(generation)},
-		{"stage", Text(frame, tag::Stage)},
-		{"prediction", {{"frame_id", std::to_string(identity)}, {"tick", std::to_string(U64(prediction, tag::Tick))},
-			{"time_ns", std::to_string(I64(prediction, tag::Time))}, {"period_ns", std::to_string(I64(prediction, tag::Period))}}}};
+	Json value = {{"frame_id", std::to_string(identity)},
+				  {"generation", std::to_string(generation)},
+				  {"stage", Text(frame, tag::Stage)},
+				  {"prediction",
+				   {{"frame_id", std::to_string(identity)},
+					{"tick", std::to_string(U64(prediction, tag::Tick))},
+					{"time_ns", std::to_string(I64(prediction, tag::Time))},
+					{"period_ns", std::to_string(I64(prediction, tag::Period))}}}};
 	if (const auto* submitted = frame.Find(tag::Submission))
 	{
 		const auto submission = Nested(submitted);
-		static constexpr std::array submissionFields{tag::Time, tag::LayerCount, tag::OutputDisposition, tag::DropReason};
+		static constexpr std::array submissionFields{tag::Time, tag::LayerCount, tag::OutputDisposition,
+													 tag::DropReason};
 		if (submission.ValidateFields(submissionFields))
 			throw std::runtime_error("Runtime returned an unsupported required submission field");
 		value["submission"] = {{"time_ns", std::to_string(I64(submission, tag::Time))},
-			{"layer_count", U32(submission, tag::LayerCount)}, {"output_disposition", Text(submission, tag::OutputDisposition)},
-			{"drop_reason", Text(submission, tag::DropReason)}};
+							   {"layer_count", U32(submission, tag::LayerCount)},
+							   {"output_disposition", Text(submission, tag::OutputDisposition)},
+							   {"drop_reason", Text(submission, tag::DropReason)}};
 	}
-	for (const auto& [tagValue, name] : {std::pair{tag::CpuFrameTime, "cpu_frame_time_ns"},
-			{tag::CompositorGpuTime, "compositor_gpu_time_ns"}})
+	for (const auto& [tagValue, name] :
+		 {std::pair{tag::CpuFrameTime, "cpu_frame_time_ns"}, {tag::CompositorGpuTime, "compositor_gpu_time_ns"}})
 		if (frame.Find(tagValue))
 			value[name] = std::to_string(I64(frame, tagValue));
 	if (const auto* input = frame.Find(tag::AppliedInput))
@@ -255,28 +279,42 @@ bool HistoryHandles(const std::string& name)
 {
 	return name == "debug_frame_history" || name == "debug_projection_history";
 }
+
 Json HistoryDefinitions()
 {
 	const Json id = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}},
-		{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
-	const Json zeroId = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
-		{{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
+											{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
+	const Json zeroId = {
+		{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
+							   {{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
 	const Json common = {{"connection", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
-		{"session", id}, {"generation", id}};
-	const auto tool = [](const char* name, const char* description, Json properties)
-	{
-		return Json{{"name", name}, {"description", description}, {"inputSchema", {{"type", "object"},
-			{"properties", std::move(properties)}, {"required", Json::array({"connection"})}, {"additionalProperties", false}}}};
+						 {"session", id},
+						 {"generation", id}};
+	const auto tool = [](const char* name, const char* description, Json properties) {
+		return Json{{"name", name},
+					{"description", description},
+					{"inputSchema",
+					 {{"type", "object"},
+					  {"properties", std::move(properties)},
+					  {"required", Json::array({"connection"})},
+					  {"additionalProperties", false}}}};
 	};
 	auto frames = common;
 	frames["after"] = zeroId;
 	frames["count"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 128}};
 	auto projections = common;
 	projections["count"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 64}};
-	return Json::array({tool("debug_frame_history", "Read bounded submitted CPU frame history and applied inputs without admission or image retention. Continue after the last frame until a page is empty.", frames),
-		tool("debug_projection_history", "Read bounded submitted projection geometry and frame identities without image readback.", projections)});
+	return Json::array(
+		{tool("debug_frame_history",
+			  "Read bounded submitted CPU frame history and applied inputs without admission or image retention. "
+			  "Continue after the last frame until a page is empty.",
+			  frames),
+		 tool("debug_projection_history",
+			  "Read bounded submitted projection geometry and frame identities without image readback.", projections)});
 }
-HistoryRequest PrepareHistory(const std::string& name, const Json& arguments, std::uint64_t session, std::uint64_t generation)
+
+HistoryRequest PrepareHistory(const std::string& name, const Json& arguments, std::uint64_t session,
+							  std::uint64_t generation)
 {
 	const bool frames = name == "debug_frame_history";
 	if (!frames && name != "debug_projection_history")
@@ -285,7 +323,8 @@ HistoryRequest PrepareHistory(const std::string& name, const Json& arguments, st
 		Keys(arguments, {"connection", "session", "generation", "after", "count"});
 	else
 		Keys(arguments, {"connection", "session", "generation", "count"});
-	HistoryRequest request{frames ? wire::OpCode::ReadFrameHistory : wire::OpCode::ReadProjectionHistory,
+	HistoryRequest request{
+		frames ? wire::OpCode::ReadFrameHistory : wire::OpCode::ReadProjectionHistory,
 		{wire::Field::U64(tag::Session, session, true), wire::Field::U64(tag::Generation, generation, true)}};
 	request.count = frames ? 128 : 64;
 	if (frames && arguments.contains("after"))
@@ -297,12 +336,14 @@ HistoryRequest PrepareHistory(const std::string& name, const Json& arguments, st
 	{
 		const auto count = Number(arguments, "count");
 		if (!arguments.at("count").is_number_integer() || !count || count > (frames ? 128u : 64u))
-			throw std::invalid_argument(frames ? "count must be an integer from 1 to 128" : "count must be an integer from 1 to 64");
+			throw std::invalid_argument(frames ? "count must be an integer from 1 to 128"
+											   : "count must be an integer from 1 to 64");
 		request.count = static_cast<std::uint32_t>(count);
 		request.fields.push_back(wire::Field::U64(tag::Length, count));
 	}
 	return request;
 }
+
 Json ProjectionHistoryDocument(const wire::Message& message, std::uint32_t count, std::uint64_t generation)
 {
 	const auto* document = message.Find(tag::Document);
@@ -314,6 +355,7 @@ Json ProjectionHistoryDocument(const wire::Message& message, std::uint32_t count
 		throw std::runtime_error("Runtime returned invalid projection history");
 	return value;
 }
+
 Json HistoryReply(const wire::Message& message, const HistoryRequest& request, std::uint64_t generation)
 {
 	const auto* error = message.Find(tag::Error);
@@ -355,9 +397,13 @@ Json HistoryReply(const wire::Message& message, const HistoryRequest& request, s
 		cursor = U64(Nested(&field), tag::FrameId);
 		entries.push_back(std::move(value));
 	}
-	return Result({{"ok", true}, {"generation", std::to_string(generation)},
-		{"origin_time_ns", std::to_string(I64(message, tag::Time))}, {"capacity", std::to_string(U64(message, tag::Capacity))},
-		{"oldest_frame", std::to_string(U64(message, tag::Offset))}, {"next_after", std::to_string(cursor)},
-		{"truncated", truncated}, {"frames", std::move(entries)}});
+	return Result({{"ok", true},
+				   {"generation", std::to_string(generation)},
+				   {"origin_time_ns", std::to_string(I64(message, tag::Time))},
+				   {"capacity", std::to_string(U64(message, tag::Capacity))},
+				   {"oldest_frame", std::to_string(U64(message, tag::Offset))},
+				   {"next_after", std::to_string(cursor)},
+				   {"truncated", truncated},
+				   {"frames", std::move(entries)}});
 }
 } // namespace simxr::app::mcp

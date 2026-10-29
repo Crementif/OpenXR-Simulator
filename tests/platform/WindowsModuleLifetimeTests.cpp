@@ -31,7 +31,8 @@ static void Unload(HMODULE& module)
 	module = nullptr;
 }
 
-template <typename Function> static Function Procedure(HMODULE module, const char* name)
+template<typename Function>
+static Function Procedure(HMODULE module, const char* name)
 {
 	const auto procedure = GetProcAddress(module, name);
 	if (!procedure)

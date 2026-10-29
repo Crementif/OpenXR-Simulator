@@ -12,7 +12,7 @@ namespace simxr
 {
 class BodyModel
 {
-  public:
+public:
 	explicit BodyModel(const BodyProportions& proportions = {});
 	void SetProportions(const BodyProportions& proportions);
 	const BodyProportions& Proportions() const;
@@ -25,7 +25,7 @@ class BodyModel
 	static std::string_view TrackerRolePath(TrackerRole role);
 	static std::string TrackerPersistentPath(TrackerIdentity identity);
 
-  private:
+private:
 	void Rebuild();
 	BodyProportions m_proportions;
 	std::uint32_t m_revision = 0;

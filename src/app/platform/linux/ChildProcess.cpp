@@ -11,7 +11,7 @@ namespace simxr::app
 {
 class ChildEnvironment
 {
-  public:
+public:
 	explicit ChildEnvironment(const LaunchProfile& profile)
 	{
 		std::map<std::string, std::string> environment;
@@ -36,18 +36,20 @@ class ChildEnvironment
 			m_pointers.push_back(value.data());
 		m_pointers.push_back(nullptr);
 	}
+
 	char* const* Data() const noexcept
 	{
 		return m_pointers.data();
 	}
 
-  private:
+private:
 	std::vector<std::string> m_values;
 	std::vector<char*> m_pointers;
 };
+
 class SpawnActions
 {
-  public:
+public:
 	explicit SpawnActions(const std::string& directory)
 	{
 		const auto initialized = posix_spawn_file_actions_init(&m_actions);
@@ -63,27 +65,34 @@ class SpawnActions
 			}
 		}
 	}
+
 	~SpawnActions()
 	{
 		posix_spawn_file_actions_destroy(&m_actions);
 	}
+
 	SpawnActions(const SpawnActions&) = delete;
 	SpawnActions& operator=(const SpawnActions&) = delete;
+
 	const posix_spawn_file_actions_t* Get() const noexcept
 	{
 		return &m_actions;
 	}
 
-  private:
+private:
 	posix_spawn_file_actions_t m_actions;
 };
+
 struct ChildProcess::State
 {
 	pid_t process = 0;
 	std::optional<int> exitCode;
 };
+
 ChildProcess::ChildProcess() : m_state(std::make_unique<State>()) {}
+
 ChildProcess::~ChildProcess() = default;
+
 std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 {
 	if (!profile.privateProtonPrefix.empty())
@@ -115,10 +124,12 @@ std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 		throw std::runtime_error(std::string("Launch failed: ") + std::strerror(result));
 	return child;
 }
+
 std::uint64_t ChildProcess::Id() const noexcept
 {
 	return static_cast<std::uint64_t>(m_state->process);
 }
+
 void ChildProcess::RequestClose()
 {
 	if (PollExit())
@@ -127,6 +138,7 @@ void ChildProcess::RequestClose()
 	if (::kill(m_state->process, SIGTERM) != 0 && errno != ESRCH)
 		throw std::runtime_error(std::string("Cannot request child close: ") + std::strerror(errno));
 }
+
 std::optional<int> ChildProcess::PollExit()
 {
 	if (m_state->exitCode)

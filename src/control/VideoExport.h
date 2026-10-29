@@ -10,26 +10,30 @@ namespace simxr::control
 {
 class VideoExport final : public ImageExport
 {
-  public:
+public:
 	explicit VideoExport(std::vector<PreviewClipFrame> frames);
 	~VideoExport();
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return m_phase.load();
 	}
+
 	ImageDescription Description() const override
 	{
 		return {};
 	}
+
 	std::string_view MediaType() const noexcept override
 	{
 		return "video/mp4";
 	}
+
 	std::string Error() const override;
 	std::uint64_t ByteSize() const noexcept override;
 	std::span<const std::byte> Read() override;
 
-  private:
+private:
 	void Run(std::vector<PreviewClipFrame> frames) noexcept;
 	std::atomic<CompletionStatus> m_phase{CompletionStatus::Pending};
 	std::atomic<bool> m_stop{false};

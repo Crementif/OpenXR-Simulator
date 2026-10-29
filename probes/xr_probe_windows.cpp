@@ -28,16 +28,19 @@
 namespace simxr::probe
 {
 using Microsoft::WRL::ComPtr;
+
 static void Check(XrResult result, const char* operation)
 {
 	if (XR_FAILED(result))
 		throw std::runtime_error(std::string(operation) + ": " + std::to_string(result));
 }
+
 [[maybe_unused]] static void CheckGpu(HRESULT result)
 {
 	if (FAILED(result))
 		throw std::runtime_error("Direct3D failure " + std::to_string(result));
 }
+
 [[noreturn]] static void UnknownCompletion(const char* operation)
 {
 	std::fprintf(stderr, "FAIL: %s; preserving native owners until process exit\n", operation);
@@ -47,7 +50,8 @@ static void Check(XrResult result, const char* operation)
 }
 
 #ifdef SIMXR_PROBE_OPENGL
-template <typename T> static T OpenGLProc(const char* name)
+template<typename T>
+static T OpenGLProc(const char* name)
 {
 	const auto procedure = wglGetProcAddress(name);
 	const auto address = std::bit_cast<std::uintptr_t>(procedure);
@@ -105,8 +109,10 @@ struct OpenGLApplication
 			throw;
 		}
 	}
+
 	OpenGLApplication(const OpenGLApplication&) = delete;
 	OpenGLApplication& operator=(const OpenGLApplication&) = delete;
+
 	~OpenGLApplication()
 	{
 		Close();
@@ -144,6 +150,7 @@ struct OpenGLApplication
 			m_window = nullptr;
 		}
 	}
+
 	void Clear(GLuint texture, GLuint layer, const float* color)
 	{
 		m_framebufferTextureLayer(m_framebuffer, GL_COLOR_ATTACHMENT0, texture, 0, static_cast<GLint>(layer));
@@ -156,6 +163,7 @@ struct OpenGLApplication
 		if (glGetError() != GL_NO_ERROR)
 			throw std::runtime_error("Render OpenGL swapchain");
 	}
+
 	void VerifyAfterUnload()
 	{
 		GLuint texture = 0;
@@ -195,6 +203,7 @@ struct D3D12Application
 	ComPtr<ID3D12DescriptorHeap> m_targets;
 	ComPtr<ID3D12Fence> m_fence;
 	std::uint64_t m_submitted = 0;
+
 	D3D12Application(IDXGIAdapter1* adapter, D3D_FEATURE_LEVEL level)
 	{
 		CheckGpu(D3D12CreateDevice(adapter, level, IID_PPV_ARGS(&m_device)));
@@ -210,8 +219,10 @@ struct D3D12Application
 		CheckGpu(m_device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&m_targets)));
 		CheckGpu(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)));
 	}
+
 	D3D12Application(const D3D12Application&) = delete;
 	D3D12Application& operator=(const D3D12Application&) = delete;
+
 	void Clear(ID3D12Resource* texture, UINT layer, const float* color)
 	{
 		CheckGpu(m_allocator->Reset());
@@ -244,6 +255,7 @@ struct D3D12Application
 		if (m_fence->GetCompletedValue() < m_submitted || m_fence->GetCompletedValue() == UINT64_MAX)
 			UnknownCompletion("Application D3D12 clear did not complete");
 	}
+
 	void VerifyAfterUnload()
 	{
 		D3D12_HEAP_PROPERTIES heap{};
@@ -296,7 +308,8 @@ static void VerifyAfterUnload(ID3D11Device* device, ID3D11DeviceContext* context
 		completed = context->GetData(completion.Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
 		if (completed == S_FALSE)
 			Sleep(1);
-	} while (completed == S_FALSE && GetTickCount64() < deadline);
+	}
+	while (completed == S_FALSE && GetTickCount64() < deadline);
 	if (completed != S_OK)
 		UnknownCompletion("Wait for D3D11 work after runtime unload");
 	D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -364,8 +377,7 @@ static int Run(std::span<const std::string> arguments)
 		Check(xrGetInstanceProcAddr(instance, "xrConvertWin32PerformanceCounterToTimeKHR",
 									reinterpret_cast<PFN_xrVoidFunction*>(&convertTime)),
 			  "Get performance-counter conversion");
-		const auto readTime = [&]
-		{
+		const auto readTime = [&] {
 			LARGE_INTEGER counter{};
 			if (!QueryPerformanceCounter(&counter))
 				throw std::runtime_error("Read performance counter");
@@ -551,8 +563,7 @@ static int Run(std::span<const std::string> arguments)
 				XrSession session = XR_NULL_HANDLE;
 				std::array<std::pair<XrTime, XrTime>, 4> transitionTimes{};
 				std::size_t nextState = 0;
-				const auto checkStateEvent = [&](const XrEventDataSessionStateChanged& changed)
-				{
+				const auto checkStateEvent = [&](const XrEventDataSessionStateChanged& changed) {
 					static constexpr std::array s_expected{
 						std::pair{XR_SESSION_STATE_IDLE, 0},		 std::pair{XR_SESSION_STATE_READY, 0},
 						std::pair{XR_SESSION_STATE_SYNCHRONIZED, 1}, std::pair{XR_SESSION_STATE_VISIBLE, 1},
@@ -576,8 +587,7 @@ static int Run(std::span<const std::string> arguments)
 				Check(xrCreateSession(instance, &sessionInfo, &session), "Create session after rejected binding");
 #else
 				std::latch start(2);
-				const auto createSession = [&]
-				{
+				const auto createSession = [&] {
 					XrSession output = XR_NULL_HANDLE;
 					start.arrive_and_wait();
 					const auto result = xrCreateSession(instance, &sessionInfo, &output);
@@ -676,8 +686,7 @@ static int Run(std::span<const std::string> arguments)
 				constexpr auto imageType = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
 #endif
 				std::vector<Image> images;
-				const auto createSwapchain = [&]
-				{
+				const auto createSwapchain = [&] {
 					Check(xrCreateSwapchain(session, &swapchainInfo, &swapchain), "Create swapchain");
 					Check(xrEnumerateSwapchainImages(swapchain, 0, &count, nullptr), "Count images");
 					if (!count)

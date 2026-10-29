@@ -19,6 +19,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL Report(VkDebugUtilsMessageSeverityFlagBits
 	std::fprintf(stderr, "Companion Vulkan: %s\n", data->pMessage);
 	return VK_FALSE;
 }
+
 void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_ptr<ValidationLog> log,
 							bool enableScreenshots, bool proofConsumer)
 {
@@ -52,10 +53,7 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 		std::vector<VkLayerProperties> layers(count);
 		CheckResult(vkEnumerateInstanceLayerProperties(&count, layers.data()));
 		if (std::none_of(layers.begin(), layers.end(),
-						 [&](const auto& value)
-						 {
-							 return std::strcmp(value.layerName, layer) == 0;
-						 }))
+						 [&](const auto& value) { return std::strcmp(value.layerName, layer) == 0; }))
 			throw std::runtime_error("Requested Vulkan validation layer is unavailable");
 		extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 		info.enabledLayerCount = 1;
@@ -68,7 +66,7 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 	const auto instanceResult = vkCreateInstance(&info, nullptr, &gpu.instance);
 	if (instanceResult == VK_ERROR_INCOMPATIBLE_DRIVER)
 		throw std::runtime_error("Vulkan could not find a compatible graphics driver.\n\n"
-			"Install or update the graphics driver for your GPU, then try again.");
+								 "Install or update the graphics driver for your GPU, then try again.");
 	CheckResult(instanceResult);
 	if (enableValidation)
 	{
@@ -107,7 +105,7 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 	}
 	if (!gpu.physical)
 		throw std::runtime_error("No Vulkan graphics device can present to this display.\n\n"
-			"Check your graphics driver and display connection, then try again.");
+								 "Check your graphics driver and display connection, then try again.");
 	VkPhysicalDeviceProperties properties;
 	vkGetPhysicalDeviceProperties(gpu.physical, &properties);
 	m_adapter = properties.deviceName;
@@ -124,13 +122,9 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 		vkEnumerateDeviceExtensionProperties(gpu.physical, nullptr, &deviceExtensionCount, supportedExtensions.data()));
 
 #if defined(__linux__) || defined(_WIN32)
-	const auto supports = [&](const char* name)
-	{
+	const auto supports = [&](const char* name) {
 		return std::any_of(supportedExtensions.begin(), supportedExtensions.end(),
-						   [&](const auto& value)
-						   {
-							   return std::strcmp(value.extensionName, name) == 0;
-						   });
+						   [&](const auto& value) { return std::strcmp(value.extensionName, name) == 0; });
 	};
 	std::uint32_t families = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties(gpu.physical, &families, nullptr);
@@ -169,10 +163,7 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 #endif
 	for (const auto name : deviceExtensions)
 		if (std::none_of(supportedExtensions.begin(), supportedExtensions.end(),
-						 [&](const auto& value)
-						 {
-							 return std::strcmp(value.extensionName, name) == 0;
-						 }))
+						 [&](const auto& value) { return std::strcmp(value.extensionName, name) == 0; }))
 			throw std::runtime_error(std::string("Companion device lacks required extension: ") + name);
 	VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeature{
 		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};

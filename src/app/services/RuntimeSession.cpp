@@ -11,6 +11,7 @@ using panel::Boolean;
 using panel::U32;
 using panel::U64;
 using Work = PanelWork;
+
 RuntimeSession::RuntimeSession(UiRenderer& renderer, const std::string& endpoint)
 	: m_debugger(m_requests), m_workspace(m_requests), m_preview(renderer, m_requests), m_exports(m_requests),
 	  m_endpoint(endpoint)
@@ -19,42 +20,52 @@ RuntimeSession::RuntimeSession(UiRenderer& renderer, const std::string& endpoint
 	if (!endpoint.empty())
 		m_requests.Connect(endpoint);
 }
+
 RuntimeSession::~RuntimeSession()
 {
 	m_requests.Close();
 }
+
 bool RuntimeSession::Connected() const
 {
 	return m_requests.Snapshot().state == RuntimeConnectionState::Connected;
 }
+
 bool RuntimeSession::Supports(wire::Capability capability) const
 {
 	return U64(m_debugger.Status(), tag::Capabilities) & static_cast<std::uint64_t>(capability);
 }
+
 bool RuntimeSession::SupportsEdits() const
 {
 	return m_debugger.Selected().id && Supports(wire::Capability::SimulationCommands);
 }
+
 void RuntimeSession::Notify(std::string title, std::string detail)
 {
 	m_notices.push_back({std::move(title), std::move(detail)});
 }
+
 void RuntimeSession::Notify(Notice notice)
 {
 	m_notices.push_back(std::move(notice));
 }
+
 std::vector<Notice> RuntimeSession::TakeNotices()
 {
 	return std::exchange(m_notices, {});
 }
+
 bool RuntimeSession::TakeScopeChanged()
 {
 	return std::exchange(m_scopeChanged, false);
 }
+
 bool RuntimeSession::TakeObservation()
 {
 	return std::exchange(m_observationChanged, false);
 }
+
 void RuntimeSession::ScopeChanged()
 {
 	// A new session or run goes live and keeps nothing of the old input state.
@@ -78,11 +89,13 @@ void RuntimeSession::ScopeChanged()
 	m_preview.ClearSelection();
 	m_preview.ShowLive(true);
 }
+
 void RuntimeSession::ChooseSession(PanelSession session)
 {
 	m_debugger.ChooseSession(session);
 	ScopeChanged();
 }
+
 void RuntimeSession::Poll(bool piloting, bool foreground)
 {
 	const auto connection = m_requests.Snapshot();
@@ -120,8 +133,8 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 		m_debugger.Poll();
 		const auto selected = m_debugger.Selected();
 		const auto now = Clock::now();
-		if (foreground && !m_time.following && m_time.epoch == m_debugger.Scope().epoch && m_time.cursor.session == selected.id &&
-			m_time.cursor.run == selected.generation && m_time.cursor.frame &&
+		if (foreground && !m_time.following && m_time.epoch == m_debugger.Scope().epoch &&
+			m_time.cursor.session == selected.id && m_time.cursor.run == selected.generation && m_time.cursor.frame &&
 			m_unavailablePreview != m_time.cursor.frame && !m_workspace.SelectedId() &&
 			!m_requests.Has(Work::PastPreview) && Supports(wire::Capability::ContinuousPreviews))
 		{
@@ -135,8 +148,8 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 			}
 		}
 		m_history.SetScope(m_debugger.Scope());
-		if (foreground && selected.id && selected.running && Supports(wire::Capability::LiveHaptics) && now >= m_nextHaptics &&
-			!m_requests.Has(Work::Haptics))
+		if (foreground && selected.id && selected.running && Supports(wire::Capability::LiveHaptics) &&
+			now >= m_nextHaptics && !m_requests.Has(Work::Haptics))
 		{
 			m_requests.Send(wire::OpCode::ReadHaptics, Work::Haptics, m_debugger.SessionFields());
 			m_hapticsRequested = now;
@@ -183,8 +196,8 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 			m_requests.Send(wire::OpCode::Capture, Work::Capture, std::move(fields), capture->id);
 			m_nextCapture = now + std::chrono::milliseconds(100);
 		}
-		if (foreground && selected.id && Supports(wire::Capability::ContinuousPreviews) && !m_requests.Has(Work::PastPreview) &&
-			!m_requests.Has(Work::Thumbnail) && !m_preview.HasPendingThumbnail())
+		if (foreground && selected.id && Supports(wire::Capability::ContinuousPreviews) &&
+			!m_requests.Has(Work::PastPreview) && !m_requests.Has(Work::Thumbnail) && !m_preview.HasPendingThumbnail())
 		{
 			const auto wanted = m_preview.History().MissingThumbnail();
 			const auto scope = m_debugger.Scope();
@@ -196,8 +209,8 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 				m_requests.Send(wire::OpCode::RetainPreview, Work::Thumbnail, std::move(fields), wanted->frame.frame);
 			}
 		}
-		if (foreground && m_preview.ShowingLive() && selected.id && now >= m_nextPreview && !m_requests.Has(Work::Preview) &&
-			!m_preview.HasPendingLive() && Supports(wire::Capability::LivePreview))
+		if (foreground && m_preview.ShowingLive() && selected.id && now >= m_nextPreview &&
+			!m_requests.Has(Work::Preview) && !m_preview.HasPendingLive() && Supports(wire::Capability::LivePreview))
 		{
 			m_requests.Send(wire::OpCode::RetainPreview, Work::Preview, m_debugger.SessionFields());
 			m_nextPreview = now + std::chrono::milliseconds(piloting ? 16 : 33);
@@ -229,8 +242,7 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 		// available in the runtime, but have no local timeline row to annotate yet.
 		if (const auto bounds = history.FrameBounds({scope.session, scope.generation, 0}, scope.epoch))
 		{
-			const auto add = [&](std::uint64_t frame)
-			{
+			const auto add = [&](std::uint64_t frame) {
 				if (frame >= bounds->first && frame <= bounds->second)
 					m_coverage.Add({scope.session, scope.generation, frame}, scope.epoch, 0, HistoryPreview);
 			};
@@ -269,16 +281,19 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 		if (!error.empty())
 			Notify("Runtime request failed", std::move(error));
 }
+
 void RuntimeSession::ConnectEndpoint(std::string endpoint, std::optional<std::uint64_t> expectedProcess)
 {
 	m_endpoint = endpoint;
 	m_failure.clear();
 	m_requests.Connect(std::move(endpoint), expectedProcess);
 }
+
 void RuntimeSession::Disconnect()
 {
 	m_requests.Disconnect();
 }
+
 void RuntimeSession::RefreshEndpoints()
 {
 	try
@@ -290,10 +305,12 @@ void RuntimeSession::RefreshEndpoints()
 		Notify("Application discovery failed", error.what());
 	}
 }
+
 std::string RuntimeSession::Endpoint() const
 {
 	return m_endpoint;
 }
+
 bool RuntimeSession::SubmitEdit(const SimulationEdit& edit)
 {
 	const auto selected = m_debugger.Selected();
@@ -309,6 +326,7 @@ bool RuntimeSession::SubmitEdit(const SimulationEdit& edit)
 	}
 	return true;
 }
+
 void RuntimeSession::ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB)
 {
 	if (!Connected() || !Supports(wire::Capability::ConfigurablePreviews) ||
@@ -324,6 +342,7 @@ void RuntimeSession::ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ra
 	m_requests.Send(wire::OpCode::ConfigurePreviews, Work::ConfigurePreviews, std::move(fields));
 	m_nextPreviewBudget = Clock::now() + std::chrono::seconds(1);
 }
+
 void RuntimeSession::ConfigureSnapshots(std::uint32_t budgetMiB)
 {
 	SnapshotBudget::Configure(budgetMiB);

@@ -1,7 +1,6 @@
 #include "simulation/HapticState.h"
 #include "Pch.h"
 
-
 namespace simxr
 {
 static bool ValidDevice(InputDeviceId device)
@@ -70,11 +69,8 @@ XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction act
 	Expire(time);
 	for (auto device : unique)
 	{
-		auto current = std::find_if(m_active.begin(), m_active.end(),
-									[&](const auto& output)
-									{
-										return output.device == device;
-									});
+		auto current =
+			std::find_if(m_active.begin(), m_active.end(), [&](const auto& output) { return output.device == device; });
 		if (current != m_active.end())
 			Retire(static_cast<std::size_t>(current - m_active.begin()), HapticStatus::Replaced, time);
 		m_active.push_back(HapticOutput{++m_sequence, device, action, subactionPath, vibration.amplitude,
@@ -85,11 +81,8 @@ XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction act
 
 XrResult HapticState::Stop(std::span<const InputDeviceId> devices, XrAction action, RuntimeTime time, bool focused)
 {
-	if (time.value.count() < 0 || std::any_of(devices.begin(), devices.end(),
-											  [](auto device)
-											  {
-												  return !ValidDevice(device);
-											  }))
+	if (time.value.count() < 0 ||
+		std::any_of(devices.begin(), devices.end(), [](auto device) { return !ValidDevice(device); }))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (!focused)
 		return XR_SESSION_NOT_FOCUSED;
@@ -156,11 +149,7 @@ std::vector<HapticOutput> HapticState::Snapshot(RuntimeTime time) const
 			value.status = HapticStatus::Expired;
 		result.push_back(value);
 	}
-	std::sort(result.begin(), result.end(),
-			  [](const auto& a, const auto& b)
-			  {
-				  return a.sequence < b.sequence;
-			  });
+	std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.sequence < b.sequence; });
 	return result;
 }
 } // namespace simxr

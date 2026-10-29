@@ -20,6 +20,7 @@ enum class HeadsetControllerProfile
 	Vive,
 	Motion
 };
+
 struct HeadsetHandSample
 {
 	XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
@@ -29,11 +30,13 @@ struct HeadsetHandSample
 	ControllerControls controls{.connected = false};
 	HeadsetControllerProfile profile = HeadsetControllerProfile::Unknown;
 };
+
 struct HeadsetEyeSample
 {
 	XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
 	XrFovf fov{};
 };
+
 struct HeadsetInputSample
 {
 	XrTime time = 0;
@@ -54,7 +57,7 @@ bool NeutralHeadsetControls(const HeadsetHandSample& hand);
 
 class HeadsetActions
 {
-  public:
+public:
 	explicit HeadsetActions(OpenXrRuntime& runtime);
 	~HeadsetActions();
 	HeadsetActions(const HeadsetActions&) = delete;
@@ -64,7 +67,7 @@ class HeadsetActions
 	bool ApplyHaptic(std::uint32_t hand, float amplitude, float frequency, XrDuration remaining);
 	bool StopHaptic(std::uint32_t hand);
 
-  private:
+private:
 	XrPath Path(const char* text) const;
 	XrAction CreateAction(const char* name, XrActionType type);
 	OpenXrRuntime& m_runtime;

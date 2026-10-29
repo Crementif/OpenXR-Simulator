@@ -7,10 +7,12 @@
 namespace simxr::headset
 {
 HeadsetBody::HeadsetBody(OpenXrRuntime& runtime) : m_runtime(runtime) {}
+
 HeadsetBody::~HeadsetBody()
 {
 	Close();
 }
+
 void HeadsetBody::Close()
 {
 	if (m_runtime.ResourcesPreserved())
@@ -24,6 +26,7 @@ void HeadsetBody::Close()
 	m_skeleton.reset();
 	m_skeletonRevision.reset();
 }
+
 void HeadsetBody::Open(XrSession session, BodyJointSet jointSet)
 {
 	if (m_fb || m_bd || m_runtime.ResourcesPreserved())
@@ -61,6 +64,7 @@ void HeadsetBody::Open(XrSession session, BodyJointSet jointSet)
 		throw std::runtime_error("Physical runtime returned a null body tracker");
 	m_jointSet = jointSet;
 }
+
 static PhysicalBodyJoint ReadJoint(XrPosef pose, XrSpaceLocationFlags flags)
 {
 	PhysicalBodyJoint result;
@@ -79,6 +83,7 @@ static PhysicalBodyJoint ReadJoint(XrPosef pose, XrSpaceLocationFlags flags)
 	result.pose = *normalized;
 	return result;
 }
+
 PhysicalBodySkeleton HeadsetBody::ReadSkeleton() const
 {
 	const auto map = BodyModel::JointMap(m_jointSet);
@@ -116,6 +121,7 @@ PhysicalBodySkeleton HeadsetBody::ReadSkeleton() const
 	}
 	return result;
 }
+
 PhysicalBodySample HeadsetBody::Sample(XrTime time, XrSpace baseSpace, bool locate)
 {
 	if (!m_fb && !m_bd)

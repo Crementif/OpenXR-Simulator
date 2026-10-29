@@ -6,6 +6,7 @@
 
 static bool s_rejectRelease = false;
 extern "C" bool __real_SDL_SetWindowRelativeMouseMode(SDL_Window*, bool);
+
 extern "C" bool __wrap_SDL_SetWindowRelativeMouseMode(SDL_Window* window, bool enabled)
 {
 	if (!enabled && std::exchange(s_rejectRelease, false))
@@ -21,11 +22,7 @@ static void CheckEvents(simxr::app::Window& window)
 	focus.window.windowID = SDL_GetWindowID(window.Native());
 	Require(SDL_PushEvent(&focus), "Queue native focus event");
 	unsigned observed = 0;
-	Require(window.PollEvents(
-				[&](const SDL_Event& event)
-				{
-					observed += event.type == SDL_EVENT_WINDOW_FOCUS_LOST;
-				}),
+	Require(window.PollEvents([&](const SDL_Event& event) { observed += event.type == SDL_EVENT_WINDOW_FOCUS_LOST; }),
 			"Focus event closed the window");
 	Require(observed == 1 && window.TakeFocusLost() && !window.TakeFocusLost(),
 			"Focus observation was lost or repeated");
@@ -38,8 +35,7 @@ static void CheckEvents(simxr::app::Window& window)
 	motion.motion.yrel = -3;
 	Require(SDL_PushEvent(&motion), "Queue captured motion");
 	unsigned forwarded = 0;
-	auto observer = [&](const SDL_Event& event)
-	{
+	auto observer = [&](const SDL_Event& event) {
 		forwarded += event.type == SDL_EVENT_MOUSE_MOTION;
 	};
 	Require(window.PollEvents(observer) && forwarded == 0 && window.TakePointerMotion() == std::pair{5.f, -3.f},
@@ -67,8 +63,7 @@ static void CheckGyro(simxr::app::Window& window)
 	description.name = "SimXR rejected gyro fixture";
 	unsigned attempts = 0;
 	description.userdata = &attempts;
-	description.SetSensorsEnabled = [](void* data, bool enabled)
-	{
+	description.SetSensorsEnabled = [](void* data, bool enabled) {
 		if (enabled)
 		{
 			++*static_cast<unsigned*>(data);
@@ -78,10 +73,12 @@ static void CheckGyro(simxr::app::Window& window)
 	};
 	const auto id = SDL_AttachVirtualJoystick(&description);
 	Require(id != 0, "Attach virtual gyro controller");
+
 	struct Joystick
 	{
 		SDL_JoystickID id;
 		SDL_Joystick* handle = nullptr;
+
 		~Joystick()
 		{
 			if (handle)
@@ -89,6 +86,7 @@ static void CheckGyro(simxr::app::Window& window)
 			SDL_DetachVirtualJoystick(id);
 		}
 	} joystick{id, SDL_OpenJoystick(id)};
+
 	Require(joystick.handle, "Open virtual joystick");
 	window.PollEvents();
 	Require(window.GamepadIdentity() == id, "Fixture did not own the selected gamepad");
@@ -107,6 +105,7 @@ int main()
 	{
 		constexpr auto subsystems = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD;
 		Require(SDL_InitSubSystem(subsystems), "Initialize independent SDL owner");
+
 		struct Quit
 		{
 			~Quit()
@@ -114,6 +113,7 @@ int main()
 				SDL_Quit();
 			}
 		} quit;
+
 		{
 			simxr::app::Window window(true);
 			CheckEvents(window);

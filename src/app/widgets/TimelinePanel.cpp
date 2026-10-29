@@ -14,19 +14,23 @@ static RuntimeFrameRun RunOf(const RuntimeView& state)
 {
 	return {state.epoch, state.session, state.generation};
 }
+
 void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
 							   bool matchesTarget)
 {
 	m_history.ObserveScript(runtime, run, state, matchesTarget);
 }
+
 void TimelinePanel::Observe(const RuntimeView& runtime)
 {
 	m_history.Observe(runtime, runtime.recording);
 }
+
 void TimelinePanel::SavedRecording(std::string path, const RuntimeView& runtime)
 {
 	m_history.SavedRecording(std::move(path), RunOf(runtime));
 }
+
 void TimelinePanel::Play(RuntimePanels& runtime, const std::string& path)
 {
 	try
@@ -38,6 +42,7 @@ void TimelinePanel::Play(RuntimePanels& runtime, const std::string& path)
 		m_history.Error(std::string("Cannot play take: ") + error.what(), runtime.View().historySeconds);
 	}
 }
+
 void TimelinePanel::ReplayTake(const std::string& path, const RuntimeView& state, std::uint64_t scriptRun)
 {
 	m_history.ReplayTake(scriptRun, path, state);
@@ -46,6 +51,7 @@ void TimelinePanel::ReplayTake(const std::string& path, const RuntimeView& state
 		if (take.path == path)
 			m_ghost = Ghost{take, RunOf(state), state.latestFrame, scriptRun};
 }
+
 void TimelinePanel::DrawGhost(const HistoryStore& history)
 {
 	if (!m_ghost)
@@ -60,8 +66,7 @@ void TimelinePanel::DrawGhost(const HistoryStore& history)
 								: history.LatestSegment({run.session, run.generation, 0}, run.epoch);
 	if (!segment)
 		return;
-	const auto after = [&](std::uint64_t frame)
-	{
+	const auto after = [&](std::uint64_t frame) {
 		auto begin = segment->first, end = segment->second;
 		while (begin < end)
 		{
@@ -107,6 +112,7 @@ void TimelinePanel::DrawGhost(const HistoryStore& history)
 	if (first && last && anchor && *last >= *first && *anchor < end)
 		m_canvas.DrawGhost(history, *first, *last, *anchor, end - 1);
 }
+
 void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow)
 {
 	if (!state.sessionAvailable || area.width <= 0 || area.height <= 0)
@@ -207,12 +213,12 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 		ImGui::EndTooltip();
 	}
 }
+
 void TimelinePanel::DrawLegend()
 {
 	if (!ImGui::BeginPopup("Timeline legend"))
 		return;
-	const auto row = [](const char* name, const char* meaning)
-	{
+	const auto row = [](const char* name, const char* meaning) {
 		ImGui::TextUnformatted(name);
 		ImGui::SameLine(ImGui::GetFontSize() * 7);
 		ImGui::TextDisabled("%s", meaning);
@@ -236,32 +242,27 @@ void TimelinePanel::DrawLegend()
 	row("Home / End", "Fit everything / go live");
 	ImGui::EndPopup();
 }
+
 bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 {
 	const auto& state = runtime.View();
 	const auto& history = runtime.History();
 	bool inspect = false;
-	const auto choose = [&](std::size_t index)
-	{
+	const auto choose = [&](std::size_t index) {
 		const auto& frame = history.At(index);
 		runtime.LookAt(index);
 		shell.selection = FrameSel{frame.identity, frame.epoch};
 		m_cursorSeconds = frame.seconds;
 		inspect = true;
 	};
-	const auto goLive = [&]
-	{
+	const auto goLive = [&] {
 		runtime.SetLive(true);
 		LeaveHistory(shell, true);
 	};
 	m_history.Resolve(history);
 	if (auto saved = std::exchange(shell.timeline.savedTake, {}))
 	{
-		std::erase_if(m_takes,
-					  [&](const TakeSource& take)
-					  {
-						  return take.path == saved->path;
-					  });
+		std::erase_if(m_takes, [&](const TakeSource& take) { return take.path == saved->path; });
 		m_takes.push_back(std::move(*saved));
 		if (m_takes.size() > 16)
 			m_takes.erase(m_takes.begin());
@@ -273,8 +274,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	if (cursorIndex)
 		m_cursorSeconds = history.At(*cursorIndex).seconds;
 	const double cursor = state.time.following ? state.historySeconds : m_cursorSeconds;
-	const auto jump = [&](bool next)
-	{
+	const auto jump = [&](bool next) {
 		auto marker = next ? m_markers.upper_bound(cursor) : m_markers.lower_bound(cursor);
 		if (!next)
 		{
@@ -351,15 +351,13 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	const auto current = state.time.following ? latest : cursorIndex;
 	const bool atEdge = state.time.following || !current || *current + 1 == history.Size();
 	const bool shift = ImGui::GetIO().KeyShift;
-	const auto stepBack = [&]
-	{
+	const auto stepBack = [&] {
 		if (shift)
 			jump(false);
 		else if (current && *current > 0)
 			choose(*current - 1);
 	};
-	const auto stepForward = [&]
-	{
+	const auto stepForward = [&] {
 		if (shift)
 			jump(true);
 		else if (!atEdge)
@@ -524,8 +522,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 		goLive();
 	if (gesture.pin)
 		runtime.TogglePin(*gesture.pin);
-	const auto selectRange = [&](std::size_t firstIndex, std::size_t lastIndex)
-	{
+	const auto selectRange = [&](std::size_t firstIndex, std::size_t lastIndex) {
 		const auto &first = history.At(firstIndex), &last = history.At(lastIndex);
 		if (first.epoch == last.epoch && first.identity.session == last.identity.session &&
 			first.identity.run == last.identity.run)
@@ -585,8 +582,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	for (const auto& event : m_history.Events())
 		m_canvas.DrawEvent(event.axisSeconds, event.seconds, event.text.c_str(), event.failed,
 						   event.run == RuntimeFrameRun{});
-	const auto clip = [&](const char* id, const TimelineSpan& span, bool running = false)
-	{
+	const auto clip = [&](const char* id, const TimelineSpan& span, bool running = false) {
 		const auto name = span.take.empty() ? std::string(span.replay ? "Script" : "Recording")
 											: PathText(Utf8Path(span.take).stem());
 		const auto range = span.Range(history);

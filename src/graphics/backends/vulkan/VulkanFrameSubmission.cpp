@@ -11,8 +11,7 @@ VulkanFrameSubmission::VulkanFrameSubmission(Session& session, VulkanBackend& ba
 											 const VulkanFrameBindings& bindings, bool retainLayers)
 	: m_session(session), m_backend(backend), m_inspection(inspection), m_bindings(bindings),
 	  m_retainLayers(retainLayers)
-{
-}
+{}
 
 VulkanFrameSubmission::~VulkanFrameSubmission() = default;
 
@@ -35,12 +34,8 @@ XrResult VulkanFrameSubmission::PrepareOutputs(std::shared_ptr<FrameReservation>
 											   std::span<const FrameCaptureRequest> captures)
 {
 	auto result = m_backend.Prepare(
-		m_composition,
-		[this](XrSwapchain swapchain)
-		{
-			return m_bindings.ReleasedImage(swapchain);
-		},
-		m_composed, std::move(reservation));
+		m_composition, [this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, m_composed,
+		std::move(reservation));
 	if (XR_FAILED(result))
 		return result;
 	m_output = m_composed;
@@ -71,11 +66,8 @@ XrResult VulkanFrameSubmission::PrepareReprojection()
 		const auto capacity = m_batch.size() < 64 ? 64 - m_batch.size() : 0;
 		m_reprojection.status = VulkanReprojectionPreparation::Prepare(
 			m_backend, *m_inspection, *m_layers, m_target, m_head,
-			[this](XrSwapchain swapchain)
-			{
-				return m_bindings.ReleasedImage(swapchain);
-			},
-			capacity, m_retention, DeliveryRetirementObserver());
+			[this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, capacity, m_retention,
+			DeliveryRetirementObserver());
 		if (m_reprojection.status == XR_SUCCESS)
 		{
 			const auto frames = m_retention->Frames();
@@ -111,18 +103,11 @@ XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& imag
 		if (depth)
 			return m_backend.PrepareDepthCapture(
 				*depth, capture.target.kind == CaptureKind::LayerDepthLinear,
-				[this](XrSwapchain swapchain)
-				{
-					return m_bindings.ReleasedImage(swapchain);
-				},
-				capture.producer, std::move(reservation));
+				[this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, capture.producer,
+				std::move(reservation));
 		return m_backend.PrepareCapture(
-			image,
-			[this](XrSwapchain swapchain)
-			{
-				return m_bindings.ReleasedImage(swapchain);
-			},
-			capture.producer, std::move(reservation));
+			image, [this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, capture.producer,
+			std::move(reservation));
 	}
 	catch (const VulkanError& error)
 	{
@@ -140,11 +125,8 @@ XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& imag
 
 XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequest> requests)
 {
-	const auto required = std::count_if(requests.begin(), requests.end(),
-										[](const auto& request)
-										{
-											return !request.history;
-										});
+	const auto required =
+		std::count_if(requests.begin(), requests.end(), [](const auto& request) { return !request.history; });
 	m_captures.reserve(required);
 	m_captureOutputs.reserve(required);
 	for (const auto& request : requests)
@@ -166,10 +148,7 @@ XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequ
 			const auto result = request.composition
 									? m_backend.Prepare(
 										  *request.composition,
-										  [this](XrSwapchain swapchain)
-										  {
-											  return m_bindings.ReleasedImage(swapchain);
-										  },
+										  [this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); },
 										  capture.producer, request.reservation)
 									: PrepareCapture(*request.image, request.depth ? &*request.depth : nullptr, capture,
 													 request.reservation);
@@ -228,8 +207,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanFrameSubmission::PrepareInspecti
 							: label + std::to_string(target.layer) + ":" + std::to_string(target.view);
 	return m_inspection->Prepare(
 		std::move(source),
-		[journal, key, time, detail, producers = m_backend.LiveReservations()](CompletionStatus status)
-		{
+		[journal, key, time, detail, producers = m_backend.LiveReservations()](CompletionStatus status) {
 			journal->Trace(status == CompletionStatus::Complete ? FrameTraceKind::GpuComplete
 																: FrameTraceKind::GpuFailed,
 						   key, time, status == CompletionStatus::Complete ? XR_SUCCESS : XR_ERROR_RUNTIME_FAILURE,
@@ -237,8 +215,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanFrameSubmission::PrepareInspecti
 			// Collect completed producers on the inspection worker before the next application frame.
 			producers.Collect();
 		},
-		[journal, key, time, detail]
-		{
+		[journal, key, time, detail] {
 			journal->Trace(FrameTraceKind::ImageRetired, key, time, XR_SUCCESS, FrameDiagnosticCategory::Timing, 0,
 						   detail);
 		},
@@ -248,8 +225,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanFrameSubmission::PrepareInspecti
 std::function<void(SharedImageKey)> VulkanFrameSubmission::DeliveryRetirementObserver() const
 {
 	return [journal = m_session.History().DiagnosticsJournal(), key = m_key,
-			time = m_layers->displayTime](SharedImageKey image)
-	{
+			time = m_layers->displayTime](SharedImageKey image) {
 		journal->Trace(FrameTraceKind::ImageRetired, key, time, XR_SUCCESS, FrameDiagnosticCategory::Timing,
 					   image.image.value, "delivery_pool:" + std::to_string(image.pool.value));
 	};

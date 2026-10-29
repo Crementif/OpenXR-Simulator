@@ -47,11 +47,7 @@ static bool Valid(CaptureTarget target)
 }
 
 SnapshotStore::SnapshotStore(std::size_t capacity, FrameHistory* history)
-	: m_history(history), m_slots(
-							  [capacity]
-							  {
-								  return capacity ? capacity : SnapshotBudget::Capacity();
-							  })
+	: m_history(history), m_slots([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); })
 {
 	m_entries.reserve(m_slots.Capacity());
 }
@@ -198,11 +194,8 @@ bool SnapshotStore::Bind(CaptureId id, std::shared_ptr<const FrameRecord> issued
 		issued->key != cancelled->key)
 		return false;
 	std::lock_guard lock(m_mutex);
-	auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-							  [&](const auto& value)
-							  {
-								  return value.record.id == id;
-							  });
+	auto entry =
+		std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
 	if (!m_running || entry == m_entries.end() || entry->released || entry->record.phase != SnapshotPhase::Reserved ||
 		entry->record.target.kind == CaptureKind::VirtualDisplay || issued->key.generation != m_generation ||
 		entry->record.generation != m_generation)
@@ -233,10 +226,7 @@ CaptureReservation SnapshotStore::Pin(std::shared_ptr<const FrameRecord> metadat
 	{
 		std::lock_guard lock(m_mutex);
 		auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-								  [&](const auto& value)
-								  {
-									  return value.record.id == capture.id;
-								  });
+								  [&](const auto& value) { return value.record.id == capture.id; });
 		if (m_running && metadata->key.generation == m_generation && entry != m_entries.end() && !entry->released)
 		{
 			valid = true;
@@ -307,10 +297,7 @@ void SnapshotStore::Update(std::shared_ptr<const FrameRecord> metadata, std::spa
 		case FrameStage::Submitted:
 		{
 			const auto source = std::find_if(outputs.begin(), outputs.end(),
-											 [&](const auto& value)
-											 {
-												 return value.target == entry.record.target;
-											 });
+											 [&](const auto& value) { return value.target == entry.record.target; });
 			entry.record.output =
 				source == outputs.end() || !HasLayerView(*metadata, entry.record.target) ? nullptr : source->output;
 			entry.record.phase =
@@ -344,11 +331,8 @@ bool SnapshotStore::PublishDisplay(CaptureId id, const PresentationTick& tick,
 								   std::shared_ptr<const FrameRecord> metadata) noexcept
 {
 	std::lock_guard lock(m_mutex);
-	auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-							  [&](const auto& value)
-							  {
-								  return value.record.id == id;
-							  });
+	auto entry =
+		std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
 	if (!m_running || entry == m_entries.end() || entry->released || entry->record.generation != m_generation ||
 		entry->record.target.kind != CaptureKind::VirtualDisplay || entry->record.phase != SnapshotPhase::Reserved ||
 		(tick.source && tick.source->generation != m_generation) ||
@@ -373,11 +357,8 @@ bool SnapshotStore::PublishDisplay(CaptureId id, const PresentationTick& tick,
 std::shared_ptr<FrameReservation> SnapshotStore::ProducerReservation(CaptureId id) const
 {
 	std::lock_guard lock(m_mutex);
-	const auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-									[&](const auto& value)
-									{
-										return value.record.id == id;
-									});
+	const auto entry =
+		std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
 	return entry == m_entries.end() || entry->released ? nullptr : entry->producer;
 }
 
@@ -401,8 +382,7 @@ bool SnapshotStore::SetProducer(FrameKey frame, std::shared_ptr<FrameReservation
 	if (!producer)
 		return false;
 	std::lock_guard lock(m_mutex);
-	const auto matches = [&](const Entry& entry)
-	{
+	const auto matches = [&](const Entry& entry) {
 		return !entry.released && entry.record.frame == frame &&
 			   (entry.record.phase == SnapshotPhase::Issued || entry.record.phase == SnapshotPhase::Begun) &&
 			   (entry.record.target == target ||
@@ -470,11 +450,8 @@ void SnapshotStore::Fail(FrameKey frame, XrResult result, std::shared_ptr<const 
 std::optional<SnapshotRecord> SnapshotStore::Read(CaptureId id) const
 {
 	std::lock_guard lock(m_mutex);
-	const auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-									[&](const auto& value)
-									{
-										return value.record.id == id;
-									});
+	const auto entry =
+		std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
 	if (entry == m_entries.end() || entry->released)
 		return {};
 	return entry->record;
@@ -483,12 +460,9 @@ std::optional<SnapshotRecord> SnapshotStore::Read(CaptureId id) const
 std::optional<CaptureId> SnapshotStore::Find(FrameKey frame, CaptureTarget target) const
 {
 	std::lock_guard lock(m_mutex);
-	const auto entry =
-		std::find_if(m_entries.begin(), m_entries.end(),
-					 [&](const auto& value)
-					 {
-						 return !value.released && value.record.frame == frame && value.record.target == target;
-					 });
+	const auto entry = std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) {
+		return !value.released && value.record.frame == frame && value.record.target == target;
+	});
 	return entry == m_entries.end() ? std::nullopt : std::optional{entry->record.id};
 }
 
@@ -541,11 +515,8 @@ bool SnapshotStore::Release(CaptureId id) noexcept
 	std::optional<Entry> released;
 	{
 		std::lock_guard lock(m_mutex);
-		auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-								  [&](const auto& value)
-								  {
-									  return value.record.id == id;
-								  });
+		auto entry =
+			std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
 		if (entry == m_entries.end() || entry->released)
 			return false;
 		released = ReleaseLocked(entry);
@@ -570,8 +541,7 @@ bool SnapshotStore::EvictOldest() noexcept
 	std::optional<Entry> released;
 	{
 		std::lock_guard lock(m_mutex);
-		const auto eligible = [](const Entry& value)
-		{
+		const auto eligible = [](const Entry& value) {
 			const auto& record = value.record;
 			const auto internalReaders = 1 + (record.display && record.display->output == record.output);
 			return !value.released && !record.pinned && record.phase != SnapshotPhase::Reserved &&
@@ -654,10 +624,7 @@ void SnapshotStore::Poll() noexcept
 		{
 			std::lock_guard lock(m_mutex);
 			auto entry = std::find_if(m_entries.begin(), m_entries.end(),
-									  [&](const auto& value)
-									  {
-										  return value.record.id == id;
-									  });
+									  [&](const auto& value) { return value.record.id == id; });
 			if (entry != m_entries.end() && entry->revision == revision)
 			{
 				if (entry->record.phase == SnapshotPhase::GpuPending && completion != CompletionStatus::Pending)

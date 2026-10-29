@@ -46,7 +46,8 @@ static void Require(bool value, const char* operation)
 	std::_Exit(1);
 }
 
-template <class Predicate> static void Await(Predicate predicate, const char* operation)
+template<class Predicate>
+static void Await(Predicate predicate, const char* operation)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (!predicate())
@@ -59,8 +60,7 @@ template <class Predicate> static void Await(Predicate predicate, const char* op
 static void AwaitComplete(const GpuCompletion& completion)
 {
 	Await(
-		[&]
-		{
+		[&] {
 			const auto status = completion.PollCompletion();
 			Require(status != CompletionStatus::Failed, "Production inspection GPU completion failed");
 			return status == CompletionStatus::Complete;
@@ -115,11 +115,13 @@ struct Device
 	VkQueue m_queue = VK_NULL_HANDLE;
 	std::uint32_t m_family = 0;
 	std::uint32_t m_index = 0;
+
 	~Device()
 	{
 		if (m_native)
 			vkDestroyDevice(m_native, nullptr);
 	}
+
 	bool Create(VkInstance instance)
 	{
 		Require(!m_native, "Inspection probe device was already created");
@@ -175,7 +177,7 @@ struct Device
 // command/image owners. This exceptional process policy is confined to the probe.
 class Commands
 {
-  public:
+public:
 	explicit Commands(Device& owner) : m_device(owner)
 	{
 		try
@@ -200,18 +202,22 @@ class Commands
 			throw;
 		}
 	}
+
 	Commands(const Commands&) = delete;
 	Commands& operator=(const Commands&) = delete;
+
 	~Commands()
 	{
 		if (m_submitted && !m_complete)
 			UnknownCompletion("probe source paint teardown");
 		Destroy();
 	}
+
 	VkCommandBuffer Handle() const
 	{
 		return m_command;
 	}
+
 	void Finish()
 	{
 		Require(!m_submitted, "Probe source commands were already submitted");
@@ -235,7 +241,7 @@ class Commands
 		m_complete = true;
 	}
 
-  private:
+private:
 	void Destroy() noexcept
 	{
 		if (m_fence)
@@ -243,6 +249,7 @@ class Commands
 		if (m_pool)
 			vkDestroyCommandPool(m_device.m_native, m_pool, nullptr);
 	}
+
 	Device& m_device;
 	VkCommandPool m_pool = VK_NULL_HANDLE;
 	VkCommandBuffer m_command = VK_NULL_HANDLE;
@@ -278,6 +285,7 @@ static PoseSample Pose()
 {
 	return {IdentityPose(), TrackedPoseFlags, {Duration{1}}};
 }
+
 static XrFovf Fov()
 {
 	const auto angle = std::atan(1.0f);
@@ -299,19 +307,14 @@ static CompositionPlan Plan(const FrameLayers& layers, std::uint32_t width, std:
 	const CompositionTarget target{width, height, {{{Pose(), Fov()}, {Pose(), Fov()}}}};
 	CompositionPlan plan;
 	Require(PrepareComposition(
-				layers, target,
-				[](XrSwapchain)
-				{
-					return XrExtent2Di{16, 16};
-				},
-				plan) == XR_SUCCESS,
+				layers, target, [](XrSwapchain) { return XrExtent2Di{16, 16}; }, plan) == XR_SUCCESS,
 			"Prepare shared inspection composition");
 	return plan;
 }
 
 class DebugCapture
 {
-  public:
+public:
 	explicit DebugCapture(VulkanBackend& backend, CaptureTarget target = {})
 	{
 		auto instance = std::make_shared<simxr::Instance>(reinterpret_cast<XrInstance>(100),
@@ -332,8 +335,7 @@ class DebugCapture
 				"Pause production capture session");
 		m_step = Command(DebugCommand::Step, {}, target);
 		Await(
-			[&]
-			{
+			[&] {
 				const auto operation = m_controller->Read(m_step);
 				Require(operation && operation->phase != DebugPhase::Failed, "Reserve inspection capture failed");
 				if (operation->captures.empty() || !m_session->Scheduler().Snapshot().permits)
@@ -345,23 +347,25 @@ class DebugCapture
 		Require(m_session->WaitFrame(m_prediction) == XR_SUCCESS && m_session->BeginFrame() == XR_SUCCESS,
 				"Issue exactly one inspection capture frame");
 	}
+
 	~DebugCapture()
 	{
 		m_session->Close();
 		m_controller->Close(false);
 	}
+
 	DebugOperationId Command(DebugCommand kind, CaptureId id = {}, CaptureTarget target = {})
 	{
 		const auto result = m_controller->Submit(m_lease, {{m_next++}, kind, 1, target, {}, id});
 		Require(result.result == DebugAdmission::Accepted, "Submit owned inspection debug command");
 		return result.operation;
 	}
+
 	DebugOperation AwaitOperation(DebugOperationId id)
 	{
 		DebugOperation result;
 		Await(
-			[&]
-			{
+			[&] {
 				const auto operation = m_controller->Read(id);
 				Require(operation && operation->phase != DebugPhase::Failed &&
 							operation->phase != DebugPhase::Interrupted && operation->phase != DebugPhase::Cancelled,
@@ -372,6 +376,7 @@ class DebugCapture
 			"Owned inspection debug operation timed out");
 		return result;
 	}
+
 	std::shared_ptr<Session> m_session;
 	std::optional<DebugController> m_controller;
 	FramePrediction m_prediction;
@@ -417,8 +422,7 @@ static void VerifyControlLayer(const std::shared_ptr<VulkanInspectionFrame>& fra
 	Require(description.arrayLayers == 1 && description.views.size() == 1 && description.width == original.width &&
 				description.height == original.height,
 			"Single-layer export retained incompatible stereo metadata");
-	const auto components = [](const FrameView& view)
-	{
+	const auto components = [](const FrameView& view) {
 		return std::array{view.pose.orientation.x, view.pose.orientation.y, view.pose.orientation.z,
 						  view.pose.orientation.w, view.pose.position.x,	view.pose.position.y,
 						  view.pose.position.z,	   view.fov.angleLeft,		view.fov.angleRight,
@@ -443,19 +447,14 @@ static std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::
 	const auto plan = Plan(*layers, 32, 24);
 	std::shared_ptr<VulkanFrame> output;
 	Require(backend.Prepare(
-				plan,
-				[&](XrSwapchain)
-				{
-					return source;
-				},
-				output) == XR_SUCCESS,
+				plan, [&](XrSwapchain) { return source; }, output) == XR_SUCCESS,
 			"Prepare external inspection regression output");
 	return output;
 }
 
 class InspectionQueueGate
 {
-  public:
+public:
 	InspectionQueueGate(std::shared_ptr<VulkanDevice> consumer, const VulkanExternalDevice& producer)
 		: m_consumer(std::move(consumer)), m_producer(producer.Device()), m_waitFence(m_consumer->AcquireCommands()),
 		  m_signalFence(m_producer->AcquireCommands()), m_signal(producer.CreateExportableSemaphore())
@@ -464,6 +463,7 @@ class InspectionQueueGate
 		VulkanExternalDevice external(m_consumer, s_sharingExtensions, VK_API_VERSION_1_1);
 		m_wait = external.ImportSemaphore(producer.Identity(), handle);
 	}
+
 	~InspectionQueueGate()
 	{
 		if (!m_submitted)
@@ -473,6 +473,7 @@ class InspectionQueueGate
 			vkWaitForFences(m_producer->binding.device, 1, &m_signalFence->fence, VK_TRUE, s_timeout) != VK_SUCCESS)
 			UnknownCompletion("Inspection queue gate did not retire");
 	}
+
 	void Submit()
 	{
 		const auto semaphore = m_wait->Get();
@@ -486,6 +487,7 @@ class InspectionQueueGate
 			UnknownCompletion("Inspection queue gate submission failed");
 		m_submitted = true;
 	}
+
 	void Release()
 	{
 		if (m_released)
@@ -500,7 +502,7 @@ class InspectionQueueGate
 		m_released = true;
 	}
 
-  private:
+private:
 	const std::shared_ptr<VulkanDevice> m_consumer;
 	const std::shared_ptr<VulkanDevice> m_producer;
 	const std::unique_ptr<VulkanCommands> m_waitFence;
@@ -519,8 +521,7 @@ static void ReuseAllocations(const VulkanBinding& binding, Device& device,
 	VulkanInspection inspection(external.Identity(), 4, validation);
 	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, s_sourceUsage);
 	Check(backend.InitializeImage(source)->Wait(s_timeout), "Initialize image reuse source");
-	const auto finish = [&](const std::shared_ptr<VulkanFrame>& producer)
-	{
+	const auto finish = [&](const std::shared_ptr<VulkanFrame>& producer) {
 		auto transfer = inspection.Prepare(producer);
 		Require(backend.Submit(producer) == XR_SUCCESS, "Submit reusable image");
 		transfer->Commit();
@@ -607,12 +608,7 @@ static bool Benchmark()
 				for (std::size_t index = 0; index < plans.size(); ++index)
 				{
 					Require(backend.Prepare(
-								plans[index],
-								[&](XrSwapchain)
-								{
-									return source;
-								},
-								producers[index]) == XR_SUCCESS,
+								plans[index], [&](XrSwapchain) { return source; }, producers[index]) == XR_SUCCESS,
 							"Prepare transfer benchmark output");
 					transfers[index] = inspection.Prepare(producers[index]);
 				}
@@ -632,8 +628,7 @@ static bool Benchmark()
 				completion.push_back(
 					std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
 		}
-		const auto report = [](const char* name, std::vector<double>& samples)
-		{
+		const auto report = [](const char* name, std::vector<double>& samples) {
 			std::sort(samples.begin(), samples.end());
 			std::printf("benchmark=%s samples=%zu p50_us=%.2f p95_us=%.2f p99_us=%.2f\n", name, samples.size(),
 						samples[samples.size() / 2], samples[samples.size() * 95 / 100],
@@ -770,28 +765,23 @@ static void DrainRetirement(VulkanBackend& backend, const std::shared_ptr<Vulkan
 		struct Unblock
 		{
 			std::latch& release;
+
 			~Unblock()
 			{
 				release.count_down();
 			}
 		} unblock{release};
+
 		auto producer = Producer(backend, source);
-		auto transfer = inspection.Prepare(producer, {},
-										   [&]
-										   {
-											   entered.count_down();
-											   release.wait();
-										   });
+		auto transfer = inspection.Prepare(producer, {}, [&] {
+			entered.count_down();
+			release.wait();
+		});
 		Require(backend.Submit(producer) == XR_SUCCESS, "Submit producer with gated retirement");
 		transfer->Commit();
 		transfer.reset();
 		producer.reset();
-		Await(
-			[&]
-			{
-				return entered.try_wait();
-			},
-			"Inspection did not reach native retirement");
+		Await([&] { return entered.try_wait(); }, "Inspection did not reach native retirement");
 		Require(inspection.Drain(0) == VK_TIMEOUT, "Drain completed before native retirement finished");
 	}
 	Check(inspection.Drain(s_timeout), "Drain released native retirement");
@@ -820,8 +810,7 @@ static std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend,
 		Require(firstTerminal != CompletionStatus::Pending, "Closed inspection left a nonterminal output");
 		std::latch ready(3), start(1);
 		std::future<VkResult> firstDrain, secondDrain, repeatedClose;
-		const auto awaitWorkers = [&]
-		{
+		const auto awaitWorkers = [&] {
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
 			for (auto* worker : {&firstDrain, &secondDrain, &repeatedClose})
 				if (worker->valid() && worker->wait_until(deadline) != std::future_status::ready)
@@ -829,33 +818,22 @@ static std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend,
 		};
 		try
 		{
-			firstDrain = std::async(std::launch::async,
-									[&]
-									{
-										ready.count_down();
-										start.wait();
-										return inspection.Drain(s_timeout);
-									});
-			secondDrain = std::async(std::launch::async,
-									 [&]
-									 {
-										 ready.count_down();
-										 start.wait();
-										 return inspection.Drain(s_timeout);
-									 });
-			repeatedClose = std::async(std::launch::async,
-									   [&]
-									   {
-										   ready.count_down();
-										   start.wait();
-										   return inspection.Close(s_timeout);
-									   });
-			Await(
-				[&]
-				{
-					return ready.try_wait();
-				},
-				"Inspection drain/close workers did not start");
+			firstDrain = std::async(std::launch::async, [&] {
+				ready.count_down();
+				start.wait();
+				return inspection.Drain(s_timeout);
+			});
+			secondDrain = std::async(std::launch::async, [&] {
+				ready.count_down();
+				start.wait();
+				return inspection.Drain(s_timeout);
+			});
+			repeatedClose = std::async(std::launch::async, [&] {
+				ready.count_down();
+				start.wait();
+				return inspection.Close(s_timeout);
+			});
+			Await([&] { return ready.try_wait(); }, "Inspection drain/close workers did not start");
 		}
 		catch (...)
 		{
@@ -954,6 +932,7 @@ struct RawRetention
 	std::vector<std::shared_ptr<VulkanInspectionFrame>> frames;
 	std::vector<SnapshotRecord> readers;
 };
+
 static RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 							   const std::shared_ptr<VulkanInspectionValidation>& validation, VkFormat format)
 {
@@ -975,12 +954,8 @@ static RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 		const FrameKey key{capture.m_session->Snapshot().generation, capture.m_prediction.id};
 		std::shared_ptr<VulkanFrame> composed, raw;
 		Require(backend.Prepare(
-					plan,
-					[&](XrSwapchain)
-					{
-						return source;
-					},
-					composed, capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
+					plan, [&](XrSwapchain) { return source; }, composed,
+					capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
 				"Prepare reserved composed companion for raw capture");
 		const auto selected = FindLayerImage(*layers, target.layer, target.view);
 		Require(selected.has_value(), "Find selected raw source metadata");
@@ -989,31 +964,19 @@ static RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 		invalid.rectangle.offset.x = 16;
 		auto unchanged = composed;
 		Require(backend.PrepareCapture(
-					invalid,
-					[&](XrSwapchain)
-					{
-						return source;
-					},
-					unchanged, rawToken) == XR_ERROR_SWAPCHAIN_RECT_INVALID &&
+					invalid, [&](XrSwapchain) { return source; }, unchanged, rawToken) ==
+						XR_ERROR_SWAPCHAIN_RECT_INVALID &&
 					unchanged == composed && !rawToken->Consumed(),
 				"Invalid raw rectangle changed output or consumed its reserved retry capacity");
 		Require(selected.has_value() &&
 					backend.PrepareCapture(
-						*selected,
-						[&](XrSwapchain)
-						{
-							return source;
-						},
-						raw, capture.m_session->Captures().ProducerReservation(key, target)) == XR_SUCCESS,
+						*selected, [&](XrSwapchain) { return source; }, raw,
+						capture.m_session->Captures().ProducerReservation(key, target)) == XR_SUCCESS,
 				"Prepare exact selected layer/view GPU copy");
 		unchanged = raw;
 		Require(backend.PrepareCapture(
-					*selected,
-					[&](XrSwapchain)
-					{
-						return source;
-					},
-					unchanged, rawToken) == XR_ERROR_CALL_ORDER_INVALID &&
+					*selected, [&](XrSwapchain) { return source; }, unchanged, rawToken) ==
+						XR_ERROR_CALL_ORDER_INVALID &&
 					unchanged == raw,
 				"Consumed raw reservation was accepted twice or replaced its output");
 		auto displayTransfer = inspection.Prepare(composed);
@@ -1028,8 +991,7 @@ static RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 							XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 2,	   nullptr};
 		Require(capture.m_session->EndFrame(
 					capture.m_prediction, &info, layers, displayTransfer->Output(),
-					[&]
-					{
+					[&] {
 						const auto result = backend.Submit(batch);
 						if (result == XR_SUCCESS)
 						{
@@ -1076,6 +1038,7 @@ static RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 				static_cast<int>(format));
 	return retained;
 }
+
 static void VerifyRaw(const RawRetention& retained)
 {
 	Require(retained.frames.size() == 5 && retained.readers.size() == 5, "Retained raw target count changed");
@@ -1144,20 +1107,15 @@ static SnapshotRecord CaptureOwned(VulkanBackend& backend, VulkanInspection& ins
 	const FrameKey key{capture.m_session->Snapshot().generation, capture.m_prediction.id};
 	std::shared_ptr<VulkanFrame> producer;
 	Require(backend.Prepare(
-				plan,
-				[&](XrSwapchain)
-				{
-					return source;
-				},
-				producer, capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
+				plan, [&](XrSwapchain) { return source; }, producer,
+				capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
 			"Prepare exact retained budget image");
 	auto transfer = inspection.Prepare(producer);
 	auto output = transfer->Output();
 	XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, capture.m_prediction.displayTime.value.count(),
 						XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,	   nullptr};
 	Require(capture.m_session->EndFrame(capture.m_prediction, &info, layers, output,
-										[&]
-										{
+										[&] {
 											const auto result = backend.Submit(producer);
 											if (result == XR_SUCCESS)
 												transfer->Commit();
@@ -1209,20 +1167,15 @@ static SnapshotRecord CaptureSequence(Device& device, const VulkanBinding& bindi
 	auto plan = Plan(*layers, 32, 24);
 	std::shared_ptr<VulkanFrame> producer;
 	Require(backend.Prepare(
-				plan,
-				[&](XrSwapchain)
-				{
-					return source;
-				},
-				producer, session.Captures().ProducerReservation(key)) == XR_SUCCESS,
+				plan, [&](XrSwapchain) { return source; }, producer, session.Captures().ProducerReservation(key)) ==
+				XR_SUCCESS,
 			"Prepare sequence's reserved native producer");
 	auto transfer = inspection.Prepare(producer);
 	auto output = transfer->Output();
 	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
 							 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
 	Require(session.EndFrame(prediction, &end, layers, output,
-							 [&]
-							 {
+							 [&] {
 								 const auto result = backend.Submit(producer);
 								 if (result == XR_SUCCESS)
 									 transfer->Commit();
@@ -1266,6 +1219,7 @@ struct LiveResult
 	std::shared_ptr<VulkanInspectionFrame> output;
 	bool submitted = false;
 };
+
 static LiveResult SubmitLive(Session& session, VulkanBackend& backend, VulkanInspection& inspection,
 							 const std::shared_ptr<VulkanImage>& source, XrSwapchain sourceId)
 {
@@ -1280,12 +1234,7 @@ static LiveResult SubmitLive(Session& session, VulkanBackend& backend, VulkanIns
 	if (token)
 	{
 		Require(backend.Prepare(
-					plan,
-					[&](XrSwapchain)
-					{
-						return source;
-					},
-					result.producer, std::move(token)) == XR_SUCCESS,
+					plan, [&](XrSwapchain) { return source; }, result.producer, std::move(token)) == XR_SUCCESS,
 				"Prepare independent live budget output");
 		transfer = inspection.Prepare(result.producer);
 		result.output = transfer->Output();
@@ -1294,8 +1243,7 @@ static LiveResult SubmitLive(Session& session, VulkanBackend& backend, VulkanIns
 						XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,	   nullptr};
 	std::function<XrResult()> submit;
 	if (result.producer)
-		submit = [&]
-		{
+		submit = [&] {
 			result.submitted = true;
 			const auto accepted = backend.Submit(result.producer);
 			if (accepted == XR_SUCCESS)
@@ -1356,12 +1304,7 @@ static std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBind
 	Require(session.CaptureBoundary().result == SnapshotAdmission::Capacity,
 			"Full debug pool silently accepted live promotion");
 	first.reset();
-	Await(
-		[&]
-		{
-			return backend.Reservations().InUse() == 1;
-		},
-		"Release exact budget reader");
+	Await([&] { return backend.Reservations().InUse() == 1; }, "Release exact budget reader");
 	const auto boundary = session.CaptureBoundary();
 	Require(boundary.result == SnapshotAdmission::Accepted && boundary.captures.size() == 1,
 			"Promote retained live image for pause");
@@ -1390,12 +1333,7 @@ static std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBind
 	Check(inspection.Drain(s_timeout), "Drain live completion and retirement");
 	session.Display().PollRetired();
 	backend.RetireCompleted();
-	Await(
-		[&]
-		{
-			return backend.LiveReservations().InUse() == 0;
-		},
-		"Return ordinary live slot after session closure");
+	Await([&] { return backend.LiveReservations().InUse() == 0; }, "Return ordinary live slot after session closure");
 	{
 		Session pressure(reinterpret_cast<XrSession>(302), instance);
 		Require(pressure.Ready(config.epoch) == XR_SUCCESS && pressure.Begin(begin, config) == XR_SUCCESS &&
@@ -1527,16 +1465,11 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 				std::shared_ptr<VulkanFrame> producer;
 				const auto key = FrameKey{capture.m_session->Snapshot().generation, capture.m_prediction.id};
 				Require(backend.Prepare(
-							plan,
-							[&](XrSwapchain)
-							{
-								return source;
-							},
-							producer, capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
+							plan, [&](XrSwapchain) { return source; }, producer,
+							capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
 						"Prepare captured external producer output");
 				auto transfer = inspection.Prepare(producer, {}, {}, VulkanInspectionKind::Required,
-												   [retirements](SharedImageKey image)
-												   {
+												   [retirements](SharedImageKey image) {
 													   std::lock_guard lock(retirements->first);
 													   retirements->second.push_back(image);
 												   });
@@ -1549,8 +1482,7 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 					XR_TYPE_FRAME_END_INFO,			  nullptr, capture.m_prediction.displayTime.value.count(),
 					XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,	   nullptr};
 				Require(capture.m_session->EndFrame(capture.m_prediction, &info, layers, retained,
-													[&]
-													{
+													[&] {
 														const auto result = backend.Submit(producer);
 														if (result == XR_SUCCESS)
 															transfer->Commit();
@@ -1585,12 +1517,7 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 				auto plan = Plan(*layers, 40, 30);
 				std::shared_ptr<VulkanFrame> producer;
 				Require(backend.Prepare(
-							plan,
-							[&](XrSwapchain)
-							{
-								return source;
-							},
-							producer) == XR_SUCCESS,
+							plan, [&](XrSwapchain) { return source; }, producer) == XR_SUCCESS,
 						"Prepare resized later external output");
 				auto transfer = inspection.Prepare(producer);
 				resized = transfer->Output();
@@ -1624,13 +1551,10 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 			"Retained closed-service output lost its terminal result after borrowed teardown");
 	Require(retainedCpuReader && retainedCpuReader->output.get() == retained.get(),
 			"Explicit reader did not survive logical/session/native parent teardown");
-	simxr::probe::VerifyImageDelivery(retained, resized, verify,
-									  [retirements](SharedImageKey image)
-									  {
-										  std::lock_guard lock(retirements->first);
-										  return std::count(retirements->second.begin(), retirements->second.end(),
-															image) == 1;
-									  });
+	simxr::probe::VerifyImageDelivery(retained, resized, verify, [retirements](SharedImageKey image) {
+		std::lock_guard lock(retirements->first);
+		return std::count(retirements->second.begin(), retirements->second.end(), image) == 1;
+	});
 	if (verify)
 	{
 		const auto sequenceImage = std::dynamic_pointer_cast<const VulkanInspectionFrame>(sequenceRetention->output);
@@ -1691,12 +1615,8 @@ int main(int argc, char** argv)
 			return Benchmark() ? 0 : 77;
 		auto validation = std::make_shared<simxr::VulkanInspectionValidation>();
 		const bool supported = Run(verify, validation);
-		Await(
-			[&]
-			{
-				return validation->liveOwnedDevices.load() == 0;
-			},
-			"Owned delivery devices did not finish native teardown");
+		Await([&] { return validation->liveOwnedDevices.load() == 0; },
+			  "Owned delivery devices did not finish native teardown");
 		Require(simxr::probe::s_validationErrors.load() == 0 && validation->errors.load() == 0,
 				"Validation errors in borrowed or independently owned Vulkan instance, including teardown");
 		if (!supported)

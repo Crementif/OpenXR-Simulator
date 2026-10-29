@@ -23,15 +23,16 @@ class VulkanFrameSync;
 
 class VulkanSubmission final : public GpuCompletion
 {
-  public:
+public:
 	~VulkanSubmission();
 	CompletionStatus PollCompletion() const noexcept override;
 	VkResult Wait(std::uint64_t timeout) const noexcept;
 	bool NativeIdle() const noexcept;
 
-  private:
+private:
 	friend class VulkanBackend;
 	friend class VulkanFrame;
+
 	struct Resources
 	{
 		VulkanNativePreservation<Resources, 256>::Reservation preservation{
@@ -60,6 +61,7 @@ class VulkanSubmission final : public GpuCompletion
 		std::array<VkImageView, 2> outputViews{};
 		std::array<VkFramebuffer, 2> framebuffers{};
 	};
+
 	explicit VulkanSubmission(std::shared_ptr<VulkanDevice> device);
 	void ReleaseSources();
 	void BeginTiming();
@@ -74,7 +76,7 @@ class VulkanSubmission final : public GpuCompletion
 
 class VulkanFrame final : public FrameOutput
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override;
 	const VulkanImage& Image() const;
 	// Aliases the submission owner, retaining its budget and native dependencies.
@@ -86,7 +88,7 @@ class VulkanFrame final : public FrameOutput
 	bool Submitted() const noexcept;
 	std::shared_ptr<const FrameGpuTiming> Timing() const noexcept;
 
-  private:
+private:
 	friend class VulkanBackend;
 	friend class VulkanInspection;
 	friend class VulkanInspectionTransfer;

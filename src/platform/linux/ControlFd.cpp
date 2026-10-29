@@ -9,6 +9,7 @@ namespace simxr::control
 struct ControlFdGuard
 {
 	int value;
+
 	~ControlFdGuard()
 	{
 		if (value >= 0)
@@ -19,47 +20,56 @@ struct ControlFdGuard
 		}
 	}
 };
+
 static void CloseOnExec(int fd)
 {
 	int flags;
 	do
 	{
 		flags = fcntl(fd, F_GETFD);
-	} while (flags < 0 && errno == EINTR);
+	}
+	while (flags < 0 && errno == EINTR);
 	if (flags < 0)
 		throw std::system_error(errno, std::generic_category(), "Query control FD flags");
 	int result;
 	do
 	{
 		result = fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
-	} while (result < 0 && errno == EINTR);
+	}
+	while (result < 0 && errno == EINTR);
 	if (result < 0)
 		throw std::system_error(errno, std::generic_category(), "Set control FD close-on-exec");
 }
+
 class OwnedControlFd final : public TransferHandle
 {
-  public:
+public:
 	explicit OwnedControlFd(int fd) noexcept : m_fd(fd) {}
+
 	~OwnedControlFd() override
 	{
 		ControlFdGuard cleanup{m_fd};
 	}
+
 	TransferHandleKind Kind() const noexcept override
 	{
 		return TransferHandleKind::OpaqueFd;
 	}
+
 	std::intptr_t Value() const noexcept override
 	{
 		return m_fd;
 	}
+
 	std::shared_ptr<TransferHandle> Duplicate() const override
 	{
 		return DuplicateControlFd(m_fd);
 	}
 
-  private:
+private:
 	const int m_fd;
 };
+
 std::shared_ptr<TransferHandle> OwnControlFd(int fd)
 {
 	ControlFdGuard pending{fd};
@@ -70,6 +80,7 @@ std::shared_ptr<TransferHandle> OwnControlFd(int fd)
 	pending.value = -1;
 	return result;
 }
+
 std::shared_ptr<TransferHandle> DuplicateControlFd(int fd)
 {
 	if (fd < 0)
@@ -78,7 +89,8 @@ std::shared_ptr<TransferHandle> DuplicateControlFd(int fd)
 	do
 	{
 		duplicate = fcntl(fd, F_DUPFD_CLOEXEC, 0);
-	} while (duplicate < 0 && errno == EINTR);
+	}
+	while (duplicate < 0 && errno == EINTR);
 	if (duplicate < 0)
 		throw std::system_error(errno, std::generic_category(), "Duplicate control FD");
 	return OwnControlFd(duplicate);

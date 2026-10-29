@@ -25,6 +25,7 @@ class HeadsetImages;
 class HeadsetOutput;
 struct HeadsetInputSample;
 struct HeadsetImageTiming;
+
 struct HeadsetFrameTiming
 {
 	std::uint64_t frames = 0, projected = 0, inspected = 0, empty = 0, repeated = 0;
@@ -41,9 +42,10 @@ enum class HeadsetOutputState
 	Inspection,
 	Hidden
 };
+
 class HeadsetSession
 {
-  public:
+public:
 	HeadsetSession(OpenXrRuntime& runtime, HeadsetGraphics& graphics);
 	~HeadsetSession();
 	HeadsetSession(const HeadsetSession&) = delete;
@@ -54,18 +56,21 @@ class HeadsetSession
 	void Run(std::optional<std::uint32_t> frames, const std::function<void(const HeadsetInputSample&)>& observe = {},
 			 const std::function<bool()>& stopRequested = {});
 	bool Close();
+
 	HeadsetOutputState OutputState() const
 	{
 		return m_outputState;
 	}
+
 	HeadsetFrameTiming Timing() const
 	{
 		return m_timing;
 	}
+
 	HeadsetImageTiming ImageTiming() const;
 	void ApplyHaptics(const std::array<std::optional<HeadsetVibration>, 2>& commands);
 
-  private:
+private:
 	void PollEvents();
 	bool Frame(bool render, const std::function<void(const HeadsetInputSample&)>& observe);
 	OpenXrRuntime& m_runtime;

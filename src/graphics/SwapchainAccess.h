@@ -15,7 +15,7 @@ namespace simxr
 {
 class SwapchainAccess
 {
-  public:
+public:
 	using InitializeImage = std::function<std::shared_ptr<const GpuCompletion>(std::uint32_t)>;
 
 	explicit SwapchainAccess(std::uint32_t imageCount, bool staticImage = false);
@@ -27,7 +27,7 @@ class SwapchainAccess
 	void MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion);
 	void Close();
 
-  private:
+private:
 	XrResult WaitForImage(std::uint32_t index, XrDuration timeout);
 	void FinishWait();
 

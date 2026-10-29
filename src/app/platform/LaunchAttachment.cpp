@@ -11,6 +11,7 @@ static std::string Environment(const LaunchProfile& profile, const char* name)
 	const auto value = std::getenv(name);
 	return value ? value : "";
 }
+
 static std::filesystem::path DataDirectory(const LaunchProfile& profile)
 {
 	if (const auto directory = Environment(profile, "SIMXR_DATA_DIR"); !directory.empty())
@@ -74,12 +75,14 @@ void LaunchAttachment::Initialize(const LaunchProfile& profile)
 		 (std::filesystem::exists(m_customEndpoint) && m_customEndpoint != m_replacedEndpoint)))
 		throw std::runtime_error("Launch attachment requires a new absolute local control endpoint");
 }
+
 std::string LaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
 {
 	if (!m_customEndpoint.empty())
 		return m_customEndpoint;
 	return (m_directory / ("control." + std::to_string(process) + ".sock")).string();
 }
+
 bool LaunchAttachment::EndpointExists(const std::string& endpoint) const
 {
 	std::error_code error;

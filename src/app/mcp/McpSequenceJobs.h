@@ -17,7 +17,7 @@ class McpDebug;
 
 class McpSequenceJobs
 {
-  public:
+public:
 	McpSequenceJobs() = default;
 	~McpSequenceJobs();
 	McpSequenceJobs(const McpSequenceJobs&) = delete;
@@ -25,12 +25,13 @@ class McpSequenceJobs
 	static nlohmann::json Definitions();
 	static bool Handles(const std::string& name);
 	std::optional<nlohmann::json> Call(McpApplication& app, McpDebug& debug, const std::string& name,
-		const nlohmann::json& arguments, const std::shared_ptr<McpCancellation>& cancellation);
+									   const nlohmann::json& arguments,
+									   const std::shared_ptr<McpCancellation>& cancellation);
 	void Close() noexcept;
 
-  private:
+private:
 	void Run(McpApplication& app, McpDebug& debug, nlohmann::json options,
-		std::shared_ptr<McpCancellation> cancellation) noexcept;
+			 std::shared_ptr<McpCancellation> cancellation) noexcept;
 	std::mutex m_lifecycle, m_mutex;
 	std::thread m_worker;
 	std::shared_ptr<McpCancellation> m_cancellation;

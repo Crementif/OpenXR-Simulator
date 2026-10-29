@@ -7,13 +7,10 @@ namespace simxr::app::mcp
 bool CacheableImageSource(std::uint32_t targetKind, bool hasTickField, bool hasValidTick) noexcept
 {
 	return (!hasTickField || hasValidTick) &&
-		(targetKind != static_cast<std::uint32_t>(control::TargetKind::VirtualDisplay) || hasValidTick);
+		   (targetKind != static_cast<std::uint32_t>(control::TargetKind::VirtualDisplay) || hasValidTick);
 }
 
-ImageCache::ImageCache(std::size_t maxBytes, std::size_t maxEntries)
-	: m_maxBytes(maxBytes), m_maxEntries(maxEntries)
-{
-}
+ImageCache::ImageCache(std::size_t maxBytes, std::size_t maxEntries) : m_maxBytes(maxBytes), m_maxEntries(maxEntries) {}
 
 std::shared_ptr<const CachedImage> ImageCache::Find(const std::string& key)
 {

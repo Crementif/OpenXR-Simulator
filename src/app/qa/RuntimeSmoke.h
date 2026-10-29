@@ -13,12 +13,12 @@ class UiRenderer;
 // Finite qualification against the controlled runtime probe.
 class RuntimeSmoke
 {
-  public:
+public:
 	explicit RuntimeSmoke(std::string exportPath);
 	void Poll(RuntimePanels& panels, UiRenderer& renderer);
 	bool Finished() const noexcept;
 
-  private:
+private:
 	enum class Stage
 	{
 		Session,

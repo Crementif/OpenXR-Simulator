@@ -19,6 +19,7 @@ namespace simxr::app
 {
 struct CompanionSettings;
 struct RuntimeView;
+
 struct AppPickerChoice
 {
 	std::optional<RunningApp> connect;
@@ -28,9 +29,10 @@ struct AppPickerChoice
 	std::string discoveryError;
 	bool addProfile = false, editProfiles = false, connectEndpoint = false, disconnect = false;
 };
+
 class AppPicker
 {
-  public:
+public:
 	~AppPicker();
 	AppPicker() = default;
 	AppPicker(const AppPicker&) = delete;
@@ -41,14 +43,16 @@ class AppPicker
 						 ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session,
 						 float maximumWidth = 0, bool compact = false);
 
-  private:
+private:
 	std::string Refresh();
 	void Run(std::stop_token stop) noexcept;
+
 	struct DiscoveryResult
 	{
 		std::vector<RunningApp> apps;
 		std::string error;
 	};
+
 	std::mutex m_mutex;
 	std::condition_variable_any m_changed;
 	std::jthread m_worker;

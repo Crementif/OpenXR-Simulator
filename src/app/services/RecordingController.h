@@ -14,6 +14,7 @@
 namespace simxr::app
 {
 class WorkerConnection;
+
 struct RecordingTarget
 {
 	std::string endpoint;
@@ -27,6 +28,7 @@ enum class RecordingAction
 	Read,
 	Save
 };
+
 struct RecordingSnapshot
 {
 	bool busy = false;
@@ -35,6 +37,7 @@ struct RecordingSnapshot
 	std::string error, savedPath;
 	std::uint64_t savedSeed = 0;
 };
+
 // Read the metadata of an editable recording without executing its script.
 automation::SavedRecording OpenSavedRecording(const std::string& path);
 // Writes an editable take through a private temporary file. Existing recording
@@ -45,7 +48,7 @@ void SaveRecording(const std::filesystem::path& destination, const automation::I
 // One joined worker owns recording control, transport and explicit persistence.
 class RecordingController
 {
-  public:
+public:
 	RecordingController();
 	~RecordingController();
 	RecordingController(const RecordingController&) = delete;
@@ -54,7 +57,7 @@ class RecordingController
 	bool Request(RecordingAction action, std::uint64_t offset = 0, std::string path = {});
 	RecordingSnapshot Snapshot() const;
 
-  private:
+private:
 	struct Job
 	{
 		RecordingAction action;
@@ -62,6 +65,7 @@ class RecordingController
 		std::uint64_t revision, offset;
 		std::string path;
 	};
+
 	static control::Message Read(WorkerConnection& connection, const Job& job, std::uint64_t offset);
 	static RecordingSnapshot Execute(WorkerConnection& connection, const Job& job);
 	void Run();

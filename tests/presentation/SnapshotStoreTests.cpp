@@ -14,7 +14,7 @@ namespace
 {
 class Output final : public FrameOutput
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		++polls;
@@ -22,11 +22,13 @@ class Output final : public FrameOutput
 			store->Read(id);
 		return status.load();
 	}
+
 	~Output() override
 	{
 		if (store && destroyed)
 			*destroyed = store->Snapshot().retiring == 0;
 	}
+
 	mutable std::atomic<unsigned> polls{0};
 	std::atomic<CompletionStatus> status{CompletionStatus::Pending};
 	SnapshotStore* store = nullptr;
@@ -36,15 +38,17 @@ class Output final : public FrameOutput
 
 class RetainedSource final : public RotationalSource
 {
-  public:
+public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	PoseSample SubmittedHead() const noexcept override
 	{
 		return {};
 	}
+
 	XrResult Reproject(const PoseSample&, std::shared_ptr<const FrameOutput>&) const override
 	{
 		return XR_ERROR_FEATURE_UNSUPPORTED;
@@ -96,7 +100,7 @@ void CaptureHistory()
 	image.reset();
 	const auto ready = history.Diagnostics().events;
 	Require(ready.size() == 1 && ready[0].kind == FrameTraceKind::CaptureReady &&
-			ready[0].frame == records.submitted->key && ready[0].related == capture.id.value && lifetime.expired(),
+				ready[0].frame == records.submitted->key && ready[0].related == capture.id.value && lifetime.expired(),
 			"Capture completion was duplicated, lost after release, or retained the GPU image");
 	const auto clear = store.Pin(Frame({1}, 2, 0).submitted);
 	const auto unavailable = store.Pin(Frame({1}, 3).submitted);
@@ -104,10 +108,10 @@ void CaptureHistory()
 	store.Stop();
 	const auto terminal = history.Diagnostics().events;
 	Require(terminal.size() == 4 && terminal[1].related == clear.id.value &&
-			terminal[1].Detail().starts_with("phase=clear;") &&
-			terminal[2].related == unavailable.id.value && terminal[2].kind == FrameTraceKind::CaptureFailed &&
-			terminal[2].result == XR_ERROR_FEATURE_UNSUPPORTED && terminal[3].related == cancelled.id.value &&
-			terminal[3].frame == FrameKey{{1}, {}} && terminal[3].Detail().starts_with("phase=cancelled;"),
+				terminal[1].Detail().starts_with("phase=clear;") && terminal[2].related == unavailable.id.value &&
+				terminal[2].kind == FrameTraceKind::CaptureFailed &&
+				terminal[2].result == XR_ERROR_FEATURE_UNSUPPORTED && terminal[3].related == cancelled.id.value &&
+				terminal[3].frame == FrameKey{{1}, {}} && terminal[3].Detail().starts_with("phase=cancelled;"),
 			"Clear, unavailable or unissued cancellation lost its capture identity");
 	store.Release(clear.id);
 	store.Release(unavailable.id);
@@ -119,7 +123,7 @@ void CaptureHistory()
 	store.Poll();
 	const auto failure = history.Diagnostics().events.back();
 	Require(failure.related == failed.id.value && failure.frame == FrameKey{{2}, {1}} &&
-			failure.kind == FrameTraceKind::CaptureFailed && failure.result == XR_ERROR_RUNTIME_FAILURE,
+				failure.kind == FrameTraceKind::CaptureFailed && failure.result == XR_ERROR_RUNTIME_FAILURE,
 			"GPU failure or restarted capture correlation was fabricated");
 }
 
@@ -280,19 +284,19 @@ void DepthRequiresSubmittedSource()
 	projection.views.resize(2);
 	projection.views[0].depth = LayerDepthDescription{};
 	described.submission->layers = std::make_shared<const FrameLayers>(
-		described.prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
-		std::vector<LayerDescription>{projection});
+		described.prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, std::vector<LayerDescription>{projection});
 	records.submitted = std::make_shared<const FrameRecord>(std::move(described));
 	Require(store.Bind(retained.id, records.issued, records.cancelled) &&
-		store.Bind(absent.id, records.issued, records.cancelled), "Bind exact depth targets");
+				store.Bind(absent.id, records.issued, records.cancelled),
+			"Bind exact depth targets");
 	auto output = std::make_shared<Output>();
 	output->status.store(CompletionStatus::Complete);
 	const std::array outputs{CaptureOutput{depth, output}, CaptureOutput{missing, output}};
 	store.Update(records.submitted, outputs);
 	store.Poll();
 	Require(store.Read(retained.id)->phase == SnapshotPhase::Ready && store.Read(retained.id)->output == output &&
-		store.Read(absent.id)->phase == SnapshotPhase::Unavailable && !store.Read(absent.id)->output,
-		"Depth target accepted pixels without the corresponding submitted depth source");
+				store.Read(absent.id)->phase == SnapshotPhase::Unavailable && !store.Read(absent.id)->output,
+			"Depth target accepted pixels without the corresponding submitted depth source");
 }
 
 void DisplayAndProducerReservation()
@@ -338,16 +342,14 @@ void ConcurrentObservation()
 	SnapshotStore store(4);
 	store.Start({6});
 	std::atomic<bool> done{false};
-	auto observer = std::async(std::launch::async,
-							   [&]
-							   {
-								   while (!done.load())
-								   {
-									   store.Poll();
-									   for (const auto id : store.Snapshot().captures)
-										   store.Read(id);
-								   }
-							   });
+	auto observer = std::async(std::launch::async, [&] {
+		while (!done.load())
+		{
+			store.Poll();
+			for (const auto id : store.Snapshot().captures)
+				store.Read(id);
+		}
+	});
 	for (std::uint64_t index = 1; index <= 100; ++index)
 	{
 		CaptureReservation capture;
@@ -356,7 +358,8 @@ void ConcurrentObservation()
 			capture = store.Reserve();
 			if (capture.result == SnapshotAdmission::Capacity)
 				std::this_thread::yield();
-		} while (capture.result == SnapshotAdmission::Capacity);
+		}
+		while (capture.result == SnapshotAdmission::Capacity);
 		Require(capture.result == SnapshotAdmission::Accepted, "Concurrent capture reservation failed");
 		const auto records = Frame({6}, index);
 		Require(store.Bind(capture.id, records.issued, records.cancelled), "Concurrent capture bind failed");
@@ -380,10 +383,12 @@ void DestructorReentry()
 		SnapshotStore* store = nullptr;
 		CaptureId id;
 		bool* observed = nullptr;
+
 		CompletionStatus PollCompletion() const noexcept override
 		{
 			return CompletionStatus::Pending;
 		}
+
 		~LastReader() override
 		{
 			const auto reader = store->Read(id);
@@ -392,6 +397,7 @@ void DestructorReentry()
 			store->Poll();
 		}
 	};
+
 	bool observed = false;
 	std::weak_ptr<LastReader> lifetime;
 	{
@@ -409,6 +415,7 @@ void DestructorReentry()
 	}
 	Require(observed && lifetime.expired(), "Store destruction exposed partially destroyed records to a last reader");
 }
+
 void TargetProducerOwnership()
 {
 	SnapshotStore store(8);

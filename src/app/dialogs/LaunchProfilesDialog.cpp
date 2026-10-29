@@ -25,6 +25,7 @@ static std::vector<std::string> Lines(const char* text)
 	}
 	return result;
 }
+
 static std::string Join(const std::vector<std::string>& lines)
 {
 	std::string result;
@@ -36,22 +37,26 @@ static std::string Join(const std::vector<std::string>& lines)
 	}
 	return result;
 }
+
 static void Copy(std::vector<char>& buffer, const std::string& text)
 {
 	buffer.resize(std::max(buffer.size(), text.size() + 1024));
 	std::copy(text.begin(), text.end(), buffer.begin());
 	buffer[text.size()] = 0;
 }
+
 static void Problem(const std::string& problem)
 {
 	if (!problem.empty())
 		ImGui::TextColored(theme::Vec(theme::Record), "%s", problem.c_str());
 }
+
 static void Label(const char* text)
 {
 	ImGui::AlignTextToFramePadding();
 	ImGui::TextUnformatted(text);
 }
+
 static bool ProfileChoice(const char* name, bool selected)
 {
 	const auto position = ImGui::GetCursorScreenPos();
@@ -60,6 +65,7 @@ static bool ProfileChoice(const char* name, bool selected)
 	ImGui::SetItemTooltip("%s", name);
 	return chosen;
 }
+
 static int ResizeText(ImGuiInputTextCallbackData* data)
 {
 	auto& buffer = *static_cast<std::vector<char>*>(data->UserData);
@@ -67,6 +73,7 @@ static int ResizeText(ImGuiInputTextCallbackData* data)
 	data->Buf = buffer.data();
 	return 0;
 }
+
 static std::string CheckPath(const char* path, PathKind kind)
 {
 	try
@@ -86,6 +93,7 @@ struct LaunchProfilesDialog::FileResult
 	std::mutex lock;
 	bool done = false, failed = false;
 	std::string path, error;
+
 	static void SDLCALL Picked(void* user, const char* const* files, int) noexcept
 	{
 		const std::unique_ptr<std::shared_ptr<FileResult>> owner(static_cast<std::shared_ptr<FileResult>*>(user));
@@ -111,8 +119,8 @@ struct LaunchProfilesDialog::FileResult
 LaunchProfilesDialog::LaunchProfilesDialog()
 	: m_name(128), m_executable(2048), m_workingDirectory(2048), m_manifest(2048), m_rig(2048),
 	  m_privateProtonPrefix(2048), m_headset(256), m_arguments(16384)
-{
-}
+{}
+
 void LaunchProfilesDialog::BrowsePath(Browse browse, bool folder, const char* start)
 {
 	m_browsing = browse;
@@ -125,6 +133,7 @@ void LaunchProfilesDialog::BrowsePath(Browse browse, bool folder, const char* st
 	else
 		SDL_ShowOpenFileDialog(FileResult::Picked, owner.release(), nullptr, nullptr, 0, location, false);
 }
+
 bool LaunchProfilesDialog::TakePath()
 {
 	if (!m_file)
@@ -150,6 +159,7 @@ bool LaunchProfilesDialog::TakePath()
 		ApplyExecutableDefaults();
 	return true;
 }
+
 void LaunchProfilesDialog::ApplyExecutableDefaults()
 {
 	const auto path = Utf8Path(m_executable.data());
@@ -158,6 +168,7 @@ void LaunchProfilesDialog::ApplyExecutableDefaults()
 	if (!m_workingDirectory[0])
 		Copy(m_workingDirectory, PathText(path.parent_path()));
 }
+
 void LaunchProfilesDialog::Load(const LaunchProfile& profile)
 {
 	++m_form;
@@ -187,6 +198,7 @@ void LaunchProfilesDialog::Load(const LaunchProfile& profile)
 		Copy(variable.value, value);
 	}
 }
+
 void LaunchProfilesDialog::Edit(const CompanionSettings& settings, int index)
 {
 	m_selected = index >= 0 && static_cast<std::size_t>(index) < settings.profiles.size() ? index : -1;
@@ -200,6 +212,7 @@ void LaunchProfilesDialog::Edit(const CompanionSettings& settings, int index)
 		Load(profile);
 	}
 }
+
 void LaunchProfilesDialog::RefreshSelection(const CompanionSettings& settings)
 {
 	if (m_selected < 0)
@@ -214,6 +227,7 @@ void LaunchProfilesDialog::RefreshSelection(const CompanionSettings& settings)
 	m_storedName.clear();
 	Load(Profile());
 }
+
 bool LaunchProfilesDialog::Create(CompanionSettings& settings, const LaunchProfile& launch)
 {
 	m_selected = -1;
@@ -223,16 +237,14 @@ bool LaunchProfilesDialog::Create(CompanionSettings& settings, const LaunchProfi
 		profile.name = "App";
 	// A unique name, so the new profile can be stored right away.
 	const auto base = profile.name;
-	for (int suffix = 2; std::ranges::any_of(settings.profiles,
-											 [&](const LaunchProfile& other)
-											 {
-												 return other.name == profile.name;
-											 });
+	for (int suffix = 2;
+		 std::ranges::any_of(settings.profiles, [&](const LaunchProfile& other) { return other.name == profile.name; });
 		 ++suffix)
 		profile.name = base + " " + std::to_string(suffix);
 	Load(profile);
 	return Store(settings);
 }
+
 LaunchProfile LaunchProfilesDialog::Profile() const
 {
 	LaunchProfile profile;
@@ -254,6 +266,7 @@ LaunchProfile LaunchProfilesDialog::Profile() const
 			profile.environment.emplace_back(variable.key.data(), variable.value.data());
 	return profile;
 }
+
 std::string LaunchProfilesDialog::NameProblem(const CompanionSettings& settings) const
 {
 	if (!m_name[0])
@@ -263,6 +276,7 @@ std::string LaunchProfilesDialog::NameProblem(const CompanionSettings& settings)
 			return "Name already used";
 	return {};
 }
+
 std::string LaunchProfilesDialog::EnvironmentProblem() const
 {
 	std::set<std::string_view> keys;
@@ -278,6 +292,7 @@ std::string LaunchProfilesDialog::EnvironmentProblem() const
 	}
 	return {};
 }
+
 bool LaunchProfilesDialog::Store(CompanionSettings& settings)
 {
 	RefreshSelection(settings);
@@ -308,6 +323,7 @@ bool LaunchProfilesDialog::Store(CompanionSettings& settings)
 	m_storedName = profile.name;
 	return true;
 }
+
 bool LaunchProfilesDialog::PathField(const char* label, std::vector<char>& buffer, PathKind kind, Browse browse)
 {
 	ImGui::PushID(label);
@@ -316,7 +332,7 @@ bool LaunchProfilesDialog::PathField(const char* label, std::vector<char>& buffe
 	const char* browseLabel = "Browse…";
 	ImGui::SetNextItemWidth(-(ImGui::CalcTextSize(browseLabel).x + style.FramePadding.x * 2 + style.ItemSpacing.x));
 	bool edited = ImGui::InputText("##Path", buffer.data(), buffer.size(), ImGuiInputTextFlags_CallbackResize,
-										 ResizeText, &buffer);
+								   ResizeText, &buffer);
 	if (browse == Browse::Executable && ImGui::IsItemDeactivatedAfterEdit())
 	{
 		ApplyExecutableDefaults();
@@ -332,6 +348,7 @@ bool LaunchProfilesDialog::PathField(const char* label, std::vector<char>& buffe
 	ImGui::PopID();
 	return edited;
 }
+
 void LaunchProfilesDialog::DrawList(CompanionSettings& settings, bool& changed)
 {
 	const auto& style = ImGui::GetStyle();
@@ -394,6 +411,7 @@ void LaunchProfilesDialog::DrawList(CompanionSettings& settings, bool& changed)
 		ImGui::EndPopup();
 	}
 }
+
 bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSnapshot& process, bool& changed,
 									const std::optional<std::array<HeadsetEyeSize, 2>>& eyes, bool canRestart)
 {
@@ -412,8 +430,8 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 		ImGui::SameLine();
 		ImGui::TextDisabled("one per line");
 		edited |= ImGui::InputTextMultiline("##Arguments", m_arguments.data(), m_arguments.size(),
-											   {-1, ImGui::GetFontSize() * 4}, ImGuiInputTextFlags_CallbackResize,
-											   ResizeText, &m_arguments);
+											{-1, ImGui::GetFontSize() * 4}, ImGuiInputTextFlags_CallbackResize,
+											ResizeText, &m_arguments);
 		edited |= PathField("Working folder", m_workingDirectory, PathKind::Folder, Browse::WorkingDirectory);
 	}
 
@@ -421,13 +439,8 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	{
 		const auto width = std::max((*eyes)[0].width, (*eyes)[1].width);
 		const auto height = std::max((*eyes)[0].height, (*eyes)[1].height);
-		const auto find = [&](std::string_view key)
-		{
-			return std::ranges::find_if(m_environment,
-										[&](const Variable& value)
-										{
-											return key == value.key.data();
-										});
+		const auto find = [&](std::string_view key) {
+			return std::ranges::find_if(m_environment, [&](const Variable& value) { return key == value.key.data(); });
 		};
 		const auto additions = (find("SIMXR_WIDTH") == m_environment.end() ? 1u : 0u) +
 							   (find("SIMXR_HEIGHT") == m_environment.end() ? 1u : 0u);
@@ -501,13 +514,14 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	if (Section("Runtime and script"))
 	{
 		Label("OpenXR runtime");
-		const char* runtime = m_runtimeChoice == RuntimeChoice::Bundled ? "OpenXR Simulator"
-											 : m_runtimeChoice == RuntimeChoice::System ? "System or environment" : "Custom";
+		const char* runtime = m_runtimeChoice == RuntimeChoice::Bundled	 ? "OpenXR Simulator"
+							  : m_runtimeChoice == RuntimeChoice::System ? "System or environment"
+																		 : "Custom";
 		if (ImGui::BeginCombo("##OpenXR runtime", runtime))
 		{
 			for (const auto& [choice, label] : {std::pair{RuntimeChoice::Bundled, "OpenXR Simulator"},
-												 std::pair{RuntimeChoice::System, "System or environment"},
-												 std::pair{RuntimeChoice::Custom, "Custom"}})
+												std::pair{RuntimeChoice::System, "System or environment"},
+												std::pair{RuntimeChoice::Custom, "Custom"}})
 				if (ImGui::Selectable(label, choice == m_runtimeChoice))
 				{
 					m_runtimeChoice = choice;
@@ -550,7 +564,8 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 				ImGui::TextWrapped("%s", option.c_str());
 				if (ImGui::Button("Copy options") && !SDL_SetClipboardText(option.c_str()))
 					m_problem = SDL_GetError();
-				ImGui::SetItemTooltip("Copies only runtime selection. Configure other Steam launch options separately.");
+				ImGui::SetItemTooltip(
+					"Copies only runtime selection. Configure other Steam launch options separately.");
 			}
 			catch (const std::exception& error)
 			{
@@ -561,7 +576,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 							   "Some games require Steam-managed startup.");
 #endif
 			ImGui::TextWrapped("For Proton, prepare a dedicated prefix with prepare-proton-prefix.py and run the "
-						   "Windows simulator in it. Select that prefix above; shared prefixes are not adopted.");
+							   "Windows simulator in it. Select that prefix above; shared prefixes are not adopted.");
 			ImGui::EndPopup();
 		}
 		Label("Headset profile");
@@ -602,11 +617,12 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	Problem(m_browseProblem);
 
 	ImGui::Separator();
-	const bool valid = nameProblem.empty() && environmentProblem.empty() && profileProblem.empty() &&
-					   CheckPath(m_executable.data(), PathKind::Executable).empty() &&
-					   (!m_workingDirectory[0] || CheckPath(m_workingDirectory.data(), PathKind::Folder).empty()) &&
-					   (m_runtimeChoice != RuntimeChoice::Custom || CheckPath(m_manifest.data(), PathKind::File).empty()) &&
-					   (!m_privateProtonPrefix[0] || CheckPath(m_privateProtonPrefix.data(), PathKind::Folder).empty());
+	const bool valid =
+		nameProblem.empty() && environmentProblem.empty() && profileProblem.empty() &&
+		CheckPath(m_executable.data(), PathKind::Executable).empty() &&
+		(!m_workingDirectory[0] || CheckPath(m_workingDirectory.data(), PathKind::Folder).empty()) &&
+		(m_runtimeChoice != RuntimeChoice::Custom || CheckPath(m_manifest.data(), PathKind::File).empty()) &&
+		(!m_privateProtonPrefix[0] || CheckPath(m_privateProtonPrefix.data(), PathKind::Folder).empty());
 	const bool running = process.state == LaunchState::Starting || process.state == LaunchState::Running;
 	ImGui::BeginDisabled(!valid || running);
 	const bool launch = ImGui::Button("Launch");
@@ -617,7 +633,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	const bool saved = m_selected >= 0 && static_cast<std::size_t>(m_selected) < settings.profiles.size() &&
 					   settings.profiles[static_cast<std::size_t>(m_selected)] == Profile();
 	if (ImGui::GetContentRegionAvail().x >= ImGui::CalcTextSize("Copy launch command").x +
-										  ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetStyle().ItemSpacing.x)
+												ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetStyle().ItemSpacing.x)
 		ImGui::SameLine();
 	ImGui::BeginDisabled(!valid || !saved);
 	if (ImGui::Button("Copy launch command"))
@@ -648,10 +664,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 			for (const auto& [key, value] : {std::pair{"SIMXR_WIDTH", width}, std::pair{"SIMXR_HEIGHT", height}})
 			{
 				auto entry = std::ranges::find_if(replacement.environment,
-												  [&](const auto& variable)
-												  {
-													  return variable.first == key;
-												  });
+												  [&](const auto& variable) { return variable.first == key; });
 				if (entry == replacement.environment.end())
 					replacement.environment.emplace_back(key, std::to_string(value));
 				else
@@ -713,18 +726,22 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	}
 	return launch;
 }
+
 std::optional<LaunchRestartRequest> LaunchProfilesDialog::TakeRestartRequest()
 {
 	return std::exchange(m_restartRequest, {});
 }
+
 bool LaunchProfilesDialog::TakeRestartCancellation()
 {
 	return std::exchange(m_cancelRestart, false);
 }
+
 bool LaunchProfilesDialog::TakeCopyCommandRequest()
 {
 	return std::exchange(m_copyCommand, false);
 }
+
 bool LaunchProfilesDialog::Draw(CompanionSettings& settings, const LaunchSnapshot& process, bool& open, bool& changed,
 								const std::optional<std::array<HeadsetEyeSize, 2>>& eyes, bool canRestart)
 {

@@ -11,11 +11,13 @@ struct PreviewIncident
 	IncidentPacket packet;
 	PreviewStatistics statistics;
 };
+
 struct UiIncident
 {
 	IncidentPacket packet;
 	UiStatistics statistics;
 };
+
 using Artifact = std::variant<PreviewIncident, UiIncident, SampleArtifact>;
 
 struct ArtifactCharge
@@ -23,6 +25,7 @@ struct ArtifactCharge
 	size_t bytes = 0;
 	size_t samples = 0;
 };
+
 struct ArtifactJob
 {
 	Artifact artifact;
@@ -33,7 +36,7 @@ struct ArtifactJob
 // until its owned pixels and metadata have been destroyed by the worker.
 class ArtifactQueue
 {
-  public:
+public:
 	void Add(IncidentUpdate update, const PreviewMonitor& monitor);
 	void Add(IncidentUpdate update, const UiMonitor& monitor);
 	bool Empty() const;
@@ -44,7 +47,7 @@ class ArtifactQueue
 	uint64_t Dropped() const;
 	bool TakeRenderDocRequest();
 
-  private:
+private:
 	void Admit(Artifact artifact);
 	std::deque<ArtifactJob> m_jobs;
 	size_t m_outstanding = 0;

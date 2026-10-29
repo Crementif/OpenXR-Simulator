@@ -12,11 +12,13 @@ LaunchObservation::LaunchObservation(std::string profile)
 	m_snapshot.detail.reserve(1024);
 	m_snapshot.detail = "Launching process";
 }
+
 LaunchSnapshot LaunchObservation::Read() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_snapshot;
 }
+
 bool LaunchObservation::RequestClose()
 {
 	std::lock_guard lock(m_mutex);
@@ -26,11 +28,12 @@ bool LaunchObservation::RequestClose()
 	m_snapshot.detail = "Close requested; waiting for the app to exit";
 	return true;
 }
+
 bool LaunchObservation::RequestRestart(std::uint64_t process, LaunchProfile profile)
 {
 	std::lock_guard lock(m_mutex);
-	if (!process || m_snapshot.process != process || m_snapshot.state != LaunchState::Running ||
-		m_restart || m_closeRequested || m_closeDelivered)
+	if (!process || m_snapshot.process != process || m_snapshot.state != LaunchState::Running || m_restart ||
+		m_closeRequested || m_closeDelivered)
 		return false;
 	m_restart = std::move(profile);
 	m_restartDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -39,6 +42,7 @@ bool LaunchObservation::RequestRestart(std::uint64_t process, LaunchProfile prof
 	m_snapshot.detail = "Restart requested; waiting for the app to exit";
 	return true;
 }
+
 bool LaunchObservation::CancelRestart()
 {
 	std::lock_guard lock(m_mutex);
@@ -50,6 +54,7 @@ bool LaunchObservation::CancelRestart()
 	m_snapshot.detail = "Restart cancelled; a delivered close request cannot be undone";
 	return true;
 }
+
 void LaunchObservation::ExpireRestart()
 {
 	std::lock_guard lock(m_mutex);
@@ -61,6 +66,7 @@ void LaunchObservation::ExpireRestart()
 		m_snapshot.detail = "Restart cancelled: the app did not exit within ten seconds";
 	}
 }
+
 bool LaunchObservation::TakeCloseRequest()
 {
 	std::lock_guard lock(m_mutex);
@@ -69,6 +75,7 @@ bool LaunchObservation::TakeCloseRequest()
 	m_closeDelivered = true;
 	return true;
 }
+
 void LaunchObservation::CloseFailed(std::string_view detail)
 {
 	std::lock_guard lock(m_mutex);
@@ -77,6 +84,7 @@ void LaunchObservation::CloseFailed(std::string_view detail)
 	m_snapshot.restartPending = false;
 	m_snapshot.detail.assign(detail.substr(0, 1024));
 }
+
 void LaunchObservation::Running(std::uint64_t process)
 {
 	std::lock_guard lock(m_mutex);
@@ -84,6 +92,7 @@ void LaunchObservation::Running(std::uint64_t process)
 	m_snapshot.state = LaunchState::Running;
 	m_snapshot.detail = "The app is running. Open Connection to connect.";
 }
+
 std::optional<LaunchProfile> LaunchObservation::Exited(int code)
 {
 	std::array<char, 32> digits;
@@ -109,6 +118,7 @@ std::optional<LaunchProfile> LaunchObservation::Exited(int code)
 	m_snapshot.detail.append(digits.data(), converted.ptr);
 	return {};
 }
+
 void LaunchObservation::Failed(std::string_view detail) noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -117,13 +127,14 @@ void LaunchObservation::Failed(std::string_view detail) noexcept
 	m_snapshot.restartPending = false;
 	m_snapshot.detail.assign(detail.substr(0, 1024));
 }
+
 class ProcessSupervisor::Job
 {
-  public:
+public:
 	Job(LaunchProfile profile, std::shared_ptr<LaunchObservation> observation)
 		: m_profile(std::move(profile)), m_observation(std::move(observation))
-	{
-	}
+	{}
+
 	void Update() noexcept
 	{
 		try
@@ -167,21 +178,24 @@ class ProcessSupervisor::Job
 			m_finished = true;
 		}
 	}
+
 	bool Finished() const noexcept
 	{
 		return m_finished;
 	}
 
-  private:
+private:
 	LaunchProfile m_profile;
 	std::shared_ptr<LaunchObservation> m_observation;
 	std::unique_ptr<ChildProcess> m_process;
 	bool m_finished = false;
 };
+
 ProcessSupervisor::ProcessSupervisor()
 {
 	m_jobs.reserve(s_capacity);
 }
+
 ProcessSupervisor::~ProcessSupervisor()
 {
 	{
@@ -192,6 +206,7 @@ ProcessSupervisor::~ProcessSupervisor()
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 void ProcessSupervisor::Run()
 {
 	for (;;)
@@ -201,11 +216,7 @@ void ProcessSupervisor::Run()
 		std::size_t count = 0;
 		{
 			std::unique_lock lock(m_mutex);
-			m_changed.wait(lock,
-						 [&]
-						 {
-							 return m_stopping || !m_jobs.empty();
-						 });
+			m_changed.wait(lock, [&] { return m_stopping || !m_jobs.empty(); });
 			if (m_stopping)
 				return;
 			count = m_jobs.size();
@@ -217,23 +228,23 @@ void ProcessSupervisor::Run()
 		{
 			std::unique_lock lock(m_mutex);
 			std::size_t retiredCount = 0;
-			std::erase_if(m_jobs,
-						  [&](auto& job)
-						  {
-							  if (!job->Finished())
-								  return false;
-							  retired[retiredCount++] = std::move(job);
-							  return true;
-						  });
+			std::erase_if(m_jobs, [&](auto& job) {
+				if (!job->Finished())
+					return false;
+				retired[retiredCount++] = std::move(job);
+				return true;
+			});
 			m_changed.wait_for(lock, std::chrono::milliseconds(50));
 		}
 	}
 }
+
 std::size_t ProcessSupervisor::Outstanding() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_jobs.size();
 }
+
 std::shared_ptr<LaunchObservation> ProcessSupervisor::Submit(LaunchProfile profile)
 {
 	auto observation = std::make_shared<LaunchObservation>(profile.name);
@@ -243,11 +254,7 @@ std::shared_ptr<LaunchObservation> ProcessSupervisor::Submit(LaunchProfile profi
 		if (m_stopping || m_jobs.size() == s_capacity)
 			throw std::runtime_error("Child process observation capacity exhausted");
 		if (!m_worker.joinable())
-			m_worker = std::thread(
-				[this]
-				{
-					Run();
-				});
+			m_worker = std::thread([this] { Run(); });
 		m_jobs.push_back(std::move(job));
 	}
 	m_changed.notify_all();

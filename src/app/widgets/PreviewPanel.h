@@ -18,13 +18,15 @@ class PilotController;
 class RuntimeSession;
 class SpatialEditor;
 class Window;
+
 class PreviewPanel
 {
-  public:
+public:
 	PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial, FramePage& frame,
 				 DeviceControlPanel& devices, Window* window);
 	bool Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad);
 	void CancelInteraction();
+
 	// The pinned region (x0, y0, x1, y1, normalized), shown instead of the whole
 	// image across frames; the shell keeps one per launch profile.
 	std::optional<ImVec4>& Crop()
@@ -32,7 +34,7 @@ class PreviewPanel
 		return m_crop;
 	}
 
-  private:
+private:
 	struct ImageArea
 	{
 		// Borrowed only until this Draw call finishes.
@@ -42,6 +44,7 @@ class PreviewPanel
 		int eyes;
 		bool hovered;
 	};
+
 	std::optional<ImageArea> DrawImage(ShellState& shell, const RuntimeView& view, bool inputAvailable);
 	void UpdateImage(const ImageArea& area, const PreviewImageSummary& image, bool cornerHovered, bool pilotArea,
 					 bool automaticGamepad);

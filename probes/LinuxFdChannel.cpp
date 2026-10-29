@@ -48,7 +48,8 @@ void Send(int socket, const void* data, std::size_t size, std::span<const int> d
 	do
 	{
 		sent = sendmsg(socket, &message, MSG_NOSIGNAL);
-	} while (sent < 0 && errno == EINTR);
+	}
+	while (sent < 0 && errno == EINTR);
 	if (sent < 0)
 		throw std::system_error(errno, std::generic_category(), "Send sharing packet");
 	if (sent != static_cast<ssize_t>(size))
@@ -76,7 +77,8 @@ void Receive(int socket, void* data, std::size_t size, Descriptors& descriptors,
 			break;
 		}
 		result = poll(&readiness, 1, static_cast<int>(remaining.count()));
-	} while (result < 0 && errno == EINTR);
+	}
+	while (result < 0 && errno == EINTR);
 	if (result < 0)
 		throw std::system_error(errno, std::generic_category(), "Wait for sharing packet");
 	if (result != 1)
@@ -92,7 +94,8 @@ void Receive(int socket, void* data, std::size_t size, Descriptors& descriptors,
 	do
 	{
 		received = recvmsg(socket, &message, MSG_CMSG_CLOEXEC);
-	} while (received < 0 && errno == EINTR);
+	}
+	while (received < 0 && errno == EINTR);
 	if (received < 0)
 		throw std::system_error(errno, std::generic_category(), "Receive sharing packet");
 	std::size_t count = 0;

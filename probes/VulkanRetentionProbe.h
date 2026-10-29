@@ -10,6 +10,7 @@ namespace simxr
 class VulkanBackend;
 class VulkanImage;
 class VulkanInspection;
+
 namespace probe
 {
 struct RetainedSubmission
@@ -21,6 +22,7 @@ struct RetainedSubmission
 	PoseSample head;
 	VkFormat format;
 };
+
 RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspection& inspection,
 										 const std::shared_ptr<VulkanImage>& image);
 void VerifySubmittedLayers(RetainedSubmission retained, bool verifyPixels);

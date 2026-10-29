@@ -85,6 +85,7 @@ static void ProveSharing(VkPhysicalDevice physicalDevice, std::uint32_t family, 
 		for (std::uint32_t frame = 0; frame < retainedImages.size(); ++frame)
 			consumer.VerifyImage(physicalDevice, retainedImages[frame], frame);
 }
+
 static void ProveCrossProcess(VkPhysicalDevice physicalDevice, std::uint32_t family, std::uint32_t consumerQueue,
 							  bool verifyPixels, bool disconnect, const std::string& companion,
 							  const std::string& screenshot)
@@ -168,10 +169,7 @@ static bool HasPath(int index, int argc, char** argv)
 		"--verify-pixels",		 "--companion", "--companion-screenshot",  "--cross-process", "--verify-disconnect",
 		"--consumer-disconnect", "--consumer",	"--consumer-verify-pixels"};
 	return std::none_of(options.begin(), options.end(),
-						[&](const char* option)
-						{
-							return std::strcmp(argv[index + 1], option) == 0;
-						});
+						[&](const char* option) { return std::strcmp(argv[index + 1], option) == 0; });
 }
 
 int main(int argc, char** argv)

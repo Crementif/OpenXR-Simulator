@@ -33,22 +33,27 @@ struct CaptureTarget
 	CaptureKind kind = CaptureKind::ComposedEyes;
 	std::uint32_t layer = 0;
 	std::uint32_t view = 0;
+
 	bool IsDepth() const
 	{
 		return kind == CaptureKind::LayerDepth || kind == CaptureKind::LayerDepthLinear;
 	}
+
 	bool IsLayerImage() const
 	{
 		return kind == CaptureKind::LayerView || IsDepth();
 	}
+
 	bool IsFilteredComposition() const
 	{
 		return kind == CaptureKind::ProjectionLayers || kind == CaptureKind::QuadLayers;
 	}
+
 	bool IsAdditionalImage() const
 	{
 		return IsLayerImage() || IsFilteredComposition();
 	}
+
 	auto operator<=>(const CaptureTarget&) const = default;
 };
 
@@ -59,6 +64,7 @@ enum class ImageRecordingPhase
 	Stopped,
 	Overrun
 };
+
 struct ImageRecordingSnapshot
 {
 	ImageRecordingPhase phase = ImageRecordingPhase::Idle;
@@ -98,7 +104,7 @@ struct SnapshotRecord
 	std::shared_ptr<const FrameOutput> output;
 	std::optional<PresentationTick> display;
 
-  private:
+private:
 	friend class SnapshotStore;
 	std::shared_ptr<FrameReservation> m_retention;
 };
@@ -123,7 +129,7 @@ struct SnapshotStoreState
 
 class SnapshotStore
 {
-  public:
+public:
 	// History outlives the store and retains no image or reservation readers.
 	explicit SnapshotStore(std::size_t capacity = 0, FrameHistory* history = nullptr);
 	~SnapshotStore();
@@ -164,7 +170,7 @@ class SnapshotStore
 	// Observes producers outside the store mutex. It submits no graphics work.
 	void Poll() noexcept;
 
-  private:
+private:
 	struct Entry
 	{
 		SnapshotRecord record;
@@ -175,6 +181,7 @@ class SnapshotStore
 		bool terminalTraced = false;
 		std::uint64_t revision = 0;
 	};
+
 	std::optional<Entry> ReleaseLocked(std::vector<Entry>::iterator entry) noexcept;
 	void CancelPendingLocked() noexcept;
 	void TraceTerminal(Entry& entry) noexcept;

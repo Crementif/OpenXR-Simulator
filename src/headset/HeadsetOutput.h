@@ -10,6 +10,7 @@
 namespace simxr::headset
 {
 class OpenXrRuntime;
+
 struct HeadsetOutputImage
 {
 	VkImage image = VK_NULL_HANDLE;
@@ -20,6 +21,7 @@ struct HeadsetOutputImage
 	std::shared_ptr<const HeadsetImageFrame> source;
 	std::shared_ptr<VulkanFrame> mapped;
 };
+
 // This whole owner is parked if submission completion becomes unknowable.
 struct HeadsetOutputResources
 {
@@ -33,9 +35,10 @@ struct HeadsetOutputResources
 	std::unique_ptr<VulkanBackend> mapper;
 	FramePool mappingSources{3};
 };
+
 class HeadsetOutput
 {
-  public:
+public:
 	explicit HeadsetOutput(HeadsetGraphics& graphics);
 	~HeadsetOutput();
 	void Open(OpenXrRuntime& runtime, XrSession session);
@@ -51,7 +54,7 @@ class HeadsetOutput
 	void Poll();
 	bool Close();
 
-  private:
+private:
 	bool Copy(std::shared_ptr<const HeadsetImageFrame> source, const std::optional<std::array<XrFovf, 2>>& fovs);
 	void Record(HeadsetOutputImage& target, const VulkanImage& pixels, bool inspection);
 	void Label(HeadsetOutputImage& target);

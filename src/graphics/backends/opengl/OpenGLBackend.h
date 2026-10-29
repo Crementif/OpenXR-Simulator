@@ -24,9 +24,10 @@ struct OpenGLCompositionSource
 
 class OpenGLContext;
 class OpenGLSharedImage;
+
 class OpenGLFrame final : public FrameOutput
 {
-  public:
+public:
 	~OpenGLFrame() override;
 	CompletionStatus PollCompletion() const noexcept override;
 	// Queued reads still require source retirement when Submit fails.
@@ -35,7 +36,7 @@ class OpenGLFrame final : public FrameOutput
 	VkSemaphore Ready() const noexcept;
 	static constexpr std::uint64_t ReadyValue = 0;
 
-  private:
+private:
 	friend class OpenGLBackend;
 	struct Resources;
 	OpenGLFrame(std::shared_ptr<OpenGLContext> context, std::span<const FrameView> views);
@@ -44,7 +45,7 @@ class OpenGLFrame final : public FrameOutput
 
 class OpenGLBackend final
 {
-  public:
+public:
 	using Frame = OpenGLFrame;
 	using Source = OpenGLCompositionSource;
 	OpenGLBackend(HDC applicationDevice, HGLRC applicationContext, std::shared_ptr<VulkanDevice> delivery,
@@ -58,7 +59,7 @@ class OpenGLBackend final
 							std::shared_ptr<OpenGLFrame>& output, bool retainMipChain = false);
 	XrResult Submit(const std::shared_ptr<OpenGLFrame>& frame);
 
-  private:
+private:
 	XrResult PrepareImage(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
 						  const VulkanExternalImageSpec& description, GLenum format, bool retained,
 						  std::shared_ptr<OpenGLFrame>& output);

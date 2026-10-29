@@ -62,8 +62,7 @@ VulkanSwapchain::VulkanSwapchain(XrSwapchainCreateInfo description)
 	: m_description(description), m_images(description.createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT ? 1 : 3),
 	  m_access(static_cast<std::uint32_t>(m_images.size()),
 			   (description.createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0)
-{
-}
+{}
 
 std::span<const std::int64_t> VulkanSwapchain::Formats()
 {
@@ -144,39 +143,42 @@ XrResult VulkanSwapchain::Acquire(VulkanBackend& backend, std::uint32_t& index)
 		return XR_ERROR_SESSION_LOST;
 	if (m_images.front().resource->device != backend.Device())
 		return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-	return m_access.Acquire(index,
-							[&](std::uint32_t candidate) -> std::shared_ptr<const GpuCompletion>
-							{
-								auto& image = m_images[candidate];
-								if (image.initialized)
-									return {};
-								auto initialized = backend.InitializeImage(image.resource);
-								image.initialized = true;
-								return initialized;
-							});
+	return m_access.Acquire(index, [&](std::uint32_t candidate) -> std::shared_ptr<const GpuCompletion> {
+		auto& image = m_images[candidate];
+		if (image.initialized)
+			return {};
+		auto initialized = backend.InitializeImage(image.resource);
+		image.initialized = true;
+		return initialized;
+	});
 }
 
 XrResult VulkanSwapchain::Wait(XrDuration timeout)
 {
 	return m_access.Wait(timeout);
 }
+
 XrResult VulkanSwapchain::Release()
 {
 	return m_access.Release();
 }
+
 SwapchainDescription VulkanSwapchain::Description() const
 {
 	return {m_description.width, m_description.height, m_description.arraySize, m_access.ReleasedImage().has_value()};
 }
+
 std::shared_ptr<VulkanImage> VulkanSwapchain::ReleasedImage() const
 {
 	const auto index = m_access.ReleasedImage();
 	return index ? m_images[*index].resource : nullptr;
 }
+
 void VulkanSwapchain::MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion)
 {
 	m_access.MarkReleasedUsed(completion);
 }
+
 void VulkanSwapchain::Close()
 {
 	m_access.Close();

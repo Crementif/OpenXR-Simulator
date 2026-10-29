@@ -35,15 +35,18 @@ static XrResult FindAdapter(const WindowsLibrary& dxgi, ComPtr<IDXGIAdapter1>& o
 	ComPtr<IDXGIFactory1> factory;
 	if (FAILED(create(IID_PPV_ARGS(&factory))))
 		return XR_ERROR_RUNTIME_FAILURE;
+
 	struct Instance
 	{
 		VkInstance handle = VK_NULL_HANDLE;
+
 		~Instance()
 		{
 			if (handle)
 				vkDestroyInstance(handle, nullptr);
 		}
 	} instance;
+
 	VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
 	application.apiVersion = VK_API_VERSION_1_1;
 	VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};

@@ -22,6 +22,7 @@ struct McpServer::Session
 		std::shared_ptr<McpCancellation> cancellation;
 		std::string key;
 	};
+
 	std::string version;
 	std::chrono::steady_clock::time_point lastUsed = std::chrono::steady_clock::now();
 	std::unordered_map<std::string, Call> calls;
@@ -32,6 +33,7 @@ struct McpServer::Session
 	std::shared_ptr<AutomationOwner> automationOwner = std::make_shared<AutomationOwner>();
 	std::uint64_t artifactRevision = 0;
 	bool initialized = false;
+
 	~Session()
 	{
 		automationOwner->active.store(false);
@@ -49,6 +51,7 @@ struct McpServer::Artifact
 struct McpDownloadSlot
 {
 	std::atomic<unsigned>& active;
+
 	~McpDownloadSlot()
 	{
 		--active;
@@ -72,8 +75,9 @@ static bool SupportedVersion(std::string_view version)
 
 static bool ValidCancellationKey(std::string_view key)
 {
-	return key.size() == 64 && std::ranges::all_of(key, [](unsigned char value)
-		{ return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); });
+	return key.size() == 64 && std::ranges::all_of(key, [](unsigned char value) {
+			   return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
+		   });
 }
 
 static Json RpcError(const Json& id, int code, const std::string& message)
@@ -85,65 +89,93 @@ static Json Tools(bool windowless)
 {
 	const Json text = {{"type", "string"}};
 	const Json identifier = {{"type", "string"}, {"pattern", "^[0-9a-f]{64}:[1-9][0-9]{0,19}$"}};
-	Json tools = Json::array({
-		{{"name", "simulator_list_applications"},
-		 {"description", "List applications in OpenXR Simulator, including their launch and connection state."},
-		 {"inputSchema", {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}}}},
-		{{"name", "simulator_application_status"},
-		 {"description", "Read one application's launch, runtime connection and session state."},
-		 {"inputSchema", {{"type", "object"}, {"properties", {{"application_id", identifier}}},
-						  {"required", Json::array({"application_id"})}, {"additionalProperties", false}}}},
-		{{"name", "simulator_stop_application"},
-		 {"description", "Request a graceful close of an application launched by the simulator. "
-						 "Use simulator_application_status to observe whether it exits; attached external applications are not supported."},
-		 {"inputSchema", {{"type", "object"}, {"properties", {{"application_id", identifier}}},
-						  {"required", Json::array({"application_id"})}, {"additionalProperties", false}}}},
-		{{"name", "simulator_restart_application"},
-		 {"description", "Request a graceful restart using the app's original launch profile. "
-						 "Pass the current process_id from simulator_application_status; inspect status for the outcome."},
-		 {"inputSchema", {{"type", "object"},
-						  {"properties", {{"application_id", identifier},
-										  {"process_id", {{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}}}}},
-						  {"required", Json::array({"application_id", "process_id"})}, {"additionalProperties", false}}}},
-		{{"name", "simulator_launch_application"},
-		 {"description", "Launch an executable using OpenXR Simulator and return its application ID. "
-						 "Use simulator_application_status to observe launch and connection progress."},
-		 {"inputSchema", {{"type", "object"},
-						  {"properties", {{"executable", text}, {"name", text}, {"working_directory", text},
-										  {"runtime_manifest", text},
-										  {"arguments", {{"type", "array"}, {"items", text}, {"maxItems", 256}}},
-										  {"environment", {{"type", "object"}, {"additionalProperties", text}}}}},
-						  {"required", Json::array({"executable"})}, {"additionalProperties", false}}}}
-	});
+	Json tools = Json::array(
+		{{{"name", "simulator_list_applications"},
+		  {"description", "List applications in OpenXR Simulator, including their launch and connection state."},
+		  {"inputSchema", {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}}}},
+		 {{"name", "simulator_application_status"},
+		  {"description", "Read one application's launch, runtime connection and session state."},
+		  {"inputSchema",
+		   {{"type", "object"},
+			{"properties", {{"application_id", identifier}}},
+			{"required", Json::array({"application_id"})},
+			{"additionalProperties", false}}}},
+		 {{"name", "simulator_stop_application"},
+		  {"description", "Request a graceful close of an application launched by the simulator. "
+						  "Use simulator_application_status to observe whether it exits; attached external "
+						  "applications are not supported."},
+		  {"inputSchema",
+		   {{"type", "object"},
+			{"properties", {{"application_id", identifier}}},
+			{"required", Json::array({"application_id"})},
+			{"additionalProperties", false}}}},
+		 {{"name", "simulator_restart_application"},
+		  {"description",
+		   "Request a graceful restart using the app's original launch profile. "
+		   "Pass the current process_id from simulator_application_status; inspect status for the outcome."},
+		  {"inputSchema",
+		   {{"type", "object"},
+			{"properties",
+			 {{"application_id", identifier}, {"process_id", {{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}}}}},
+			{"required", Json::array({"application_id", "process_id"})},
+			{"additionalProperties", false}}}},
+		 {{"name", "simulator_launch_application"},
+		  {"description", "Launch an executable using OpenXR Simulator and return its application ID. "
+						  "Use simulator_application_status to observe launch and connection progress."},
+		  {"inputSchema",
+		   {{"type", "object"},
+			{"properties",
+			 {{"executable", text},
+			  {"name", text},
+			  {"working_directory", text},
+			  {"runtime_manifest", text},
+			  {"arguments", {{"type", "array"}, {"items", text}, {"maxItems", 256}}},
+			  {"environment", {{"type", "object"}, {"additionalProperties", text}}}}},
+			{"required", Json::array({"executable"})},
+			{"additionalProperties", false}}}}});
 	if (windowless)
-		tools.push_back({{"name", "simulator_shutdown"},
-			{"description", "Shut down this windowless simulator instance; launched applications keep running."},
-			{"inputSchema", {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}}}});
+		tools.push_back(
+			{{"name", "simulator_shutdown"},
+			 {"description", "Shut down this windowless simulator instance; launched applications keep running."},
+			 {"inputSchema", {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}}}});
 #ifdef SIMXR_COMPANION_AUTOMATION
-	const Json integer = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}},
-		{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
-	const Json seed = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
-		{{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
-	const auto luauTool = [](const char* name, const char* description, Json properties, Json required)
-	{
-		return Json{{"name", name}, {"description", description}, {"inputSchema", {{"type", "object"},
-			{"properties", std::move(properties)}, {"required", std::move(required)}, {"additionalProperties", false}}}};
+	const Json integer = {
+		{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}},
+							   {{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
+	const Json seed = {
+		{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
+							   {{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
+	const auto luauTool = [](const char* name, const char* description, Json properties, Json required) {
+		return Json{{"name", name},
+					{"description", description},
+					{"inputSchema",
+					 {{"type", "object"},
+					  {"properties", std::move(properties)},
+					  {"required", std::move(required)},
+					  {"additionalProperties", false}}}};
 	};
-	tools.push_back(luauTool("simulator_luau_run", "Run bounded Luau source on one selected application's current XR session. Poll status for completion.",
-		{{"application_id", identifier}, {"source", {{"type", "string"}, {"minLength", 1}, {"maxLength", 524288}}},
-		 {"name", {{"type", "string"}, {"maxLength", 256}}}, {"seed", seed},
+	tools.push_back(luauTool(
+		"simulator_luau_run",
+		"Run bounded Luau source on one selected application's current XR session. Poll status for completion.",
+		{{"application_id", identifier},
+		 {"source", {{"type", "string"}, {"minLength", 1}, {"maxLength", 524288}}},
+		 {"name", {{"type", "string"}, {"maxLength", 256}}},
+		 {"seed", seed},
 		 {"deadline_seconds", {{"type", "integer"}, {"minimum", 1}, {"maximum", 3600}}},
 		 {"memory_mib", {{"type", "integer"}, {"minimum", 1}, {"maximum", 512}}}},
 		Json::array({"application_id", "source"})));
-	for (const auto& [name, description] : {
-		std::pair{"simulator_luau_status", "Read this MCP session's current or selected Luau run, including phase, output and checkpoints."},
-		{"simulator_luau_pause", "Request a pause at the next simulator binding boundary; pure Luau code runs until then."},
-		{"simulator_luau_resume", "Resume this MCP session's paused Luau run."},
-		{"simulator_luau_step", "Advance this MCP session's paused Luau run by one binding boundary."},
-		{"simulator_luau_cancel", "Cancel this MCP session's Luau run and release its runtime resources."}})
+	for (const auto& [name, description] :
+		 {std::pair{"simulator_luau_status",
+					"Read this MCP session's current or selected Luau run, including phase, output and checkpoints."},
+		  {"simulator_luau_pause",
+		   "Request a pause at the next simulator binding boundary; pure Luau code runs until then."},
+		  {"simulator_luau_resume", "Resume this MCP session's paused Luau run."},
+		  {"simulator_luau_step", "Advance this MCP session's paused Luau run by one binding boundary."},
+		  {"simulator_luau_cancel", "Cancel this MCP session's Luau run and release its runtime resources."}})
 		tools.push_back(luauTool(name, description, {{"application_id", identifier}, {"run_id", integer}},
-			name == std::string_view("simulator_luau_status") ? Json::array({"application_id"})
-																		 : Json::array({"application_id", "run_id"})));
+								 name == std::string_view("simulator_luau_status")
+									 ? Json::array({"application_id"})
+									 : Json::array({"application_id", "run_id"})));
 #endif
 	for (auto& definition : McpDebug::Definitions())
 	{
@@ -151,7 +183,8 @@ static Json Tools(bool windowless)
 		{
 			auto artifact = definition;
 			artifact["name"] = "debug_export_artifact";
-			artifact["description"] = "Create an authenticated, short-lived binary download link for a completed image or video export. The export must stay retained.";
+			artifact["description"] = "Create an authenticated, short-lived binary download link for a completed image "
+									  "or video export. The export must stay retained.";
 			tools.push_back(std::move(artifact));
 		}
 		tools.push_back(std::move(definition));
@@ -166,24 +199,26 @@ static Json Tools(bool windowless)
 McpServer::McpServer(McpApplication& application, std::uint16_t port, std::string token)
 	: m_application(application), m_token(std::move(token))
 {
-	if (m_token.size() != 64 || !std::ranges::all_of(m_token, [](unsigned char value)
-		{ return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); }))
+	if (m_token.size() != 64 || !std::ranges::all_of(m_token, [](unsigned char value) {
+			return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
+		}))
 		throw std::invalid_argument("SIMXR_MCP_TOKEN must contain 64 lowercase hexadecimal characters");
 	m_server.set_payload_max_length(1024 * 1024);
 	m_server.set_read_timeout(std::chrono::seconds(5));
 	m_server.set_write_timeout(std::chrono::seconds(5));
 	m_server.set_keep_alive_max_count(1);
 	m_server.set_socket_options(ConfigureMcpListener);
-	m_server.new_task_queue = [] { return new httplib::ThreadPool(8, 8, 32); };
-	m_server.set_pre_routing_handler([this](const auto& request, auto& response)
-	{
+	m_server.new_task_queue = [] {
+		return new httplib::ThreadPool(8, 8, 32);
+	};
+	m_server.set_pre_routing_handler([this](const auto& request, auto& response) {
 		return Authorize(request, response) ? httplib::Server::HandlerResponse::Unhandled
-											 : httplib::Server::HandlerResponse::Handled;
+											: httplib::Server::HandlerResponse::Handled;
 	});
 	m_server.Post("/mcp", [this](const auto& request, auto& response) { Route(request, response); });
 	m_server.Get("/mcp", [](const auto&, auto& response) { response.status = 405; });
-	m_server.Get(R"(/artifacts/([0-9a-f]{64}))", [this](const auto& request, auto& response)
-		{ DownloadArtifact(request, response); });
+	m_server.Get(R"(/artifacts/([0-9a-f]{64}))",
+				 [this](const auto& request, auto& response) { DownloadArtifact(request, response); });
 	m_server.Delete("/mcp", [this](const auto& request, auto& response) { DeleteSession(request, response); });
 	const auto bound = port ? (m_server.bind_to_port("127.0.0.1", port) ? static_cast<int>(port) : -1)
 							: m_server.bind_to_any_port("127.0.0.1");
@@ -192,10 +227,13 @@ McpServer::McpServer(McpApplication& application, std::uint16_t port, std::strin
 	m_port = static_cast<std::uint16_t>(bound);
 	try
 	{
-		m_worker = std::thread([this]
-		{
-			try { m_server.listen_after_bind(); }
-			catch (...) {}
+		m_worker = std::thread([this] {
+			try
+			{
+				m_server.listen_after_bind();
+			}
+			catch (...)
+			{}
 			m_workerExited.store(true);
 		});
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -203,8 +241,7 @@ McpServer::McpServer(McpApplication& application, std::uint16_t port, std::strin
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		if (!m_server.is_running())
 			throw std::runtime_error("The local MCP listener failed to start");
-		m_reaper = std::thread([this]
-		{
+		m_reaper = std::thread([this] {
 			std::unique_lock lock(m_reaperMutex);
 			while (!m_reaperChanged.wait_for(lock, std::chrono::seconds(30), [this] { return m_reaperStopping; }))
 			{
@@ -247,8 +284,8 @@ std::uint16_t McpServer::Port() const noexcept
 std::size_t McpServer::ClientSessions() const
 {
 	std::lock_guard lock(m_sessionMutex);
-	return static_cast<std::size_t>(std::ranges::count_if(m_sessions, [](const auto& entry)
-		{ return entry.second->initialized; }));
+	return static_cast<std::size_t>(
+		std::ranges::count_if(m_sessions, [](const auto& entry) { return entry.second->initialized; }));
 }
 
 void McpServer::Stop() noexcept
@@ -300,8 +337,9 @@ void McpServer::ReapExpired()
 			else
 				++entry;
 		}
-		std::erase_if(m_artifacts, [&](const auto& item)
-			{ return item.second->expires <= now || !m_sessions.contains(item.second->session); });
+		std::erase_if(m_artifacts, [&](const auto& item) {
+			return item.second->expires <= now || !m_sessions.contains(item.second->session);
+		});
 	}
 	for (const auto& session : expired)
 	{
@@ -332,8 +370,7 @@ bool McpServer::Authorize(const httplib::Request& request, httplib::Response& re
 		return false;
 	}
 	const auto version = request.get_header_value("MCP-Protocol-Version");
-	if (request.get_header_value_count("MCP-Protocol-Version") > 1 ||
-		(!version.empty() && !SupportedVersion(version)))
+	if (request.get_header_value_count("MCP-Protocol-Version") > 1 || (!version.empty() && !SupportedVersion(version)))
 	{
 		response.status = 400;
 		return false;
@@ -366,7 +403,9 @@ void McpServer::DeleteSession(const httplib::Request& request, httplib::Response
 		}
 		session->automationOwner->active.store(false);
 		m_sessions.erase(found);
-		std::erase_if(m_artifacts, [&](const auto& item) { return item.second->session == request.get_header_value("MCP-Session-Id"); });
+		std::erase_if(m_artifacts, [&](const auto& item) {
+			return item.second->session == request.get_header_value("MCP-Session-Id");
+		});
 		for (const auto& [id, call] : session->calls)
 			call.cancellation->Cancel();
 	}
@@ -433,7 +472,8 @@ void McpServer::DownloadArtifact(const httplib::Request& request, httplib::Respo
 	try
 	{
 		const auto cancellation = std::make_shared<McpCancellation>();
-		const auto result = session->debug.Call(m_application, "debug_export_info",
+		const auto result = session->debug.Call(
+			m_application, "debug_export_info",
 			{{"connection", artifact->connection}, {"export", std::to_string(artifact->ticket)}}, cancellation);
 		if (!result || result->value("isError", true))
 		{
@@ -455,17 +495,20 @@ void McpServer::DownloadArtifact(const httplib::Request& request, httplib::Respo
 	response.set_header("Cache-Control", "no-store");
 	response.set_header("X-Content-Type-Options", "nosniff");
 	response.set_header("Content-Disposition", artifact->mediaType == "video/mp4"
-		? "attachment; filename=simxr-clip.mp4" : "attachment; filename=simxr-image.raw");
-	response.set_content_provider(static_cast<std::size_t>(artifact->size), artifact->mediaType,
-		[this, session, artifact, slot](std::size_t offset, std::size_t length, httplib::DataSink& sink)
-		{
+												   ? "attachment; filename=simxr-clip.mp4"
+												   : "attachment; filename=simxr-image.raw");
+	response.set_content_provider(
+		static_cast<std::size_t>(artifact->size), artifact->mediaType,
+		[this, session, artifact, slot](std::size_t offset, std::size_t length, httplib::DataSink& sink) {
 			(void)slot;
 			if (!length || offset >= artifact->size)
 				return false;
 			try
 			{
-				const auto amount = std::min<std::uint64_t>({length, artifact->size - offset, control::MaxPayload - 4096});
-				const auto bytes = session->debug.ReadArtifact(m_application, artifact->connection, artifact->ticket, offset, amount);
+				const auto amount =
+					std::min<std::uint64_t>({length, artifact->size - offset, control::MaxPayload - 4096});
+				const auto bytes =
+					session->debug.ReadArtifact(m_application, artifact->connection, artifact->ticket, offset, amount);
 				return sink.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 			}
 			catch (...)
@@ -479,8 +522,7 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 {
 	const auto version = request.get_header_value("MCP-Protocol-Version");
 	const auto key = request.get_header_value("X-Simxr-Cancellation-Key");
-	if (request.get_header_value_count("X-Simxr-Cancellation-Key") > 1 ||
-		(!key.empty() && !ValidCancellationKey(key)))
+	if (request.get_header_value_count("X-Simxr-Cancellation-Key") > 1 || (!key.empty() && !ValidCancellationKey(key)))
 	{
 		response.status = 400;
 		return;
@@ -500,8 +542,7 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 		return;
 	}
 	if (!document.is_object() || !document.contains("jsonrpc") || !document["jsonrpc"].is_string() ||
-		document["jsonrpc"] != "2.0" ||
-		!document.contains("method") || !document["method"].is_string())
+		document["jsonrpc"] != "2.0" || !document.contains("method") || !document["method"].is_string())
 	{
 		response.status = 400;
 		response.set_content(RpcError(nullptr, -32600, "Invalid request").dump(), "application/json");
@@ -525,10 +566,10 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 		const auto& id = document["id"];
 		const auto params = document.value("params", Json::object());
 		if (!params.is_object() || !params.contains("protocolVersion") || !params["protocolVersion"].is_string() ||
-			!params.contains("capabilities") || !params["capabilities"].is_object() ||
-			!params.contains("clientInfo") || !params["clientInfo"].is_object() ||
-			!params["clientInfo"].contains("name") || !params["clientInfo"]["name"].is_string() ||
-			!params["clientInfo"].contains("version") || !params["clientInfo"]["version"].is_string())
+			!params.contains("capabilities") || !params["capabilities"].is_object() || !params.contains("clientInfo") ||
+			!params["clientInfo"].is_object() || !params["clientInfo"].contains("name") ||
+			!params["clientInfo"]["name"].is_string() || !params["clientInfo"].contains("version") ||
+			!params["clientInfo"]["version"].is_string())
 		{
 			response.set_content(RpcError(id, -32602, "Invalid initialization parameters").dump(), "application/json");
 			return;
@@ -548,8 +589,8 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 		}
 		response.set_header("MCP-Session-Id", sessionId);
 		Json result = {{"protocolVersion", session->version},
-				  {"capabilities", {{"tools", {{"listChanged", false}}}}},
-				  {"serverInfo", {{"name", "openxr-simulator"}, {"version", simxr::Version}}}};
+					   {"capabilities", {{"tools", {{"listChanged", false}}}}},
+					   {"serverInfo", {{"name", "openxr-simulator"}, {"version", simxr::Version}}}};
 		response.set_content(Json({{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(result)}}).dump(),
 							 "application/json");
 		return;
@@ -618,7 +659,7 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 		if (!notification && method != "ping" && !session->initialized)
 		{
 			response.set_content(RpcError(document["id"], -32600, "Session is not initialized").dump(),
-							 "application/json");
+								 "application/json");
 			return;
 		}
 		if (!notification && method == "tools/call")
@@ -632,7 +673,7 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 			if (session->calls.contains(callId))
 			{
 				response.set_content(RpcError(document["id"], -32600, "Request ID is already active").dump(),
-								 "application/json");
+									 "application/json");
 				return;
 			}
 			if (m_activeCalls >= 4)
@@ -659,8 +700,7 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 	else if (method == "tools/call")
 	{
 		const auto params = document.value("params", Json::object());
-		const auto release = [&]
-		{
+		const auto release = [&] {
 			std::lock_guard lock(m_sessionMutex);
 			session->calls.erase(callId);
 			--m_activeCalls;
@@ -687,14 +727,14 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 				callResult = session->debug.Call(m_application, "debug_export_info", arguments, cancellation);
 				if (callResult && !callResult->value("isError", true) && !cancellation->Requested())
 				{
-					const auto fail = [](const char* message)
-					{
-						return Json{{"content", Json::array({{{"type", "text"},
-							{"text", Json({{"ok", false}, {"error", message}}).dump()}}})}, {"isError", true}};
+					const auto fail = [](const char* message) {
+						return Json{
+							{"content", Json::array({{{"type", "text"},
+													  {"text", Json({{"ok", false}, {"error", message}}).dump()}}})},
+							{"isError", true}};
 					};
 					const auto info = Json::parse(callResult->at("content").at(0).at("text").get<std::string>());
-					const auto number = [](const Json& value, const char* name)
-					{
+					const auto number = [](const Json& value, const char* name) {
 						const auto text = value.at(name).get<std::string>();
 						std::uint64_t result = 0;
 						const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
@@ -711,14 +751,17 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 						const auto identity = NewMcpIdentifier();
 						const auto owner = request.get_header_value("MCP-Session-Id");
 						const auto connection = arguments.at("connection").get<std::string>();
-						const auto media = info.value("media_type", "") == "video/mp4" ? "video/mp4" : "application/octet-stream";
+						const auto media =
+							info.value("media_type", "") == "video/mp4" ? "video/mp4" : "application/octet-stream";
 						std::string selected;
 						{
 							std::lock_guard lock(m_sessionMutex);
 							const auto now = std::chrono::steady_clock::now();
-							std::erase_if(m_artifacts, [&](const auto& item)
-								{ return item.second->expires <= now || !m_sessions.contains(item.second->session); });
-							if (const auto active = m_sessions.find(owner); active != m_sessions.end() && active->second == session &&
+							std::erase_if(m_artifacts, [&](const auto& item) {
+								return item.second->expires <= now || !m_sessions.contains(item.second->session);
+							});
+							if (const auto active = m_sessions.find(owner);
+								active != m_sessions.end() && active->second == session &&
 								session->artifactRevision == artifactRevision)
 							{
 								std::size_t count = 0;
@@ -727,7 +770,8 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 									if (existing->session != owner)
 										continue;
 									++count;
-									if (existing->connection == connection && existing->ticket == ticket && existing->size == size)
+									if (existing->connection == connection && existing->ticket == ticket &&
+										existing->size == size)
 									{
 										existing->expires = now + std::chrono::minutes(5);
 										selected = id;
@@ -748,7 +792,8 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 							}
 						}
 						if (selected.empty())
-							callResult = fail("Artifact unavailable: the connection changed, the session closed, or capacity was reached");
+							callResult = fail("Artifact unavailable: the connection changed, the session closed, or "
+											  "capacity was reached");
 						else
 						{
 							const auto uri = "http://127.0.0.1:" + std::to_string(m_port) + "/artifacts/" + selected;
@@ -756,8 +801,14 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 							metadata["expires_in_seconds"] = 300;
 							metadata["download_auth"] = "Bearer token required; keep the export and MCP session open";
 							callResult = Json{{"content", Json::array({{{"type", "text"}, {"text", metadata.dump()}},
-								{{"type", "resource_link"}, {"uri", uri}, {"name", media == std::string_view("video/mp4") ? "simxr-clip.mp4" : "simxr-image.raw"},
-								 {"mimeType", media}, {"size", size}}})}, {"isError", false}};
+																	   {{"type", "resource_link"},
+																		{"uri", uri},
+																		{"name", media == std::string_view("video/mp4")
+																					 ? "simxr-clip.mp4"
+																					 : "simxr-image.raw"},
+																		{"mimeType", media},
+																		{"size", size}}})},
+											  {"isError", false}};
 						}
 					}
 				}
@@ -766,10 +817,12 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 			}
 			else
 			{
-				callResult = McpSequenceJobs::Handles(name) ? session->sequenceJobs.Call(m_application, session->debug, name, arguments, cancellation) :
-					HandlesMonitor(name) ? m_application.Call(name, arguments, cancellation) :
-					McpDebug::Handles(name) ? session->debug.Call(m_application, name, arguments, cancellation) :
-					m_application.Call(name, arguments, cancellation, session->automationOwner);
+				callResult = McpSequenceJobs::Handles(name) ? session->sequenceJobs.Call(m_application, session->debug,
+																						 name, arguments, cancellation)
+							 : HandlesMonitor(name)			? m_application.Call(name, arguments, cancellation)
+							 : McpDebug::Handles(name)
+								 ? session->debug.Call(m_application, name, arguments, cancellation)
+								 : m_application.Call(name, arguments, cancellation, session->automationOwner);
 				if ((name == "debug_release_export" || name == "debug_disconnect") && callResult &&
 					!callResult->value("isError", true))
 				{
@@ -791,10 +844,9 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 					const auto owner = request.get_header_value("MCP-Session-Id");
 					std::lock_guard lock(m_sessionMutex);
 					++session->artifactRevision;
-					std::erase_if(m_artifacts, [&](const auto& item)
-					{
+					std::erase_if(m_artifacts, [&](const auto& item) {
 						return item.second->session == owner && item.second->connection == connection &&
-							(name == "debug_disconnect" || item.second->ticket == ticket);
+							   (name == "debug_disconnect" || item.second->ticket == ticket);
 					});
 				}
 			}

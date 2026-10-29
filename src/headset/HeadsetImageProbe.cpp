@@ -45,8 +45,7 @@ void VerifyHeadsetImageCopy(HeadsetGraphics& graphics, const HeadsetImageSource&
 	}
 	wire::LocalControlClient client(source.endpoint);
 	const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields = {},
-						  std::vector<std::shared_ptr<wire::TransferHandle>> handles = {})
-	{
+						  std::vector<std::shared_ptr<wire::TransferHandle>> handles = {}) {
 		wire::ControlPacket request;
 		request.message.opcode = static_cast<std::uint16_t>(opcode);
 		request.message.fields = std::move(fields);
@@ -124,8 +123,7 @@ void VerifyHeadsetImageCopy(HeadsetGraphics& graphics, const HeadsetImageSource&
 			}
 		}
 		catch (...)
-		{
-		}
+		{}
 		if (!consumer.NativeIdle() || device->lost)
 			graphics.PreserveNativeResources();
 		throw;

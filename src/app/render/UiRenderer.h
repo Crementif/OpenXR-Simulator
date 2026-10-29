@@ -16,6 +16,7 @@ union SDL_Event;
 namespace simxr::app
 {
 class Window;
+
 struct ValidationLog
 {
 	std::atomic<std::uint32_t> errors{0};
@@ -23,7 +24,7 @@ struct ValidationLog
 
 class UiRenderer
 {
-  public:
+public:
 	UiRenderer(Window& window, bool validation, std::shared_ptr<ValidationLog> log, bool screenshots = false,
 			   bool proofConsumer = false);
 	~UiRenderer();
@@ -42,7 +43,7 @@ class UiRenderer
 	std::uint64_t SubmittedFrames() const;
 	std::uint32_t RebuildCount() const;
 
-  private:
+private:
 	struct Resources;
 	std::shared_ptr<Resources> m_resources;
 	Window* m_window = nullptr;

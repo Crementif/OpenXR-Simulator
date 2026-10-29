@@ -18,11 +18,13 @@ struct RequestId
 	std::uint64_t value = 0;
 	auto operator<=>(const RequestId&) const = default;
 };
+
 struct ControlSessionId
 {
 	std::uint64_t value = 0;
 	auto operator<=>(const ControlSessionId&) const = default;
 };
+
 struct ConnectionId
 {
 	std::uint64_t value = 0;

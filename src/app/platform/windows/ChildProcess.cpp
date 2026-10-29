@@ -31,6 +31,7 @@ static void RequireRuntimeOverride()
 			"Run the companion without elevation, or select a provisioned private Proton prefix in the "
 			"launch profile. This launch has been cancelled.");
 }
+
 struct EnvironmentOrder
 {
 	bool operator()(const std::wstring& left, const std::wstring& right) const
@@ -39,9 +40,10 @@ struct EnvironmentOrder
 									static_cast<int>(right.size()), TRUE) == CSTR_LESS_THAN;
 	}
 };
+
 class ChildEnvironment
 {
-  public:
+public:
 	explicit ChildEnvironment(const LaunchProfile& profile)
 	{
 		std::map<std::wstring, std::wstring, EnvironmentOrder> environment;
@@ -99,21 +101,26 @@ class ChildEnvironment
 		if (environment.empty())
 			m_block.push_back(L'\0');
 	}
+
 	wchar_t* Data() noexcept
 	{
 		return m_block.data();
 	}
 
-  private:
+private:
 	std::vector<wchar_t> m_block;
 };
+
 struct ChildProcess::State
 {
 	windows::Handle handle;
 	DWORD identity = 0;
 };
+
 ChildProcess::ChildProcess() : m_state(std::make_unique<State>()) {}
+
 ChildProcess::~ChildProcess() = default;
+
 std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 {
 	ValidateLaunchProfile(profile);
@@ -151,15 +158,18 @@ std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 	const windows::Handle primaryThread(process.hThread);
 	return child;
 }
+
 std::uint64_t ChildProcess::Id() const noexcept
 {
 	return m_state->identity;
 }
+
 struct WindowCloseRequest
 {
 	DWORD process;
 	bool posted = false;
 	DWORD error = ERROR_SUCCESS;
+
 	static BOOL CALLBACK Visit(HWND window, LPARAM parameter)
 	{
 		auto& request = *reinterpret_cast<WindowCloseRequest*>(parameter);
@@ -176,6 +186,7 @@ struct WindowCloseRequest
 		return TRUE;
 	}
 };
+
 void ChildProcess::RequestClose()
 {
 	if (PollExit())
@@ -192,6 +203,7 @@ void ChildProcess::RequestClose()
 	if (!request.posted && !PollExit())
 		throw std::runtime_error("The launched app has no closeable window; close it manually");
 }
+
 std::optional<int> ChildProcess::PollExit()
 {
 	const auto result = WaitForSingleObject(m_state->handle.Get(), 0);

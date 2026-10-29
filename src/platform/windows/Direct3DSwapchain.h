@@ -17,7 +17,7 @@ namespace simxr::windows
 // the session's SwapchainAccess; submitted frames retain the resources they use.
 class Direct3DSwapchain final
 {
-  public:
+public:
 	// Output must be empty; allocation failure leaves it unchanged.
 	static XrResult Create(ID3D11Device* device, const XrSwapchainCreateInfo& description,
 						   std::unique_ptr<Direct3DSwapchain>& output);
@@ -35,7 +35,7 @@ class Direct3DSwapchain final
 	// Native submission restores the state declared when these images were allocated.
 	D3D12_RESOURCE_STATES ReleaseState12() const noexcept;
 
-  private:
+private:
 	Direct3DSwapchain(DXGI_FORMAT format, const wchar_t* runtimeLibrary);
 	XrResult Allocate(ID3D11Device* device, const XrSwapchainCreateInfo& description);
 	XrResult Allocate(ID3D12Device* device, const XrSwapchainCreateInfo& description);

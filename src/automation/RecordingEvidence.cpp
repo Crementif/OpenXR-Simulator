@@ -11,6 +11,7 @@ static std::optional<std::int64_t> Add(std::int64_t value, std::int64_t delta)
 		return {};
 	return value + delta;
 }
+
 RecordingEvidence ReadRecordingEvidence(const std::filesystem::path& directory, std::uint64_t cursor,
 										std::stop_token stop)
 {
@@ -77,8 +78,7 @@ RecordingEvidence ReadRecordingEvidence(const std::filesystem::path& directory, 
 	bool ordered = true;
 	std::optional<RuntimeTime> previous;
 	std::optional<FrameId> previousFrame;
-	const auto consider = [&](FrameId frame, std::optional<RuntimeTime> time)
-	{
+	const auto consider = [&](FrameId frame, std::optional<RuntimeTime> time) {
 		if (!time || (previous &&
 					  (*time < *previous || frame < *previousFrame || (frame == *previousFrame && *time != *previous))))
 		{

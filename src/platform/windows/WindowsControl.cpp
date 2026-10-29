@@ -9,7 +9,9 @@ namespace simxr::control::windows
 static std::atomic<unsigned> s_nativeChannels{0};
 
 Handle::Handle(HANDLE value) : value(value) {}
+
 Handle::Handle(Handle&& other) noexcept : value(std::exchange(other.value, INVALID_HANDLE_VALUE)) {}
+
 Handle& Handle::operator=(Handle&& other) noexcept
 {
 	if (this != &other)
@@ -33,19 +35,22 @@ void Handle::Close() noexcept
 
 class OwnedTransfer final : public TransferHandle
 {
-  public:
+public:
 	explicit OwnedTransfer(Handle handle) : m_handle(std::move(handle)) {}
+
 	TransferHandleKind Kind() const noexcept override
 	{
 		return TransferHandleKind::OpaqueWin32;
 	}
+
 	std::intptr_t Value() const noexcept override
 	{
 		return reinterpret_cast<std::intptr_t>(m_handle.value);
 	}
+
 	std::shared_ptr<TransferHandle> Duplicate() const override;
 
-  private:
+private:
 	Handle m_handle;
 };
 
@@ -179,6 +184,7 @@ enum class Channel::Kind
 	Read,
 	Write
 };
+
 struct Channel::Native
 {
 	Handle pipe;
@@ -191,6 +197,7 @@ struct Channel::Native
 	std::array<std::byte, 65536> bytes;
 	Kind kind = Kind::None;
 	DWORD goal = 0;
+
 	explicit Native(Handle value) : pipe(std::move(value))
 	{
 		operation.hEvent = event.value;

@@ -5,12 +5,15 @@
 namespace simxr::headset
 {
 class OpenXrRuntime;
+
 struct PhysicalBodyJoint
 {
 	XrPosef pose{{0, 0, 0, 1}, {0, 0, 0}};
 	XrSpaceLocationFlags flags = 0;
 };
+
 using PhysicalBodySkeleton = std::array<std::optional<SkeletonJoint>, BodyJointCount>;
+
 // Provider observations are runtime-estimated joints, never independent hardware trackers.
 // An absent joint is outside the provider schema; present invalid joints represent tracking loss.
 struct PhysicalBodySample
@@ -26,9 +29,10 @@ struct PhysicalBodySample
 	std::array<std::optional<PhysicalBodyJoint>, BodyJointCount> joints;
 	std::optional<PhysicalBodySkeleton> skeleton;
 };
+
 class HeadsetBody
 {
-  public:
+public:
 	explicit HeadsetBody(OpenXrRuntime& runtime);
 	~HeadsetBody();
 	HeadsetBody(const HeadsetBody&) = delete;
@@ -37,7 +41,7 @@ class HeadsetBody
 	PhysicalBodySample Sample(XrTime time, XrSpace baseSpace, bool locate = true);
 	void Close();
 
-  private:
+private:
 	PhysicalBodySkeleton ReadSkeleton() const;
 	OpenXrRuntime& m_runtime;
 	BodyJointSet m_jointSet = BodyJointSet::UpperBodyFB;

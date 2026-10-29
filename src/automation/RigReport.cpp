@@ -98,6 +98,7 @@ static std::string Escape(std::string_view text, bool xml = false)
 	}
 	return result;
 }
+
 static const char* PhaseName(RigPhase phase)
 {
 	switch (phase)
@@ -157,13 +158,11 @@ std::string SerializeRigJson(const RigSnapshot& result)
 	out << '}';
 	return out.str();
 }
+
 std::string SerializeRigJunit(const RigSnapshot& result)
 {
 	const auto failures = std::count_if(result.checkpoints.begin(), result.checkpoints.end(),
-										[](const auto& item)
-										{
-											return !item.passed;
-										});
+										[](const auto& item) { return !item.passed; });
 	const bool executionFailure = result.phase != RigPhase::Complete;
 	std::ostringstream out;
 	out.imbue(std::locale::classic());

@@ -8,11 +8,12 @@ namespace simxr::control
 static constexpr std::array s_uploadSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId,
 											 tag::Offset,  tag::TotalBytes, tag::Bytes};
 static constexpr std::array s_startSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId, tag::Loop};
-static constexpr std::array s_sequence{tag::Session,	tag::Generation, tag::SourceKind,
-									   tag::SequenceId, tag::Offset,	 tag::Length, tag::ApplicationOwned};
+static constexpr std::array s_sequence{tag::Session, tag::Generation, tag::SourceKind,		tag::SequenceId,
+									   tag::Offset,	 tag::Length,	  tag::ApplicationOwned};
 static constexpr std::array s_sequenceCapture{tag::Session, tag::Generation, tag::CaptureId, tag::ApplicationOwned};
-static constexpr std::array s_simulation{tag::Session,	 tag::Generation, tag::TransactionId, tag::ApplyFrame,
-										 tag::ApplyTime, tag::LatePolicy, tag::SourceKind,	  tag::Commands, tag::ExpectedInputs};
+static constexpr std::array s_simulation{tag::Session,	  tag::Generation, tag::TransactionId,
+										 tag::ApplyFrame, tag::ApplyTime,  tag::LatePolicy,
+										 tag::SourceKind, tag::Commands,   tag::ExpectedInputs};
 static constexpr std::array s_simulationStatus{tag::Session, tag::Generation, tag::TransactionId, tag::SourceKind};
 static constexpr std::array s_gameObservations{tag::Session, tag::Generation, tag::Offset, tag::Length};
 static constexpr std::array s_game{tag::Session,   tag::Generation,	 tag::GameId, tag::GameKind,
@@ -119,6 +120,7 @@ static constexpr std::array s_schemas{
 	RequestSchema{OpCode::GameStatus, RequestDomain::Game, 4, s_game},
 	RequestSchema{OpCode::SubmitGame, RequestDomain::Game, 4, s_game},
 	RequestSchema{OpCode::GameOperation, RequestDomain::Game, 4, s_game}};
+
 std::uint64_t RequireRequestU64(const Message& request, std::uint16_t tag)
 {
 	const auto* field = request.Find(tag);
@@ -127,6 +129,7 @@ std::uint64_t RequireRequestU64(const Message& request, std::uint16_t tag)
 		throw ControlRequestError{ErrorCode::Invalid, "Missing or invalid uint64 field"};
 	return *value;
 }
+
 std::uint32_t RequireRequestU32(const Message& request, std::uint16_t tag)
 {
 	const auto* field = request.Find(tag);
@@ -135,6 +138,7 @@ std::uint32_t RequireRequestU32(const Message& request, std::uint16_t tag)
 		throw ControlRequestError{ErrorCode::Invalid, "Missing or invalid uint32 field"};
 	return *value;
 }
+
 const RequestSchema& ValidateControlRequest(const ControlPacket& packet, bool nativeHandles)
 {
 	const auto& request = packet.message;
@@ -142,11 +146,9 @@ const RequestSchema& ValidateControlRequest(const ControlPacket& packet, bool na
 		throw ControlRequestError{ErrorCode::UnsupportedVersion, "Unsupported protocol major"};
 	if (request.flags || !request.requestId.value)
 		throw ControlRequestError{ErrorCode::Invalid, "Expected an identified request"};
-	const auto schema = std::find_if(s_schemas.begin(), s_schemas.end(),
-									 [&](const auto& entry)
-									 {
-										 return static_cast<std::uint16_t>(entry.opcode) == request.opcode;
-									 });
+	const auto schema = std::find_if(s_schemas.begin(), s_schemas.end(), [&](const auto& entry) {
+		return static_cast<std::uint16_t>(entry.opcode) == request.opcode;
+	});
 	if (schema == s_schemas.end())
 		throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported operation code"};
 	for (const auto& field : request.fields)

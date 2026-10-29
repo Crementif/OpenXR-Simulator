@@ -12,10 +12,12 @@ SpatialMatrix PoseMatrix(XrPosef pose)
 	return {right.x,		 right.y,		  right.z,		   0, up.x, up.y, up.z, 0, back.x, back.y, back.z, 0,
 			pose.position.x, pose.position.y, pose.position.z, 1};
 }
+
 SpatialMatrix ViewMatrix(XrPosef camera)
 {
 	return PoseMatrix(RelativePose(IdentityPose(), camera));
 }
+
 SpatialMatrix ProjectionMatrix(XrFovf fov)
 {
 	const float left = std::tan(fov.angleLeft), right = std::tan(fov.angleRight);
@@ -38,6 +40,7 @@ SpatialMatrix ProjectionMatrix(XrFovf fov)
 			-2 * far * near / (far - near),
 			0};
 }
+
 XrPosef MatrixPose(const SpatialMatrix& matrix)
 {
 	XrQuaternionf rotation{};
@@ -62,6 +65,7 @@ XrPosef MatrixPose(const SpatialMatrix& matrix)
 	}
 	return NormalizedPose({rotation, {matrix[12], matrix[13], matrix[14]}}).value_or(IdentityPose());
 }
+
 ProjectedPoint ProjectPoint(const FrameView& camera, XrVector3f world)
 {
 	const auto local = RelativePose({{0, 0, 0, 1}, world}, camera.pose).position;
@@ -74,10 +78,10 @@ ProjectedPoint ProjectPoint(const FrameView& camera, XrVector3f world)
 		result.uv = {1 - result.uv.x, 1 - result.uv.y};
 	return result;
 }
+
 XrQuaternionf RotationBetween(XrVector3f from, XrVector3f to)
 {
-	const auto unit = [](XrVector3f value)
-	{
+	const auto unit = [](XrVector3f value) {
 		const float length = std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
 		return length > .00001f ? XrVector3f{value.x / length, value.y / length, value.z / length}
 								: XrVector3f{0, 0, 1};
@@ -98,10 +102,10 @@ XrQuaternionf RotationBetween(XrVector3f from, XrVector3f to)
 		return {0, 0, 0, 1};
 	return {rotation.x / length, rotation.y / length, rotation.z / length, rotation.w / length};
 }
+
 XrQuaternionf ArcballRotation(XrVector2f from, XrVector2f to)
 {
-	const auto lift = [](XrVector2f point)
-	{
+	const auto lift = [](XrVector2f point) {
 		const float squared = point.x * point.x + point.y * point.y;
 		if (squared <= 1)
 			return XrVector3f{point.x, point.y, std::sqrt(1 - squared)};
@@ -123,12 +127,14 @@ XrQuaternionf SnapRotation(XrQuaternionf rotation, float radians)
 	const float scale = std::sin(angle / 2) / length;
 	return {rotation.x * scale, rotation.y * scale, rotation.z * scale, std::cos(angle / 2)};
 }
+
 XrVector3f YawPitchRoll(XrQuaternionf q)
 {
 	return {std::atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y)),
 			std::asin(std::clamp(2 * (q.w * q.x - q.y * q.z), -1.0f, 1.0f)),
 			std::atan2(2 * (q.x * q.y + q.w * q.z), 1 - 2 * (q.x * q.x + q.z * q.z))};
 }
+
 XrQuaternionf AxisAngle(XrVector3f axis, float radians)
 {
 	const float length = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);

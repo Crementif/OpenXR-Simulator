@@ -10,6 +10,7 @@ struct TrackerRoleBinding
 	TrackerRole role;
 	std::uint32_t revision;
 };
+
 static constexpr std::array s_roles{TrackerRoleBinding{"handheld_object", TrackerRole::HandheldObject, 1},
 									TrackerRoleBinding{"left_foot", TrackerRole::LeftFoot, 1},
 									TrackerRoleBinding{"right_foot", TrackerRole::RightFoot, 1},
@@ -29,10 +30,12 @@ static constexpr std::array s_roles{TrackerRoleBinding{"handheld_object", Tracke
 									TrackerRoleBinding{"right_ankle", TrackerRole::RightAnkle, 3}};
 
 HeadsetTrackers::HeadsetTrackers(OpenXrRuntime& runtime) : m_runtime(runtime) {}
+
 HeadsetTrackers::~HeadsetTrackers()
 {
 	Close();
 }
+
 void HeadsetTrackers::Close()
 {
 	if (m_runtime.ResourcesPreserved())
@@ -48,10 +51,12 @@ void HeadsetTrackers::Close()
 	m_enumerate = nullptr;
 	m_session = XR_NULL_HANDLE;
 }
+
 bool HeadsetTrackers::Available() const
 {
 	return m_enumerate != nullptr;
 }
+
 void HeadsetTrackers::Open(XrSession session, XrActionSet actionSet)
 {
 	if (m_session)
@@ -67,16 +72,14 @@ void HeadsetTrackers::Open(XrSession session, XrActionSet actionSet)
 		reinterpret_cast<PFN_xrEnumerateViveTrackerPathsHTCX>(m_runtime.Procedure("xrEnumerateViveTrackerPathsHTCX"));
 	if (!m_enumerate)
 		throw std::runtime_error("Physical runtime did not expose tracker enumeration");
-	const auto path = [&](const std::string& text)
-	{
+	const auto path = [&](const std::string& text) {
 		XrPath value = XR_NULL_PATH;
 		CheckXr(xrStringToPath(m_runtime.Instance(), text.c_str(), &value), "Create physical tracker path");
 		return value;
 	};
 	m_roles.reserve(s_roles.size());
 	std::vector<XrActionSuggestedBinding> bindings;
-	const auto bind = [&](RoleAction& role, const std::string& prefix, const std::string& name)
-	{
+	const auto bind = [&](RoleAction& role, const std::string& prefix, const std::string& name) {
 		role.path = path(prefix);
 		XrActionCreateInfo action{XR_TYPE_ACTION_CREATE_INFO};
 		std::strcpy(action.actionName, name.c_str());
@@ -105,11 +108,9 @@ void HeadsetTrackers::Open(XrSession session, XrActionSet actionSet)
 	for (const auto& device : devices)
 	{
 		const auto persistent = PathString(device.persistentPath);
-		if (persistent.empty() || std::any_of(m_devices.begin(), m_devices.end(),
-											  [&](const RoleAction& prior)
-											  {
-												  return prior.path == device.persistentPath;
-											  }))
+		if (persistent.empty() || std::any_of(m_devices.begin(), m_devices.end(), [&](const RoleAction& prior) {
+				return prior.path == device.persistentPath;
+			}))
 			throw std::runtime_error("Physical runtime returned missing or duplicate tracker identities");
 		const auto name = "tracker_device_" + std::to_string(m_devices.size());
 		bind(m_devices.emplace_back(), persistent, name);
@@ -121,6 +122,7 @@ void HeadsetTrackers::Open(XrSession session, XrActionSet actionSet)
 	CheckXr(xrSuggestInteractionProfileBindings(m_runtime.Instance(), &suggestion),
 			"Suggest physical tracker bindings");
 }
+
 std::string HeadsetTrackers::PathString(XrPath path) const
 {
 	if (!path)
@@ -133,6 +135,7 @@ std::string HeadsetTrackers::PathString(XrPath path) const
 		throw std::runtime_error("Physical runtime returned an invalid tracker path");
 	return {text.data(), length - 1};
 }
+
 std::vector<XrViveTrackerPathsHTCX> HeadsetTrackers::Enumerate() const
 {
 	std::array<XrViveTrackerPathsHTCX, MaxTrackerDevices> paths;
@@ -145,6 +148,7 @@ std::vector<XrViveTrackerPathsHTCX> HeadsetTrackers::Enumerate() const
 	CheckXr(result, "Enumerate physical trackers");
 	return {paths.begin(), paths.begin() + count};
 }
+
 std::vector<PhysicalTrackerSample> HeadsetTrackers::Sample(XrTime time, XrSpace baseSpace, bool locate)
 {
 	if (!Available())
@@ -165,24 +169,16 @@ std::vector<PhysicalTrackerSample> HeadsetTrackers::Sample(XrTime time, XrSpace 
 			if (prior.persistentPath == sample.persistentPath)
 				throw std::runtime_error("Physical runtime returned duplicate tracker identities");
 		const auto role = std::find_if(m_roles.begin(), m_roles.end(),
-									   [&](const RoleAction& value)
-									   {
-										   return value.path == path.rolePath;
-									   });
+									   [&](const RoleAction& value) { return value.path == path.rolePath; });
 		if (role != m_roles.end())
 			sample.role = role->role;
-		const auto persistent = std::find_if(m_devices.begin(), m_devices.end(),
-											 [&](const RoleAction& value)
-											 {
-												 return value.path == path.persistentPath;
-											 });
+		const auto persistent = std::find_if(m_devices.begin(), m_devices.end(), [&](const RoleAction& value) {
+			return value.path == path.persistentPath;
+		});
 		const RoleAction* selected = persistent == m_devices.end() ? nullptr : &*persistent;
 		if (!selected && role != m_roles.end() &&
 			std::count_if(paths.begin(), paths.end(),
-						  [&](const XrViveTrackerPathsHTCX& value)
-						  {
-							  return value.rolePath == path.rolePath;
-						  }) == 1)
+						  [&](const XrViveTrackerPathsHTCX& value) { return value.rolePath == path.rolePath; }) == 1)
 			selected = &*role;
 		sample.needsBinding = selected == nullptr;
 		if (locate && selected)
@@ -198,10 +194,7 @@ std::vector<PhysicalTrackerSample> HeadsetTrackers::Sample(XrTime time, XrSpace 
 		samples.push_back(std::move(sample));
 	}
 	std::sort(samples.begin(), samples.end(),
-			  [](const auto& left, const auto& right)
-			  {
-				  return left.persistentPath < right.persistentPath;
-			  });
+			  [](const auto& left, const auto& right) { return left.persistentPath < right.persistentPath; });
 	return samples;
 }
 } // namespace simxr::headset

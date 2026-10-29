@@ -21,6 +21,7 @@ static const char* StatusName(HapticStatus status)
 	}
 	return "Unknown";
 }
+
 void DrawHapticEvents(const HapticFeedback& feedback, std::uint32_t hand, bool supported)
 {
 	if (!ImGui::CollapsingHeader("Haptics"))

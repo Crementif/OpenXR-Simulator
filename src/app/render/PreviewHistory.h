@@ -13,6 +13,7 @@
 namespace simxr::app
 {
 class UiRenderer;
+
 struct PreviewShot
 {
 	std::size_t slot = 0;
@@ -20,12 +21,13 @@ struct PreviewShot
 	std::uint64_t epoch = 0;
 	float aspect = 9.f / 16;
 };
+
 // A bounded GPU cache of live and requested historical thumbnails. Copies use
 // the UI frame's GPU commands; nothing is read back. Slots and resources retire
 // only after the UI frames that used them have completed.
 class PreviewHistory
 {
-  public:
+public:
 	static constexpr std::uint64_t DefaultBudget = 32ull << 20;
 	PreviewHistory(UiRenderer& renderer, std::uint64_t budget = DefaultBudget);
 	~PreviewHistory();
@@ -35,10 +37,12 @@ class PreviewHistory
 	void Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch);
 	// The newest kept image at or shortly before a frame of the same run.
 	std::optional<PreviewShot> Nearest(FrameIdentity frame, std::uint64_t epoch) const;
+
 	const std::vector<PreviewShot>& Shots() const noexcept
 	{
 		return m_shots;
 	}
+
 	void BeginThumbnails();
 	void RequestThumbnail(FrameIdentity frame, std::uint64_t epoch);
 	std::optional<PreviewShot> MissingThumbnail() const;
@@ -54,17 +58,20 @@ class PreviewHistory
 	void Record(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);
 	std::uint64_t Bytes() const noexcept;
+
 	std::uint64_t Budget() const noexcept
 	{
 		return m_budget;
 	}
+
 	const std::string& Error() const noexcept
 	{
 		return m_error;
 	}
 
-  private:
+private:
 	struct Resources;
+
 	struct Copy
 	{
 		VkImage source = VK_NULL_HANDLE;
@@ -73,6 +80,7 @@ class PreviewHistory
 		std::size_t slot = 0;
 		PreviewShot previous;
 	};
+
 	bool Prepare(const control::ImageDescription& description);
 	void Retire();
 	void CollectRetired();

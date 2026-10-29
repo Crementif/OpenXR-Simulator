@@ -11,6 +11,7 @@ struct PhysicalHeadsetPage::FileResult
 	std::mutex mutex;
 	bool done = false, failed = false;
 	std::string path, error;
+
 	static void SDLCALL Picked(void* user, const char* const* files, int) noexcept
 	{
 		const std::unique_ptr<std::shared_ptr<FileResult>> owner(static_cast<std::shared_ptr<FileResult>*>(user));
@@ -32,10 +33,12 @@ struct PhysicalHeadsetPage::FileResult
 		}
 	}
 };
+
 void PhysicalHeadsetPage::SetError(std::string error)
 {
 	m_error = std::move(error);
 }
+
 std::optional<HeadsetPageRequest> PhysicalHeadsetPage::Draw(const HeadsetHostSnapshot& host, bool canConnect,
 															const std::string& conflict, const ObservedSetup* game)
 {

@@ -32,47 +32,64 @@ static std::uint64_t Number(const Json& object, const char* key, bool zero = fal
 		throw std::invalid_argument(std::string(key) + " must be nonzero");
 	return result;
 }
+
 static Json Result(const Json& value, bool error = false)
 {
 	return {{"content", Json::array({{{"type", "text"}, {"text", value.dump()}}})}, {"isError", error}};
 }
+
 bool GameHandles(const std::string& name)
 {
 	static const std::set<std::string> names{"game_bridge_status", "game_bridge_observations", "game_bridge_command",
-		"game_bridge_operation"};
+											 "game_bridge_operation"};
 	return names.contains(name);
 }
+
 Json GameDefinitions()
 {
 	const Json text = {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}};
 	const Json id = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}},
-		{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
-	const Json cursor = {{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
-		{{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
+											{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
+	const Json cursor = {
+		{"anyOf", Json::array({{{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,19})$"}},
+							   {{"type", "integer"}, {"minimum", 0}, {"maximum", 9007199254740991ULL}}})}};
 	const Json common = {{"connection", text}, {"session", id}, {"generation", id}};
-	const auto tool = [](const char* name, const char* description, Json properties, Json required)
-	{
-		return Json{{"name", name}, {"description", description}, {"inputSchema", {{"type", "object"},
-			{"properties", std::move(properties)}, {"required", std::move(required)}, {"additionalProperties", false}}}};
+	const auto tool = [](const char* name, const char* description, Json properties, Json required) {
+		return Json{{"name", name},
+					{"description", description},
+					{"inputSchema",
+					 {{"type", "object"},
+					  {"properties", std::move(properties)},
+					  {"required", std::move(required)},
+					  {"additionalProperties", false}}}};
 	};
 	Json result = Json::array();
-	result.push_back(tool("game_bridge_status", "Read the cooperating game's identity, supported commands and latest telemetry.", common, Json::array({"connection"})));
+	result.push_back(tool("game_bridge_status",
+						  "Read the cooperating game's identity, supported commands and latest telemetry.", common,
+						  Json::array({"connection"})));
 	auto observations = common;
 	observations["offset"] = cursor;
 	observations["count"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 16}};
-	result.push_back(tool("game_bridge_observations", "Read bounded game telemetry and lifecycle events; check gap before assuming continuity.", observations, Json::array({"connection"})));
+	result.push_back(tool("game_bridge_observations",
+						  "Read bounded game telemetry and lifecycle events; check gap before assuming continuity.",
+						  observations, Json::array({"connection"})));
 	auto command = common;
 	command["game"] = id;
 	command["command_id"] = id;
 	command["kind"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 3}};
 	command["payload"] = {{"type", "string"}, {"maxLength", SIMXR_GAME_PAYLOAD_CAPACITY}};
-	result.push_back(tool("game_bridge_command", "Queue a supported game command at a safe update point. Poll its operation; queued does not mean applied.", command, Json::array({"connection", "game", "command_id", "kind"})));
+	result.push_back(
+		tool("game_bridge_command",
+			 "Queue a supported game command at a safe update point. Poll its operation; queued does not mean applied.",
+			 command, Json::array({"connection", "game", "command_id", "kind"})));
 	auto operation = common;
 	operation["game"] = id;
 	operation["operation"] = id;
-	result.push_back(tool("game_bridge_operation", "Read this connection's game command acknowledgement.", operation, Json::array({"connection", "game", "operation"})));
+	result.push_back(tool("game_bridge_operation", "Read this connection's game command acknowledgement.", operation,
+						  Json::array({"connection", "game", "operation"})));
 	return result;
 }
+
 GameRequest PrepareGame(const std::string& name, const Json& arguments, std::uint64_t session, std::uint64_t generation)
 {
 	if (!arguments.is_object())
@@ -143,6 +160,7 @@ GameRequest PrepareGame(const std::string& name, const Json& arguments, std::uin
 	(void)wire::EncodeFields(request.fields);
 	return request;
 }
+
 Json GameReply(const wire::Message& message, wire::OpCode opcode)
 {
 	const auto* error = message.Find(tag::Error);
@@ -160,7 +178,8 @@ Json GameReply(const wire::Message& message, wire::OpCode opcode)
 	const auto* document = message.Find(tag::Document);
 	if (!document)
 		throw std::runtime_error("Runtime omitted game bridge details");
-	if (opcode == wire::OpCode::GameStatus || opcode == wire::OpCode::SubmitGame || opcode == wire::OpCode::GameOperation)
+	if (opcode == wire::OpCode::GameStatus || opcode == wire::OpCode::SubmitGame ||
+		opcode == wire::OpCode::GameOperation)
 	{
 		const auto* game = message.Find(tag::GameId);
 		if (!game || !game->AsU64() || (opcode != wire::OpCode::GameStatus && !*game->AsU64()))
@@ -170,13 +189,18 @@ Json GameReply(const wire::Message& message, wire::OpCode opcode)
 	{
 		const auto* operation = message.Find(tag::OperationId);
 		const auto* phase = message.Find(tag::Phase);
-		static const std::set<std::string_view> phases{"queued", "delivered", "complete", "failed", "cancelled", "interrupted"};
-		if (!operation || !operation->AsU64().value_or(0) || !phase || !phase->AsText() || !phases.contains(*phase->AsText()))
+		static const std::set<std::string_view> phases{"queued", "delivered", "complete",
+													   "failed", "cancelled", "interrupted"};
+		if (!operation || !operation->AsU64().value_or(0) || !phase || !phase->AsText() ||
+			!phases.contains(*phase->AsText()))
 			throw std::runtime_error("Runtime omitted game operation details");
 	}
 	Json result = {{"ok", true}};
-	for (const auto& [field, name] : {std::pair{tag::GameId, "game_id"}, {tag::OperationId, "operation_id"},
-			{tag::Session, "session"}, {tag::Generation, "generation"}, {tag::ClockRevision, "clock_revision"}})
+	for (const auto& [field, name] : {std::pair{tag::GameId, "game_id"},
+									  {tag::OperationId, "operation_id"},
+									  {tag::Session, "session"},
+									  {tag::Generation, "generation"},
+									  {tag::ClockRevision, "clock_revision"}})
 		if (const auto* value = message.Find(field))
 			if (const auto number = value->AsU64())
 				result[name] = std::to_string(*number);
@@ -187,8 +211,9 @@ Json GameReply(const wire::Message& message, wire::OpCode opcode)
 		if (const auto value = domain->AsU32())
 			result["clock_domain"] = *value;
 	for (const auto& [field, name] : {std::pair{tag::NativeTime, "native_time_ns"},
-			{tag::RuntimeTimeBefore, "runtime_time_before_ns"}, {tag::RuntimeTimeAfter, "runtime_time_after_ns"},
-			{tag::ClockResolution, "clock_resolution_ns"}})
+									  {tag::RuntimeTimeBefore, "runtime_time_before_ns"},
+									  {tag::RuntimeTimeAfter, "runtime_time_after_ns"},
+									  {tag::ClockResolution, "clock_resolution_ns"}})
 		if (const auto* value = message.Find(field))
 			if (const auto number = value->AsI64())
 				result[name] = std::to_string(*number);

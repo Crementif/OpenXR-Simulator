@@ -5,8 +5,7 @@ namespace simxr
 {
 EyeGazeInteraction::EyeGazeInteraction(const EnabledExtensions& enabled, bool supported)
 	: m_enabled(enabled.Contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME)), m_supported(supported)
-{
-}
+{}
 
 bool EyeGazeInteraction::Supports() const
 {
@@ -15,11 +14,7 @@ bool EyeGazeInteraction::Supports() const
 
 void EyeGazeInteraction::ContributeInput(const TrackingSnapshot& snapshot, InputSnapshot& input) const
 {
-	std::erase_if(input.devices,
-				  [](const auto& device)
-				  {
-					  return device.identity.kind == InputDeviceKind::EyeGaze;
-				  });
+	std::erase_if(input.devices, [](const auto& device) { return device.identity.kind == InputDeviceKind::EyeGaze; });
 	if (m_enabled)
 		input.devices.push_back({{InputDeviceKind::EyeGaze, 0},
 								 {"/user/eyes_ext"},

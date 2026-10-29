@@ -15,14 +15,16 @@ namespace simxr
 {
 class Runtime;
 } // namespace simxr
+
 namespace simxr::control
 {
 class ImageInspectionProvider;
+
 // Transport workers call this service without holding runtime/native locks.
 // The runtime outlives the service; Close disconnects leases before its teardown.
 class ControlService
 {
-  public:
+public:
 	explicit ControlService(Runtime& runtime, std::size_t maxConnections = 16,
 							std::shared_ptr<ImageInspectionProvider> images = {});
 	~ControlService();
@@ -34,7 +36,7 @@ class ControlService
 	ControlPacket HandlePacket(ConnectionId connection, const ControlPacket& request);
 	void Close() noexcept;
 
-  private:
+private:
 	struct Client;
 	struct Publication;
 	struct HeldReaders;

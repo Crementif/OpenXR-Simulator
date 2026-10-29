@@ -2,7 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-
 namespace simxr
 {
 static constexpr std::size_t Index(BodyJoint joint)
@@ -10,8 +9,7 @@ static constexpr std::size_t Index(BodyJoint joint)
 	return static_cast<std::size_t>(joint);
 }
 
-static const std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> s_jointsFB = []
-{
+static const std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> s_jointsFB = [] {
 	std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> result{};
 	result[XR_BODY_JOINT_ROOT_FB] = BodyJoint::Root;
 	result[XR_BODY_JOINT_HIPS_FB] = BodyJoint::Hips;
@@ -86,8 +84,7 @@ static const std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> s_jointsFB = []
 	return result;
 }();
 
-static const std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> s_jointsMETA = []
-{
+static const std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> s_jointsMETA = [] {
 	std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> result{};
 	result[XR_FULL_BODY_JOINT_ROOT_META] = BodyJoint::Root;
 	result[XR_FULL_BODY_JOINT_HIPS_META] = BodyJoint::Hips;
@@ -176,8 +173,7 @@ static const std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> s_jointsMETA =
 	return result;
 }();
 
-static const std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> s_jointsBD = []
-{
+static const std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> s_jointsBD = [] {
 	std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> result{};
 	result[XR_BODY_JOINT_PELVIS_BD] = BodyJoint::Hips;
 	result[XR_BODY_JOINT_LEFT_HIP_BD] = BodyJoint::LeftUpperLeg;
@@ -377,8 +373,7 @@ void BodyModel::Rebuild()
 	const auto height = m_proportions.height;
 	const auto shoulder = m_proportions.shoulderWidth / 2;
 	const auto hip = m_proportions.hipWidth / 2;
-	auto set = [&](BodyJoint joint, std::optional<BodyJoint> parent, XrVector3f position)
-	{
+	auto set = [&](BodyJoint joint, std::optional<BodyJoint> parent, XrVector3f position) {
 		m_skeleton[Index(joint)] = {joint, parent, {{0, 0, 0, 1}, position}};
 	};
 	set(BodyJoint::Root, {}, {0, 0, 0});

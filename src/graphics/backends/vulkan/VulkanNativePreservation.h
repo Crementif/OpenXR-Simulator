@@ -19,7 +19,8 @@ namespace simxr
 // final parking cell before acquisition. Unknown completion transfers the entire
 // charged native owner here without allocation, waiting or destroying anything.
 // Process lifetime is deliberate: shutdown is not proof of GPU completion.
-template <class Resource, std::size_t Capacity> class VulkanNativePreservation
+template<class Resource, std::size_t Capacity>
+class VulkanNativePreservation
 {
 	struct Storage
 	{
@@ -38,11 +39,13 @@ template <class Resource, std::size_t Capacity> class VulkanNativePreservation
 				}
 			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, diagnostic);
 		}
+
 		void Release(std::size_t index) noexcept
 		{
 			std::lock_guard lock(mutex);
 			reserved[index] = false;
 		}
+
 		void Preserve(std::size_t index, std::unique_ptr<Resource> resource) noexcept
 		{
 			std::lock_guard lock(mutex);
@@ -50,29 +53,33 @@ template <class Resource, std::size_t Capacity> class VulkanNativePreservation
 			preserved[index].swap(resource);
 		}
 	};
+
 	static Storage& Owners()
 	{
 		static auto* s_owners = new Storage;
 		return *s_owners;
 	}
 
-  public:
+public:
 	class Reservation
 	{
-	  public:
+	public:
 		explicit Reservation(const char* diagnostic) : m_index(Owners().Reserve(diagnostic)) {}
+
 		~Reservation()
 		{
 			Owners().Release(m_index);
 		}
+
 		Reservation(const Reservation&) = delete;
 		Reservation& operator=(const Reservation&) = delete;
+
 		void Preserve(std::unique_ptr<Resource> resource) noexcept
 		{
 			Owners().Preserve(m_index, std::move(resource));
 		}
 
-	  private:
+	private:
 #ifdef _WIN32
 		windows::ModuleReference m_module;
 #endif

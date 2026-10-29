@@ -27,7 +27,7 @@ ImGuiWindow* FindPanel(const char* name);
 bool UseValidation();
 std::filesystem::path QaDirectory(const char* name);
 
-template <typename Pump>
+template<typename Pump>
 void ChooseRigView(ImGuiID rig, const char* view, Pump pump)
 {
 	ImGui::ActivateItemByID(ImHashStr("##View", 0, rig));
@@ -40,7 +40,7 @@ void ChooseRigView(ImGuiID rig, const char* view, Pump pump)
 
 class Interaction
 {
-  public:
+public:
 	Window window{true};
 	std::shared_ptr<ValidationLog> validation = std::make_shared<ValidationLog>();
 	UiRenderer renderer{window, UseValidation(), validation, true};
@@ -53,6 +53,7 @@ class Interaction
 	std::function<void()> extraDraw;
 	unsigned clicks = 0;
 	bool live = false;
+
 	Interaction(bool launch = false) : workspace(processes, launch, ""), live(launch) {}
 
 	bool PollEvents();

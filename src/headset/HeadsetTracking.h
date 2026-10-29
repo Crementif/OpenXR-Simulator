@@ -18,6 +18,7 @@ struct HeadsetAlignment
 	float worldFloor = 0;
 	std::optional<float> localEyeHeight;
 };
+
 XrPosef AlignHeadset(const HeadsetInputSample& input, const HeadsetAlignment& alignment);
 HeadsetAlignment HeadsetRestartAlignment(const HeadsetInputSample& input, XrPosef worldFromInitial, float worldFloor);
 

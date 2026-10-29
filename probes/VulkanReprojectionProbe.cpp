@@ -17,6 +17,7 @@ static void Require(bool condition, const char* message)
 	if (!condition)
 		throw std::runtime_error(message);
 }
+
 static void Await(const GpuCompletion& output)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -30,6 +31,7 @@ static void Await(const GpuCompletion& output)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
+
 static std::shared_ptr<const VulkanImagePixels> Pixels(const VulkanInspectionFrame& image)
 {
 	auto read = image.Export();
@@ -39,15 +41,18 @@ static std::shared_ptr<const VulkanImagePixels> Pixels(const VulkanInspectionFra
 	Require(pixels != nullptr, "Completed composition export omitted pixels");
 	return pixels;
 }
+
 static float Decode(float value)
 {
 	return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
 }
+
 static float Encode(float value)
 {
 	value = std::clamp(value, 0.0f, 1.0f);
 	return value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1 / 2.4f) - 0.055f;
 }
+
 static XrColor4f Sample(const VulkanImagePixels& image, XrVector2f uv)
 {
 	const float x = uv.x * image.width - 0.5f, y = uv.y * image.height - 0.5f;
@@ -69,6 +74,7 @@ static XrColor4f Sample(const VulkanImagePixels& image, XrVector2f uv)
 		}
 	return {result[0], result[1], result[2], result[3]};
 }
+
 static void Verify(const CompositionPlan& plan, const VulkanImagePixels& output,
 				   const std::vector<std::shared_ptr<const VulkanImagePixels>>& sources)
 {
@@ -115,13 +121,13 @@ static void Verify(const CompositionPlan& plan, const VulkanImagePixels& output,
 				}
 			}
 }
+
 static void Exercise(std::vector<std::shared_ptr<VulkanInspectionFrame>> sources,
 					 const std::shared_ptr<VulkanInspectionFrame>& foreign, bool verify)
 {
 	Require(sources.size() == 5, "Expected separate outer/inset/quad retained sources");
 	const PoseSample head{IdentityPose(), TrackedPoseFlags, {Duration{1}}};
-	const auto fov = [](float tangent)
-	{
+	const auto fov = [](float tangent) {
 		const float angle = std::atan(tangent);
 		return XrFovf{-angle, angle, angle, -angle};
 	};
@@ -151,8 +157,7 @@ static void Exercise(std::vector<std::shared_ptr<VulkanInspectionFrame>> sources
 	hud.worldPose.pose = hud.poseInSpace;
 	hud.size = {0.6f, 0.4f};
 	FrameLayers layers{{Duration{1}}, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, {projection, world, hud}};
-	const CompositionExtentResolver extent = [](XrSwapchain)
-	{
+	const CompositionExtentResolver extent = [](XrSwapchain) {
 		return XrExtent2Di{4, 5};
 	};
 	CompositionPlan baseline, rotated;
@@ -219,31 +224,26 @@ static void Exercise(std::vector<std::shared_ptr<VulkanInspectionFrame>> sources
 	}
 	for (auto& output : outputs)
 		output.reset();
-	auto sampling = std::async(
-		std::launch::async,
-		[&]
+	auto sampling = std::async(std::launch::async, [&] {
+		for (std::uint32_t iteration = 0; iteration < 6; ++iteration)
 		{
-			for (std::uint32_t iteration = 0; iteration < 6; ++iteration)
-			{
-				auto image = VulkanInspectionFrame::Compose(rotated, bindings);
-				Require(image != nullptr, "Completed retained sources became pending during concurrent composition");
-				Await(*image);
-				if (verify)
-					Verify(rotated, *Pixels(*image), reference);
-			}
-		});
-	auto exporting = std::async(std::launch::async,
-								[&]
-								{
-									for (std::uint32_t iteration = 0; iteration < 6; ++iteration)
-									{
-										if (verify)
-											Require(Pixels(*sources[0])->rgba == reference[0]->rgba,
-													"Concurrent composition changed source pixels");
-										auto delivery = sources[4]->Share();
-										Await(*delivery);
-									}
-								});
+			auto image = VulkanInspectionFrame::Compose(rotated, bindings);
+			Require(image != nullptr, "Completed retained sources became pending during concurrent composition");
+			Await(*image);
+			if (verify)
+				Verify(rotated, *Pixels(*image), reference);
+		}
+	});
+	auto exporting = std::async(std::launch::async, [&] {
+		for (std::uint32_t iteration = 0; iteration < 6; ++iteration)
+		{
+			if (verify)
+				Require(Pixels(*sources[0])->rgba == reference[0]->rgba,
+						"Concurrent composition changed source pixels");
+			auto delivery = sources[4]->Share();
+			Await(*delivery);
+		}
+	});
 	sampling.get();
 	exporting.get();
 	outputs[0] = VulkanInspectionFrame::Compose(rotated, bindings);
@@ -258,6 +258,7 @@ static void Exercise(std::vector<std::shared_ptr<VulkanInspectionFrame>> sources
 	Await(*shared);
 	std::puts("case=owned-per-layer-composition afterApplicationTeardown=1 boundedOutputs=3 PASS");
 }
+
 void VerifyCompositionPixels(const CompositionPlan& plan, const VulkanInspectionFrame& output,
 							 const std::vector<std::shared_ptr<const VulkanImagePixels>>& sources)
 {

@@ -127,6 +127,7 @@ struct PendingConsumerDevice
 {
 	Instance instance;
 	VkDevice device = VK_NULL_HANDLE;
+
 	~PendingConsumerDevice()
 	{
 		if (device)
@@ -187,12 +188,10 @@ static std::shared_ptr<VulkanDevice> CreateConsumerDevice(const control::ImageDe
 			  "enumerate pending-consumer device extensions");
 		extensions.resize(count);
 		for (const auto* required : enabled)
-			Require(std::any_of(extensions.begin(), extensions.end(),
-								[&](const auto& extension)
-								{
-									return std::strcmp(required, extension.extensionName) == 0;
-								}),
-					"Pending-consumer device extension is unavailable");
+			Require(
+				std::any_of(extensions.begin(), extensions.end(),
+							[&](const auto& extension) { return std::strcmp(required, extension.extensionName) == 0; }),
+				"Pending-consumer device extension is unavailable");
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
 		std::vector<VkQueueFamilyProperties> families(count);
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());
@@ -443,40 +442,30 @@ WindowsPendingDelivery::~WindowsPendingDelivery()
 
 void WindowsPendingDelivery::StartWatchdog()
 {
-	m_watchdog = std::thread(
-		[this]
+	m_watchdog = std::thread([this] {
+		try
 		{
-			try
-			{
-				std::unique_lock lock(m_watchdogMutex);
-				if (m_watchdogChanged.wait_for(lock, std::chrono::seconds(10),
-											   [this]
-											   {
-												   return m_stopWatchdog;
-											   }))
-					return;
-				m_watchdogExpired = true;
-				lock.unlock();
-				std::fputs("FAIL: pending-runtime watchdog expired after 10 seconds; signaling the GPU gate\n", stderr);
-				std::fflush(stderr);
-				VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-				signal.semaphore = m_gate;
-				signal.value = 1;
-				if (m_signal(m_device->binding.device, &signal) != VK_SUCCESS)
-					PreservePending("watchdog could not signal the GPU gate");
-				lock.lock();
-				if (!m_watchdogChanged.wait_for(lock, std::chrono::seconds(2),
-												[this]
-												{
-													return m_stopWatchdog;
-												}))
-					PreservePending("native teardown did not return after the watchdog released its gate");
-			}
-			catch (...)
-			{
-				PreservePending("pending-consumer watchdog failed");
-			}
-		});
+			std::unique_lock lock(m_watchdogMutex);
+			if (m_watchdogChanged.wait_for(lock, std::chrono::seconds(10), [this] { return m_stopWatchdog; }))
+				return;
+			m_watchdogExpired = true;
+			lock.unlock();
+			std::fputs("FAIL: pending-runtime watchdog expired after 10 seconds; signaling the GPU gate\n", stderr);
+			std::fflush(stderr);
+			VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+			signal.semaphore = m_gate;
+			signal.value = 1;
+			if (m_signal(m_device->binding.device, &signal) != VK_SUCCESS)
+				PreservePending("watchdog could not signal the GPU gate");
+			lock.lock();
+			if (!m_watchdogChanged.wait_for(lock, std::chrono::seconds(2), [this] { return m_stopWatchdog; }))
+				PreservePending("native teardown did not return after the watchdog released its gate");
+		}
+		catch (...)
+		{
+			PreservePending("pending-consumer watchdog failed");
+		}
+	});
 }
 
 void WindowsPendingDelivery::StopWatchdog()
@@ -640,10 +629,7 @@ void WindowsPendingDelivery::ReleaseAndVerify()
 			{
 				const auto key = Import(shared, preview, *m_consumers[index]);
 				Require(std::none_of(m_keys.begin(), m_keys.end(),
-									 [&key](const auto& previous)
-									 {
-										 return previous.pool == key.pool;
-									 }),
+									 [&key](const auto& previous) { return previous.pool == key.pool; }),
 						"Recreated runtime reused an old immutable allocation pool");
 				deliveries[index] = Id(shared.message, control::tag::DeliveryId);
 				m_consumers[index]->Submit();

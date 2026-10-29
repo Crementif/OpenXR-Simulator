@@ -11,39 +11,48 @@ static float Yaw(XrQuaternionf q)
 	const auto forward = Rotate(q, {0, 0, -1});
 	return std::atan2(-forward.x, -forward.z);
 }
+
 static XrVector3f Add(XrVector3f a, XrVector3f b)
 {
 	return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
+
 static XrVector3f Subtract(XrVector3f a, XrVector3f b)
 {
 	return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
+
 static XrVector3f Scale(XrVector3f a, float factor)
 {
 	return {a.x * factor, a.y * factor, a.z * factor};
 }
+
 static float Dot(XrVector3f a, XrVector3f b)
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
 }
+
 static float Length(XrVector3f a)
 {
 	return std::sqrt(Dot(a, a));
 }
+
 static XrVector3f Normalize(XrVector3f a)
 {
 	const float length = Length(a);
 	return length > 1e-6f ? Scale(a, 1 / length) : XrVector3f{0, 0, -1};
 }
+
 static std::size_t Index(BodyJoint joint)
 {
 	return static_cast<std::size_t>(joint);
 }
+
 struct ArmJoints
 {
 	BodyJoint upper, lower, twist, wrist, palm, firstFinger, lastFinger, upperLeg, lowerLeg;
 };
+
 static constexpr std::array<ArmJoints, 2> s_arms{{
 	{BodyJoint::LeftArmUpper, BodyJoint::LeftArmLower, BodyJoint::LeftHandWristTwist, BodyJoint::LeftHandWrist,
 	 BodyJoint::LeftHandPalm, BodyJoint::LeftHandIndexDistal, BodyJoint::LeftHandThumbTip, BodyJoint::LeftUpperLeg,
@@ -59,11 +68,11 @@ static constexpr std::array s_attachable{
 	BodyJoint::RightHandWrist, BodyJoint::LeftHandPalm, BodyJoint::RightHandPalm, BodyJoint::LeftUpperLeg,
 	BodyJoint::RightUpperLeg,  BodyJoint::LeftLowerLeg, BodyJoint::RightLowerLeg, BodyJoint::LeftFootAnkle,
 	BodyJoint::RightFootAnkle, BodyJoint::LeftFootBall, BodyJoint::RightFootBall};
+
 // Arm pose from the posed skeleton: the elbow bends back and down when the hand is closer than full reach.
 static void PoseArm(const BodySample& base, const ArmJoints& arm, XrVector3f palm, BodyControls& body)
 {
-	const auto at = [&](BodyJoint joint)
-	{
+	const auto at = [&](BodyJoint joint) {
 		return base.joints[Index(joint)].pose.position;
 	};
 	const auto upper = at(arm.upper), lower = at(arm.lower), twist = at(arm.twist), wrist = at(arm.wrist),
@@ -82,8 +91,7 @@ static void PoseArm(const BodySample& base, const ArmJoints& arm, XrVector3f pal
 	const auto upperRotation = RotationBetween(Normalize(Subtract(lower, upper)), Normalize(Subtract(elbow, upper)));
 	const auto lowerRotation = RotationBetween(Normalize(Subtract(wrist, lower)), Normalize(Subtract(target, elbow)));
 	const auto handRotation = RotationBetween(Normalize(Subtract(bindPalm, wrist)), Normalize(Subtract(palm, target)));
-	const auto set = [&](BodyJoint joint, XrVector3f position, XrQuaternionf orientation)
-	{
+	const auto set = [&](BodyJoint joint, XrVector3f position, XrQuaternionf orientation) {
 		body.joints[Index(joint)] = BodyJointOverride{XrPosef{orientation, position}, true};
 	};
 	const float twistWeight = Length(Subtract(twist, lower)) / std::max(lowerLength, 1e-4f);
@@ -97,6 +105,7 @@ static void PoseArm(const BodySample& base, const ArmJoints& arm, XrVector3f pal
 			set(static_cast<BodyJoint>(index),
 				Add(palm, Rotate(handRotation, Subtract(base.joints[index].pose.position, bindPalm))), handRotation);
 }
+
 const char* TrackerRoleName(TrackerRole role)
 {
 	switch (role)
@@ -140,10 +149,12 @@ const char* TrackerRoleName(TrackerRole role)
 	}
 	return "Tracker";
 }
+
 char TrackerRoleLetter(TrackerRole role)
 {
 	return TrackerRoleName(role)[0];
 }
+
 const char* BodyJointName(BodyJoint joint)
 {
 	switch (joint)
@@ -198,10 +209,12 @@ const char* BodyJointName(BodyJoint joint)
 		return "Joint";
 	}
 }
+
 std::span<const BodyJoint> AttachableJoints()
 {
 	return s_attachable;
 }
+
 PosedBody PoseBody(BodyPose pose, const BodyControls& current, const BodyProportions& proportions, float headHeight)
 {
 	PosedBody result;
@@ -213,8 +226,7 @@ PosedBody PoseBody(BodyPose pose, const BodyControls& current, const BodyProport
 	controls.rootPose = IdentityPose();
 	const PoseSample head{{{0, 0, 0, 1}, {0, headHeight, 0}}, TrackedPoseFlags};
 	const auto base = BodyModel{proportions}.Evaluate(head, controls, RuntimeTime{Duration{1}});
-	const auto at = [&](BodyJoint joint)
-	{
+	const auto at = [&](BodyJoint joint) {
 		return base.joints[Index(joint)].pose.position;
 	};
 	for (std::size_t side = 0; side < 2; ++side)
@@ -241,15 +253,18 @@ PosedBody PoseBody(BodyPose pose, const BodyControls& current, const BodyProport
 	}
 	return result;
 }
+
 XrPosef PlayerRig::Root() const
 {
 	return {EulerAngles(facing, 0, 0), position};
 }
+
 XrPosef PlayerRig::Head() const
 {
 	return Compose(Root(),
 				   {Multiply(EulerAngles(m_headYaw, m_headPitch, 0), m_headRoll), {m_lean.x, height, m_lean.z}});
 }
+
 XrPosef PlayerRig::AnchorPose(Anchor anchor) const
 {
 	switch (anchor)
@@ -263,11 +278,13 @@ XrPosef PlayerRig::AnchorPose(Anchor anchor) const
 	}
 	return IdentityPose();
 }
+
 XrPosef PlayerRig::Hand(std::size_t hand) const
 {
 	const auto& device = m_hands.at(hand);
 	return Compose(AnchorPose(device.anchor), device.offset);
 }
+
 XrPosef PlayerRig::JointPose(BodyJoint joint) const
 {
 	auto controls = m_body;
@@ -276,11 +293,13 @@ XrPosef PlayerRig::JointPose(BodyJoint joint) const
 	const PoseSample head{Head(), TrackedPoseFlags};
 	return BodyModel{m_proportions}.Evaluate(head, controls, RuntimeTime{Duration{1}}).joints[Index(joint)].pose;
 }
+
 XrPosef PlayerRig::Tracker(std::size_t slot) const
 {
 	const auto& tracker = m_trackers.at(slot);
 	return tracker.joint ? Compose(JointPose(*tracker.joint), tracker.offset) : tracker.offset;
 }
+
 void PlayerRig::SetHeadWorld(XrPosef pose)
 {
 	const auto localHead = RelativePose(pose, Root());
@@ -291,36 +310,43 @@ void PlayerRig::SetHeadWorld(XrPosef pose)
 	m_headPitch = std::asin(std::clamp(forward.y, -1.0f, 1.0f));
 	m_headRoll = RelativePose({localHead.orientation, {}}, {EulerAngles(m_headYaw, m_headPitch, 0), {}}).orientation;
 }
+
 void PlayerRig::SetHandWorld(std::size_t hand, XrPosef pose)
 {
 	auto& device = m_hands.at(hand);
 	device.offset = RelativePose(pose, AnchorPose(device.anchor));
 }
+
 void PlayerRig::SetTrackerWorld(std::size_t slot, XrPosef pose)
 {
 	auto& tracker = m_trackers.at(slot);
 	tracker.offset = tracker.joint ? RelativePose(pose, JointPose(*tracker.joint)) : pose;
 }
+
 void PlayerRig::SetHandAnchor(std::size_t hand, Anchor anchor)
 {
 	const auto pose = Hand(hand);
 	m_hands.at(hand).anchor = anchor;
 	SetHandWorld(hand, pose);
 }
+
 void PlayerRig::AttachTracker(std::size_t slot, std::optional<BodyJoint> joint)
 {
 	const auto pose = Tracker(slot);
 	m_trackers.at(slot).joint = joint;
 	SetTrackerWorld(slot, pose);
 }
+
 void PlayerRig::SnapTracker(std::size_t slot)
 {
 	m_trackers.at(slot) = {BodyModel::TrackerJoint(m_trackerDevices.at(slot).role), IdentityPose()};
 }
+
 void PlayerRig::SetTrackerOffset(std::size_t slot, XrPosef offset)
 {
 	m_trackers.at(slot).offset = offset;
 }
+
 void PlayerRig::Reset(const ObservedSetup& observed)
 {
 	const auto& head = observed.values.tracking.head.pose;
@@ -341,6 +367,7 @@ void PlayerRig::Reset(const ObservedSetup& observed)
 	m_ready = true;
 	Observe(observed);
 }
+
 void PlayerRig::Observe(const ObservedSetup& observed)
 {
 	if (!m_ready)
@@ -379,6 +406,7 @@ void PlayerRig::Observe(const ObservedSetup& observed)
 	}
 	ObserveTrackers(observed);
 }
+
 void PlayerRig::ObserveTrackers(const ObservedSetup& observed)
 {
 	if (observed.values.tracking.trackers.size() > MaxTrackerDevices)
@@ -388,10 +416,7 @@ void PlayerRig::ObserveTrackers(const ObservedSetup& observed)
 	for (const auto& device : observed.values.tracking.trackers)
 	{
 		const auto previous = std::find_if(m_trackerDevices.begin(), m_trackerDevices.end(),
-										   [&](const auto& value)
-										   {
-											   return value.identity == device.identity;
-										   });
+										   [&](const auto& value) { return value.identity == device.identity; });
 		const auto joint = device.anchor.value_or(BodyModel::TrackerJoint(device.role));
 		TrackerAttachment tracker{joint, IdentityPose()};
 		if (previous != m_trackerDevices.end())
@@ -425,6 +450,7 @@ void PlayerRig::Preset(std::size_t hand, HandPreset preset)
 		offset.orientation = EulerAngles(0, std::numbers::pi_v<float> / 2, 0);
 	SetHandWorld(hand, Compose(Root(), offset));
 }
+
 void PlayerRig::ApplyBodyPose(BodyPose pose)
 {
 	const auto posed = PoseBody(pose, m_body, m_proportions, height);
@@ -433,6 +459,7 @@ void PlayerRig::ApplyBodyPose(BodyPose pose)
 		m_hands[hand] = {Anchor::Body, posed.hands[hand]};
 	m_bodyPose = pose;
 }
+
 void PlayerRig::ResetHead()
 {
 	m_headYaw = m_headPitch = 0;
@@ -440,15 +467,18 @@ void PlayerRig::ResetHead()
 	m_lean = {};
 	height = m_proportions.height;
 }
+
 void PlayerRig::ResetHand(std::size_t hand)
 {
 	m_hands.at(hand) = {Anchor::Body, TrackingState{}.controllers.at(hand).pose.pose};
 }
+
 void PlayerRig::ResetBody()
 {
 	m_body = {};
 	m_bodyPose = BodyPose::Stand;
 }
+
 void PlayerRig::ResetTracker(std::size_t slot)
 {
 	const auto identity = m_trackerDevices.at(slot).identity;
@@ -458,6 +488,7 @@ void PlayerRig::ResetTracker(std::size_t slot)
 	m_trackerDevices.at(slot).sourcePath = sourcePath;
 	SnapTracker(slot);
 }
+
 void PlayerRig::ResetAll()
 {
 	position = {};
@@ -469,6 +500,7 @@ void PlayerRig::ResetAll()
 	for (std::size_t slot = 0; slot < m_trackers.size(); ++slot)
 		ResetTracker(slot);
 }
+
 void PlayerRig::Move(XrVector3f velocity, float yaw, float pitch, float seconds, bool freeLook)
 {
 	if (freeLook)
@@ -482,13 +514,13 @@ void PlayerRig::Move(XrVector3f velocity, float yaw, float pitch, float seconds,
 	position.z += movement.z * delta;
 	height = std::clamp(height + velocity.y * delta, .4f, 2.2f);
 }
+
 ManualTransaction PlayerRig::Transaction(const ObservedSetup& observed, std::optional<CommandSource> ownSource,
 										 bool includeWorld) const
 {
 	ManualTransaction result;
 	result.continuous = true;
-	const auto allowed = [&](ControlChannel channel)
-	{
+	const auto allowed = [&](ControlChannel channel) {
 		const auto& owner = observed.owners[static_cast<std::size_t>(channel)];
 		return !owner || (ownSource && *owner == *ownSource);
 	};

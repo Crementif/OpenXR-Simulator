@@ -17,8 +17,8 @@ namespace simxr::headset
 {
 HeadsetSession::HeadsetSession(OpenXrRuntime& runtime, HeadsetGraphics& graphics)
 	: m_runtime(runtime), m_graphics(graphics)
-{
-}
+{}
+
 HeadsetSession::~HeadsetSession()
 {
 	Close();

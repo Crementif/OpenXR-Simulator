@@ -9,20 +9,15 @@ FramePreviewHistory::Entry::Entry()
 	tracking.trackers.reserve(MaxTrackerDevices);
 	tracking.input.trackers.reserve(MaxTrackerDevices);
 }
+
 std::uint64_t FramePreviewHistory::Entry::StateBytes() const noexcept
 {
 	return sizeof(Entry) + 128 + tracking.trackers.capacity() * sizeof(TrackerSample) +
 		   tracking.input.trackers.capacity() * sizeof(TrackerDevice);
 }
 
-FramePreviewHistory::FramePreviewHistory()
-	: m_worker(
-		  [this]
-		  {
-			  Run();
-		  })
-{
-}
+FramePreviewHistory::FramePreviewHistory() : m_worker([this] { Run(); }) {}
+
 FramePreviewHistory::~FramePreviewHistory()
 {
 	{
@@ -32,6 +27,7 @@ FramePreviewHistory::~FramePreviewHistory()
 	m_changed.notify_all();
 	m_worker.join();
 }
+
 void FramePreviewHistory::Configure(std::uint64_t bytes)
 {
 	if (bytes < (std::uint64_t{MinMiB} << 20) || bytes > (std::uint64_t{MaxMiB} << 20) || bytes % SlotBytes)
@@ -42,6 +38,7 @@ void FramePreviewHistory::Configure(std::uint64_t bytes)
 			break;
 	m_changed.notify_all();
 }
+
 void FramePreviewHistory::CloseAdmission()
 {
 	{
@@ -51,6 +48,7 @@ void FramePreviewHistory::CloseAdmission()
 	m_budget.CloseAdmission();
 	m_changed.notify_all();
 }
+
 void FramePreviewHistory::ConfigureRam(std::uint64_t bytes)
 {
 	if (bytes < (std::uint64_t{MinMiB} << 20) || bytes > (std::uint64_t{MaxMiB} << 20) || bytes % SlotBytes)
@@ -58,12 +56,14 @@ void FramePreviewHistory::ConfigureRam(std::uint64_t bytes)
 	m_ramLimit.store(bytes);
 	TrimRam();
 }
+
 std::string FramePreviewHistory::Error() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_error.empty() && m_gpuOnly ? "Vulkan H.264 encode/decode unavailable; retaining GPU history only"
 										: m_error;
 }
+
 std::shared_ptr<FramePreviewHistory::Entry> FramePreviewHistory::EvictRaw()
 {
 	std::lock_guard lock(m_mutex);
@@ -80,6 +80,7 @@ std::shared_ptr<FramePreviewHistory::Entry> FramePreviewHistory::EvictRaw()
 	}
 	return {};
 }
+
 std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key, bool waitForSpace)
 {
 	auto reservation = m_budget.Reserve();
@@ -99,7 +100,8 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key, boo
 			// A budget shrink or slow encoder can leave completed frames awaiting archival.
 			// Keep the next application frame intact while the worker releases their GPU slots.
 			std::unique_lock lock(m_mutex);
-			if (!waitForSpace || m_admissionClosed || m_stopping || !m_error.empty() || std::chrono::steady_clock::now() >= deadline)
+			if (!waitForSpace || m_admissionClosed || m_stopping || !m_error.empty() ||
+				std::chrono::steady_clock::now() >= deadline)
 				return {};
 			m_changed.wait_for(lock, std::chrono::milliseconds(1));
 		}
@@ -113,14 +115,12 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key, boo
 		std::lock_guard lock(m_mutex);
 		if (m_admissionClosed)
 			return {};
-		std::erase_if(m_recent,
-					  [&](const auto& frame)
-					  {
-						  if (frame->preview.submitted || !frame->admission.expired())
-							  return false;
-						  m_frames.erase(frame->preview.key);
-						  return true;
-					  });
+		std::erase_if(m_recent, [&](const auto& frame) {
+			if (frame->preview.submitted || !frame->admission.expired())
+				return false;
+			m_frames.erase(frame->preview.key);
+			return true;
+		});
 		const auto [found, inserted] = m_frames.emplace(key, entry);
 		if (!inserted)
 			throw std::logic_error("Duplicate preview admission");
@@ -136,6 +136,7 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key, boo
 	}
 	return reservation;
 }
+
 void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
 								 const TrackingSnapshot* tracking, RuntimeTime time, Duration period)
 {
@@ -190,6 +191,7 @@ void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput
 	TrimRam();
 	m_changed.notify_one();
 }
+
 void FramePreviewHistory::TrimRam()
 {
 	{
@@ -210,10 +212,7 @@ void FramePreviewHistory::TrimRam()
 				return;
 			}
 			const auto found = std::find_if(m_frames.begin(), m_frames.end(),
-											[](const auto& entry)
-											{
-												return entry.second->charge != 0;
-											});
+											[](const auto& entry) { return entry.second->charge != 0; });
 			if (found == m_frames.end())
 			{
 				m_trimming = false;
@@ -226,6 +225,7 @@ void FramePreviewHistory::TrimRam()
 		}
 	}
 }
+
 std::vector<FrameKey> FramePreviewHistory::Frames(SessionGeneration generation, std::size_t limit) const
 {
 	std::vector<FrameKey> frames;
@@ -241,6 +241,7 @@ std::vector<FrameKey> FramePreviewHistory::Frames(SessionGeneration generation, 
 	std::reverse(frames.begin(), frames.end());
 	return frames;
 }
+
 std::shared_ptr<const TrackingSnapshot> FramePreviewHistory::Tracking(FrameKey key) const
 {
 	std::lock_guard lock(m_mutex);
@@ -249,6 +250,7 @@ std::shared_ptr<const TrackingSnapshot> FramePreviewHistory::Tracking(FrameKey k
 		return {};
 	return {found->second, &found->second->tracking};
 }
+
 std::vector<PreviewClipFrame> FramePreviewHistory::RetainRange(FrameKey first, FrameKey last) const
 {
 	if (first.generation != last.generation || !first.frame.value || last.frame.value < first.frame.value ||
@@ -270,6 +272,7 @@ std::vector<PreviewClipFrame> FramePreviewHistory::RetainRange(FrameKey first, F
 	}
 	return frames;
 }
+
 FramePreview FramePreviewHistory::Find(FrameKey key)
 {
 	std::lock_guard lock(m_mutex);
@@ -297,6 +300,7 @@ FramePreview FramePreviewHistory::Find(FrameKey key)
 		result.tracking = {entry, &entry->tracking};
 	return result;
 }
+
 void FramePreviewHistory::Run() noexcept
 {
 	bool worked = false, retry = false;
@@ -313,11 +317,7 @@ void FramePreviewHistory::Run() noexcept
 				return;
 			if (!m_error.empty())
 			{
-				m_changed.wait(lock,
-							   [this]
-							   {
-								   return m_stopping;
-							   });
+				m_changed.wait(lock, [this] { return m_stopping; });
 				return;
 			}
 			const auto requested = m_frames.find(m_requested);

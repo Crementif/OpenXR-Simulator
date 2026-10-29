@@ -26,6 +26,7 @@ struct LaunchProfile
 	bool useBundledRuntime = false;
 	bool operator==(const LaunchProfile&) const = default;
 };
+
 void ValidateLaunchProfile(const LaunchProfile& profile);
 LaunchProfile ResolveLaunchProfile(LaunchProfile profile, const std::filesystem::path& applicationDirectory);
 std::string LinuxSteamRuntimeOption(const std::filesystem::path& manifest);
@@ -46,6 +47,7 @@ enum class LaunchState
 	Exited,
 	Failed
 };
+
 struct LaunchSnapshot
 {
 	LaunchState state = LaunchState::Idle;

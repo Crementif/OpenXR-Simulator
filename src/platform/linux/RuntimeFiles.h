@@ -14,22 +14,24 @@
 namespace simxr
 {
 std::shared_ptr<const PoseSequence> LoadStartupSequence(const std::filesystem::path& path);
+
 struct RuntimeLogStatus
 {
 	bool closed = false;
 	std::uint64_t errors = 0, droppedLogs = 0;
 	std::string detail;
 };
+
 class RuntimeLog
 {
-  public:
+public:
 	explicit RuntimeLog(std::filesystem::path directory);
 	~RuntimeLog();
 	bool Log(std::string message);
 	RuntimeLogStatus Status() const;
 	void Close();
 
-  private:
+private:
 	void Run() noexcept;
 	void RecordError(std::string_view detail) noexcept;
 	void AppendLog(const std::vector<std::string>& messages);

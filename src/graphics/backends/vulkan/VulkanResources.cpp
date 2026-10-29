@@ -25,10 +25,12 @@ VulkanCommands::VulkanCommands(VkDevice device, std::uint32_t queueFamily) : m_d
 		throw;
 	}
 }
+
 VulkanCommands::~VulkanCommands()
 {
 	Destroy();
 }
+
 void VulkanCommands::Destroy() noexcept
 {
 	if (pool)
@@ -40,6 +42,7 @@ void VulkanCommands::Destroy() noexcept
 	if (fence)
 		vkDestroyFence(m_device, fence, nullptr);
 }
+
 void VulkanCommands::Reset()
 {
 	CheckVulkan(vkResetCommandPool(m_device, pool, 0), "Reset completed command pool");

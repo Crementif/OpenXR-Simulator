@@ -6,14 +6,16 @@
 namespace simxr::control
 {
 namespace native = windows;
+
 ControlExchangeTimeout::ControlExchangeTimeout(RequestId request)
 	: std::runtime_error("Control exchange is unfinished; Retry or Close explicitly"), m_request(request)
-{
-}
+{}
+
 RequestId ControlExchangeTimeout::Request() const noexcept
 {
 	return m_request;
 }
+
 struct LocalControlClient::State
 {
 	struct Exchange
@@ -28,12 +30,14 @@ struct LocalControlClient::State
 		bool imported = false;
 		std::vector<std::shared_ptr<TransferHandle>> handles;
 	};
+
 	mutable std::mutex mutex;
 	native::Handle stopping = native::Event();
 	std::unique_ptr<native::Channel> pipe;
 	std::unique_ptr<Exchange> pending;
 	std::chrono::milliseconds timeout;
 	std::uint64_t next = 1, peerProcess = 0;
+
 	State(const std::string& path, std::chrono::milliseconds timeout) : timeout(timeout)
 	{
 		if (timeout.count() <= 0 || timeout > std::chrono::hours{24})
@@ -65,6 +69,7 @@ struct LocalControlClient::State
 			throw native::Error("Query control pipe peer process failed");
 		peerProcess = process;
 	}
+
 	std::unique_ptr<Exchange> Close() noexcept
 	{
 		SetEvent(stopping.value);
@@ -73,6 +78,7 @@ struct LocalControlClient::State
 		pipe.reset();
 		return std::move(pending);
 	}
+
 	ControlPacket ExchangePacket()
 	{
 		const auto deadline = native::Clock::now() + timeout;
@@ -152,18 +158,21 @@ struct LocalControlClient::State
 		}
 	}
 };
+
 LocalControlClient::LocalControlClient(std::string path, std::chrono::milliseconds timeout)
 	: m_state(std::make_unique<State>(path, timeout))
-{
-}
+{}
+
 LocalControlClient::~LocalControlClient()
 {
 	Close();
 }
+
 std::uint64_t LocalControlClient::PeerProcess() const noexcept
 {
 	return m_state->peerProcess;
 }
+
 ControlPacket LocalControlClient::Request(ControlPacket request)
 {
 	std::unique_ptr<State::Exchange> retired;
@@ -209,6 +218,7 @@ ControlPacket LocalControlClient::Request(ControlPacket request)
 		throw;
 	}
 }
+
 ControlPacket LocalControlClient::Retry()
 {
 	std::unique_ptr<State::Exchange> retired;
@@ -231,11 +241,13 @@ ControlPacket LocalControlClient::Retry()
 		throw;
 	}
 }
+
 std::optional<RequestId> LocalControlClient::Pending() const
 {
 	std::lock_guard lock(m_state->mutex);
 	return m_state->pending ? std::optional{m_state->pending->outgoing.requestId} : std::nullopt;
 }
+
 void LocalControlClient::Close() noexcept
 {
 	SetEvent(m_state->stopping.value);

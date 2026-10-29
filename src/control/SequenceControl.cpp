@@ -18,9 +18,11 @@ bool ApplicationOwnedSequence(const Message& request)
 		return false;
 	const auto value = selector->AsBool();
 	if (!value || (*value && request.Find(tag::SourceKind)))
-		throw ControlRequestError{ErrorCode::Invalid, "Application-owned sequence requires a boolean and no connection source"};
+		throw ControlRequestError{ErrorCode::Invalid,
+								  "Application-owned sequence requires a boolean and no connection source"};
 	return *value;
 }
+
 static InspectionValue Status(const PoseSequenceStatus& status)
 {
 	return InspectionValue::Object({{"id", InspectionValue::Unsigned(status.id)},
@@ -31,11 +33,13 @@ static InspectionValue Status(const PoseSequenceStatus& status)
 									{"last_frame", InspectionValue::Unsigned(status.lastFrame.value)},
 									{"groups", InspectionValue::Unsigned(status.groups)}});
 }
+
 struct AdmissionDescription
 {
 	const char* name;
 	XrResult result;
 };
+
 static AdmissionDescription DescribeAdmission(SnapshotAdmission value)
 {
 	switch (value)
@@ -101,6 +105,7 @@ InspectionValue SequenceControl::Upload(const Message& request, const ControlSes
 									{"total", InspectionValue::Unsigned(m_total)},
 									{"complete", InspectionValue::Boolean(m_bytes.size() == m_total)}});
 }
+
 InspectionValue SequenceControl::Start(const Message& request, const ControlSession& binding, CommandSource source,
 									   Message& response)
 {
@@ -143,6 +148,7 @@ InspectionValue SequenceControl::Start(const Message& request, const ControlSess
 	response.fields.push_back(Field::U64(tag::SequenceId, status->id));
 	return Status(*status);
 }
+
 InspectionValue SequenceControl::Read(const Message& request, const ControlSession& binding, CommandSource source,
 									  std::vector<SnapshotRecord>& held)
 {
@@ -248,6 +254,7 @@ InspectionValue SequenceControl::Read(const Message& request, const ControlSessi
 									{"held_captures", InspectionValue::Array(std::move(retained))},
 									{"captures", InspectionValue::Array(std::move(captures))}});
 }
+
 InspectionValue SequenceControl::Dispatch(const Message& request, const ControlSession& binding, CommandSource source,
 										  Message& response, std::vector<SnapshotRecord>& held)
 {

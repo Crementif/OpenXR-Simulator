@@ -14,38 +14,43 @@ namespace simxr::app
 // the run state or the border and disappear after a few seconds.
 class Notices
 {
-  public:
+public:
 	void Push(Notice notice);
 	void Draw(ShellRect area);
 	// The newest notice still shown, or nullptr.
 	const Notice* Latest() const;
+
 	// Every recent notice, oldest first, after its toast is gone.
 	struct Logged
 	{
 		std::string title, detail;
 		std::chrono::steady_clock::time_point time;
 	};
+
 	const std::vector<Logged>& Log() const
 	{
 		return m_log;
 	}
+
 	// A notice arrived since the history was last opened.
 	bool Unseen() const
 	{
 		return m_unseen;
 	}
+
 	void MarkSeen()
 	{
 		m_unseen = false;
 	}
 
-  private:
+private:
 	struct Entry
 	{
 		Notice notice;
 		std::chrono::steady_clock::time_point shown;
 		std::uint64_t id = 0;
 	};
+
 	std::vector<Entry> m_entries;
 	std::vector<Logged> m_log;
 	std::uint64_t m_nextId = 1;

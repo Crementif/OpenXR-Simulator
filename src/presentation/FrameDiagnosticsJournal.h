@@ -48,6 +48,7 @@ enum class FrameDiagnosticCategory
 	Validation,
 	Command
 };
+
 struct FrameDiagnostic
 {
 	std::uint64_t sequence = 0;
@@ -62,11 +63,13 @@ struct FrameDiagnostic
 	std::array<char, 192> detail{};
 	std::uint16_t detailLength = 0;
 	bool detailTruncated = false;
+
 	std::string_view Detail() const
 	{
 		return {detail.data(), detailLength};
 	}
 };
+
 struct FrameDiagnostics
 {
 	std::size_t capacity = 0;
@@ -80,7 +83,7 @@ struct FrameDiagnostics
 // they run outside the journal lock and may inspect Read().
 class FrameDiagnosticsJournal
 {
-  public:
+public:
 	using TimestampSource = std::function<Duration()>;
 	explicit FrameDiagnosticsJournal(std::size_t capacity = 1024, TimestampSource timestamp = {});
 	~FrameDiagnosticsJournal();
@@ -95,7 +98,7 @@ class FrameDiagnosticsJournal
 	bool ReadInto(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
 				  std::optional<FrameKey> frame = {}) const noexcept;
 
-  private:
+private:
 	void CopyLocked(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
 					std::optional<FrameKey> frame) const noexcept;
 	static std::size_t ValidateCapacity(std::size_t capacity);

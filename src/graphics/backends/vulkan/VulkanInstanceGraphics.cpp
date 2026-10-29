@@ -54,7 +54,7 @@ static VkPhysicalDevice SelectPhysicalDevice(VkInstance instance)
 
 class VulkanProbeInstance final
 {
-  public:
+public:
 	VulkanProbeInstance()
 	{
 		VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -63,12 +63,15 @@ class VulkanProbeInstance final
 		creation.pApplicationInfo = &application;
 		CheckVulkan(vkCreateInstance(&creation, nullptr, &m_instance), "Create Vulkan capability query instance");
 	}
+
 	~VulkanProbeInstance()
 	{
 		vkDestroyInstance(m_instance, nullptr);
 	}
+
 	VulkanProbeInstance(const VulkanProbeInstance&) = delete;
 	VulkanProbeInstance& operator=(const VulkanProbeInstance&) = delete;
+
 	VkPhysicalDevice PhysicalDevice() const
 	{
 		const auto selected = SelectPhysicalDevice(m_instance);
@@ -77,7 +80,7 @@ class VulkanProbeInstance final
 		return selected;
 	}
 
-  private:
+private:
 	VkInstance m_instance = VK_NULL_HANDLE;
 };
 
@@ -88,11 +91,7 @@ static bool ValidNames(std::uint32_t count, const char* const* names)
 	if (!names)
 		return false;
 	const std::span selected(names, count);
-	return std::all_of(selected.begin(), selected.end(),
-					   [](const char* name)
-					   {
-						   return name && *name;
-					   });
+	return std::all_of(selected.begin(), selected.end(), [](const char* name) { return name && *name; });
 }
 
 std::vector<const char*> VulkanSharingExtensions(VkPhysicalDevice physicalDevice)
@@ -198,11 +197,9 @@ XrResult VulkanInstanceGraphics::DeviceExtensions(XrSystemId system, std::uint32
 
 std::optional<VulkanInstanceGraphics::Selection> VulkanInstanceGraphics::FindSelection(VkPhysicalDevice device) const
 {
-	const auto found = std::find_if(m_selections.begin(), m_selections.end(),
-									[device](const Selection& selection)
-									{
-										return selection.physicalDevice == device;
-									});
+	const auto found = std::find_if(m_selections.begin(), m_selections.end(), [device](const Selection& selection) {
+		return selection.physicalDevice == device;
+	});
 	if (found == m_selections.end())
 		return {};
 	return *found;
@@ -219,11 +216,9 @@ XrResult VulkanInstanceGraphics::PhysicalDevice(XrSystemId system, VkInstance in
 		const auto selected = SelectPhysicalDevice(instance);
 		if (!selected)
 			return XR_ERROR_RUNTIME_FAILURE;
-		const auto existing = std::find_if(m_selections.begin(), m_selections.end(),
-										   [selected](const Selection& selection)
-										   {
-											   return selection.physicalDevice == selected;
-										   });
+		const auto existing =
+			std::find_if(m_selections.begin(), m_selections.end(),
+						 [selected](const Selection& selection) { return selection.physicalDevice == selected; });
 		if (existing == m_selections.end())
 			m_selections.push_back({selected, instance});
 		else
@@ -263,10 +258,7 @@ XrResult VulkanInstanceGraphics::CreateInstance(const XrVulkanInstanceCreateInfo
 						  creation.ppEnabledExtensionNames + creation.enabledExtensionCount);
 	const auto* properties2 = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
 	if (enumerate && std::none_of(extensions.begin(), extensions.end(),
-								 [properties2](const char* name)
-								 {
-									 return std::strcmp(name, properties2) == 0;
-								 }))
+								  [properties2](const char* name) { return std::strcmp(name, properties2) == 0; }))
 	{
 		std::uint32_t count = 0;
 		if (enumerate(nullptr, &count, nullptr) == VK_SUCCESS && count)
@@ -276,11 +268,9 @@ XrResult VulkanInstanceGraphics::CreateInstance(const XrVulkanInstanceCreateInfo
 			if (enumeration == VK_SUCCESS || enumeration == VK_INCOMPLETE)
 			{
 				supported.resize(count);
-				if (std::any_of(supported.begin(), supported.end(),
-								[properties2](const auto& extension)
-								{
-									return std::strcmp(extension.extensionName, properties2) == 0;
-								}))
+				if (std::any_of(supported.begin(), supported.end(), [properties2](const auto& extension) {
+						return std::strcmp(extension.extensionName, properties2) == 0;
+					}))
 					extensions.push_back(properties2);
 			}
 		}
@@ -321,10 +311,7 @@ XrResult VulkanInstanceGraphics::CreateDevice(const XrVulkanDeviceCreateInfoKHR*
 	{
 		for (const auto* required : VulkanSharingExtensions(selection->physicalDevice))
 			if (std::none_of(extensions.begin(), extensions.end(),
-							 [required](const char* existing)
-							 {
-								 return std::strcmp(existing, required) == 0;
-							 }))
+							 [required](const char* existing) { return std::strcmp(existing, required) == 0; }))
 				extensions.push_back(required);
 	}
 	catch (const VulkanError& error)

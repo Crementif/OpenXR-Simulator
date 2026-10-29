@@ -72,11 +72,9 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 										std::abs(position.y - visibleMax.y) < radius * 2;
 				for (int attempt = 0; attempt < 12; ++attempt)
 				{
-					if (std::none_of(arrows.begin(), arrows.begin() + arrowCount,
-									 [&](ImVec2 other)
-									 {
-										 return std::hypot(position.x - other.x, position.y - other.y) < radius * 2.5f;
-									 }))
+					if (std::none_of(arrows.begin(), arrows.begin() + arrowCount, [&](ImVec2 other) {
+							return std::hypot(position.x - other.x, position.y - other.y) < radius * 2.5f;
+						}))
 						break;
 					const float offset = (attempt / 2 + 1) * radius * 2.6f * (attempt % 2 ? -1 : 1);
 					position = original;

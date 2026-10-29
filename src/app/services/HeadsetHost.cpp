@@ -21,6 +21,7 @@ HeadsetHostAlignment HeadsetAlignmentFor(const ObservedSetup& observed)
 		throw std::invalid_argument("Headset alignment requires a finite player floor height");
 	return {pose->position.x, pose->position.z, std::atan2(-forward.x, -forward.z), floor};
 }
+
 static std::string NumberText(float value)
 {
 	std::array<char, 64> buffer;
@@ -29,6 +30,7 @@ static std::string NumberText(float value)
 		throw std::invalid_argument("Cannot encode headset alignment");
 	return {buffer.data(), result.ptr};
 }
+
 static std::optional<std::array<HeadsetEyeSize, 2>> ParseEyeSizes(std::string_view line)
 {
 	constexpr std::string_view prefix = "simxr_host_eye_sizes=";
@@ -49,6 +51,7 @@ static std::optional<std::array<HeadsetEyeSize, 2>> ParseEyeSizes(std::string_vi
 	}
 	return std::array<HeadsetEyeSize, 2>{{{values[0], values[1]}, {values[2], values[3]}}};
 }
+
 static std::optional<std::uint32_t> ParseTrackerCount(std::string_view line)
 {
 	constexpr std::string_view prefix = "simxr_host_tracker_count=";
@@ -61,17 +64,20 @@ static std::optional<std::uint32_t> ParseTrackerCount(std::string_view line)
 		return {};
 	return count;
 }
+
 static void CheckProcess(bool result)
 {
 	if (!result)
 		throw std::runtime_error(SDL_GetError());
 }
+
 HeadsetHost::~HeadsetHost()
 {
 	Stop();
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 void HeadsetHost::Start(HeadsetHostOptions options)
 {
 	if (m_restart)
@@ -118,10 +124,7 @@ void HeadsetHost::Start(HeadsetHostOptions options)
 	try
 	{
 		m_worker = std::jthread(
-			[this, options = std::move(options)](std::stop_token stop) mutable
-			{
-				Run(stop, std::move(options));
-			});
+			[this, options = std::move(options)](std::stop_token stop) mutable { Run(stop, std::move(options)); });
 	}
 	catch (...)
 	{
@@ -130,12 +133,14 @@ void HeadsetHost::Start(HeadsetHostOptions options)
 		throw;
 	}
 }
+
 void HeadsetHost::Stop()
 {
 	m_worker.request_stop();
 	m_target.reset();
 	m_restart.reset();
 }
+
 void HeadsetHost::Realign(HeadsetHostAlignment alignment)
 {
 	if (!m_target || m_target->discover || m_restart || Snapshot().phase != HeadsetHostPhase::Running)
@@ -149,15 +154,16 @@ void HeadsetHost::Realign(HeadsetHostAlignment alignment)
 	Stop();
 	m_restart = std::move(next);
 }
+
 bool HeadsetHost::Restarting() const
 {
 	return m_restart.has_value();
 }
+
 void HeadsetHost::ObserveTarget(const std::string& endpoint, std::uint64_t session, std::uint64_t generation,
 								std::uint64_t connectionEpoch)
 {
-	const auto matches = [&](const HeadsetHostOptions& target)
-	{
+	const auto matches = [&](const HeadsetHostOptions& target) {
 		return target.discover || (target.endpoint == endpoint && target.session == session &&
 								   target.generation == generation && target.connectionEpoch == connectionEpoch);
 	};
@@ -179,11 +185,13 @@ void HeadsetHost::ObserveTarget(const std::string& endpoint, std::uint64_t sessi
 		}
 	}
 }
+
 HeadsetHostSnapshot HeadsetHost::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_snapshot;
 }
+
 void HeadsetHost::Run(std::stop_token stop, HeadsetHostOptions options)
 {
 	std::unique_ptr<SDL_Process, decltype(&SDL_DestroyProcess)> process(nullptr, SDL_DestroyProcess);

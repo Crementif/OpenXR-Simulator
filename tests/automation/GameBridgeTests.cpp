@@ -10,6 +10,7 @@
 
 using namespace simxr;
 namespace wire = control;
+
 static void CheckObservationJournal()
 {
 	GameBridge bridge(4);
@@ -71,6 +72,7 @@ static void CheckObservationJournal()
 		Require(rejected, "Future journal cursor accepted");
 	}
 }
+
 int main()
 {
 	try
@@ -97,8 +99,7 @@ int main()
 		wire::ControlService service(runtime);
 		auto connection = *service.Connect();
 		std::uint64_t request = 0;
-		const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields)
-		{
+		const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields) {
 			wire::Message message;
 			message.opcode = static_cast<std::uint16_t>(opcode);
 			message.requestId = wire::RequestId{++request};
@@ -109,14 +110,12 @@ int main()
 		Require((*hello.Find(wire::tag::Capabilities)->AsU64() &
 				 static_cast<std::uint64_t>(wire::Capability::GameBridge)) != 0,
 				"Registered capabilities not detected");
-		const auto common = [&]
-		{
+		const auto common = [&] {
 			return std::vector<wire::Field>{
 				wire::Field::U64(wire::tag::Session, 1),
 				wire::Field::U64(wire::tag::Generation, session->Snapshot().generation.value)};
 		};
-		const auto submit = [&](std::uint64_t id, std::uint32_t kind, const char* payload)
-		{
+		const auto submit = [&](std::uint64_t id, std::uint32_t kind, const char* payload) {
 			auto fields = common();
 			fields.push_back(wire::Field::U64(wire::tag::GameId, game));
 			fields.push_back(wire::Field::U64(wire::tag::CommandId, id));

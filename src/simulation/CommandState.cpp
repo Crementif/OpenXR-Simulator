@@ -4,13 +4,13 @@
 #include "simulation/TrackingSystem.h"
 #include "simulation/BodyObservation.h"
 
-
 namespace simxr
 {
 static constexpr std::size_t Index(ControlChannel channel)
 {
 	return static_cast<std::size_t>(channel);
 }
+
 static constexpr std::size_t Index(FailureScenario scenario)
 {
 	return static_cast<std::size_t>(scenario);
@@ -39,6 +39,7 @@ ControlChannel CommandState::ScenarioChannel(FailureScenario scenario)
 		return ControlChannel::Session;
 	}
 }
+
 ControlChannel CommandState::ChannelFor(const SetHeadPose&)
 {
 	return ControlChannel::Head;
@@ -68,6 +69,7 @@ ControlChannel CommandState::ChannelFor(const SetTrackers&)
 {
 	return ControlChannel::Trackers;
 }
+
 ControlChannel CommandState::ChannelFor(const SetTracker&)
 {
 	return ControlChannel::Trackers;
@@ -97,6 +99,7 @@ ControlChannel CommandState::ChannelFor(const SetScenario& command)
 {
 	return ScenarioChannel(command.scenario);
 }
+
 ControlChannel CommandState::ChannelFor(const SetReferenceSpaces&)
 {
 	return ControlChannel::Session;
@@ -156,6 +159,7 @@ void CommandState::ApplyScenarios(CommandConfiguration& config) const
 		m_scenarios[Index(FailureScenario::SessionLoss)])
 		config.tracking.focused = false;
 }
+
 CommandConfiguration CommandState::MergeOverrides(const CommandConfiguration& baseline,
 												  const CommandConfiguration& values, const ChannelMask& overrides)
 {
@@ -197,6 +201,7 @@ CommandConfiguration CommandState::MergeOverrides(const CommandConfiguration& ba
 	}
 	return result;
 }
+
 void CommandState::Normalize(CommandConfiguration& value, RuntimeTime time)
 {
 	if (!NormalizeReferenceSpaces(value.referenceSpaces))
@@ -219,6 +224,7 @@ void CommandState::Normalize(CommandConfiguration& value, RuntimeTime time)
 		if (!profile.starts_with("/interaction_profiles/") || !IsValidXrPath(profile))
 			throw std::invalid_argument("Invalid command profile path");
 }
+
 void CommandState::ClearChannel(ControlChannel channel) noexcept
 {
 	m_overrides[Index(channel)] = false;
@@ -239,11 +245,10 @@ void CommandState::ClearChannel(ControlChannel channel) noexcept
 
 class CommandState::Mutation
 {
-  public:
+public:
 	Mutation(CommandState& state, CommandSource source, RuntimeTime time)
 		: m_state(state), m_source(source), m_time(time)
-	{
-	}
+	{}
 
 	CommandResult operator()(const TakeControl& command)
 	{
@@ -266,6 +271,7 @@ class CommandState::Mutation
 		m_state.m_owners[index].reset();
 		return CommandResult::Applied;
 	}
+
 	CommandResult operator()(const SetScenario& command)
 	{
 		if (m_state.m_owners[CheckedChannel(ChannelFor(command))] != m_source)
@@ -282,7 +288,8 @@ class CommandState::Mutation
 		return CommandResult::Applied;
 	}
 
-	template <class Command> CommandResult operator()(const Command& command)
+	template<class Command>
+	CommandResult operator()(const Command& command)
 	{
 		const auto index = CheckedChannel(ChannelFor(command));
 		if (m_state.m_owners[index] != m_source)
@@ -293,7 +300,7 @@ class CommandState::Mutation
 		return CommandResult::Applied;
 	}
 
-  private:
+private:
 	CommandState& m_state;
 	CommandSource m_source;
 	const RuntimeTime m_time;
@@ -323,63 +330,75 @@ void CommandState::Set(const SetHeadPose& command)
 {
 	m_values.tracking.head = command.value;
 }
+
 void CommandState::Set(const SetControllerPose& command)
 {
 	if (command.hand >= m_values.tracking.controllers.size())
 		throw std::invalid_argument("Invalid controller");
 	m_values.tracking.controllers[command.hand] = command.value;
 }
+
 void CommandState::Set(const SetControllerControls& command)
 {
 	if (command.hand >= m_values.input.controllers.size())
 		throw std::invalid_argument("Invalid controller");
 	m_values.input.controllers[command.hand] = command.value;
 }
+
 void CommandState::Set(const SetBodyControls& command)
 {
 	m_values.tracking.body = command.value;
 	m_values.tracking.bodyObservation = command.observation;
 }
+
 void CommandState::Set(const SetGaze& command)
 {
 	m_values.tracking.gaze = command.value;
 }
+
 void CommandState::Set(const SetTracker& command)
 {
 	if (command.index >= m_values.tracking.trackers.size())
 		throw std::invalid_argument("Invalid tracker");
 	m_values.tracking.trackers[command.index] = command.value;
 }
+
 void CommandState::Set(const SetTrackers& command)
 {
 	if (command.value.size() > MaxTrackerDevices)
 		throw std::invalid_argument("Tracker inventory exceeds capacity");
 	m_values.tracking.trackers = command.value;
 }
+
 void CommandState::Set(const SetEyeViews& command)
 {
 	m_values.tracking.eyeViews = command.value;
 }
+
 void CommandState::Set(const SetViewSettings& command)
 {
 	m_values.views = command.value;
 }
+
 void CommandState::Set(const SetBodyProportions& command)
 {
 	m_values.proportions = command.value;
 }
+
 void CommandState::Set(const SetControllerProfile& command)
 {
 	if (command.hand >= m_values.input.preferredProfiles.size())
 		throw std::invalid_argument("Invalid controller");
 	m_values.input.preferredProfiles[command.hand] = command.path;
 }
+
 void CommandState::Set(const SetScenario& command)
 {
 	if (Index(command.scenario) >= m_scenarios.size())
 		throw std::invalid_argument("Invalid scenario");
 	m_scenarios[Index(command.scenario)] = command.enabled;
 }
+
 void CommandState::Set(const SetReferenceSpaces& command)
 {
 	m_values.referenceSpaces = command.value;

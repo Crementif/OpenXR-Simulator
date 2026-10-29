@@ -13,6 +13,7 @@ namespace simxr::headset
 {
 static constexpr XrTime s_vendorOffset = 12345678;
 static bool s_invalid = false, s_failure = false;
+
 static XrResult XRAPI_PTR ToHost(XrInstance, XrTime time, timespec* result)
 {
 	if (s_failure)
@@ -22,16 +23,20 @@ static XrResult XRAPI_PTR ToHost(XrInstance, XrTime time, timespec* result)
 	result->tv_nsec = s_invalid ? 1000000000 : host % 1000000000;
 	return XR_SUCCESS;
 }
+
 static XrResult XRAPI_PTR ToRuntime(XrInstance, const timespec* time, XrTime* result)
 {
 	*result = time->tv_sec * 1000000000 + time->tv_nsec + s_vendorOffset;
 	return XR_SUCCESS;
 }
+
 OpenXrRuntime::~OpenXrRuntime() = default;
+
 XrInstance OpenXrRuntime::Instance() const
 {
 	return reinterpret_cast<XrInstance>(1);
 }
+
 PFN_xrVoidFunction OpenXrRuntime::Procedure(const char* name) const
 {
 	if (std::string_view(name) == "xrConvertTimeToTimespecTimeKHR")
@@ -40,11 +45,13 @@ PFN_xrVoidFunction OpenXrRuntime::Procedure(const char* name) const
 		return reinterpret_cast<PFN_xrVoidFunction>(ToRuntime);
 	throw std::runtime_error("Unexpected clock procedure");
 }
+
 void CheckXr(XrResult result, const char* operation)
 {
 	if (XR_FAILED(result))
 		throw std::runtime_error(operation);
 }
+
 static void CheckConversion()
 {
 	OpenXrRuntime runtime;
@@ -105,6 +112,7 @@ static void CheckConversion()
 	}
 }
 } // namespace simxr::headset
+
 int main()
 {
 	try

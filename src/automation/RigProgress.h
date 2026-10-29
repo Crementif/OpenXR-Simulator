@@ -13,7 +13,7 @@ namespace simxr::automation
 {
 class RigProgress
 {
-  public:
+public:
 	void Start(const RigOptions& options);
 	void Pause();
 	void Resume();
@@ -28,15 +28,15 @@ class RigProgress
 	void CaptureRetained();
 	void Checkpoint(RigCheckpoint checkpoint);
 	void Print(std::string line);
-	void ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed,
-		std::uint64_t skipped, std::uint64_t pairs, std::uint64_t gaps);
+	void ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed, std::uint64_t skipped,
+					   std::uint64_t pairs, std::uint64_t gaps);
 	void MissedCadences(std::uint64_t count);
 	void BeginObservation();
 	void EndObservation();
 	RigPhase Phase() const;
 	RigSnapshot Snapshot() const;
 
-  private:
+private:
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::atomic<bool> m_cancelled{false};

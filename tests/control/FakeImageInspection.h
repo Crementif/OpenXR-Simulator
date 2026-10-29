@@ -28,6 +28,7 @@ struct State
 	std::vector<FrameView> views;
 	std::function<void()> onReaderDestroyed;
 };
+
 inline ImageDescription Description()
 {
 	ImageDescription result;
@@ -47,6 +48,7 @@ inline ImageDescription Description()
 	result.layout = 1;
 	return result;
 }
+
 inline std::vector<std::byte> Pixels()
 {
 	std::vector<std::byte> result(4 * 3 * 2 * 4);
@@ -54,25 +56,30 @@ inline std::vector<std::byte> Pixels()
 		result[index] = std::byte((index * 17 + 3) & 255);
 	return result;
 }
+
 class Output final : public FrameOutput
 {
-  public:
+public:
 	explicit Output(std::shared_ptr<FrameReservation> slot) : slot(std::move(slot)) {}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	std::shared_ptr<FrameReservation> slot;
 };
+
 struct Data
 {
 	std::vector<std::byte> pixels = Pixels();
 	ImageDescription description = Description();
 	std::shared_ptr<const FrameOutput> source;
 };
+
 class Delivery final : public ImageDelivery
 {
-  public:
+public:
 	Delivery(std::shared_ptr<State> state, std::shared_ptr<Data> data, std::shared_ptr<TransferHandle> consumer)
 		: state(std::move(state)), data(std::move(data)), consumer(std::move(consumer)), image(this->state->nextImage++)
 	{
@@ -87,46 +94,54 @@ class Delivery final : public ImageDelivery
 		const char value = 1;
 		Require(::write(static_cast<int>(writer->Value()), &value, 1) == 1, "Signal fixture pipe");
 	}
+
 	~Delivery() override
 	{
 		++state->deliveriesDestroyed;
 	}
+
 	SharedImageKey Key() const noexcept override
 	{
 		return {{0xfedcba9876543210ULL}, {image}};
 	}
+
 	ImageDescription Description() const override
 	{
 		if (state->failDeliveryDescription.exchange(false))
 			throw std::bad_alloc{};
 		return data->description;
 	}
+
 	CompletionStatus ProducerCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	CompletionStatus ConsumerCompletion() const noexcept override
 	{
 		return state->consumerPhase.load();
 	}
+
 	std::vector<std::shared_ptr<TransferHandle>> PrepareHandles() override
 	{
 		return {memory->Duplicate(), ready->Duplicate()};
 	}
+
 	void MarkTransferred() noexcept override
 	{
 		++state->exposures;
 	}
 
-  private:
+private:
 	std::shared_ptr<State> state;
 	std::shared_ptr<Data> data;
 	std::shared_ptr<TransferHandle> consumer, memory, ready;
 	std::uint64_t image;
 };
+
 class Export final : public ImageExport
 {
-  public:
+public:
 	Export(std::shared_ptr<State> state, std::shared_ptr<Data> data, std::optional<std::uint32_t> layer)
 		: state(std::move(state)), data(std::move(data)), description(this->data->description)
 	{
@@ -141,24 +156,29 @@ class Export final : public ImageExport
 		else
 			bytes = this->data->pixels;
 	}
+
 	~Export() override
 	{
 		++state->exportsDestroyed;
 	}
+
 	ImageDescription Description() const override
 	{
 		if (state->failExportDescription.exchange(false))
 			throw std::bad_alloc{};
 		return description;
 	}
+
 	std::uint64_t ByteSize() const noexcept override
 	{
 		return bytes.size();
 	}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return state->exportPhase.load();
 	}
+
 	std::span<const std::byte> Read() override
 	{
 		++state->reads;
@@ -167,36 +187,42 @@ class Export final : public ImageExport
 		return bytes;
 	}
 
-  private:
+private:
 	std::shared_ptr<State> state;
 	std::shared_ptr<Data> data;
 	ImageDescription description;
 	std::vector<std::byte> bytes;
 };
+
 class Reader final : public ImageReader
 {
-  public:
+public:
 	Reader(std::shared_ptr<State> state, std::shared_ptr<Data> data) : state(std::move(state)), data(std::move(data)) {}
+
 	~Reader() override
 	{
 		++state->readersDestroyed;
 		if (state->onReaderDestroyed)
 			state->onReaderDestroyed();
 	}
+
 	CompletionStatus PollCompletion() const noexcept override
 	{
 		return CompletionStatus::Complete;
 	}
+
 	ImageDescription Description() const override
 	{
 		if (state->failReaderDescription.exchange(false))
 			throw std::bad_alloc{};
 		return data->description;
 	}
+
 	ImageCapabilities Capabilities() const noexcept override
 	{
 		return {true, true};
 	}
+
 	std::shared_ptr<ImageDelivery> Share(const ImageDeviceIdentity& identity,
 										 const std::shared_ptr<TransferHandle>& consumer) const override
 	{
@@ -208,24 +234,28 @@ class Reader final : public ImageReader
 		++state->shares;
 		return std::make_shared<Delivery>(state, data, consumer->Duplicate());
 	}
+
 	std::shared_ptr<ImageExport> Export(std::optional<std::uint32_t> layer) const override
 	{
 		++state->exports;
 		return std::make_shared<test::Export>(state, data, layer);
 	}
 
-  private:
+private:
 	std::shared_ptr<State> state;
 	std::shared_ptr<Data> data;
 };
+
 class Provider final : public ImageInspectionProvider
 {
-  public:
+public:
 	explicit Provider(std::shared_ptr<State> state) : state(std::move(state)) {}
+
 	ImageCapabilities Capabilities(XrSession) const noexcept override
 	{
 		return {true, true};
 	}
+
 	std::shared_ptr<ImageReader> Retain(std::shared_ptr<const FrameOutput> output) const override
 	{
 		++state->retains;
@@ -236,9 +266,10 @@ class Provider final : public ImageInspectionProvider
 		return std::make_shared<Reader>(state, std::move(data));
 	}
 
-  private:
+private:
 	std::shared_ptr<State> state;
 };
+
 struct Fixture
 {
 	Runtime runtime{ExtensionRegistry{std::span<const ExtensionDefinition>{}}};
@@ -249,6 +280,7 @@ struct Fixture
 	std::shared_ptr<Provider> provider = std::make_shared<Provider>(state);
 	ControlService service{runtime, 16, provider};
 	CaptureId capture;
+
 	explicit Fixture(ExecutionMode mode = ExecutionMode::Deterministic)
 	{
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -267,6 +299,7 @@ struct Fixture
 		session->Scheduler().Pause();
 		capture = Submit();
 	}
+
 	CaptureId Submit()
 	{
 		auto reservation = session->ReserveCapture();
@@ -290,6 +323,7 @@ struct Fixture
 				"CPU fixture capture not ready");
 		return reservation.id;
 	}
+
 	~Fixture()
 	{
 		service.Close();

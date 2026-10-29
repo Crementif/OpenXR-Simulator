@@ -17,28 +17,38 @@ Json McpSequenceJobs::Definitions()
 {
 	auto start = mcp::SequenceCaptureDefinition();
 	start["name"] = "start_pose_sequence_capture";
-	start["description"] = "Start saving a pose sequence in a session-owned background job. Poll get_pose_sequence_capture. "
-		"Retry only with the same job_id and identical arguments; cancellation or disconnect can close its debugger connection.";
+	start["description"] =
+		"Start saving a pose sequence in a session-owned background job. Poll get_pose_sequence_capture. "
+		"Retry only with the same job_id and identical arguments; cancellation or disconnect can close its debugger "
+		"connection.";
 	start["inputSchema"]["properties"]["job_id"] = {{"type", "string"}, {"minLength", 1}, {"maxLength", 128}};
 	start["inputSchema"]["required"].push_back("job_id");
 	const Json id = {{"type", "string"}, {"minLength", 1}, {"maxLength", 128}};
-	const auto tool = [&](const char* name, const char* description)
-	{
-		return Json{{"name", name}, {"description", description}, {"inputSchema", {{"type", "object"},
-			{"properties", {{"job_id", id}}}, {"required", Json::array({"job_id"})}, {"additionalProperties", false}}}};
+	const auto tool = [&](const char* name, const char* description) {
+		return Json{{"name", name},
+					{"description", description},
+					{"inputSchema",
+					 {{"type", "object"},
+					  {"properties", {{"job_id", id}}},
+					  {"required", Json::array({"job_id"})},
+					  {"additionalProperties", false}}}};
 	};
-	return Json::array({std::move(start),
-		tool("get_pose_sequence_capture", "Read the current or completed background capture and its latest written manifest."),
-		tool("cancel_pose_sequence_capture", "Cancel and join the background capture. Cancellation retires its debugger connection; inspect the manifest for partial output.")});
+	return Json::array(
+		{std::move(start),
+		 tool("get_pose_sequence_capture",
+			  "Read the current or completed background capture and its latest written manifest."),
+		 tool("cancel_pose_sequence_capture", "Cancel and join the background capture. Cancellation retires its "
+											  "debugger connection; inspect the manifest for partial output.")});
 }
 
 bool McpSequenceJobs::Handles(const std::string& name)
 {
-	return name == "start_pose_sequence_capture" || name == "get_pose_sequence_capture" || name == "cancel_pose_sequence_capture";
+	return name == "start_pose_sequence_capture" || name == "get_pose_sequence_capture" ||
+		   name == "cancel_pose_sequence_capture";
 }
 
 std::optional<Json> McpSequenceJobs::Call(McpApplication& app, McpDebug& debug, const std::string& name,
-	const Json& arguments, const std::shared_ptr<McpCancellation>& cancellation)
+										  const Json& arguments, const std::shared_ptr<McpCancellation>& cancellation)
 {
 	try
 	{
@@ -113,7 +123,8 @@ std::optional<Json> McpSequenceJobs::Call(McpApplication& app, McpDebug& debug, 
 		}
 		try
 		{
-			m_worker = std::thread(&McpSequenceJobs::Run, this, std::ref(app), std::ref(debug), options, workCancellation);
+			m_worker =
+				std::thread(&McpSequenceJobs::Run, this, std::ref(app), std::ref(debug), options, workCancellation);
 		}
 		catch (...)
 		{
@@ -135,12 +146,11 @@ std::optional<Json> McpSequenceJobs::Call(McpApplication& app, McpDebug& debug, 
 }
 
 void McpSequenceJobs::Run(McpApplication& app, McpDebug& debug, Json options,
-	std::shared_ptr<McpCancellation> cancellation) noexcept
+						  std::shared_ptr<McpCancellation> cancellation) noexcept
 {
 	try
 	{
-		const auto result = mcp::CaptureSequence(app, debug, options, cancellation, [&](const Json& manifest)
-		{
+		const auto result = mcp::CaptureSequence(app, debug, options, cancellation, [&](const Json& manifest) {
 			std::lock_guard lock(m_mutex);
 			m_status["capture"] = manifest;
 			const auto phase = manifest.at("phase").get<std::string>();
@@ -189,6 +199,7 @@ void McpSequenceJobs::Close() noexcept
 	if (m_worker.joinable())
 		m_worker.join();
 }
+
 McpSequenceJobs::~McpSequenceJobs()
 {
 	Close();

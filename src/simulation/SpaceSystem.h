@@ -23,7 +23,7 @@ struct SpaceLocation
 
 class SpaceSystem
 {
-  public:
+public:
 	using ActionSource = std::function<PoseSample(XrAction, XrPath, RuntimeTime)>;
 	using ActionValidator = std::function<XrResult(XrAction, XrPath)>;
 
@@ -48,7 +48,7 @@ class SpaceSystem
 	bool CanPublish(RuntimeTime time) const;
 	XrResult Restore(RuntimeTime time, ReferenceSpaceState state, bool requested = true);
 
-  private:
+private:
 	struct SpaceRecord
 	{
 		XrReferenceSpaceType referenceType = XR_REFERENCE_SPACE_TYPE_MAX_ENUM;
@@ -56,12 +56,14 @@ class SpaceSystem
 		XrPath subactionPath = XR_NULL_PATH;
 		XrPosef poseOffset;
 	};
+
 	struct Origin
 	{
 		RuntimeTime time;
 		XrPosef local;
 		XrPosef stage;
 	};
+
 	std::optional<Origin> OriginAt(RuntimeTime time) const;
 	XrResult ApplyOrigin(RuntimeTime time, const ReferenceSpaceState& state, bool requireNewTime, bool requested);
 	PoseSample Resolve(const SpaceRecord& record, RuntimeTime time, const std::optional<Origin>& origin) const;

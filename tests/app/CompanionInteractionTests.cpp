@@ -35,44 +35,55 @@ int main(int argc, char** argv)
 		}
 #endif
 		using RunCase = void (*)(const char*, const char*);
-		const RunCase preferences = [](auto, auto) { Interaction test; CheckPreferences(test); };
+		const RunCase preferences = [](auto, auto) {
+			Interaction test;
+			CheckPreferences(test);
+		};
+
 		struct Case
 		{
 			const char* environment;
 			RunCase run;
 		};
+
 		const Case cases[]{
-			{"SIMXR_DISTRIBUTION_QA", [](auto, auto executable)
-			{
-				CheckDistributionOnboarding();
-				CheckProfileCopyButton(executable);
-				CheckProfileClipboard(executable);
-			}},
-			{"SIMXR_HEADSET_LAUNCH_QA", [](auto, auto) { CheckHeadsetLaunchProfile(); CheckHeadsetRestartProfile(); }},
+			{"SIMXR_DISTRIBUTION_QA",
+			 [](auto, auto executable) {
+				 CheckDistributionOnboarding();
+				 CheckProfileCopyButton(executable);
+				 CheckProfileClipboard(executable);
+			 }},
+			{"SIMXR_HEADSET_LAUNCH_QA",
+			 [](auto, auto) {
+				 CheckHeadsetLaunchProfile();
+				 CheckHeadsetRestartProfile();
+			 }},
 			{"SIMXR_RIG_POINTER_QA", [](auto, auto) { CheckRigPointer(); }},
-			{"SIMXR_TABS_LIVE_FIRST", [](auto first, auto)
-			{
-				const auto* second = std::getenv("SIMXR_TABS_LIVE_SECOND");
-				Require(*first && second && *second, "Two live tab endpoints are required");
-				std::vector<std::string> endpoints{first, second};
-				if (const auto* third = std::getenv("SIMXR_TABS_LIVE_THIRD"))
-				{
-					const auto* fourth = std::getenv("SIMXR_TABS_LIVE_FOURTH");
-					Require(*third && fourth && *fourth, "Both additional live tab endpoints are required");
-					endpoints.emplace_back(third);
-					endpoints.emplace_back(fourth);
-				}
-				CheckPortableLiveTabs(endpoints, QaDirectory("SIMXR_TABS_LIVE_DIRECTORY"));
-			}},
+			{"SIMXR_TABS_LIVE_FIRST",
+			 [](auto first, auto) {
+				 const auto* second = std::getenv("SIMXR_TABS_LIVE_SECOND");
+				 Require(*first && second && *second, "Two live tab endpoints are required");
+				 std::vector<std::string> endpoints{first, second};
+				 if (const auto* third = std::getenv("SIMXR_TABS_LIVE_THIRD"))
+				 {
+					 const auto* fourth = std::getenv("SIMXR_TABS_LIVE_FOURTH");
+					 Require(*third && fourth && *fourth, "Both additional live tab endpoints are required");
+					 endpoints.emplace_back(third);
+					 endpoints.emplace_back(fourth);
+				 }
+				 CheckPortableLiveTabs(endpoints, QaDirectory("SIMXR_TABS_LIVE_DIRECTORY"));
+			 }},
 #ifdef __linux__
 			{"SIMXR_TABS_QA", [](auto, auto) { CheckApplicationTabs(); }},
-			{"SIMXR_TABS_GPU_FIRST", [](auto first, auto)
-			{
-				const auto* second = std::getenv("SIMXR_TABS_GPU_SECOND");
-				Require(second && *second, "Two GPU tab endpoints are required");
-				if (std::getenv("SIMXR_TABS_INPUT_QA")) CheckGpuTabInput(first, second);
-				else CheckMultiGpuTabs(first, second);
-			}},
+			{"SIMXR_TABS_GPU_FIRST",
+			 [](auto first, auto) {
+				 const auto* second = std::getenv("SIMXR_TABS_GPU_SECOND");
+				 Require(second && *second, "Two GPU tab endpoints are required");
+				 if (std::getenv("SIMXR_TABS_INPUT_QA"))
+					 CheckGpuTabInput(first, second);
+				 else
+					 CheckMultiGpuTabs(first, second);
+			 }},
 			{"SIMXR_UI_PILOT_ENDPOINT", [](auto endpoint, auto) { PilotLiveRuntime(endpoint); }},
 			{"SIMXR_HAPTICS_QA", [](auto, auto) { CheckLiveHaptics(); }},
 			{"SIMXR_DISCOVERY_FAILURE_QA", [](auto, auto) { CheckDiscoveryFailure(); }},
@@ -82,21 +93,25 @@ int main(int argc, char** argv)
 			{"SIMXR_HEADSET_PAGE_QA", [](auto, auto) { CheckPhysicalHeadsetPage(); }},
 			{"SIMXR_TRACKER_COLLECTION_QA", [](auto, auto) { CheckExpandedTrackerUi(); }},
 			{"SIMXR_DEVICE_HEADER_QA", [](auto, auto) { ConfigureObservedDevices(); }},
-			{"SIMXR_TIMELINE_ENDPOINT", [](auto endpoint, auto)
-			{
-				Interaction test;
-				test.live = true;
-				test.runtime.ConnectEndpoint(endpoint);
-				Eventually([&] { test.Frame(); return test.runtime.Snapshot().selectedReady; }, "Timeline app preview absent");
-				CheckTimelineWorkflow(test);
-			}},
+			{"SIMXR_TIMELINE_ENDPOINT",
+			 [](auto endpoint, auto) {
+				 Interaction test;
+				 test.live = true;
+				 test.runtime.ConnectEndpoint(endpoint);
+				 Eventually(
+					 [&] {
+						 test.Frame();
+						 return test.runtime.Snapshot().selectedReady;
+					 },
+					 "Timeline app preview absent");
+				 CheckTimelineWorkflow(test);
+			 }},
 			{"SIMXR_UPDATE_STARTUP_QA", [](auto, auto) { CheckUpdateStartup(); }},
 			{"SIMXR_BUDGET_QA", preferences},
 			{"SIMXR_MCP_UI_QA", preferences},
 			{"SIMXR_UPDATE_UI_QA", preferences},
 			{"SIMXR_PREVIEW_PILOT_ENDPOINT", [](auto endpoint, auto) { CheckConnectedPreview(endpoint); }},
-			{"SIMXR_DEBUG_QA_ENDPOINT", [](auto endpoint, auto) { CheckDebuggerWorkflow(endpoint); }}
-		};
+			{"SIMXR_DEBUG_QA_ENDPOINT", [](auto endpoint, auto) { CheckDebuggerWorkflow(endpoint); }}};
 		for (const auto& test : cases)
 			if (const auto* value = std::getenv(test.environment))
 			{
@@ -104,7 +119,8 @@ int main(int argc, char** argv)
 				return 0;
 			}
 #ifdef __linux__
-		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"); executable && std::getenv("SIMXR_PICKER_QA"))
+		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE");
+			executable && std::getenv("SIMXR_PICKER_QA"))
 		{
 			CheckAppPicker(executable);
 			return 0;

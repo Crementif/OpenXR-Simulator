@@ -48,6 +48,7 @@ void DeviceControlPanel::DrawBody()
 		ApplyOwned(ControlChannel::Proportions, SetBodyProportions{m_authoredProportions});
 	ImGui::EndDisabled();
 }
+
 void DeviceControlPanel::DrawGaze()
 {
 	SectionLabel("Eye gaze");
@@ -73,6 +74,7 @@ void DeviceControlPanel::DrawGaze()
 		ApplyOwned(ControlChannel::Gaze, SetGaze{gaze});
 	ImGui::EndDisabled();
 }
+
 void DeviceControlPanel::DrawTrackers()
 {
 	if (m_observed && !m_observed->trackerAttachmentsAvailable)
@@ -86,8 +88,7 @@ void DeviceControlPanel::DrawTrackers()
 	m_selectedTracker = std::clamp(m_selectedTracker, 0, static_cast<int>(m_authoredTracking.trackers.size() - 1));
 	if (m_authoredTracking.trackers.size() > 8)
 	{
-		const auto name = [&](std::size_t index)
-		{
+		const auto name = [&](std::size_t index) {
 			const auto& device = m_authoredTracking.trackers[index];
 			return std::string(TrackerRoleName(device.role)) + " #" + std::to_string(device.identity.value);
 		};
@@ -212,6 +213,7 @@ void DeviceControlPanel::DrawTrackers()
 	}
 	ImGui::EndDisabled();
 }
+
 void DeviceControlPanel::DrawViews()
 {
 	SectionLabel("Display");
@@ -227,11 +229,12 @@ void DeviceControlPanel::DrawViews()
 		maximum = std::min({maximum, (fov.angleRight - fov.angleLeft) / 2, (fov.angleUp - fov.angleDown) / 2});
 	const float maximumDegrees = maximum * 180 / std::numbers::pi_v<float>;
 	const float minimumDegrees = std::min(.1f, maximumDegrees);
-	edited |= Field(
-		"##Inset half angle",
-		ImGui::SliderAngle("##Inset half angle", &m_authoredViews.insetHalfAngle, minimumDegrees, maximumDegrees, "%.1f°"), true,
-		AngleValue(m_authoredViews.insetHalfAngle, std::min(defaults.insetHalfAngle, maximum), minimumDegrees,
-				   maximumDegrees));
+	edited |= Field("##Inset half angle",
+					ImGui::SliderAngle("##Inset half angle", &m_authoredViews.insetHalfAngle, minimumDegrees,
+									   maximumDegrees, "%.1f°"),
+					true,
+					AngleValue(m_authoredViews.insetHalfAngle, std::min(defaults.insetHalfAngle, maximum),
+							   minimumDegrees, maximumDegrees));
 	if (edited && !m_edit)
 		ApplyOwned(ControlChannel::Views, SetViewSettings{m_authoredViews});
 	ImGui::EndDisabled();

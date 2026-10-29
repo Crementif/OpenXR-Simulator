@@ -7,8 +7,8 @@ struct FramePoolState
 {
 	explicit FramePoolState(std::size_t limit, std::function<void()> callback)
 		: capacity(limit), reclaim(std::move(callback))
-	{
-	}
+	{}
+
 	std::mutex mutex;
 	std::size_t capacity;
 	std::function<std::size_t()> capacityProvider;
@@ -110,6 +110,7 @@ std::size_t FramePool::Capacity() const
 	std::lock_guard lock(m_state->mutex);
 	return m_state->capacityProvider ? m_state->capacityProvider() : m_state->capacity;
 }
+
 void FramePool::SetCapacity(std::size_t capacity) const
 {
 	if (!capacity)

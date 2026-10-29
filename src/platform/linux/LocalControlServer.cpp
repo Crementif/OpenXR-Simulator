@@ -43,6 +43,7 @@ static bool Read(int socket, std::vector<std::byte>& bytes, std::size_t total, C
 	{
 		std::array<int, MaxTransferHandles> values{};
 		std::size_t count = 0;
+
 		~ReceivedRights()
 		{
 			for (std::size_t index = 0; index < count; ++index)
@@ -50,6 +51,7 @@ static bool Read(int socket, std::vector<std::byte>& bytes, std::size_t total, C
 					close(values[index]);
 		}
 	};
+
 	auto offset = bytes.size();
 	bytes.resize(total);
 	while (offset < total)
@@ -121,6 +123,7 @@ static bool Read(int socket, std::vector<std::byte>& bytes, std::size_t total, C
 	}
 	return true;
 }
+
 static bool Write(int socket, const ControlPacket& packet, const std::atomic<bool>& stopping)
 {
 	std::array<int, MaxTransferHandles> descriptors{};
@@ -184,23 +187,27 @@ static std::uint64_t ReadHeaderInteger(std::span<const std::byte> bytes, std::si
 		value |= std::uint64_t{std::to_integer<unsigned char>(bytes[offset + index])} << (index * 8);
 	return value;
 }
+
 struct LocalControlServer::State
 {
 	struct Descriptor
 	{
 		int value = -1;
+
 		~Descriptor()
 		{
 			if (value >= 0)
 				close(value);
 		}
 	};
+
 	struct Worker
 	{
 		int socket = -1;
 		std::atomic<bool> finished{false};
 		std::thread thread;
 	};
+
 	ControlService& service;
 	std::string path;
 	const std::size_t capacity;
@@ -211,6 +218,7 @@ struct LocalControlServer::State
 	std::mutex lifecycle;
 	std::thread acceptor;
 	std::vector<std::unique_ptr<Worker>> workers;
+
 	State(ControlService& service, std::string path, std::size_t capacity)
 		: service(service), path(std::move(path)), capacity(capacity)
 	{
@@ -219,6 +227,7 @@ struct LocalControlServer::State
 			throw std::invalid_argument("Invalid local control socket path/capacity");
 		workers.reserve(capacity);
 	}
+
 	~State()
 	{
 		struct stat current{};
@@ -226,6 +235,7 @@ struct LocalControlServer::State
 			current.st_ino == bound.st_ino)
 			unlink(path.c_str());
 	}
+
 	void Bind()
 	{
 		listener.value = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
@@ -256,10 +266,10 @@ struct LocalControlServer::State
 		if (chmod(path.c_str(), 0600) != 0 || listen(listener.value, static_cast<int>(capacity)) != 0)
 			throw std::runtime_error("Protect/listen local control socket failed");
 	}
+
 	void Serve(Worker& worker, ConnectionId connection) noexcept
 	{
-		const auto trace = [&](const char* stage, std::uint16_t opcode = 0, std::uint64_t request = 0)
-		{
+		const auto trace = [&](const char* stage, std::uint16_t opcode = 0, std::uint64_t request = 0) {
 			if (std::getenv("SIMXR_CONTROL_TRACE"))
 				std::fprintf(stderr, "SimXR control trace connection=%llu stage=%s opcode=%u request=%llu\n",
 							 static_cast<unsigned long long>(connection.value), stage, opcode,
@@ -332,6 +342,7 @@ struct LocalControlServer::State
 		shutdown(worker.socket, SHUT_RDWR);
 		worker.finished.store(true);
 	}
+
 	void Collect()
 	{
 		for (auto& worker : workers)
@@ -343,6 +354,7 @@ struct LocalControlServer::State
 			}
 		std::erase(workers, nullptr);
 	}
+
 	void Accept() noexcept
 	{
 		while (!stopping.load())
@@ -371,11 +383,7 @@ struct LocalControlServer::State
 				workers.push_back(std::move(worker));
 				try
 				{
-					raw->thread = std::thread(
-						[this, raw, id = *connection]
-						{
-							Serve(*raw, id);
-						});
+					raw->thread = std::thread([this, raw, id = *connection] { Serve(*raw, id); });
 				}
 				catch (...)
 				{
@@ -393,24 +401,24 @@ struct LocalControlServer::State
 		}
 	}
 };
+
 LocalControlServer::LocalControlServer(ControlService& service, std::string path, std::size_t maxClients)
 	: m_state(std::make_unique<State>(service, std::move(path), maxClients))
 {
 	m_state->Bind();
-	m_state->acceptor = std::thread(
-		[state = m_state.get()]
-		{
-			state->Accept();
-		});
+	m_state->acceptor = std::thread([state = m_state.get()] { state->Accept(); });
 }
+
 LocalControlServer::~LocalControlServer()
 {
 	Close();
 }
+
 const std::string& LocalControlServer::Path() const
 {
 	return m_state->path;
 }
+
 void LocalControlServer::Close() noexcept
 {
 	std::lock_guard lock(m_state->lifecycle);

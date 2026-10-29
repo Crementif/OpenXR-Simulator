@@ -12,8 +12,7 @@ std::string ProfileLaunchCommand(const std::filesystem::path& executable, std::s
 	if (!executable.is_absolute() || path.find('\0') != std::string::npos || profile.empty() ||
 		profile.find('\0') != std::string_view::npos)
 		throw std::invalid_argument("A saved profile and an absolute simulator path are required");
-	const auto quote = [shell](std::string_view value)
-	{
+	const auto quote = [shell](std::string_view value) {
 		std::string result = "'";
 		for (const auto character : value)
 		{
@@ -43,8 +42,7 @@ std::string DecodeProfileLaunchName(std::string_view encoded)
 {
 	if (encoded.empty() || encoded.size() % 2)
 		throw std::invalid_argument("Invalid encoded launch profile name");
-	const auto digit = [](char character) -> unsigned
-	{
+	const auto digit = [](char character) -> unsigned {
 		if (character >= '0' && character <= '9')
 			return static_cast<unsigned>(character - '0');
 		if (character >= 'a' && character <= 'f')
@@ -66,8 +64,7 @@ std::string DecodeProfileLaunchName(std::string_view encoded)
 std::string LinuxSteamRuntimeOption(const std::filesystem::path& manifest)
 {
 	const auto path = PathText(manifest);
-	if (!manifest.is_absolute() || path.find('\0') != std::string::npos ||
-		path.find("%command%") != std::string::npos)
+	if (!manifest.is_absolute() || path.find('\0') != std::string::npos || path.find("%command%") != std::string::npos)
 		throw std::invalid_argument("Steam requires an absolute runtime manifest path without %command%");
 	std::string quoted = "'";
 	for (const auto character : path)
@@ -107,8 +104,7 @@ LaunchProfile ResolveLaunchProfile(LaunchProfile profile, const std::filesystem:
 
 void ValidateLaunchProfile(const LaunchProfile& profile)
 {
-	const auto validateText = [](const std::string& text)
-	{
+	const auto validateText = [](const std::string& text) {
 		if (text.size() > 1024 * 1024 || text.find('\0') != std::string::npos)
 			throw std::invalid_argument("Launch text exceeds its bound or contains NUL");
 	};

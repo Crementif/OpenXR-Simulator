@@ -9,7 +9,7 @@ namespace simxr
 // cover production, owned inspection, delivery and the companion-private copy.
 class SnapshotBudget
 {
-  public:
+public:
 	static constexpr std::uint32_t DefaultMiB = 1024;
 	static constexpr std::uint32_t MinMiB = 128;
 	static constexpr std::uint32_t MaxMiB = 8192;

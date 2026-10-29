@@ -53,20 +53,15 @@ void Instance::Create(std::uint32_t apiVersion)
 	Check(vkEnumerateInstanceLayerProperties(&count, nullptr), "enumerate instance layers");
 	std::vector<VkLayerProperties> layers(count);
 	Check(vkEnumerateInstanceLayerProperties(&count, layers.data()), "enumerate instance layers");
-	const bool validation = std::any_of(layers.begin(), layers.end(),
-										[](const auto& layer)
-										{
-											return std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0;
-										});
+	const bool validation = std::any_of(layers.begin(), layers.end(), [](const auto& layer) {
+		return std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0;
+	});
 	Check(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr), "enumerate instance extensions");
 	std::vector<VkExtensionProperties> extensions(count);
 	Check(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()), "enumerate instance extensions");
-	const bool debugUtils =
-		std::any_of(extensions.begin(), extensions.end(),
-					[](const auto& extension)
-					{
-						return std::strcmp(extension.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0;
-					});
+	const bool debugUtils = std::any_of(extensions.begin(), extensions.end(), [](const auto& extension) {
+		return std::strcmp(extension.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0;
+	});
 	const char* layerName = "VK_LAYER_KHRONOS_validation";
 	const char* extensionName = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 	VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};

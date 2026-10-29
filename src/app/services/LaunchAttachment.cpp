@@ -5,7 +5,8 @@
 
 namespace simxr::app
 {
-static std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint, std::uint64_t process)
+static std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint,
+													std::uint64_t process)
 {
 	const auto* error = message.Find(control::tag::Error);
 	if (!error || error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
@@ -40,11 +41,14 @@ static std::optional<LaunchedSession> UniqueSession(const control::Message& mess
 	return selected;
 }
 
-LaunchAttachment::LaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile, std::string replacedEndpoint)
-	: m_discovery(discovery), m_replacedEndpoint(std::move(replacedEndpoint)), m_deadline(std::chrono::steady_clock::now() + std::chrono::seconds{30})
+LaunchAttachment::LaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile,
+								   std::string replacedEndpoint)
+	: m_discovery(discovery), m_replacedEndpoint(std::move(replacedEndpoint)),
+	  m_deadline(std::chrono::steady_clock::now() + std::chrono::seconds{30})
 {
 	Initialize(profile);
 }
+
 LaunchAttachment::~LaunchAttachment()
 {
 	if (const auto* connecting = std::get_if<Connecting>(&m_state))
@@ -52,6 +56,7 @@ LaunchAttachment::~LaunchAttachment()
 	else if (const auto* waiting = std::get_if<WaitingForSession>(&m_state))
 		m_discovery.Disconnect(waiting->epoch);
 }
+
 void LaunchAttachment::Observe(const LaunchSnapshot& process)
 {
 	if (std::holds_alternative<Complete>(m_state))
@@ -66,6 +71,7 @@ void LaunchAttachment::Observe(const LaunchSnapshot& process)
 	if (std::holds_alternative<WaitingForProcess>(m_state))
 		m_state = WaitingForEndpoint{process.process};
 }
+
 std::optional<LaunchedSession> LaunchAttachment::Poll()
 {
 	if (std::holds_alternative<Complete>(m_state))
@@ -78,8 +84,7 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 		return {};
 	// Applications can replace a probing XR instance before starting their session.
 	// Only read-only discovery is retried, with the original process and deadline.
-	const auto retry = [&](std::uint64_t epoch, std::uint64_t process, const std::string& detail)
-	{
+	const auto retry = [&](std::uint64_t epoch, std::uint64_t process, const std::string& detail) {
 		m_discovery.Disconnect(epoch);
 		m_lastFailure = detail;
 		m_retryAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);

@@ -15,7 +15,7 @@ namespace simxr::control
 // The owner must retire all UI uses before releasing a completed consumer.
 class VulkanImageConsumer
 {
-  public:
+public:
 	VulkanImageConsumer(std::shared_ptr<VulkanDevice> device, std::span<const char* const> enabledExtensions,
 						std::uint32_t apiVersion, ImageCompletionKind completion = ImageCompletionKind::Fence,
 						bool timelineEnabled = false, bool companionAdmission = false);
@@ -40,7 +40,7 @@ class VulkanImageConsumer
 	// Only after transport admission failed before any byte/FD could be sent.
 	void AbandonUnsent();
 
-  private:
+private:
 	struct State;
 	std::unique_ptr<State> m_state;
 };

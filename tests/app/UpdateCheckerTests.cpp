@@ -30,17 +30,21 @@ static void Reject(std::string_view repository, std::string_view current, std::s
 	}
 	Require(rejected, "Invalid release response was accepted");
 }
+
 static void CheckVersions()
 {
-	const auto newer = ParseRelease("valid-owner/repository", "2.0.0",
-		R"({"tag_name":"v2.10.0","draft":false,"prerelease":false,"html_url":"https://evil.invalid"})");
+	const auto newer =
+		ParseRelease("valid-owner/repository", "2.0.0",
+					 R"({"tag_name":"v2.10.0","draft":false,"prerelease":false,"html_url":"https://evil.invalid"})");
 	Require(newer.status == UpdateStatus::Available && newer.version == "v2.10.0" &&
-			newer.releaseUrl == "https://github.com/valid-owner/repository/releases/tag/v2.10.0",
+				newer.releaseUrl == "https://github.com/valid-owner/repository/releases/tag/v2.10.0",
 			"A newer release or its trusted URL was not identified");
 	Require(ParseRelease("owner/repo", "2.10.0", R"({"tag_name":"v2.9.9","draft":false,"prerelease":false})").status ==
-				UpdateStatus::Current, "Version comparison must use numeric components");
+				UpdateStatus::Current,
+			"Version comparison must use numeric components");
 	Require(ParseRelease("owner/repo", "2.0.0", R"({"tag_name":"2.0.0","draft":false,"prerelease":false})").status ==
-				UpdateStatus::Current, "An equal release must be current");
+				UpdateStatus::Current,
+			"An equal release must be current");
 	Reject("owner/repo", "2.0.0", "not json");
 	Reject("owner/repo", "2.0.0", R"({"tag_name":"v2.0.1-beta","draft":false,"prerelease":true})");
 	Reject("owner/repo", "2.0.0", R"({"tag_name":"v2.0.1","draft":true,"prerelease":false})");
@@ -50,31 +54,34 @@ static void CheckVersions()
 	Reject("owner/../repo", "2.0.0", R"({"tag_name":"v2.0.1","draft":false,"prerelease":false})");
 	Reject("owner/repo", "2.0.0", std::string(1024 * 1024 + 1, 'x'));
 }
+
 static void CheckWorker()
 {
-	UpdateChecker checker("owner/repo", "2.0.0", [](std::string_view)
-	{
+	UpdateChecker checker("owner/repo", "2.0.0", [](std::string_view) {
 		std::this_thread::sleep_for(150ms);
 		return std::string(R"({"tag_name":"v2.0.1","draft":false,"prerelease":false})");
 	});
 	checker.Start();
 	Require(checker.State().status == UpdateStatus::Checking && !checker.Poll(), "A network check blocked the caller");
 	Eventually([&] { return checker.Poll(); }, "Update worker did not finish");
-	Require(checker.State().status == UpdateStatus::Available && !checker.Poll(), "Update result was not published once");
-	UpdateChecker offline("owner/repo", "2.0.0", [](std::string_view) -> std::string
-	{
-		throw std::runtime_error("offline");
-	});
+	Require(checker.State().status == UpdateStatus::Available && !checker.Poll(),
+			"Update result was not published once");
+	UpdateChecker offline("owner/repo", "2.0.0",
+						  [](std::string_view) -> std::string { throw std::runtime_error("offline"); });
 	offline.Start();
 	Eventually([&] { return offline.Poll(); }, "Offline update worker did not finish");
 	Require(offline.State().status == UpdateStatus::Unavailable && offline.State().error == "offline",
 			"Offline must remain unavailable");
 	bool called = false;
-	UpdateChecker unconfigured("", "2.0.0", [&](std::string_view) { called = true; return std::string{}; });
+	UpdateChecker unconfigured("", "2.0.0", [&](std::string_view) {
+		called = true;
+		return std::string{};
+	});
 	unconfigured.Start();
 	Require(!called && unconfigured.State().status == UpdateStatus::Unavailable,
 			"Unconfigured builds must not contact a service");
 }
+
 int main(int argc, char** argv)
 {
 	try
@@ -83,8 +90,8 @@ int main(int argc, char** argv)
 		if (argc == 5 && std::string_view(argv[1]) == "--production-live")
 		{
 			const auto repository = std::string(argv[2]);
-			const auto response = windows::RunUpdateWorker(L"--update-worker=" + windows::Wide(repository),
-														windows::Wide(argv[3]));
+			const auto response =
+				windows::RunUpdateWorker(L"--update-worker=" + windows::Wide(repository), windows::Wide(argv[3]));
 			const auto result = ParseRelease(repository, "0.0.0", response);
 			Require(result.status == UpdateStatus::Available, "Production update worker did not return a release");
 			std::ofstream marker{std::filesystem::path(argv[4])};
@@ -112,8 +119,7 @@ int main(int argc, char** argv)
 			Require(port > 0 && port <= 65535, "Invalid test port");
 			const auto started = std::chrono::steady_clock::now();
 			{
-				UpdateChecker checker("test/repo", "2.0.0", [port](std::string_view)
-				{
+				UpdateChecker checker("test/repo", "2.0.0", [port](std::string_view) {
 					return windows::RunUpdateWorker(L"--slow-worker=" + std::to_wstring(port));
 				});
 				checker.Start();

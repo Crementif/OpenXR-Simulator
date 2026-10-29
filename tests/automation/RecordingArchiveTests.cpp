@@ -19,22 +19,27 @@ namespace simxr::tests
 {
 namespace wire = control;
 namespace archive = automation;
+
 struct Directory
 {
 	std::filesystem::path path =
 		std::filesystem::temp_directory_path() /
 		("simxr-archive-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
 	Directory()
 	{
 		Require(std::filesystem::create_directory(path), "Create private test directory");
 	}
+
 	~Directory()
 	{
 		std::error_code ignored;
 		std::filesystem::remove_all(path, ignored);
 	}
 };
-template <typename Operation> static void Reject(Operation operation)
+
+template<typename Operation>
+static void Reject(Operation operation)
 {
 	try
 	{
@@ -46,6 +51,7 @@ template <typename Operation> static void Reject(Operation operation)
 	}
 	throw std::runtime_error("Invalid archive operation succeeded");
 }
+
 static wire::Message Response(CommandRecorder& recorder, wire::OpCode opcode, std::size_t offset, std::size_t count)
 {
 	const auto snapshot = recorder.Snapshot(offset, count);
@@ -58,6 +64,7 @@ static wire::Message Response(CommandRecorder& recorder, wire::OpCode opcode, st
 					  wire::Field::Bool(wire::tag::End, offset + snapshot.transactions.size() == snapshot.total)};
 	return message;
 }
+
 static CommandOutcome Outcome(std::size_t index, bool body)
 {
 	CommandOutcome outcome;
@@ -80,6 +87,7 @@ static CommandOutcome Outcome(std::size_t index, bool body)
 		outcome.transaction.commands = {SetHeadPose{}};
 	return outcome;
 }
+
 static std::uint64_t ReadAll(archive::RecordingArchiveReader& reader)
 {
 	std::uint64_t count = 0;
@@ -100,6 +108,7 @@ static std::uint64_t ReadAll(archive::RecordingArchiveReader& reader)
 	}
 	return count;
 }
+
 static void Streaming()
 {
 	Directory root;
@@ -110,11 +119,7 @@ static void Streaming()
 	archive::RecordingArchiveWriter writer(path, Response(recorder, wire::OpCode::StartRecording, 0, 0));
 	auto first = Response(recorder, wire::OpCode::ReadRecording, 0, 1);
 	Require(writer.Append(first) == 1, "First flush acknowledgement changed");
-	Reject(
-		[&]
-		{
-			writer.Append(first);
-		});
+	Reject([&] { writer.Append(first); });
 	recorder.Acknowledge(1);
 	for (std::size_t batch = 0; batch < 80; ++batch)
 	{
@@ -126,24 +131,12 @@ static void Streaming()
 		Require(through == (batch + 1) * 16 + 1, "Flushed offset changed across ring reuse");
 		recorder.Acknowledge(through);
 	}
-	Reject(
-		[&]
-		{
-			writer.Finish(Response(recorder, wire::OpCode::StopRecording, 1281, 0));
-		});
+	Reject([&] { writer.Finish(Response(recorder, wire::OpCode::StopRecording, 1281, 0)); });
 	recorder.Stop();
 	writer.Finish(Response(recorder, wire::OpCode::StopRecording, 1281, 0));
 	Require(writer.State().complete && writer.State().origin.version == 4, "Finalized archive lost schema promotion");
-	Reject(
-		[&]
-		{
-			writer.Append(first);
-		});
-	Reject(
-		[&]
-		{
-			archive::RecordingArchiveWriter duplicate(path, first);
-		});
+	Reject([&] { writer.Append(first); });
+	Reject([&] { archive::RecordingArchiveWriter duplicate(path, first); });
 	archive::RecordingArchiveReader reader(path);
 	Require(ReadAll(reader) == 1281 && reader.State().complete && !reader.State().truncated &&
 				reader.State().origin.version == 4,
@@ -168,11 +161,7 @@ static void Streaming()
 		const std::array<char, 4> length{char(0xff), char(0xff), char(0xff), char(0x7f)};
 		file.write(length.data(), length.size());
 	}
-	Reject(
-		[&]
-		{
-			archive::RecordingArchiveReader invalid(oversized);
-		});
+	Reject([&] { archive::RecordingArchiveReader invalid(oversized); });
 	const auto corrupt = root.path / "corrupt";
 	std::filesystem::create_directory(corrupt);
 	std::filesystem::copy_file(path / "input.simxr", corrupt / "input.simxr");
@@ -181,22 +170,17 @@ static void Streaming()
 		file.seekp(50);
 		file.put('\xff');
 	}
-	Reject(
-		[&]
-		{
-			archive::RecordingArchiveReader invalid(corrupt);
-		});
+	Reject([&] { archive::RecordingArchiveReader invalid(corrupt); });
 	{
 		std::ofstream file(path / "input.simxr", std::ios::binary | std::ios::app);
 		file.put('x');
 	}
-	Reject(
-		[&]
-		{
-			archive::RecordingArchiveReader trailing(path);
-			ReadAll(trailing);
-		});
+	Reject([&] {
+		archive::RecordingArchiveReader trailing(path);
+		ReadAll(trailing);
+	});
 }
+
 static void Interrupted()
 {
 	Directory root;
@@ -209,17 +193,14 @@ static void Interrupted()
 		writer.Append(Response(recorder, wire::OpCode::ReadRecording, 0, 1));
 		recorder.Stop();
 		recorder.Start({}, true);
-		Reject(
-			[&]
-			{
-				writer.Append(Response(recorder, wire::OpCode::ReadRecording, 0, 0));
-			});
+		Reject([&] { writer.Append(Response(recorder, wire::OpCode::ReadRecording, 0, 0)); });
 		Require(writer.State().next == 1 && !writer.State().complete, "Rejected page changed archive progress");
 	}
 	archive::RecordingArchiveReader reader(root.path / "take");
 	Require(ReadAll(reader) == 1 && !reader.State().complete && !reader.State().truncated,
 			"Clean-boundary interruption was misreported as completed");
 }
+
 static void ReleaseRanges()
 {
 	for (const bool metadata : {false, true})
@@ -261,13 +242,10 @@ static void ReleaseRanges()
 		if (metadata)
 		{
 			const auto range = archive::ReadRecordingRange(root.path / "take", FrameId{2}, FrameId{2});
-			const auto restoredBody = std::ranges::find_if(range.initial,
-														   [](const auto& command)
-														   {
-															   const auto* value =
-																   std::get_if<SetBodyControls>(&command);
-															   return value && value->observation.has_value();
-														   });
+			const auto restoredBody = std::ranges::find_if(range.initial, [](const auto& command) {
+				const auto* value = std::get_if<SetBodyControls>(&command);
+				return value && value->observation.has_value();
+			});
 			Require(restoredBody != range.initial.end() &&
 						std::get<SetBodyControls>(*restoredBody).observation->requestedTime == body->requestedTime &&
 						std::get<SetBodyControls>(*restoredBody).observation->jointSet == body->jointSet,
@@ -275,8 +253,7 @@ static void ReleaseRanges()
 			Require(std::get<SetHeadPose>(range.initial.front()).value.pose.position.x == 9,
 					"Trim restored the old controlled origin instead of its recorded fallback");
 			Require(std::ranges::any_of(range.initial,
-										[](const auto& command)
-										{
+										[](const auto& command) {
 											const auto* eyes = std::get_if<SetEyeViews>(&command);
 											return eyes && !eyes->value;
 										}),
@@ -284,15 +261,10 @@ static void ReleaseRanges()
 		}
 		else
 		{
-			Reject(
-				[&]
-				{
-					(void)archive::ReadRecordingRange(root.path / "take", FrameId{2}, FrameId{2});
-				});
+			Reject([&] { (void)archive::ReadRecordingRange(root.path / "take", FrameId{2}, FrameId{2}); });
 			archive::RecordingArchiveReader reader(root.path / "take");
 			while (reader.Next())
-			{
-			}
+			{}
 			Require(reader.State().complete, "Legacy archive stopped being readable");
 		}
 	}
@@ -310,13 +282,10 @@ static void ReleaseRanges()
 		state->runtimeTime = RuntimeTime{Duration{wrongFrame ? 110 : 111}};
 		release.releaseState = state;
 		recorder.Observe(release);
-		Reject(
-			[&]
-			{
-				(void)archive::DecodeRecordingPage(Response(recorder, wire::OpCode::ReadRecording, 0, 1));
-			});
+		Reject([&] { (void)archive::DecodeRecordingPage(Response(recorder, wire::OpCode::ReadRecording, 0, 1)); });
 	}
 }
+
 static void GameEvidence()
 {
 	for (const bool gap : {false, true})
@@ -326,8 +295,7 @@ static void GameEvidence()
 		wire::ControlService service(runtime);
 		const auto connection = *service.Connect();
 		std::uint64_t requestId = 0;
-		const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields)
-		{
+		const auto call = [&](wire::OpCode opcode, std::vector<wire::Field> fields) {
 			wire::Message request;
 			request.requestId = wire::RequestId{++requestId};
 			request.opcode = static_cast<std::uint16_t>(opcode);
@@ -338,8 +306,7 @@ static void GameEvidence()
 		const auto game = runtime.Game().Register(SIMXR_GAME_CAN_RESET);
 		Require(runtime.Game().Publish(game, "initial state"), "SDK origin setup");
 		constexpr std::int64_t anchor = 9007199254740993LL;
-		const auto read = [&](std::uint64_t offset, std::uint64_t count)
-		{
+		const auto read = [&](std::uint64_t offset, std::uint64_t count) {
 			auto result = call(wire::OpCode::ReadGameObservations, {wire::Field::U64(wire::tag::Offset, offset),
 																	wire::Field::U64(wire::tag::Length, count)});
 			result.fields.insert(result.fields.end(),
@@ -362,23 +329,11 @@ static void GameEvidence()
 		for (auto& field : wrongOrigin.fields)
 			if (field.tag == wire::tag::Generation)
 				field = wire::Field::U64(wire::tag::Generation, 2);
-		Reject(
-			[&]
-			{
-				archive::RecordingArchiveWriter invalid(root.path / "wrong", start, wrongOrigin);
-			});
+		Reject([&] { archive::RecordingArchiveWriter invalid(root.path / "wrong", start, wrongOrigin); });
 		Require(!std::filesystem::exists(root.path / "wrong"), "Wrong SDK origin created an archive");
 		auto partialClock = origin;
-		std::erase_if(partialClock.fields,
-					  [](const auto& field)
-					  {
-						  return field.tag == wire::tag::NativeTime;
-					  });
-		Reject(
-			[&]
-			{
-				(void)archive::DecodeRecordedGamePage(partialClock);
-			});
+		std::erase_if(partialClock.fields, [](const auto& field) { return field.tag == wire::tag::NativeTime; });
+		Reject([&] { (void)archive::DecodeRecordedGamePage(partialClock); });
 		archive::RecordingArchiveWriter writer(root.path / "sdk", start, origin);
 		for (unsigned index = 0; index < (gap ? 1100u : 2u); ++index)
 			Require(runtime.Game().Publish(game, std::to_string(index)), "SDK journal setup");
@@ -390,11 +345,7 @@ static void GameEvidence()
 			for (auto& field : invalid.fields)
 				if (field.tag == wire::tag::Generation)
 					field = wire::Field::U64(wire::tag::Generation, 2);
-			Reject(
-				[&]
-				{
-					writer.AppendGame(invalid);
-				});
+			Reject([&] { writer.AppendGame(invalid); });
 			writer.AppendGame(message);
 			if (decoded.journal.next == decoded.journal.total)
 				break;
@@ -429,23 +380,19 @@ static void GameEvidence()
 		}
 		std::stop_source cancellation;
 		cancellation.request_stop();
-		Reject(
-			[&]
-			{
-				(void)archive::ReadRecordingEvidence(root.path / "sdk", 0, cancellation.get_token());
-			});
+		Reject([&] { (void)archive::ReadRecordingEvidence(root.path / "sdk", 0, cancellation.get_token()); });
 		const auto input = root.path / "sdk" / "input.simxr";
 		std::filesystem::resize_file(input, std::filesystem::file_size(input) - 1);
 		archive::RecordingArchiveReader truncated(root.path / "sdk");
 		while (truncated.NextEvent())
-		{
-		}
+		{}
 		Require(truncated.State().game->complete && !truncated.State().complete && truncated.State().truncated,
 				"SDK completion hid an interrupted input archive footer");
 		service.Disconnect(connection);
 	}
 }
 } // namespace simxr::tests
+
 int main()
 {
 	try

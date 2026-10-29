@@ -30,8 +30,7 @@ static std::wstring Environment(const wchar_t* name)
 
 const std::filesystem::path& RuntimeDataDirectory()
 {
-	static const auto directory = []
-	{
+	static const auto directory = [] {
 		if (const auto explicitPath = Environment(L"SIMXR_DATA_DIR"); !explicitPath.empty())
 			return std::filesystem::path(explicitPath);
 		const auto base = Environment(L"LOCALAPPDATA");

@@ -2,9 +2,11 @@
 #include <functional>
 #include <string>
 #include <string_view>
+
 namespace simxr::app
 {
 void DrawLiveField(bool pending, std::string_view rejection);
+
 struct FieldValue
 {
 	std::function<void()> reset;
@@ -16,6 +18,7 @@ struct FieldValue
 	std::string groupText;
 	bool* quaternionView = nullptr;
 };
+
 bool FieldActions(const char* id, const FieldValue& value);
 FieldValue NumberValue(float& value, float fallback, float step, float minimum, float maximum,
 					   const char* format = "%.3f");

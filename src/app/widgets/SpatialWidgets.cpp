@@ -11,6 +11,7 @@ ImU32 DeviceColor(int device, float alpha)
 	const auto color = device == 1 ? theme::Left : device == 2 ? theme::Right : device == 0 ? theme::Text : theme::Head;
 	return theme::Fade(color, alpha);
 }
+
 void CancelPoseGizmo(GizmoState& state)
 {
 	if (state.usingGizmo)
@@ -23,6 +24,7 @@ void CancelPoseGizmo(GizmoState& state)
 	state.usingGizmo = false;
 	state.screenMove = false;
 }
+
 SpatialEditResult DrawPoseGizmo(const char* id, GizmoState& state, const FrameView& camera, ImVec2 minimum,
 								ImVec2 maximum, XrPosef& pose, bool enabled)
 {

@@ -16,6 +16,7 @@ static wire::HapticObservation Observation(std::uint64_t sequence = 1, std::int6
 			{{sequence, {InputDeviceKind::Controller, 0}, .5f, 120, 0, {}, HapticStatus::Active},
 			 {sequence + 1, {InputDeviceKind::Controller, 1}, 1, 0, 0, 1'000'000'000, HapticStatus::Active}}};
 }
+
 static void Feedback()
 {
 	HapticFeedback feedback;
@@ -55,6 +56,7 @@ static void Feedback()
 	feedback.Observe(Observation(), start, start);
 	Require(feedback.Motors(start, true)[0] != 0, "A new session may reuse sequence identities");
 }
+
 static void ShortPulses()
 {
 	HapticFeedback feedback;
@@ -76,6 +78,7 @@ static void ShortPulses()
 	feedback.Observe(pulse, start + 1s, start + 1s);
 	Require(feedback.Motors(start + 1s, true)[0] == 0, "Reconnection after a gap replayed short history");
 }
+
 static void Malformed()
 {
 	const std::array output{HapticOutput{
@@ -96,6 +99,7 @@ static void Malformed()
 	}
 	Require(rejected, "Malformed haptic data must not drive hardware");
 }
+
 int main()
 {
 	try

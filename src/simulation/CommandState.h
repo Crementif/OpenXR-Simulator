@@ -13,7 +13,7 @@ namespace simxr
 // application of one transaction. Its caller supplies synchronization.
 class CommandState
 {
-  public:
+public:
 	using ChannelMask = std::array<bool, ControlChannelCount>;
 	static ControlChannel ScenarioChannel(FailureScenario scenario);
 	CommandState() = default;
@@ -28,7 +28,7 @@ class CommandState
 	void ClearOwnership() noexcept;
 	void Swap(CommandState& other) noexcept;
 
-  private:
+private:
 	class Mutation;
 	using ChannelOwners = std::array<std::optional<CommandSource>, ControlChannelCount>;
 	using ScenarioMask = ScenarioState;

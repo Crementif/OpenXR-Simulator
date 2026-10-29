@@ -15,14 +15,16 @@
 namespace simxr::app
 {
 class RuntimePanels;
+
 struct ScriptRun
 {
 	std::string path;
 	ScriptOptions options;
 };
+
 class Library
 {
-  public:
+public:
 	Library();
 	void Refresh();
 	void Advance(Selection& selection, RigController& rigs);
@@ -30,7 +32,7 @@ class Library
 	std::optional<ScriptRun> DrawBrowser(Selection& selection, RuntimePanels& runtime, RigController& rigs);
 	std::optional<ScriptRun> Draw(Selection& selection, RuntimePanels& runtime, RigController& rigs);
 
-  private:
+private:
 	void Poll(Selection& selection, RigController& rigs);
 	const LibraryEntry* Find(const std::string& path) const;
 	void DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs);

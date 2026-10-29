@@ -26,7 +26,7 @@ struct RuntimeConfiguration
 
 class Runtime
 {
-  public:
+public:
 	using InstanceRef = HandleRef<XrInstance, Instance>;
 	using SessionRef = HandleRef<XrSession, Session>;
 
@@ -48,7 +48,7 @@ class Runtime
 	void CloseDebugger(XrSession session);
 	void Close();
 
-  private:
+private:
 	const ExtensionRegistry m_extensions;
 	const RuntimeConfiguration m_configuration;
 	mutable std::mutex m_mutex;

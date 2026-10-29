@@ -14,6 +14,7 @@
 namespace simxr::control
 {
 using Clock = std::chrono::steady_clock;
+
 static void Ready(int socket, int stopping, short events, Clock::time_point deadline, RequestId request)
 {
 	for (;;)
@@ -41,10 +42,11 @@ static void Ready(int socket, int stopping, short events, Clock::time_point dead
 			throw std::runtime_error("Control peer disconnected");
 	}
 }
+
 ControlExchangeTimeout::ControlExchangeTimeout(RequestId request)
 	: std::runtime_error("Control exchange is unfinished; Retry or Close explicitly"), m_request(request)
-{
-}
+{}
+
 RequestId ControlExchangeTimeout::Request() const noexcept
 {
 	return m_request;
@@ -55,16 +57,19 @@ struct LocalControlClient::State
 	struct Descriptor
 	{
 		int value = -1;
+
 		~Descriptor()
 		{
 			if (value >= 0)
 				::close(value);
 		}
 	};
+
 	struct Rights
 	{
 		std::array<int, MaxTransferHandles> values{};
 		std::size_t count = 0;
+
 		~Rights()
 		{
 			for (std::size_t index = 0; index < count; ++index)
@@ -72,6 +77,7 @@ struct LocalControlClient::State
 					::close(values[index]);
 		}
 	};
+
 	struct Exchange
 	{
 		ControlPacket outgoing, incoming;
@@ -79,12 +85,14 @@ struct LocalControlClient::State
 		std::size_t sent = 0, offset = 0;
 		bool handlesSent = false;
 	};
+
 	mutable std::mutex mutex;
 	Descriptor socket;
 	Descriptor stopping;
 	std::chrono::milliseconds timeout;
 	std::uint64_t next = 1, peerProcess = 0;
 	std::unique_ptr<Exchange> pending;
+
 	State(std::string path, std::chrono::milliseconds timeout) : timeout(timeout)
 	{
 		if (timeout.count() <= 0 || timeout > std::chrono::hours{24} || path.empty() || path.front() != '/' ||
@@ -121,12 +129,14 @@ struct LocalControlClient::State
 			throw std::runtime_error("Control peer process identity is unavailable");
 		peerProcess = static_cast<std::uint64_t>(peer.pid);
 	}
+
 	std::unique_ptr<Exchange> Close()
 	{
 		if (socket.value >= 0)
 			::close(std::exchange(socket.value, -1));
 		return std::move(pending);
 	}
+
 	void Send(Clock::time_point deadline)
 	{
 		auto& exchange = *pending;
@@ -170,6 +180,7 @@ struct LocalControlClient::State
 			exchange.sent += static_cast<std::size_t>(sent);
 		}
 	}
+
 	void Receive(Clock::time_point deadline)
 	{
 		auto& exchange = *pending;
@@ -230,6 +241,7 @@ struct LocalControlClient::State
 			exchange.offset += static_cast<std::size_t>(count);
 		}
 	}
+
 	ControlPacket ExchangePacket()
 	{
 		const auto deadline = Clock::now() + timeout;
@@ -264,18 +276,21 @@ struct LocalControlClient::State
 		}
 	}
 };
+
 LocalControlClient::LocalControlClient(std::string path, std::chrono::milliseconds timeout)
 	: m_state(std::make_unique<State>(std::move(path), timeout))
-{
-}
+{}
+
 LocalControlClient::~LocalControlClient()
 {
 	Close();
 }
+
 std::uint64_t LocalControlClient::PeerProcess() const noexcept
 {
 	return m_state->peerProcess;
 }
+
 ControlPacket LocalControlClient::Request(ControlPacket request)
 {
 	std::unique_ptr<State::Exchange> retired;
@@ -336,6 +351,7 @@ ControlPacket LocalControlClient::Request(ControlPacket request)
 		throw;
 	}
 }
+
 ControlPacket LocalControlClient::Retry()
 {
 	std::unique_ptr<State::Exchange> retired;
@@ -358,16 +374,17 @@ ControlPacket LocalControlClient::Retry()
 		throw;
 	}
 }
+
 std::optional<RequestId> LocalControlClient::Pending() const
 {
 	std::lock_guard lock(m_state->mutex);
 	return m_state->pending ? std::optional{m_state->pending->outgoing.message.requestId} : std::nullopt;
 }
+
 void LocalControlClient::Close() noexcept
 {
 	while (::eventfd_write(m_state->stopping.value, 1) < 0 && errno == EINTR)
-	{
-	}
+	{}
 	std::unique_ptr<State::Exchange> retired;
 	std::lock_guard lock(m_state->mutex);
 	retired = m_state->Close();

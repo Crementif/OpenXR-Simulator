@@ -19,21 +19,24 @@ struct ScriptOptions
 	std::uint64_t seed = 0;
 	int deadlineSeconds = 30, memoryMiB = 64;
 };
+
 struct RigTarget
 {
 	std::string endpoint;
 	std::uint64_t session = 0, generation = 0;
 	bool operator==(const RigTarget&) const = default;
 };
+
 struct RigReportResult
 {
 	std::string path;
 	std::exception_ptr error;
 };
+
 // One execution worker and its transport, with independent owned report output.
 class RigController
 {
-  public:
+public:
 	RigController();
 	~RigController();
 	void RunScript(RigTarget target, const std::string& path, const ScriptOptions& options);
@@ -62,11 +65,12 @@ class RigController
 	void PrepareLaunch(const LaunchProfile& profile);
 	void AttachLaunch(const LaunchedSession& session);
 
-  private:
+private:
 	struct Launch
 	{
 		std::string source, name;
 	};
+
 	void Start(RigTarget target, std::string source, std::string name, const ScriptOptions& options, bool replay,
 			   std::filesystem::path archive = {}, std::optional<std::uint64_t> expectedProcess = {});
 	std::optional<WorkerConnection> m_transport;

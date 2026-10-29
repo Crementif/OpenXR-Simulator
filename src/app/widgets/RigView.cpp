@@ -14,15 +14,18 @@ static constexpr XrFovf s_defaultFov{-.8f, .8f, .8f, -.8f};
 static constexpr float s_near = .05f;
 // Orbiting a single device starts closer than orbiting the whole player.
 static constexpr float s_deviceDistance = 1.2f;
+
 static float DefaultDistance(int focus)
 {
 	return focus >= 0 ? s_deviceDistance : s_defaultView.distance;
 }
+
 static float Yaw(XrQuaternionf q)
 {
 	const auto forward = Rotate(q, {0, 0, -1});
 	return std::atan2(-forward.x, -forward.z);
 }
+
 SpatialScene SpatialScene::FromTracking(const TrackingSnapshot& tracking)
 {
 	if (tracking.trackers.size() > MaxTrackerDevices)
@@ -49,6 +52,7 @@ SpatialScene SpatialScene::FromTracking(const TrackingSnapshot& tracking)
 		scene.gaze = tracking.gaze.pose;
 	return scene;
 }
+
 FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float aspect, float header)
 {
 	if (state.eye && scene.eye)
@@ -67,6 +71,7 @@ FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float 
 			 {target.x + state.pan.x + offset.x, target.y + state.pan.y + offset.y, target.z + state.pan.z + offset.z}},
 			{-horizontal, horizontal, up, -.55f}};
 }
+
 SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& scene, int& selected,
 						  const std::array<bool, MaxTrackerDevices + 3>& editable, ImVec2 size,
 						  const SpatialScene* ghost)
@@ -93,8 +98,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 		state.distance = DefaultDistance(focus);
 	}
 	// Each view button also re-centres and resets the zoom, so Back is the way home.
-	const auto view = [&](float yaw, float pitch)
-	{
+	const auto view = [&](float yaw, float pitch) {
 		state.eye = false;
 		state.yaw = yaw;
 		state.pitch = pitch;
@@ -103,8 +107,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	};
 	// One view menu at the top left and Expand at the top right keep the view itself clear.
 	constexpr float pi = std::numbers::pi_v<float>;
-	const auto near = [](float a, float b)
-	{
+	const auto near = [](float a, float b) {
 		return std::abs(a - b) < .01f;
 	};
 	const char* current = state.eye														 ? "Eye"
@@ -167,30 +170,25 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	const float tanLeft = std::tan(camera.fov.angleLeft), tanRight = std::tan(camera.fov.angleRight);
 	const float tanUp = std::tan(camera.fov.angleUp), tanDown = std::tan(camera.fov.angleDown);
 	const float focal = size.x / (tanRight - tanLeft);
-	const auto toCamera = [&](XrVector3f world)
-	{
+	const auto toCamera = [&](XrVector3f world) {
 		return RelativePose({{0, 0, 0, 1}, world}, camera.pose).position;
 	};
 	// A camera-space point in front of the near plane, on screen.
-	const auto screen = [&](XrVector3f local)
-	{
+	const auto screen = [&](XrVector3f local) {
 		const float depth = -local.z;
 		return ImVec2{minimum.x + (local.x / depth - tanLeft) / (tanRight - tanLeft) * size.x,
 					  minimum.y + (tanUp - local.y / depth) / (tanUp - tanDown) * size.y};
 	};
-	const auto project = [&](XrVector3f world)
-	{
+	const auto project = [&](XrVector3f world) {
 		const auto local = toCamera(world);
 		return local.z > -s_near ? std::pair{ImVec2{}, true} : std::pair{screen(local), false};
 	};
-	const auto line = [&](XrVector3f first, XrVector3f second, ImU32 color, float thickness = 1.0f)
-	{
+	const auto line = [&](XrVector3f first, XrVector3f second, ImU32 color, float thickness = 1.0f) {
 		auto a = toCamera(first), b = toCamera(second);
 		if (a.z > -s_near && b.z > -s_near)
 			return;
 		// Keep only the part in front of the near plane.
-		const auto cut = [](XrVector3f inside, XrVector3f outside)
-		{
+		const auto cut = [](XrVector3f inside, XrVector3f outside) {
 			const float t = (inside.z + s_near) / (inside.z - outside.z);
 			return XrVector3f{inside.x + (outside.x - inside.x) * t, inside.y + (outside.y - inside.y) * t, -s_near};
 		};
@@ -215,8 +213,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	line({}, {0, 0, -.3f}, theme::AxisZ, 2);
 	{
 		// Facing arrow on the floor at the root.
-		const auto at = [&](float x, float z)
-		{
+		const auto at = [&](float x, float z) {
 			return Compose(scene.root, {{0, 0, 0, 1}, {x, 0, z}}).position;
 		};
 		const auto color = theme::Fade(theme::TextDim, .8f);
@@ -226,16 +223,14 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	}
 	// A hand page dims the body so the hands stand out.
 	const bool handPage = selected == 1 || selected == 2;
-	const auto drawController = [&](XrPosef pose, ImU32 color, float alpha)
-	{
+	const auto drawController = [&](XrPosef pose, ImU32 color, float alpha) {
 		// Through the eye it is true to scale; from outside it grows to stay readable, within limits.
 		const auto centre = toCamera(pose.position);
 		if (centre.z > -s_near)
 			return;
 		const float perMeter = focal / -centre.z;
 		const float glyph = state.eye ? 1.0f : std::clamp(20 * scale / (perMeter * .12f), 1.0f, 4.0f);
-		const auto local = [&](XrVector3f offset)
-		{
+		const auto local = [&](XrVector3f offset) {
 			return toCamera(
 				Compose(pose, {{0, 0, 0, 1}, {offset.x * glyph, offset.y * glyph, offset.z * glyph}}).position);
 		};
@@ -248,14 +243,9 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 			ring[step] = local({c, .015f - .866f * s, -.065f - .5f * s});
 		}
 		const bool clipped = bottom.z > -s_near || top.z > -s_near ||
-							 std::ranges::any_of(ring,
-												 [](XrVector3f point)
-												 {
-													 return point.z > -s_near;
-												 });
+							 std::ranges::any_of(ring, [](XrVector3f point) { return point.z > -s_near; });
 		// Each end is as thick as its own depth makes it, so the near end reads as near.
-		const auto radiusAt = [&](XrVector3f point)
-		{
+		const auto radiusAt = [&](XrVector3f point) {
 			return std::max(2.5f * scale, .015f * glyph * focal / -point.z);
 		};
 		const auto ink = theme::Fade(theme::Ink, alpha);
@@ -265,8 +255,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 			const float ra = radiusAt(bottom), rb = radiusAt(top);
 			const float length = std::max(.001f, std::hypot(b.x - a.x, b.y - a.y));
 			const ImVec2 across{-(b.y - a.y) / length, (b.x - a.x) / length};
-			const auto capsule = [&](float grow, ImU32 fill)
-			{
+			const auto capsule = [&](float grow, ImU32 fill) {
 				draw->AddQuadFilled({a.x + across.x * (ra + grow), a.y + across.y * (ra + grow)},
 									{b.x + across.x * (rb + grow), b.y + across.y * (rb + grow)},
 									{b.x - across.x * (rb + grow), b.y - across.y * (rb + grow)},
@@ -291,8 +280,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 		line(Compose(pose, {{0, 0, 0, 1}, {0, 0, -.08f * glyph}}).position,
 			 Compose(pose, {{0, 0, 0, 1}, {0, 0, -.3f * glyph}}).position, theme::Fade(color, .8f), 1.5f);
 	};
-	const auto renderScene = [&](const SpatialScene& value, float alpha)
-	{
+	const auto renderScene = [&](const SpatialScene& value, float alpha) {
 		const float bodyAlpha = alpha * (handPage ? .4f : .9f);
 		for (std::size_t joint = 0; joint < BodyJointCount; ++joint)
 		{
@@ -302,8 +290,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 					 value.body.joints[static_cast<std::size_t>(*value.body.skeleton[joint].parent)].pose.position,
 					 theme::Fade(theme::TextDim, bodyAlpha), 1.5f);
 		}
-		const auto renderDevice = [&](int device)
-		{
+		const auto renderDevice = [&](int device) {
 			if (!value.available[device])
 				return;
 			const auto pose = value.devices[device];

@@ -4,10 +4,11 @@
 namespace simxr
 {
 SwapchainWaits::Registration::Registration(SwapchainWaits& owner) : m_owner(&owner) {}
+
 SwapchainWaits::Registration::Registration(Registration&& other) noexcept
 	: m_owner(std::exchange(other.m_owner, nullptr))
-{
-}
+{}
+
 SwapchainWaits::Registration::~Registration()
 {
 	if (m_owner)
@@ -33,11 +34,7 @@ void SwapchainWaits::Close()
 bool SwapchainWaits::Drain(std::chrono::nanoseconds timeout)
 {
 	std::unique_lock lock(m_mutex);
-	return m_changed.wait_for(lock, timeout,
-							  [this]
-							  {
-								  return m_readers == 0;
-							  });
+	return m_changed.wait_for(lock, timeout, [this] { return m_readers == 0; });
 }
 
 void SwapchainWaits::Leave()

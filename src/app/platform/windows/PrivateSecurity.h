@@ -10,16 +10,25 @@ namespace simxr::app::windows
 {
 class PrivateSecurity
 {
-  public:
+public:
 	explicit PrivateSecurity(bool directory, bool inherit = false);
 	~PrivateSecurity();
 	PrivateSecurity(const PrivateSecurity&) = delete;
 	PrivateSecurity& operator=(const PrivateSecurity&) = delete;
-	SECURITY_ATTRIBUTES* Attributes() { return &m_attributes; }
-	const std::wstring& SidText() const { return m_sidText; }
+
+	SECURITY_ATTRIBUTES* Attributes()
+	{
+		return &m_attributes;
+	}
+
+	const std::wstring& SidText() const
+	{
+		return m_sidText;
+	}
+
 	void Check(HANDLE handle, SE_OBJECT_TYPE type, bool requireProtected) const;
 
-  private:
+private:
 	std::vector<std::byte> m_sid;
 	std::wstring m_sidText;
 	PSECURITY_DESCRIPTOR m_descriptor = nullptr;

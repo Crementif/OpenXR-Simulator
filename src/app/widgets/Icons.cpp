@@ -30,8 +30,7 @@ struct IconPath
 
 static void AppendCubic(const float* curve, std::vector<ImVec2>& points)
 {
-	const auto distance = [&](int a, int b)
-	{
+	const auto distance = [&](int a, int b) {
 		return std::hypot(curve[b * 2] - curve[a * 2], curve[b * 2 + 1] - curve[a * 2 + 1]);
 	};
 	// nanosvg stores straight segments as cubics with their control points on the line.
@@ -45,17 +44,18 @@ static void AppendCubic(const float* curve, std::vector<ImVec2>& points)
 						  a * curve[1] + b * curve[3] + c * curve[5] + d * curve[7] - 12});
 	}
 }
+
 // Repeated points make zero-length segments that ImGui cannot join or fill.
 static void RemoveRepeats(IconPath& path)
 {
-	const auto same = [](ImVec2 a, ImVec2 b)
-	{
+	const auto same = [](ImVec2 a, ImVec2 b) {
 		return std::abs(a.x - b.x) < 1e-3f && std::abs(a.y - b.y) < 1e-3f;
 	};
 	path.points.erase(std::unique(path.points.begin(), path.points.end(), same), path.points.end());
 	if (path.closed && path.points.size() > 2 && same(path.points.front(), path.points.back()))
 		path.points.pop_back();
 }
+
 // ImGui's anti-aliased fill expects clockwise points on screen.
 static void MakeClockwise(std::vector<ImVec2>& points)
 {
@@ -69,6 +69,7 @@ static void MakeClockwise(std::vector<ImVec2>& points)
 	if (area < 0)
 		std::reverse(points.begin(), points.end());
 }
+
 static std::vector<IconPath> Parse(std::string_view source)
 {
 	std::string text(source);
@@ -107,10 +108,10 @@ static std::vector<IconPath> Parse(std::string_view source)
 	}
 	return paths;
 }
+
 static const std::vector<IconPath>& Paths(Icon icon)
 {
-	static const auto s_paths = []
-	{
+	static const auto s_paths = [] {
 		std::array<std::vector<IconPath>, s_files.size()> paths;
 		for (std::size_t index = 0; index < s_files.size(); ++index)
 			for (const auto& [name, source] : s_sources)
@@ -120,11 +121,11 @@ static const std::vector<IconPath>& Paths(Icon icon)
 	}();
 	return s_paths[static_cast<std::size_t>(icon)];
 }
+
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color)
 {
 	const float unit = size / 24;
-	const auto map = [&](ImVec2 point)
-	{
+	const auto map = [&](ImVec2 point) {
 		return ImVec2{center.x + point.x * unit, center.y + point.y * unit};
 	};
 	for (const auto& path : Paths(icon))

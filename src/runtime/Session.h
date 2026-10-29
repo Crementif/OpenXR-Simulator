@@ -50,7 +50,7 @@ struct SessionSnapshot
 
 class Session
 {
-  public:
+public:
 	Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
 	Session(XrSession handle, std::shared_ptr<Instance> instance,
 			std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
@@ -58,7 +58,7 @@ class Session
 	XrResult Ready(RuntimeTime time);
 	XrResult Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config,
 				   PresentationPolicy policy = PresentationPolicy::Repeat,
-		std::shared_ptr<const PoseSequence> startupSequence = {});
+				   std::shared_ptr<const PoseSequence> startupSequence = {});
 	XrResult RequestExit(RuntimeTime time);
 	XrResult End(RuntimeTime time);
 	XrResult SetState(XrSessionState state, RuntimeTime time);
@@ -86,10 +86,12 @@ class Session
 	XrResult EnableImageHistory();
 	bool SupportsImageHistory() const;
 	FrameImageHistory& ImageHistory();
+
 	FramePreviewHistory& PreviewHistory() noexcept
 	{
 		return m_previewHistory;
 	}
+
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
 	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {},
@@ -138,7 +140,7 @@ class Session
 	std::uint32_t ActiveViewCount() const;
 	LocatedViews ViewsAt(RuntimeTime time, bool foveated = false) const;
 
-  private:
+private:
 	void Close(std::optional<SessionGeneration> expectedGeneration);
 	friend class DebugController;
 	bool WithDebugGeneration(SessionGeneration generation, const std::function<void()>& work,

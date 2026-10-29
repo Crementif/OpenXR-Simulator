@@ -18,6 +18,7 @@ static void Require(bool value, const char* message)
 	if (!value)
 		throw std::runtime_error(message);
 }
+
 static void Await(const GpuCompletion& output)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -31,6 +32,7 @@ static void Await(const GpuCompletion& output)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
+
 struct SubmittedFrame
 {
 	PresentationTick display;
@@ -41,24 +43,28 @@ struct SubmittedFrame
 
 class RetentionBindings final : public VulkanFrameBindings
 {
-  public:
+public:
 	explicit RetentionBindings(std::shared_ptr<VulkanImage> image) : m_image(std::move(image)) {}
+
 	std::optional<SwapchainDescription> Describe(XrSwapchain swapchain) const override
 	{
 		if (swapchain != m_handle)
 			return {};
 		return SwapchainDescription{m_image->extent.width, m_image->extent.height, m_image->layers, true};
 	}
+
 	std::shared_ptr<VulkanImage> ReleasedImage(XrSwapchain swapchain) const override
 	{
 		return swapchain == m_handle ? m_image : nullptr;
 	}
+
 	void MarkReleasedUsed(XrSwapchain swapchain,
 						  const std::shared_ptr<const GpuCompletion>& completion) const noexcept override
 	{
 		if (swapchain == m_handle)
 			m_used = completion;
 	}
+
 	const XrSwapchain m_handle = reinterpret_cast<XrSwapchain>(201);
 	const std::shared_ptr<VulkanImage> m_image;
 	mutable std::shared_ptr<const GpuCompletion> m_used;
@@ -92,8 +98,7 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 				session.Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_VIEW, IdentityPose(), view) == XR_SUCCESS,
 			"Create submitted layer spaces");
 	RetainedSubmission retained{};
-	const auto submit = [&](bool retain) -> SubmittedFrame
-	{
+	const auto submit = [&](bool retain) -> SubmittedFrame {
 		FramePrediction prediction;
 		Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
 				"Begin retained frame");
@@ -142,11 +147,8 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 		{
 			VulkanFrameSubmission native(session, backend, &inspection, bindings, retain);
 			FrameSubmission submission(session, native);
-			const auto result = submission.Execute(end,
-												   [&bindings](XrSwapchain swapchain)
-												   {
-													   return bindings.Describe(swapchain);
-												   });
+			const auto result =
+				submission.Execute(end, [&bindings](XrSwapchain swapchain) { return bindings.Describe(swapchain); });
 			if (XR_FAILED(result))
 				std::fprintf(stderr, "Automatic submission retain=%d result=%d\n", retain, result);
 			Require(result == XR_SUCCESS, "Production frame submission with optional retention failed");
@@ -154,11 +156,7 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 		Require(bindings.m_used != nullptr, "Retained application swapchain was not protected by batch completion");
 		Await(*bindings.m_used);
 		const auto entries = session.Display().Retain();
-		auto found = std::find_if(entries.begin(), entries.end(),
-								  [&](const auto& entry)
-								  {
-									  return entry.key == key;
-								  });
+		auto found = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) { return entry.key == key; });
 		Require(found != entries.end() && found->output, "Submitted baseline disappeared");
 		Await(*found->output);
 		for (unsigned tick = 0; tick < 8; ++tick)
@@ -204,8 +202,7 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 	Await(*retained.source);
 	Require(backend.ReprojectionReservations().InUse() == 5,
 			"Cropped sources were not deduplicated or hidden layers were omitted");
-	const auto resolve = [&](XrSwapchain source)
-	{
+	const auto resolve = [&](XrSwapchain source) {
 		return bindings.ReleasedImage(source);
 	};
 	std::unique_ptr<VulkanReprojectionPreparation> cancelled;
@@ -279,11 +276,7 @@ void VerifySubmittedLayers(RetainedSubmission retained, bool verifyPixels)
 	VirtualDisplay display;
 	auto head = retained.head;
 	const RuntimeTime epoch{Duration{std::max<std::int64_t>(1, head.sampleTime.value.count())}};
-	display.ConfigurePolicy(PresentationPolicy::Rotational,
-							[&](RuntimeTime)
-							{
-								return head;
-							});
+	display.ConfigurePolicy(PresentationPolicy::Rotational, [&](RuntimeTime) { return head; });
 	display.Start({1}, {epoch, std::chrono::milliseconds(1)}, ExecutionMode::Deterministic);
 	Require(display.Pause(), "Pause native display for exact output inspection");
 	const FrameKey source{{1}, {1}};
@@ -324,11 +317,7 @@ void VerifySubmittedLayers(RetainedSubmission retained, bool verifyPixels)
 			CompositionPlan expected;
 			Require(PrepareRotationalComposition(
 						*retained.layers, retained.target, retained.head, head,
-						[](XrSwapchain)
-						{
-							return XrExtent2Di{16, 16};
-						},
-						expected) == XR_SUCCESS,
+						[](XrSwapchain) { return XrExtent2Di{16, 16}; }, expected) == XR_SUCCESS,
 					"Prepare original-texture reference");
 			for (auto& draw : expected.draws)
 				draw.source.source =

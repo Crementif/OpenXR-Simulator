@@ -19,6 +19,7 @@
 namespace simxr::control::windows
 {
 using Clock = std::chrono::steady_clock;
+
 struct Handle
 {
 	HANDLE value = INVALID_HANDLE_VALUE;
@@ -31,6 +32,7 @@ struct Handle
 	~Handle();
 	void Close() noexcept;
 };
+
 std::runtime_error Error(const char* detail, DWORD result = GetLastError());
 std::shared_ptr<TransferHandle> DuplicateTransfer(HANDLE process, HANDLE handle);
 std::array<std::byte, 8> TransferAcknowledgement(RequestId request);
@@ -49,10 +51,13 @@ struct Security
 	Security(const Security&) = delete;
 	Security& operator=(const Security&) = delete;
 };
+
 Handle VerifyPeer(HANDLE pipe, bool server, const std::vector<std::byte>& expected, bool* nativeHandles = nullptr);
+
 struct Timeout
 {
 };
+
 struct Interrupted
 {
 };
@@ -61,7 +66,7 @@ struct Interrupted
 // One bounded native owner per connection also covers failed cancellation.
 class Channel
 {
-  public:
+public:
 	explicit Channel(Handle pipe);
 	~Channel();
 	Channel(const Channel&) = delete;
@@ -77,7 +82,7 @@ class Channel
 	std::size_t Transfer(bool write, std::span<std::byte> bytes, Clock::time_point deadline, HANDLE stop);
 	void Close() noexcept;
 
-  private:
+private:
 	enum class Kind;
 	struct Native;
 	DWORD Finish(Clock::time_point deadline, HANDLE stop);

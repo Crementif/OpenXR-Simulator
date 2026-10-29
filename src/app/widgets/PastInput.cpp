@@ -8,6 +8,7 @@
 namespace simxr::app
 {
 static constexpr float s_degrees = 180 / std::numbers::pi_v<float>;
+
 static const char* PresetName(BodyPreset preset)
 {
 	switch (preset)
@@ -21,32 +22,38 @@ static const char* PresetName(BodyPreset preset)
 	}
 	return "Unknown";
 }
+
 static std::string Position(const XrVector3f& value)
 {
 	std::ostringstream text;
 	text << std::fixed << std::setprecision(2) << value.x << ", " << value.y << ", " << value.z << " m";
 	return text.str();
 }
+
 static const char* Tracking(bool connected, bool tracked)
 {
 	return !connected ? "Disconnected" : tracked ? "Tracked" : "Not tracked";
 }
+
 // Dimmed key/value rows: the recorded values of a past frame are not editable.
 class PastInputRows
 {
-  public:
+public:
 	explicit PastInputRows(const char* id) : m_open(ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp))
 	{
 		if (m_open)
 			ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6);
 	}
+
 	PastInputRows(const PastInputRows&) = delete;
 	PastInputRows& operator=(const PastInputRows&) = delete;
+
 	~PastInputRows()
 	{
 		if (m_open)
 			ImGui::EndTable();
 	}
+
 	void Row(const char* key, const std::string& value)
 	{
 		if (!m_open)
@@ -58,9 +65,10 @@ class PastInputRows
 		ImGui::TextDisabled("%s", value.c_str());
 	}
 
-  private:
+private:
 	bool m_open;
 };
+
 static std::string Placement(const TrackerDevice& tracker)
 {
 	if (tracker.jointOffset)
@@ -69,10 +77,12 @@ static std::string Placement(const TrackerDevice& tracker)
 		return Position(tracker.poseOverride->position);
 	return tracker.anchor ? "On the body" : "Default";
 }
+
 static void Missing(const char* what)
 {
 	ImGui::TextDisabled("%s not recorded for this frame", what);
 }
+
 void DrawPastBody(const InputSample& sample)
 {
 	if (!sample.body)
@@ -97,14 +107,12 @@ void DrawPastBody(const InputSample& sample)
 			rows.Row(s_controls[index], (control.offset ? Position(*control.offset) + " " : std::string{}) +
 											(control.tracked ? "" : "not tracked"));
 	}
-	const auto joints = std::count_if(body.joints.begin(), body.joints.end(),
-									  [](const auto& joint)
-									  {
-										  return joint.has_value();
-									  });
+	const auto joints =
+		std::count_if(body.joints.begin(), body.joints.end(), [](const auto& joint) { return joint.has_value(); });
 	if (joints)
 		rows.Row("Joints", std::to_string(joints) + " overridden");
 }
+
 void DrawPastGaze(const InputSample& sample)
 {
 	if (!sample.gaze)
@@ -121,6 +129,7 @@ void DrawPastGaze(const InputSample& sample)
 	rows.Row("Pitch", angle);
 	rows.Row("State", !gaze.available ? "Unavailable" : gaze.tracked ? "Tracked" : "Not tracked");
 }
+
 void DrawPastTrackers(const InputSample& sample, std::size_t selected)
 {
 	if (!sample.trackers)
@@ -145,6 +154,7 @@ void DrawPastTrackers(const InputSample& sample, std::size_t selected)
 	}
 	ImGui::EndTable();
 }
+
 void DrawInputSummary(const InputSample& sample)
 {
 	if (sample.body)

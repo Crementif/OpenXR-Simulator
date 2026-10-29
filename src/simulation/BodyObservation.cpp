@@ -82,13 +82,13 @@ BodyObservation NormalizeBodyObservation(BodyObservation observation)
 	}
 	return observation;
 }
+
 BodyObservation RebaseBodyObservation(const BodyObservation& observation, RuntimeTime origin, RuntimeTime target)
 {
 	auto result = NormalizeBodyObservation(observation);
 	if (origin.value.count() <= 0 || target.value.count() <= 0)
 		throw std::invalid_argument("Body replay requires positive clock anchors");
-	const auto shift = [&](RuntimeTime time)
-	{
+	const auto shift = [&](RuntimeTime time) {
 		// Positive source times and anchors make this subtraction representable.
 		const auto offset = time.value.count() - origin.value.count();
 		const auto destination = target.value.count();
@@ -103,6 +103,7 @@ BodyObservation RebaseBodyObservation(const BodyObservation& observation, Runtim
 		result.returnedTime = shift(*result.returnedTime);
 	return result;
 }
+
 BodySample EvaluateBodyObservation(const BodyObservation& observation, bool focused)
 {
 	BodySample result;

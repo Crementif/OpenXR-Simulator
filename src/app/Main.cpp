@@ -85,13 +85,14 @@ int main(int argc, char** argv)
 		}
 		if (argument == "--help")
 		{
-			std::puts("Usage: simxr_companion [--connect SOCKET] [--hidden] [--windowless] [--validation] [--smoke-frames N] "
-					  "[--screenshot PATH] [--runtime-smoke [--export PATH]] [--proof-consumer [FD]] "
-					  "[--proof-verify-pixels] [--mcp-http PORT] [--launch-profile=NAME]"
+			std::puts(
+				"Usage: simxr_companion [--connect SOCKET] [--hidden] [--windowless] [--validation] [--smoke-frames N] "
+				"[--screenshot PATH] [--runtime-smoke [--export PATH]] [--proof-consumer [FD]] "
+				"[--proof-verify-pixels] [--mcp-http PORT] [--launch-profile=NAME]"
 #ifdef SIMXR_MCP_DISCOVERY
-					  " [--mcp]"
+				" [--mcp]"
 #endif
-					  );
+			);
 			return 0;
 		}
 		if (argument.starts_with("--launch-profile-hex="))
@@ -150,8 +151,8 @@ int main(int argc, char** argv)
 			options.validation = true;
 		else if (argument == "--runtime-smoke")
 			options.runtimeSmoke = true;
-		else if (argument == "--connect" || argument == "--export" || argument == "--screenshot" || argument == "--mcp-http" ||
-				 argument == "--smoke-frames")
+		else if (argument == "--connect" || argument == "--export" || argument == "--screenshot" ||
+				 argument == "--mcp-http" || argument == "--smoke-frames")
 		{
 			const auto value = ReadValue(argc, argv, index);
 			if (!value)
@@ -166,7 +167,8 @@ int main(int argc, char** argv)
 			{
 				unsigned port = 0;
 				const auto result = std::from_chars(value->data(), value->data() + value->size(), port);
-				if (result.ec != std::errc{} || result.ptr != value->data() + value->size() || port > 65535 || options.mcpPort)
+				if (result.ec != std::errc{} || result.ptr != value->data() + value->size() || port > 65535 ||
+					options.mcpPort)
 				{
 					std::fputs("--mcp-http requires one port from 0 to 65535\n", stderr);
 					return 2;
@@ -209,10 +211,11 @@ int main(int argc, char** argv)
 			return 2;
 		}
 	}
-	if ((options.windowless && (options.hidden || options.validation || options.smokeFrames || options.runtimeSmoke ||
-							   options.proofDescriptor >= 0 || !options.screenshot.empty() || !options.controlSocket.empty())) ||
+	if ((options.windowless &&
+		 (options.hidden || options.validation || options.smokeFrames || options.runtimeSmoke ||
+		  options.proofDescriptor >= 0 || !options.screenshot.empty() || !options.controlSocket.empty())) ||
 		(options.launchProfile && (options.windowless || options.smokeFrames || options.runtimeSmoke ||
-								  options.proofDescriptor >= 0 || !options.controlSocket.empty())) ||
+								   options.proofDescriptor >= 0 || !options.controlSocket.empty())) ||
 		(options.proofVerifyPixels && options.proofDescriptor < 0) ||
 		(options.runtimeSmoke && (options.controlSocket.empty() || options.proofDescriptor >= 0)) ||
 		(!options.imageExport.empty() && !options.runtimeSmoke) ||
@@ -231,8 +234,8 @@ int main(int argc, char** argv)
 	if (options.windowless && !options.mcpPort && options.mcpBootstrapDescriptor == -2)
 		options.mcpBootstrapDescriptor = -1;
 	const bool finite = options.smokeFrames || options.proofDescriptor >= 0 || options.runtimeSmoke;
-	const bool showFailure = !options.hidden && !options.windowless && !finite && !options.mcpPort &&
-		options.mcpBootstrapDescriptor == -2;
+	const bool showFailure =
+		!options.hidden && !options.windowless && !finite && !options.mcpPort && options.mcpBootstrapDescriptor == -2;
 	try
 	{
 		const auto bootstrapToken = simxr::app::TakeMcpToken();

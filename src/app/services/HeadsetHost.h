@@ -13,11 +13,14 @@
 namespace simxr::app
 {
 struct ObservedSetup;
+
 struct HeadsetHostAlignment
 {
 	float x = 0, z = 0, yaw = 0, floor = 0;
 };
+
 HeadsetHostAlignment HeadsetAlignmentFor(const ObservedSetup& observed);
+
 struct HeadsetHostOptions
 {
 	std::filesystem::path executable;
@@ -55,11 +58,13 @@ enum class HeadsetOutputState
 	Inspection,
 	Hidden
 };
+
 struct HeadsetEyeSize
 {
 	std::uint32_t width = 0, height = 0;
 	bool operator==(const HeadsetEyeSize&) const = default;
 };
+
 struct HeadsetHostSnapshot
 {
 	HeadsetHostPhase phase = HeadsetHostPhase::Idle;
@@ -75,11 +80,12 @@ struct HeadsetHostSnapshot
 	std::array<std::optional<bool>, 3> bodySupport;
 	std::optional<std::uint32_t> connectedTrackers;
 };
+
 // UI-thread commands; the worker alone owns the native process and its pipes.
 // Running means the process exists, not that tracking/display attachment is ready.
 class HeadsetHost
 {
-  public:
+public:
 	~HeadsetHost();
 	void Start(HeadsetHostOptions options);
 	void Stop();
@@ -90,7 +96,7 @@ class HeadsetHost
 					   std::uint64_t connectionEpoch);
 	HeadsetHostSnapshot Snapshot() const;
 
-  private:
+private:
 	void Run(std::stop_token stop, HeadsetHostOptions options);
 	mutable std::mutex m_mutex;
 	HeadsetHostSnapshot m_snapshot;

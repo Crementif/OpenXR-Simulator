@@ -24,19 +24,21 @@ struct D3D12CompositionSource
 
 class D3D12Frame final : public FrameOutput
 {
-  public:
+public:
 	~D3D12Frame() override;
 	CompletionStatus PollCompletion() const noexcept override;
+
 	bool SourcesUsed() const noexcept
 	{
 		return m_submitted;
 	}
+
 	ID3D12Resource* Texture() const noexcept;
 	HANDLE TextureHandle() const noexcept;
 	HANDLE FenceHandle() const noexcept;
 	static constexpr std::uint64_t ReadyValue = 1;
 
-  private:
+private:
 	friend class D3D12Backend;
 	D3D12Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
 			   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views);
@@ -61,7 +63,7 @@ class D3D12Frame final : public FrameOutput
 // Every source is restored to its declared release state before submission ends.
 class D3D12Backend final
 {
-  public:
+public:
 	using Frame = D3D12Frame;
 	using Source = D3D12CompositionSource;
 	D3D12Backend(ID3D12Device* device, ID3D12CommandQueue* queue);
@@ -72,7 +74,7 @@ class D3D12Backend final
 						   std::shared_ptr<D3D12Frame>& output, bool retainMipChain = false);
 	HRESULT Submit(const std::shared_ptr<D3D12Frame>& frame);
 
-  private:
+private:
 	HRESULT Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES state,
 					 std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output);
 	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;

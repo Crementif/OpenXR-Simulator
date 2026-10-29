@@ -15,15 +15,15 @@ class VulkanImagePool final : public std::enable_shared_from_this<VulkanImagePoo
 {
 	struct Allocation;
 
-  public:
+public:
 	class Lease final : public std::enable_shared_from_this<Lease>
 	{
-	  public:
+	public:
 		~Lease();
 		std::shared_ptr<VulkanExternalImage> External();
 		std::shared_ptr<VulkanImage> Import(const VulkanExternalDevice& consumer);
 
-	  private:
+	private:
 		friend class VulkanImagePool;
 		Lease(std::shared_ptr<VulkanImagePool> pool, std::shared_ptr<Allocation> allocation,
 			  std::shared_ptr<VulkanExternalImage> image, bool producer);
@@ -38,7 +38,7 @@ class VulkanImagePool final : public std::enable_shared_from_this<VulkanImagePoo
 	// Drop every cached borrowed-device owner, even if its owned inspection lease survives.
 	void Close();
 
-  private:
+private:
 	struct Allocation
 	{
 		std::shared_ptr<VulkanExternalImage> producer;
@@ -48,6 +48,7 @@ class VulkanImagePool final : public std::enable_shared_from_this<VulkanImagePoo
 		bool cached = false;
 		bool Idle() const noexcept;
 	};
+
 	std::shared_ptr<VulkanExternalImage> External(const std::shared_ptr<Lease>& lease);
 	std::shared_ptr<VulkanImage> Import(const Lease& lease, const VulkanExternalDevice& consumer);
 	void Return(const std::shared_ptr<Allocation>& allocation, bool producer);

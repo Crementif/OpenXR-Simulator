@@ -14,12 +14,14 @@ struct HeadsetPageRequest
 	bool realign = false;
 	HeadsetHostOptions options;
 };
+
 class PhysicalHeadsetPage
 {
-  public:
+public:
 	std::optional<HeadsetPageRequest> Draw(const HeadsetHostSnapshot& host, bool canConnect,
 										   const std::string& conflict = {}, const ObservedSetup* game = nullptr);
 	void SetError(std::string error);
+
 	bool TrackersEnabled() const
 	{
 		return m_trackers;
@@ -30,7 +32,7 @@ class PhysicalHeadsetPage
 		return m_body != 0;
 	}
 
-  private:
+private:
 	struct FileResult;
 	std::shared_ptr<FileResult> m_file;
 	std::string m_manifest, m_error;

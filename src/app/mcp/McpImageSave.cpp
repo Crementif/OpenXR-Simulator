@@ -20,25 +20,34 @@ namespace tag = control::tag;
 static Json Error(const std::string& message)
 {
 	return {{"content", Json::array({{{"type", "text"}, {"text", Json({{"ok", false}, {"error", message}}).dump()}}})},
-		{"isError", true}};
+			{"isError", true}};
 }
+
 Json ImageSaveDefinition()
 {
 	const Json id = {{"oneOf", Json::array({{{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}},
-		{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
+											{{"type", "integer"}, {"minimum", 1}, {"maximum", 9007199254740991ULL}}})}};
 	return {{"name", "debug_save_image"},
-		{"description", "Encode a completed single-eye image export and atomically save it to an absolute .png, .jpg or .jpeg path. Existing files require overwrite=true; the export remains owned by the connection."},
-		{"inputSchema", {{"type", "object"}, {"properties", {
-			{"connection", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
-			{"session", id}, {"generation", id}, {"export", id},
-			{"path", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
-			{"quality", {{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}},
-			{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 120}}},
-			{"overwrite", {{"type", "boolean"}}}}},
-			{"required", Json::array({"connection", "export", "path"})}, {"additionalProperties", false}}}};
+			{"description",
+			 "Encode a completed single-eye image export and atomically save it to an absolute .png, .jpg or .jpeg "
+			 "path. Existing files require overwrite=true; the export remains owned by the connection."},
+			{"inputSchema",
+			 {{"type", "object"},
+			  {"properties",
+			   {{"connection", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
+				{"session", id},
+				{"generation", id},
+				{"export", id},
+				{"path", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}},
+				{"quality", {{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}},
+				{"timeout", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 120}}},
+				{"overwrite", {{"type", "boolean"}}}}},
+			  {"required", Json::array({"connection", "export", "path"})},
+			  {"additionalProperties", false}}}};
 }
+
 std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& arguments,
-	const std::shared_ptr<McpCancellation>& cancellation)
+							  const std::shared_ptr<McpCancellation>& cancellation)
 {
 	try
 	{
@@ -46,8 +55,8 @@ std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& 
 			throw std::invalid_argument("Arguments must be an object");
 		for (auto item = arguments.begin(); item != arguments.end(); ++item)
 			if (item.key() != "connection" && item.key() != "session" && item.key() != "generation" &&
-				item.key() != "export" && item.key() != "path" && item.key() != "quality" &&
-				item.key() != "timeout" && item.key() != "overwrite")
+				item.key() != "export" && item.key() != "path" && item.key() != "quality" && item.key() != "timeout" &&
+				item.key() != "overwrite")
 				throw std::invalid_argument("Unknown argument: " + item.key());
 		if (arguments.contains("session") != arguments.contains("generation"))
 			throw std::invalid_argument("Supply both session and generation, or omit both");
@@ -96,24 +105,20 @@ std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& 
 		const auto width = image.width, height = image.height, format = image.format;
 		const auto pixelBytes = ColorPixelBytes(format);
 		const auto total = panel::U64(info, tag::TotalBytes);
-		if (!pixelBytes || !width || !height || width > FileImageLimits.dimension || height > FileImageLimits.dimension ||
-			image.arrayLayers != 1 || std::uint64_t{width} * height > FileImageLimits.inputBytes / pixelBytes ||
+		if (!pixelBytes || !width || !height || width > FileImageLimits.dimension ||
+			height > FileImageLimits.dimension || image.arrayLayers != 1 ||
+			std::uint64_t{width} * height > FileImageLimits.inputBytes / pixelBytes ||
 			total != std::uint64_t{width} * height * pixelBytes)
 			throw std::runtime_error("Choose a supported single-layer image within the 512 MiB file encoding limit");
 		std::vector<std::byte> pixels;
 		pixels.reserve(static_cast<std::size_t>(total));
-		control::ExportReader::Read([&](auto opcode, auto fields) { return calls.Request(opcode, std::move(fields)); },
-			ticket, total, [&](std::span<const std::byte> bytes)
-		{
-			pixels.insert(pixels.end(), bytes.begin(), bytes.end());
-		});
+		control::ExportReader::Read(
+			[&](auto opcode, auto fields) { return calls.Request(opcode, std::move(fields)); }, ticket, total,
+			[&](std::span<const std::byte> bytes) { pixels.insert(pixels.end(), bytes.begin(), bytes.end()); });
 		calls.Check();
 		const auto encoded = EncodeImage(pixels, format, width, height, png, quality, FileImageLimits);
 		calls.Check();
-		SaveExportFile(destination, encoded.bytes, overwrite, [&]
-		{
-			calls.Check();
-		});
+		SaveExportFile(destination, encoded.bytes, overwrite, [&] { calls.Check(); });
 		auto result = ImageDocument(info);
 		result["path"] = PathText(destination);
 		result["media_type"] = encoded.mediaType;

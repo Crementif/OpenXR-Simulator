@@ -14,15 +14,18 @@ void TestRuntimeFiles()
 	const auto directory = std::filesystem::temp_directory_path() / ("simxr-files-" + std::to_string(getpid()));
 	std::filesystem::remove_all(directory);
 	std::filesystem::create_directories(directory);
+
 	struct Cleanup
 	{
 		std::filesystem::path path;
+
 		~Cleanup()
 		{
 			std::error_code ignored;
 			std::filesystem::remove_all(path, ignored);
 		}
 	} cleanup{directory};
+
 	const auto source = directory / "poses-画面.jsonl";
 	{
 		std::ofstream output(source);
@@ -31,10 +34,10 @@ void TestRuntimeFiles()
 	const auto program = LoadStartupSequence(source);
 	std::filesystem::remove(source);
 	Require(program && program->Size() == 1 && program->Steps()[0].capture &&
-		program->Steps()[0].head->position[0] == 2 && !program->Loops(), "Startup program depends on its source file");
+				program->Steps()[0].head->position[0] == 2 && !program->Loops(),
+			"Startup program depends on its source file");
 	Require(!LoadStartupSequence({}), "Unset startup path created a program");
-	const auto reject = [](const auto& path)
-	{
+	const auto reject = [](const auto& path) {
 		bool rejected = false;
 		try
 		{
@@ -72,9 +75,10 @@ void TestRuntimeFiles()
 	Require(failing.Log("cannot write"), "Failure test was not admitted");
 	failing.Close();
 	Require(failing.Status().closed && failing.Status().errors == 1 && !failing.Status().detail.empty(),
-		"Log failure was lost or prevented shutdown");
+			"Log failure was lost or prevented shutdown");
 }
 }
+
 int main()
 {
 	try

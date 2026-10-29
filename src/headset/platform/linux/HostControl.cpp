@@ -13,6 +13,7 @@ void ValidateHostControlPipe()
 	if (fstat(STDIN_FILENO, &status) != 0 || !S_ISFIFO(status.st_mode))
 		throw std::invalid_argument("Parent control requires a standard-input pipe");
 }
+
 bool HostStopRequested()
 {
 	pollfd descriptor{STDIN_FILENO, POLLIN, 0};
