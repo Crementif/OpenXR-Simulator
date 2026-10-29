@@ -67,8 +67,10 @@ Run-Native 'cmake' @('--preset', 'release', '-S', $root, '-B', $build,
 Run-Native 'cmake' @('--build', $build, '--parallel', '4', '--target', 'openxr_simulator', 'simxr_companion',
     'simxr_runner', 'simxr_headset_host', 'xr_probe_d3d11', 'xr_probe_d3d12', 'xr_probe_opengl', 'xr_probe_vk',
     'companion_settings_tests', 'update_checker_tests', 'mcp_simulation_command_tests', 'mcp_history_tests', 'startup_failure_tests',
-    'stereo_surface_tests', 'stereo_consistency_tests', 'mcp_image_encode_tests', 'mcp_application_tests', 'package_documentation_tests', 'windows_profile_fixture')
+    'stereo_surface_tests', 'stereo_consistency_tests', 'mcp_image_encode_tests', 'mcp_application_tests', 'package_documentation_tests', 'windows_profile_fixture',
+    'simxr_native_regression_tests')
 Run-Native 'ctest' @('--test-dir', $build, '--output-on-failure', '-R', '^(companion_settings|update_checker|mcp_simulation_commands|mcp_history|mcp_connector_cancellation|mcp_connector_configuration|mcp_connector_protocol|startup_failure_format|stereo_surface|stereo_consistency|mcp_image_encode|mcp_application|package_documentation)$')
+Run-Native 'ctest' @('--test-dir', $build, '--output-on-failure', '--no-tests=error', '-L', '^native-regression$')
 Run-Native 'python' @((Join-Path $root 'tests\app\test_update_timeout_windows.py'), (Join-Path $build 'update_checker_tests.exe'))
 $stage = Join-Path $work 'verification-stage'
 Run-Native 'cmake' @('--install', $build, '--config', 'Release', '--prefix', $stage)

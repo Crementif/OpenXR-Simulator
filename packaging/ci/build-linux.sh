@@ -18,8 +18,10 @@ cmake --preset release -S "$root" -B "$work/build" \
 cmake --build "$work/build" --parallel "${SIMXR_CI_JOBS:-4}" --target \
     openxr_simulator simxr_companion simxr_runner simxr_headset_host xr_probe_linux game_bridge_probe \
     companion_settings_tests update_checker_tests mcp_simulation_command_tests mcp_history_tests startup_failure_tests \
-    stereo_surface_tests stereo_consistency_tests mcp_image_encode_tests mcp_application_tests package_documentation_tests
+    stereo_surface_tests stereo_consistency_tests mcp_image_encode_tests mcp_application_tests package_documentation_tests \
+    simxr_native_regression_tests
 ctest --test-dir "$work/build" --output-on-failure -R '^(companion_settings|update_checker|mcp_simulation_commands|mcp_history|mcp_connector_cancellation|mcp_connector_configuration|mcp_connector_protocol|native_mcp_game_bridge|startup_failure_format|stereo_surface|stereo_consistency|mcp_image_encode|mcp_application|package_documentation|package_documentation_open)$'
+ctest --test-dir "$work/build" --output-on-failure --no-tests=error -L '^native-regression$'
 python3 "$root/packaging/linux/build-package.py" --build "$work/build" --output "$work/packages"
 python3 - "$work/build/generated/simxr/Version.h" "$work/packages/VERSION" <<'PY'
 from pathlib import Path

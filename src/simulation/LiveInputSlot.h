@@ -36,7 +36,7 @@ struct LiveInputStatus
 	LiveInputPhase phase = LiveInputPhase::Disconnected;
 };
 // Scheduler-owned value: copied with the prepared boundary so failed publication
-// cannot consume an edge. Derived from the WebXR live-input mailbox contract.
+// cannot consume an edge.
 class LiveInputSlot
 {
   public:

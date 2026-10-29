@@ -1060,4 +1060,8 @@ if(SIMXR_BUILD_HEADSET)
     include(cmake/SimxrHeadset.cmake)
 endif()
 
+if(BUILD_TESTING AND SIMXR_BUILD_AUTOMATION AND SIMXR_BUILD_HEADSET AND SIMXR_BUILD_COMPANION)
+    include(cmake/SimxrNativeRegression.cmake)
+endif()
+
 include(cmake/SimxrPackage.cmake)
