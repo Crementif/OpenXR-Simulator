@@ -3,6 +3,7 @@
 
 
 from pathlib import Path
+import os
 import sys
 import time
 
@@ -11,6 +12,16 @@ from mcp_support import McpTest, eventually
 
 def main():
     app, connector, probe = (str(Path(value).resolve()) for value in sys.argv[1:4])
+    launch = {'executable': probe, 'environment': {
+        'SIMXR_PROBE_INTERACTIVE': '1', 'SIMXR_PROBE_DYNAMIC_COLOR': '1',
+        'SIMXR_PROBE_FRAMES': '120000', 'SIMXR_WIDTH': '128', 'SIMXR_HEIGHT': '96'}}
+    if len(sys.argv) > 4:
+        launch['runtime_manifest'] = str(Path(sys.argv[4]).resolve())
+        launch['environment'].update({
+            'SIMXR_CONTROL_SOCKET': rf'\\.\pipe\SimXR.Control.monitor.{os.getpid()}',
+            'SIMXR_PROBE_SLEEP_MS': '1', 'SIMXR_PROBE_PROJECTION_ONLY': '1',
+            'DISABLE_XR_APILAYER_NOVENDOR_OBSMirror': '1',
+            'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY': '1'})
     with McpTest('simxr-flicker-monitor-', windowless=True) as test:
         root = test.root
 
@@ -21,9 +32,7 @@ def main():
         assert {'start_flicker_monitor', 'get_flicker_status', 'get_ui_flicker_status', 'stop_flicker_monitor'} <= names
         test.discover()
 
-        launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
-            'SIMXR_PROBE_INTERACTIVE': '1', 'SIMXR_PROBE_DYNAMIC_COLOR': '1',
-            'SIMXR_PROBE_FRAMES': '120000', 'SIMXR_WIDTH': '128', 'SIMXR_HEIGHT': '96'}})
+        launched = client.tool('simulator_launch_application', launch)
         assert not launched['error'], launched
         application = launched['data']['application_id']
 
@@ -48,7 +57,7 @@ def main():
             assert not status['error'] and status['data']['phase'] != 'failed', status
             return status['data'] if status['data']['windows'] else None
 
-        result = eventually(analyzed, timeout=50)
+        result = eventually(lambda: (value if (value := analyzed()) and value['events'] else None), timeout=50)
         assert result['generation'] == state['generation'] and result['frames_observed'] >= 2, result
         assert result['last_analysis']['frames_analyzed'] >= 2 and result['events'], result
         incident = client.tool('capture_flicker_window', {'application_id': application, 'timeout': 25,
@@ -101,9 +110,7 @@ def main():
         log = test.log('configured.log')
         client = test.connect(connector, '--app', app, '--windowless', log=log)
         test.discover()
-        launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
-            'SIMXR_PROBE_INTERACTIVE': '1', 'SIMXR_PROBE_DYNAMIC_COLOR': '1',
-            'SIMXR_PROBE_FRAMES': '120000', 'SIMXR_WIDTH': '128', 'SIMXR_HEIGHT': '96'}})
+        launched = client.tool('simulator_launch_application', launch)
         assert not launched['error'], launched
         application = launched['data']['application_id']
         state = test.connected(client, application)

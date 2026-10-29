@@ -112,8 +112,13 @@ void CheckSharedSequenceRigCancellation()
 	{
 		return fixture.Exchange(opcode, std::move(request));
 	}, [&] { fixture.service.Disconnect(fixture.connection); });
-	runner.Start(fixture.Options("simxr.start_input_recording() while true do simxr.wait(0.01) end"));
-	Eventually([&] { return fixture.session->Commands().Recorder().Snapshot({}, 0).active; },
+	runner.Start(fixture.Options("simxr.start_input_recording() while true do simxr.wait(10) end"));
+	Eventually([&]
+	{
+		const auto result = runner.Snapshot();
+		Require(result.phase == automation::RigPhase::Running, result.error.c_str());
+		return fixture.session->Commands().Recorder().Snapshot({}, 0).active;
+	},
 		"Rig recording did not begin");
 	FramePrediction frame;
 	Require(fixture.session->WaitFrame(frame) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS &&
@@ -258,7 +263,9 @@ void CheckSweepRigs()
 			return result;
 		});
 		auto options = fixture.Options(std::move(source));
-		options.deadline = std::chrono::seconds{10};
+		options.name = "@" + std::string(name);
+		// The full 121-frame sweep checks scheduling, not host execution speed.
+		options.deadline = std::chrono::seconds{30};
 		runner.Start(std::move(options));
 		runner.Join();
 		Require(runner.Snapshot().phase == automation::RigPhase::Complete, runner.Snapshot().error.c_str());

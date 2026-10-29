@@ -253,6 +253,7 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 	bool enable1 = EnvOn("SIMXR_PROBE_ENABLE1");
 	bool subRect = EnvOn("SIMXR_PROBE_SUBRECT");
 	bool projectionOnly = EnvOn("SIMXR_PROBE_PROJECTION_ONLY");
+	const bool dynamicColor = EnvOn("SIMXR_PROBE_DYNAMIC_COLOR");
 	bool retainInspection = false;
 	bool quadViews = false;
 	bool foveated = false;
@@ -1185,7 +1186,12 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 							clearRect(base, declared);
 						// Same square in both eyes, offset 20px horizontally: real, known
 						// disparity for a stereo checker to find.
-						if (EnvOn("SIMXR_PROBE_STEREO_TEXTURE") && f < 120)
+						if (dynamicColor)
+						{
+							const float color[4] = {f % 2 ? 1.f : 0.f, f % 2 ? 0.f : 1.f, 0.f, 1.f};
+							clearRect(color, declared);
+						}
+						else if (EnvOn("SIMXR_PROBE_STEREO_TEXTURE") && f < 120)
 						{
 							const int tileWidth = viewRect.extent.width / 16, tileHeight = viewRect.extent.height / 12;
 							for (int row = 0; row < 12; ++row)

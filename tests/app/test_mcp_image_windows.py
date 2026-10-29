@@ -30,7 +30,7 @@ def main():
             profiles = client.tool("get_headset_profiles", {})
             assert not profiles["error"], profiles
             index = next(item for item in profiles["data"]["profiles"] if item["name"] == "index")
-            assert abs(index["ipd_m"] - .063) < .0001, index
+            assert abs(index["ipd"] - .063) < .0001, index
 
             test.discover()
             endpoint = rf"\\.\pipe\SimXR.Control.mcp.image.{os.getpid()}"
@@ -385,7 +385,7 @@ def main():
             assert not artifact["result"]["isError"], artifact
             url = urlsplit(artifact["result"]["content"][1]["uri"])
             download_connection = http.client.HTTPConnection(url.hostname, url.port, timeout=30)
-            download_connection.request("GET", url.path, headers={"Authorization": "Bearer " + discovery()["token"]})
+            download_connection.request("GET", url.path, headers={"Authorization": "Bearer " + test.discover()["token"]})
             response = download_connection.getresponse()
             artifact_data = response.read()
             assert response.status == 200 and len(artifact_data) == int(info["total_bytes"])
@@ -448,7 +448,7 @@ def main():
             video_url = urlsplit(item["uri"])
             download_connection = http.client.HTTPConnection(video_url.hostname, video_url.port, timeout=30)
             download_connection.request("GET", video_url.path,
-                                        headers={"Authorization": "Bearer " + discovery()["token"]})
+                                        headers={"Authorization": "Bearer " + test.discover()["token"]})
             response = download_connection.getresponse()
             movie = response.read()
             assert response.status == 200 and len(movie) == int(video_info["total_bytes"])

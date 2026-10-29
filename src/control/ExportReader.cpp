@@ -78,8 +78,7 @@ void ExportReader::Read(const Exchange& exchange, std::uint64_t ticket, std::uin
 		const auto chunk = exchange(OpCode::ReadExport,
 			{Field::U64(tag::ExportId, ticket, true), Field::U64(tag::Offset, offset, true), Field::U64(tag::Length, length, true)});
 		const auto* bytes = chunk.Find(tag::Bytes);
-		if (!bytes || RequiredNumber(chunk, tag::Offset) != offset ||
-			RequiredNumber(chunk, tag::Length) != length || bytes->value.size() != length)
+		if (!bytes || bytes->value.empty() || RequiredNumber(chunk, tag::Offset) != offset || bytes->value.size() > length)
 			throw std::runtime_error("Invalid export chunk");
 		consume(bytes->value);
 		offset += bytes->value.size();
