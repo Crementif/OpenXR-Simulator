@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(OpenXR-Simulator VERSION 2.0.0 LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(SIMXR_RELEASE_REPOSITORY "" CACHE STRING "Public GitHub owner/repository for update checks")
 if(SIMXR_RELEASE_REPOSITORY AND NOT SIMXR_RELEASE_REPOSITORY MATCHES "^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$")
     message(FATAL_ERROR "SIMXR_RELEASE_REPOSITORY must be a GitHub owner/repository")
