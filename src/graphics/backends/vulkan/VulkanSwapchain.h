@@ -2,7 +2,6 @@
 
 #include "graphics/SwapchainAccess.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
-#include "graphics/backends/vulkan/VulkanReadbackBatch.h"
 
 #include <cstdint>
 #include <memory>
@@ -12,12 +11,6 @@
 
 namespace simxr
 {
-struct VulkanSwapchainRegion
-{
-	VulkanReadbackRegion region;
-	std::uint32_t imageIndex = 0;
-};
-
 // Native calls are externally serialized. Wait touches only access state, so
 // closure can cancel it and retire image readers without invalidating its data.
 class VulkanSwapchain
@@ -33,8 +26,6 @@ class VulkanSwapchain
 	XrResult Release();
 	SwapchainDescription Description() const;
 	std::shared_ptr<VulkanImage> ReleasedImage() const;
-	std::optional<VulkanSwapchainRegion> Resolve(const LayerImageDescription& image) const;
-	void MarkUsed(std::uint32_t imageIndex, const std::shared_ptr<const GpuCompletion>& completion);
 	void MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion);
 	void Close();
 

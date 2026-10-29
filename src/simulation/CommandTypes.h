@@ -31,6 +31,8 @@ struct CommandSource
 	std::uint64_t id = 0;
 	bool operator==(const CommandSource&) const = default;
 };
+inline constexpr CommandSource ApplicationAutomationSource{CommandSourceKind::Rig, UINT64_MAX};
+
 enum class ControlChannel
 {
 	Head,

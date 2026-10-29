@@ -66,6 +66,29 @@ class SequenceTests(unittest.TestCase):
         empty = self.client.upload_sequence(self.session, b'')
         self.assertNotEqual(self.client.start_sequence(self.session, empty)['sequence_id'], sequence)
 
+    def test_application_selector_validation(self):
+        fields = self.client._session(self.session) + [Field.u64(Tag.SEQUENCE_ID, 1, True)]
+        for selector in (Field.u32(Tag.APPLICATION_OWNED, 1, True),
+                         Field.binary(Tag.APPLICATION_OWNED, b'\x02', True)):
+            with self.assertRaises(ControlError):
+                self.client.request(OpCode.READ_SEQUENCE, fields + [selector])
+        with self.assertRaises(ControlError):
+            self.client.request(OpCode.READ_SEQUENCE, fields + [
+                Field.boolean(Tag.APPLICATION_OWNED, True, True), Field.u32(Tag.SOURCE_KIND, 1)])
+        program = self.client.upload_sequence(self.session, '{"frame":0,"capture":true}\n')
+        sequence = self.client.start_sequence(self.session, program)['sequence_id']
+        hidden = self.client.sequence_status(self.session, sequence, application_owned=True)['document']
+        self.assertIsNone(hidden['status'])
+        with self.assertRaises(ControlError):
+            self.client.stop_sequence(self.session, sequence, application_owned=True)
+        self.start.touch()
+        page = wait_for(lambda: self.client.sequence_status(self.session, sequence)['document'],
+                        lambda state: bool(state['captures']))
+        with self.assertRaises(ControlError) as error:
+            self.client.release_sequence_capture(self.session, page['captures'][0]['capture_id'],
+                                                 application_owned=True)
+        self.assertEqual(error.exception.code.name, 'CONFLICT')
+
     def test_chunks_retry_replacement_and_retirement(self):
         data = b'{"frame":0,"head":{"x":4},"capture":true}\n'
         first = self.upload_chunk(2**53 + 9, 0, len(data), data[:11])['document']

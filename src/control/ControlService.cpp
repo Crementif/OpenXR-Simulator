@@ -562,7 +562,12 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 				return;
 			if (held.capture->generation != generation)
 				throw ControlRequestError{ErrorCode::StaleGeneration, "Sequence capture belongs to another run"};
-			if (!client.simulation->OwnsSequenceCapture(*held.capture))
+			const bool owned = ApplicationOwnedSequence(request)
+				? held.capture->metadata && held.capture->metadata->sequenceCapture &&
+					held.capture->metadata->sequenceCapture->request.owner == ApplicationAutomationSource &&
+					held.capture->metadata->sequenceCapture->reservation.id == id
+				: client.simulation->OwnsSequenceCapture(*held.capture);
+			if (!owned)
 				throw ControlRequestError{ErrorCode::Conflict, "Sequence capture belongs to another source"};
 			released = session->Captures().Release(id);
 		};

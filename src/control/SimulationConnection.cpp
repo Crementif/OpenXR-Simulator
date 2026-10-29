@@ -182,7 +182,10 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 		throw ControlRequestError{ErrorCode::Conflict, "Device connection has no attachment to this session"};
 	auto& scheduler = session->Commands();
 	const bool trackerInteraction = session->Extensions().Contains(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
-	const auto source = RequestSource(request);
+	const bool applicationOwned = ApplicationOwnedSequence(request);
+	if (applicationOwned && opcode != OpCode::ReadSequence && opcode != OpCode::StopSequence)
+		throw ControlRequestError{ErrorCode::Invalid, "Application ownership only selects an existing startup sequence"};
+	const auto source = applicationOwned ? ApplicationAutomationSource : RequestSource(request);
 	const auto simulationState = [&]
 	{
 		std::vector<std::uint64_t> bound;
@@ -208,7 +211,8 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 		case OpCode::StartSequence:
 		case OpCode::ReadSequence:
 		case OpCode::StopSequence:
-			Track(session, source);
+			if (!applicationOwned)
+				Track(session, source);
 			document = m_sequences.Dispatch(request, binding, source, response, held);
 			break;
 		case OpCode::ReadDiagnostics:

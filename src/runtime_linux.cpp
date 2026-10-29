@@ -1,7 +1,6 @@
 #define XR_USE_TIMESPEC
 #define XR_USE_GRAPHICS_API_VULKAN
 #include "Pch.h"
-#include "control/legacy/LegacyFileChannel.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
@@ -338,7 +337,6 @@ static XrResult XRAPI_PTR RunXrRequestExitSession(XrSession handle)
 	if (!Valid(session))
 		return XR_ERROR_HANDLE_INVALID;
 	auto result = session->core->RequestExit(simxr::LinuxRuntime::SessionTime(*session.Shared()));
-	session->owner->PublishStatus(session->core);
 	return result;
 }
 static XrResult XRAPI_PTR RunXrEndSession(XrSession handle)
@@ -371,10 +369,7 @@ static XrResult XRAPI_PTR RunXrWaitFrame(XrSession sHandle, const XrFrameWaitInf
 		std::lock_guard nativeLock(s->graphicsMutex);
 		if (!Valid(s) || s->core.Shared() != core || core->Snapshot().closed)
 			return XR_ERROR_HANDLE_INVALID;
-		s->graphics->PollCaptures();
 		std::lock_guard stateLock(Host().Mutex());
-		if (s->owner->AdvanceSequence(s->core->Snapshot().lastSubmitted))
-			s->graphics->RequestCapture({"both", "all"}, s->core->Snapshot().lastSubmitted);
 		const auto& input = s->owner->Input();
 		const auto tracking = input.Tracking(s->core->Snapshot().state == XR_SESSION_STATE_FOCUSED);
 		s->core->PublishTracking(admitted.displayTime, tracking, input.Views(), admitted.id);
@@ -516,7 +511,6 @@ static XrResult XRAPI_PTR RunXrDestroySwapchain(XrSwapchain handle)
 	const auto chain = session->graphics->FindSwapchain(handle);
 	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
-	session->graphics->PollCaptures();
 	session->graphics->DestroySwapchain(chain);
 	return XR_SUCCESS;
 }
@@ -542,36 +536,6 @@ static XrResult XRAPI_PTR RunXrEndFrame(XrSession handle, const XrFrameEndInfo* 
 	const auto result = session->graphics->EndFrame(*info);
 	if (XR_FAILED(result))
 		return result;
-	try
-	{
-		std::uint32_t projectionCount = 0;
-		for (std::uint32_t layer = 0; layer < info->layerCount; ++layer)
-			if (info->layers[layer]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
-				++projectionCount;
-		std::lock_guard lock(Host().Mutex());
-		session->owner->PublishStatus(session->core,
-									  simxr::LinuxRuntimeStatus::FrameCounts{info->layerCount, projectionCount});
-	}
-	catch (const std::exception& error)
-	{
-		try
-		{
-			session->owner->Log(std::string("submitted frame observer failed: ") + error.what());
-		}
-		catch (...)
-		{
-		}
-	}
-	catch (...)
-	{
-		try
-		{
-			session->owner->Log("submitted frame observer failed");
-		}
-		catch (...)
-		{
-		}
-	}
 	return XR_SUCCESS;
 }
 static XrResult XRAPI_PTR RunXrEnumerateReferenceSpaces(XrSession sHandle, std::uint32_t c, std::uint32_t* n,

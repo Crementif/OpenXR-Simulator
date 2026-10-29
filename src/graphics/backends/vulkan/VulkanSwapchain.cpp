@@ -173,27 +173,6 @@ std::shared_ptr<VulkanImage> VulkanSwapchain::ReleasedImage() const
 	const auto index = m_access.ReleasedImage();
 	return index ? m_images[*index].resource : nullptr;
 }
-std::optional<VulkanSwapchainRegion> VulkanSwapchain::Resolve(const LayerImageDescription& image) const
-{
-	const auto index = m_access.ReleasedImage();
-	const auto& rectangle = image.rectangle;
-	if (!index || image.arraySlice >= m_description.arraySize || rectangle.offset.x < 0 || rectangle.offset.y < 0 ||
-		rectangle.extent.width <= 0 || rectangle.extent.height <= 0)
-		return {};
-	const auto width = static_cast<std::uint32_t>(rectangle.extent.width);
-	const auto height = static_cast<std::uint32_t>(rectangle.extent.height);
-	if (width > m_description.width || height > m_description.height ||
-		static_cast<std::uint32_t>(rectangle.offset.x) > m_description.width - width ||
-		static_cast<std::uint32_t>(rectangle.offset.y) > m_description.height - height)
-		return {};
-	return VulkanSwapchainRegion{
-		{m_images[*index].resource, {rectangle.offset.x, rectangle.offset.y}, {width, height}, image.arraySlice},
-		*index};
-}
-void VulkanSwapchain::MarkUsed(std::uint32_t imageIndex, const std::shared_ptr<const GpuCompletion>& completion)
-{
-	m_access.MarkUsed(imageIndex, completion);
-}
 void VulkanSwapchain::MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion)
 {
 	m_access.MarkReleasedUsed(completion);

@@ -363,22 +363,36 @@ class Client:
         return self.request(OpCode.START_SEQUENCE, self._session(session) + [
             Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.PROGRAM_ID, program_id, True), Field.boolean(Tag.LOOP, loop)])
 
-    def sequence_status(self, session, sequence=None, *, after=0, count=32, source=1):
+    def _sequence_owner(self, application_owned, source=1):
+        if type(application_owned) is not bool:
+            raise ProtocolError('application_owned must be boolean')
+        if application_owned:
+            if source != 1:
+                raise ProtocolError('Application-owned sequence has no connection source')
+            return [Field.boolean(Tag.APPLICATION_OWNED, True, True)]
+        return [Field.u32(Tag.SOURCE_KIND, source)]
+
+    def sequence_status(self, session, sequence=None, *, after=0, count=32, source=1, application_owned=False):
+        """Read a connection-owned sequence, or explicitly select the application's startup sequence."""
         if type(after) is not int or not 0 <= after < 2**64 or type(count) is not int or not 1 <= count <= 64:
             raise ProtocolError('Sequence pages require a uint64 cursor and count in [1,64]')
-        fields = self._session(session) + [Field.u32(Tag.SOURCE_KIND, source),
-                                         Field.u64(Tag.OFFSET, after), Field.u64(Tag.LENGTH, count)]
+        fields = self._session(session) + self._sequence_owner(application_owned, source) + [
+            Field.u64(Tag.OFFSET, after), Field.u64(Tag.LENGTH, count)]
         if sequence is not None:
             fields.append(Field.u64(Tag.SEQUENCE_ID, sequence, True))
         return self.request(OpCode.READ_SEQUENCE, fields)
 
-    def stop_sequence(self, session, sequence, *, source=1):
-        return self.request(OpCode.STOP_SEQUENCE, self._session(session) + [
-            Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.SEQUENCE_ID, sequence, True)])
+    def stop_sequence(self, session, sequence, *, source=1, application_owned=False):
+        return self.request(OpCode.STOP_SEQUENCE, self._session(session) +
+                            self._sequence_owner(application_owned, source) + [Field.u64(Tag.SEQUENCE_ID, sequence, True)])
 
-    def release_sequence_capture(self, session, capture):
-        return self.request(OpCode.RELEASE_SEQUENCE_CAPTURE,
-                            self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
+    def release_sequence_capture(self, session, capture, *, application_owned=False):
+        if type(application_owned) is not bool:
+            raise ProtocolError('application_owned must be boolean')
+        fields = self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)]
+        if application_owned:
+            fields.append(Field.boolean(Tag.APPLICATION_OWNED, True, True))
+        return self.request(OpCode.RELEASE_SEQUENCE_CAPTURE, fields)
 
     def _recording_identity(self, recording_id):
         if not self.hello['capabilities'] & Capability.RECORDING_DRAIN:

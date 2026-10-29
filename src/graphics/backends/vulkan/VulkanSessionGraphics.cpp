@@ -1,8 +1,6 @@
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
 #include "Pch.h"
 
-#include "control/legacy/LegacyFileChannel.h"
-#include "graphics/backends/vulkan/VulkanFrameObserver.h"
 #include "graphics/backends/vulkan/VulkanFrameSubmission.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
@@ -23,7 +21,7 @@ static SnapshotAdmission PromoteInspectionCapture(const std::shared_ptr<const Fr
 	return SnapshotAdmission::Capacity;
 }
 
-class VulkanSessionGraphics::FrameBindings final : public VulkanCaptureBindings, public VulkanFrameBindings
+class VulkanSessionGraphics::FrameBindings final : public VulkanFrameBindings
 {
   public:
 	explicit FrameBindings(const VulkanSessionGraphics& graphics) : m_graphics(graphics) {}
@@ -42,22 +40,6 @@ class VulkanSessionGraphics::FrameBindings final : public VulkanCaptureBindings,
 	{
 		if (const auto chain = m_graphics.FindSwapchain(swapchain))
 			chain->MarkReleasedUsed(completion);
-	}
-	std::optional<VulkanCaptureSource> ResolveSource(const LayerImageDescription& image) const override
-	{
-		const auto chain = m_graphics.FindSwapchain(image.source);
-		if (!chain)
-			return {};
-		const auto source = chain->Resolve(image);
-		if (!source)
-			return {};
-		return VulkanCaptureSource{source->region, image.source, source->imageIndex};
-	}
-	void MarkSourceUsed(const VulkanCaptureSource& source,
-						const std::shared_ptr<VulkanReadbackBatch>& completion) const noexcept override
-	{
-		if (const auto chain = m_graphics.FindSwapchain(source.swapchain))
-			chain->MarkUsed(source.imageIndex, completion);
 	}
 
   private:
@@ -214,8 +196,6 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 										   {
 											   return bindings.Describe(swapchain);
 										   });
-	if (XR_SUCCEEDED(result) && m_observer)
-		m_observer->Observe(info, submission.Composition(), bindings);
 	return result;
 }
 
@@ -223,25 +203,6 @@ std::shared_ptr<VulkanDevice> VulkanSessionGraphics::Device() const
 {
 	return m_backend->Device();
 }
-void VulkanSessionGraphics::SetObserver(std::unique_ptr<VulkanFrameObserver> observer)
-{
-	if (m_observer || m_closing)
-		throw std::logic_error("Vulkan frame observer is already installed or closing");
-	m_observer = std::move(observer);
-}
-
-void VulkanSessionGraphics::RequestCapture(LegacyCaptureRequest request, FrameId frame)
-{
-	if (m_observer)
-		m_observer->Request(std::move(request), frame);
-}
-
-void VulkanSessionGraphics::PollCaptures()
-{
-	if (m_observer)
-		m_observer->Poll();
-}
-
 void VulkanSessionGraphics::BeginClose()
 {
 	m_closing = true;
@@ -280,8 +241,6 @@ XrResult VulkanSessionGraphics::Drain(std::chrono::nanoseconds timeout)
 		if (m_validation && m_validation->errors.load())
 			return XR_ERROR_RUNTIME_FAILURE;
 	}
-	if (m_observer && m_observer->Close(static_cast<std::uint64_t>(remaining().count())) != VK_SUCCESS)
-		return XR_ERROR_RUNTIME_FAILURE;
 	m_closeStage = CloseStage::Drained;
 	return XR_SUCCESS;
 }
@@ -299,7 +258,6 @@ XrResult VulkanSessionGraphics::FinishClose()
 	if (XR_FAILED(result))
 		return result;
 	const auto validation = m_validation;
-	m_observer.reset();
 	m_inspection.reset();
 	m_validation.reset();
 	m_backend.reset();

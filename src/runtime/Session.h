@@ -57,7 +57,8 @@ class Session
 	~Session();
 	XrResult Ready(RuntimeTime time);
 	XrResult Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config,
-				   PresentationPolicy policy = PresentationPolicy::Repeat);
+				   PresentationPolicy policy = PresentationPolicy::Repeat,
+		std::shared_ptr<const PoseSequence> startupSequence = {});
 	XrResult RequestExit(RuntimeTime time);
 	XrResult End(RuntimeTime time);
 	XrResult SetState(XrSessionState state, RuntimeTime time);

@@ -101,7 +101,6 @@ add_library(simxr_control STATIC
     src/control/VideoExport.cpp
     src/control/ExportReader.cpp
     src/control/IncidentSample.cpp
-    src/control/legacy/LegacyCaptureImage.cpp
     src/control/legacy/LegacyInput.cpp
     src/platform/windows/WindowsRuntimeFiles.cpp
     src/platform/windows/WindowsRuntimeStatus.cpp
@@ -131,8 +130,7 @@ target_link_libraries(simxr_control PUBLIC simxr_core)
 target_compile_features(simxr_control PUBLIC cxx_std_20)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(simxr_control PRIVATE src/platform/linux/LocalControlServer.cpp src/platform/linux/LocalControlClient.cpp
-        src/platform/linux/ControlFd.cpp src/platform/linux/LegacyFileChannel.cpp
-        src/platform/linux/LinuxRuntimeStatus.cpp)
+        src/platform/linux/ControlFd.cpp src/platform/linux/RuntimeFiles.cpp)
 elseif(WIN32)
     target_sources(simxr_control PRIVATE src/platform/windows/LocalControlServer.cpp src/platform/windows/LocalControlClient.cpp
         src/platform/windows/WindowsControl.cpp src/platform/windows/WindowsRuntimeInput.cpp)
@@ -354,9 +352,6 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_B
     add_library(simxr_vulkan_control STATIC src/control/backends/vulkan/VulkanImageInspection.cpp
         src/control/backends/vulkan/VulkanControlHandle.cpp
         src/control/backends/vulkan/VulkanImageConsumer.cpp)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_sources(simxr_vulkan_control PRIVATE src/control/legacy/backends/vulkan/VulkanLegacyCapture.cpp)
-    endif()
     simxr_configure_target(simxr_vulkan_control)
     target_link_libraries(simxr_vulkan_control PUBLIC simxr_control simxr_vulkan simxr_diagnostics)
 
@@ -524,10 +519,8 @@ if(BUILD_TESTING)
         target_link_libraries(rig_launch_attachment_tests PRIVATE simxr_connection)
         simxr_add_test(control_fd_tests tests/control/ControlFdTests.cpp control_fd)
         target_link_libraries(control_fd_tests PRIVATE simxr_control)
-        simxr_add_test(legacy_file_channel_tests tests/control/LegacyFileChannelTests.cpp legacy_file_channel)
-        target_link_libraries(legacy_file_channel_tests PRIVATE simxr_control)
-        simxr_add_test(linux_runtime_status_tests tests/control/LinuxRuntimeStatusTests.cpp linux_runtime_status)
-        target_link_libraries(linux_runtime_status_tests PRIVATE simxr_control)
+        simxr_add_test(runtime_files_tests tests/control/RuntimeFilesTests.cpp runtime_files)
+        target_link_libraries(runtime_files_tests PRIVATE simxr_control)
         simxr_add_test(image_control_service_tests tests/control/ImageControlServiceTests.cpp image_control_service)
         target_link_libraries(image_control_service_tests PRIVATE simxr_control)
         simxr_add_test(live_preview_control_tests tests/control/LivePreviewControlTests.cpp live_preview_control)
@@ -624,8 +617,6 @@ if(BUILD_TESTING)
     target_link_libraries(windows_runtime_files_tests PRIVATE simxr_control)
     simxr_add_test(flicker_diagnostics_tests tests/diagnostics/FlickerDiagnosticsTests.cpp flicker_diagnostics)
     target_link_libraries(flicker_diagnostics_tests PRIVATE simxr_diagnostics simxr_core)
-    simxr_add_test(legacy_capture_image_tests tests/control/LegacyCaptureImageTests.cpp legacy_capture_image)
-    target_link_libraries(legacy_capture_image_tests PRIVATE simxr_control)
     simxr_add_test(legacy_input_tests tests/control/LegacyInputTests.cpp legacy_input)
     target_link_libraries(legacy_input_tests PRIVATE simxr_control)
     simxr_add_test(session_tests tests/runtime/SessionTests.cpp session)
@@ -895,6 +886,11 @@ if(SIMXR_BUILD_PROBES)
                     add_test(NAME linux_vulkan_sequence COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_sequence.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_sequence PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_startup_sequence COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_sequence.py" "$<TARGET_FILE:xr_probe_linux>" --startup)
+                    set_tests_properties(linux_vulkan_startup_sequence PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_cadence COMMAND "${Python3_EXECUTABLE}"

@@ -16,11 +16,8 @@ namespace simxr
 {
 class Session;
 class VulkanBackend;
-class VulkanCaptureBindings;
 class VulkanInspection;
-class VulkanFrameObserver;
 class VulkanSwapchain;
-struct LegacyCaptureRequest;
 struct CompositionPlan;
 struct VulkanInspectionValidation;
 
@@ -39,7 +36,6 @@ class VulkanSessionGraphics final
 	VulkanSessionGraphics(const VulkanSessionGraphics&) = delete;
 	VulkanSessionGraphics& operator=(const VulkanSessionGraphics&) = delete;
 	std::shared_ptr<VulkanDevice> Device() const;
-	void SetObserver(std::unique_ptr<VulkanFrameObserver> observer);
 	control::ImageCapabilities Capabilities() const noexcept;
 	bool SupportsReprojection() const noexcept;
 	XrResult CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output);
@@ -48,8 +44,6 @@ class VulkanSessionGraphics final
 	XrResult Acquire(VulkanSwapchain& swapchain, std::uint32_t& index);
 	std::optional<SwapchainWaits::Registration> EnterWait();
 	XrResult EndFrame(const XrFrameEndInfo& info);
-	void RequestCapture(LegacyCaptureRequest request, FrameId frame);
-	void PollCaptures();
 	void BeginClose();
 	XrResult Drain(std::chrono::nanoseconds timeout = std::chrono::seconds(5));
 	XrResult FinishClose();
@@ -73,7 +67,6 @@ class VulkanSessionGraphics final
 	HandleRegistry<XrSwapchain, VulkanSwapchain, const Session*> m_swapchains;
 	std::shared_ptr<VulkanInspectionValidation> m_validation;
 	std::unique_ptr<VulkanInspection> m_inspection;
-	std::unique_ptr<VulkanFrameObserver> m_observer;
 	control::ImageCapabilities m_capabilities;
 	SwapchainWaits m_waits;
 	std::mutex m_closeMutex;

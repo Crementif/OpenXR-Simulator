@@ -6,9 +6,6 @@
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
-#include "control/legacy/LegacyFileChannel.h"
-#include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
-#include "flicker_detector.h"
 #include "runtime/SimulationExtensions.h"
 #include "simulation/HeadsetProfiles.h"
 
@@ -71,9 +68,8 @@ const ExtensionRegistry& LinuxRuntime::Extensions()
 LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::filesystem::path& directory,
 							 ExecutionMode executionMode)
 	: core(std::move(instance)), mode(executionMode),
-	  m_files(std::make_shared<LegacyFileChannel>(directory,
-												  std::getenv("SIMXR_SEQUENCE") ? std::getenv("SIMXR_SEQUENCE") : "")),
-	  m_diagnostics(std::make_shared<flicker::Diagnostics>(directory)), m_status(m_files, getpid(), mode)
+	  m_startupSequence(LoadStartupSequence(std::getenv("SIMXR_SEQUENCE") ? std::getenv("SIMXR_SEQUENCE") : "")),
+	  m_log(directory)
 {
 	auto views = m_input.Views();
 	if (const auto* name = std::getenv("SIMXR_HEADSET_PROFILE"))
@@ -97,39 +93,13 @@ const LegacyInput& LinuxInstance::Input() const noexcept
 {
 	return m_input;
 }
-bool LinuxInstance::AdvanceSequence(FrameId submitted)
-{
-	if (auto sequence = m_files->TakeSequence())
-		m_input.StartSequence(std::move(*sequence), submitted);
-	return m_input.AdvanceSequence(submitted);
-}
-void LinuxInstance::PublishStatus(const Runtime::SessionRef& current,
-								  std::optional<LinuxRuntimeStatus::FrameCounts> submitted) noexcept
-{
-	try
-	{
-		const auto snapshot = current ? current->Snapshot() : SessionSnapshot{};
-		m_status.Update(snapshot, m_input, LinuxRuntimeStatus::Clock::now(), submitted);
-	}
-	catch (...)
-	{
-		try
-		{
-			Log("Runtime status observation failed");
-		}
-		catch (...)
-		{
-		}
-	}
-}
 void LinuxInstance::Log(const std::string& message)
 {
-	m_files->Log(message);
+	m_log.Log(message);
 }
 void LinuxInstance::Close()
 {
-	m_diagnostics->Close();
-	m_files->Close();
+	m_log.Close();
 }
 LinuxRuntime::SessionBinding::SessionBinding(InstanceRef instance, Runtime::SessionRef session,
 											 std::unique_ptr<VulkanSessionGraphics> native)
@@ -244,15 +214,13 @@ XrResult LinuxRuntime::CreateSession(XrInstance handle, const XrSessionCreateInf
 	result = VulkanSessionGraphics::Create(binding, core.Shared(), validation, graphics);
 	if (XR_FAILED(result))
 		return result;
-	graphics->SetObserver(std::make_unique<VulkanLegacyCapture>(graphics->Device(), core.Shared(), instance->m_files,
-																instance->m_diagnostics));
+
 	auto native = std::make_unique<SessionBinding>(instance, core, std::move(graphics));
 	result = core->Ready({Duration{instance->mode == ExecutionMode::Deterministic ? 1000000000LL : MonotonicTime()}});
 	if (XR_FAILED(result))
 		return result;
 	instance->Log("create Vulkan session queueFamily=" + std::to_string(binding.queueFamily) +
 				  " queueIndex=" + std::to_string(binding.queueIndex));
-	instance->PublishStatus(core);
 	const auto attached = m_sessions.Attach(core, std::move(native));
 	lock.lock();
 	m_currentSession = attached;
@@ -309,7 +277,7 @@ XrResult LinuxRuntime::BeginSession(XrSession handle, const XrSessionBeginInfo* 
 	if (XR_FAILED(configured))
 		return configured;
 	lock.unlock();
-	return session->core->Begin(*info, config, policy);
+	return session->core->Begin(*info, config, policy, session->owner->m_startupSequence);
 }
 
 XrResult LinuxRuntime::EndSession(XrSession handle)
@@ -321,9 +289,6 @@ XrResult LinuxRuntime::EndSession(XrSession handle)
 	const auto time = SessionTime(*session.Shared());
 	lock.unlock();
 	const auto result = session->core->End(time);
-	lock.lock();
-	if (FindSession(session))
-		session->owner->PublishStatus(session->core);
 	return result;
 }
 
@@ -356,7 +321,6 @@ XrResult LinuxRuntime::DestroySession(XrSession handle)
 	m_core.DestroySession(session);
 	m_sessions.Remove(session);
 	m_currentSession = XR_NULL_HANDLE;
-	session->owner->PublishStatus();
 	return XR_SUCCESS;
 }
 

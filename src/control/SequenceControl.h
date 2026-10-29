@@ -15,6 +15,7 @@ namespace simxr::control
 {
 struct ControlSession;
 struct Message;
+bool ApplicationOwnedSequence(const Message& request);
 
 // One bounded upload per connection. The enclosing simulation owner serializes
 // requests and retires every admitted execution on disconnect.

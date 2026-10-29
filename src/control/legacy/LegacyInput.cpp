@@ -13,26 +13,6 @@ LegacyInput::LegacyInput()
 	m_views.outerFov.fill({-0.7853982f, 0.7853982f, 0.7853982f, -0.7853982f});
 }
 
-void LegacyInput::StartSequence(Sequence sequence, FrameId origin)
-{
-	m_sequence.Start(std::move(sequence), origin);
-}
-
-bool LegacyInput::AdvanceSequence(FrameId submitted)
-{
-	bool capture = false;
-	for (const auto& step : m_sequence.Advance(submitted))
-	{
-		if (step.head)
-			step.head->Apply(m_head, m_headAngles);
-		for (std::size_t hand = 0; hand < step.controllers.size(); ++hand)
-			if (step.controllers[hand])
-				step.controllers[hand]->Apply(m_controllers[hand].offset, m_controllers[hand].controls);
-		capture |= step.capture;
-	}
-	return capture;
-}
-
 TrackingState LegacyInput::Tracking(bool focused) const
 {
 	TrackingState tracking;
@@ -46,16 +26,6 @@ TrackingState LegacyInput::Tracking(bool focused) const
 std::array<ControllerControls, 2> LegacyInput::Controls() const
 {
 	return {m_controllers[0].controls, m_controllers[1].controls};
-}
-
-const XrPosef& LegacyInput::HeadPose() const
-{
-	return m_head;
-}
-
-LegacyHeadAngles LegacyInput::HeadAngles() const
-{
-	return {m_headAngles[0], m_headAngles[1], m_headAngles[2]};
 }
 
 const ViewSettings& LegacyInput::Views() const

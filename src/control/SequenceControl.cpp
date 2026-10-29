@@ -11,6 +11,16 @@
 
 namespace simxr::control
 {
+bool ApplicationOwnedSequence(const Message& request)
+{
+	const auto* selector = request.Find(tag::ApplicationOwned);
+	if (!selector)
+		return false;
+	const auto value = selector->AsBool();
+	if (!value || (*value && request.Find(tag::SourceKind)))
+		throw ControlRequestError{ErrorCode::Invalid, "Application-owned sequence requires a boolean and no connection source"};
+	return *value;
+}
 static InspectionValue Status(const PoseSequenceStatus& status)
 {
 	return InspectionValue::Object({{"id", InspectionValue::Unsigned(status.id)},

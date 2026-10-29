@@ -3,7 +3,7 @@
 #include "control/legacy/LegacyInput.h"
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
-#include "platform/linux/LinuxRuntimeStatus.h"
+#include "platform/linux/RuntimeFiles.h"
 #include "runtime/NativeBindings.h"
 #include "runtime/Runtime.h"
 
@@ -13,10 +13,6 @@
 #include <optional>
 #include <string>
 
-namespace flicker
-{
-class Diagnostics;
-}
 namespace simxr::control
 {
 class ControlService;
@@ -24,7 +20,6 @@ class LocalControlServer;
 } // namespace simxr::control
 namespace simxr
 {
-class LegacyFileChannel;
 
 class LinuxInstance final
 {
@@ -34,9 +29,6 @@ class LinuxInstance final
 	LinuxInstance(const LinuxInstance&) = delete;
 	LinuxInstance& operator=(const LinuxInstance&) = delete;
 	const LegacyInput& Input() const noexcept;
-	bool AdvanceSequence(FrameId submitted);
-	void PublishStatus(const Runtime::SessionRef& current = {},
-					   std::optional<LinuxRuntimeStatus::FrameCounts> submitted = {}) noexcept;
 	void Log(const std::string& message);
 	void Close();
 
@@ -47,9 +39,8 @@ class LinuxInstance final
   private:
 	friend class LinuxRuntime;
 	LegacyInput m_input;
-	const std::shared_ptr<LegacyFileChannel> m_files;
-	const std::shared_ptr<flicker::Diagnostics> m_diagnostics;
-	LinuxRuntimeStatus m_status;
+	const std::shared_ptr<const PoseSequence> m_startupSequence;
+	RuntimeLog m_log;
 };
 
 // Owns native bindings and transport; the portable Runtime owns XR identities.
