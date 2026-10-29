@@ -3,26 +3,55 @@
 
 namespace simxr::control
 {
-ConnectionRequests::ConnectionRequests(std::function<void()> onClosed) : m_onClosed(std::move(onClosed)) {}
-
-ConnectionRequests::~ConnectionRequests()
+ConnectionRequests::Exchange::~Exchange()
 {
-	Close();
-	std::optional<ControlPacket> retired;
-	std::function<void()> retiredObserver;
-	{
-		std::lock_guard lock(m_mutex);
-		retired = std::move(m_lastResponse);
-		m_lastResponse.reset();
-		retiredObserver = std::move(m_onClosed);
-	}
-	// A cached exposure can own the last native reader. Leave the mutex and
-	// closed phase observable until its detached packet has been destroyed.
+	if (m_admission == Admission::Execute)
+		m_owner.Finish();
 }
 
-ConnectionRequests::Exchange ConnectionRequests::Begin(const ControlPacket& request)
+ConnectionRequests::Exchange::Admission ConnectionRequests::Exchange::Result() const noexcept
 {
-	return Exchange(*this, request);
+	return m_admission;
+}
+
+ErrorCode ConnectionRequests::Exchange::Error() const noexcept
+{
+	return m_error;
+}
+
+const char* ConnectionRequests::Exchange::Detail() const noexcept
+{
+	return m_detail;
+}
+
+std::uint16_t ConnectionRequests::Exchange::ResponseMinor() const noexcept
+{
+	return m_minor;
+}
+
+const ControlPacket& ConnectionRequests::Exchange::Replay() const
+{
+	if (m_admission != Admission::Replay)
+		throw std::logic_error("Exchange has no replay response");
+	return *m_replay;
+}
+
+void ConnectionRequests::Exchange::Publish(const ControlPacket& response, RetiredReplay& retired)
+{
+	if (m_admission != Admission::Execute || m_published || retired.m_used)
+		throw std::logic_error("Exchange is not awaiting response publication");
+	// Allocate the replay copy before changing the last accepted identity.
+	auto cached = response;
+	static_assert(std::is_nothrow_move_assignable_v<ControlPacket>);
+	{
+		std::lock_guard lock(m_owner.m_mutex);
+		retired.m_used = true;
+		retired.m_packet = std::move(m_owner.m_lastResponse);
+		m_owner.m_lastPayload = std::move(m_payload);
+		m_owner.m_lastResponse = std::move(cached);
+		m_owner.m_lastIdentity = m_identity;
+		m_published = true;
+	}
 }
 
 ConnectionRequests::Exchange::Exchange(ConnectionRequests& owner, const ControlPacket& request) : m_owner(owner)
@@ -75,61 +104,32 @@ ConnectionRequests::Exchange::Exchange(ConnectionRequests& owner, const ControlP
 	owner.m_phase = Phase::Executing;
 }
 
-ConnectionRequests::Exchange::~Exchange()
-{
-	if (m_admission == Admission::Execute)
-		m_owner.Finish();
-}
-
 void ConnectionRequests::Exchange::Reject(ErrorCode error, const char* detail) noexcept
 {
 	m_error = error;
 	m_detail = detail;
 }
 
-ConnectionRequests::Exchange::Admission ConnectionRequests::Exchange::Result() const noexcept
-{
-	return m_admission;
-}
+ConnectionRequests::ConnectionRequests(std::function<void()> onClosed) : m_onClosed(std::move(onClosed)) {}
 
-ErrorCode ConnectionRequests::Exchange::Error() const noexcept
+ConnectionRequests::~ConnectionRequests()
 {
-	return m_error;
-}
-
-const char* ConnectionRequests::Exchange::Detail() const noexcept
-{
-	return m_detail;
-}
-
-std::uint16_t ConnectionRequests::Exchange::ResponseMinor() const noexcept
-{
-	return m_minor;
-}
-
-const ControlPacket& ConnectionRequests::Exchange::Replay() const
-{
-	if (m_admission != Admission::Replay)
-		throw std::logic_error("Exchange has no replay response");
-	return *m_replay;
-}
-
-void ConnectionRequests::Exchange::Publish(const ControlPacket& response, RetiredReplay& retired)
-{
-	if (m_admission != Admission::Execute || m_published || retired.m_used)
-		throw std::logic_error("Exchange is not awaiting response publication");
-	// Allocate the replay copy before changing the last accepted identity.
-	auto cached = response;
-	static_assert(std::is_nothrow_move_assignable_v<ControlPacket>);
+	Close();
+	std::optional<ControlPacket> retired;
+	std::function<void()> retiredObserver;
 	{
-		std::lock_guard lock(m_owner.m_mutex);
-		retired.m_used = true;
-		retired.m_packet = std::move(m_owner.m_lastResponse);
-		m_owner.m_lastPayload = std::move(m_payload);
-		m_owner.m_lastResponse = std::move(cached);
-		m_owner.m_lastIdentity = m_identity;
-		m_published = true;
+		std::lock_guard lock(m_mutex);
+		retired = std::move(m_lastResponse);
+		m_lastResponse.reset();
+		retiredObserver = std::move(m_onClosed);
 	}
+	// A cached exposure can own the last native reader. Leave the mutex and
+	// closed phase observable until its detached packet has been destroyed.
+}
+
+ConnectionRequests::Exchange ConnectionRequests::Begin(const ControlPacket& request)
+{
+	return Exchange(*this, request);
 }
 
 bool ConnectionRequests::Negotiated() const

@@ -47,19 +47,12 @@ void HeadsetInputBridge::Stop()
 		m_status.phase = HeadsetInputPhase::Stopped;
 }
 
-void HeadsetInputBridge::Fail(const char* error) noexcept
+HeadsetInputStatus HeadsetInputBridge::Status() const
 {
 	std::lock_guard lock(m_mutex);
-	m_status.phase = HeadsetInputPhase::Failed;
-	m_status.discardedSamples += m_count;
-	m_count = 0;
-	try
-	{
-		m_status.error = error;
-	}
-	catch (...)
-	{}
-	m_changed.notify_all();
+	auto status = m_status;
+	status.queueDepth = m_count;
+	return status;
 }
 
 bool HeadsetInputBridge::Publish(const HeadsetInputSample& input, NativeClockDomain domain, std::int64_t observed,
@@ -99,14 +92,6 @@ bool HeadsetInputBridge::Publish(const HeadsetInputSample& input, NativeClockDom
 	m_status.queueHighWater = std::max(m_status.queueHighWater, m_count);
 	m_changed.notify_one();
 	return true;
-}
-
-HeadsetInputStatus HeadsetInputBridge::Status() const
-{
-	std::lock_guard lock(m_mutex);
-	auto status = m_status;
-	status.queueDepth = m_count;
-	return status;
 }
 
 std::array<std::optional<HeadsetVibration>, 2> HeadsetInputBridge::ConsumeHaptics(bool enabled)
@@ -395,5 +380,20 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 	}
 	if (client)
 		client->Close();
+}
+
+void HeadsetInputBridge::Fail(const char* error) noexcept
+{
+	std::lock_guard lock(m_mutex);
+	m_status.phase = HeadsetInputPhase::Failed;
+	m_status.discardedSamples += m_count;
+	m_count = 0;
+	try
+	{
+		m_status.error = error;
+	}
+	catch (...)
+	{}
+	m_changed.notify_all();
 }
 } // namespace simxr::headset

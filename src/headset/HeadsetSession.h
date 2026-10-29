@@ -50,9 +50,9 @@ public:
 	~HeadsetSession();
 	HeadsetSession(const HeadsetSession&) = delete;
 	HeadsetSession& operator=(const HeadsetSession&) = delete;
+
 	void Open(std::optional<HeadsetImageSource> source = {}, bool trackers = false,
 			  std::optional<BodyJointSet> body = {});
-	void SetCalibration(std::optional<XrPosef> worldFromInitial);
 	void Run(std::optional<std::uint32_t> frames, const std::function<void(const HeadsetInputSample&)>& observe = {},
 			 const std::function<bool()>& stopRequested = {});
 	bool Close();
@@ -68,11 +68,14 @@ public:
 	}
 
 	HeadsetImageTiming ImageTiming() const;
+
+	void SetCalibration(std::optional<XrPosef> worldFromInitial);
 	void ApplyHaptics(const std::array<std::optional<HeadsetVibration>, 2>& commands);
 
 private:
 	void PollEvents();
 	bool Frame(bool render, const std::function<void(const HeadsetInputSample&)>& observe);
+
 	OpenXrRuntime& m_runtime;
 	HeadsetGraphics& m_graphics;
 	XrSession m_session = XR_NULL_HANDLE;

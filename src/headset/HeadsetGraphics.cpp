@@ -22,67 +22,6 @@ HeadsetGraphics::~HeadsetGraphics()
 		m_validation.release();
 }
 
-bool HeadsetGraphics::Close()
-{
-	if (!Drain())
-		return false;
-	if (m_device)
-		vkDestroyDevice(std::exchange(m_device, VK_NULL_HANDLE), nullptr);
-	if (m_messenger)
-	{
-		const auto destroy = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-			vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT"));
-		destroy(m_instance, m_messenger, nullptr);
-		m_messenger = VK_NULL_HANDLE;
-	}
-	if (m_instance)
-		vkDestroyInstance(std::exchange(m_instance, VK_NULL_HANDLE), nullptr);
-	return true;
-}
-
-bool HeadsetGraphics::Drain()
-{
-	if (m_preserved)
-		return false;
-	if (m_device && vkDeviceWaitIdle(m_device) != VK_SUCCESS)
-	{
-		PreserveNativeResources();
-		return false;
-	}
-	return true;
-}
-
-void HeadsetGraphics::PreserveNativeResources()
-{
-	if (!m_preserved)
-		std::cerr << "Headset GPU shutdown is uncertain; preserving native owners until host process exit\n";
-	m_preserved = true;
-	if (m_runtime)
-		m_runtime->PreserveNativeResources();
-}
-
-bool HeadsetGraphics::ResourcesPreserved() const
-{
-	return m_preserved;
-}
-
-VKAPI_ATTR VkBool32 VKAPI_CALL HeadsetGraphics::Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-														   VkDebugUtilsMessageTypeFlagsEXT,
-														   const VkDebugUtilsMessengerCallbackDataEXT* message,
-														   void* owner)
-{
-	auto& state = *static_cast<ValidationState*>(owner);
-	if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-		++state.errors;
-	std::cerr << "Headset Vulkan validation: " << message->pMessage << '\n';
-	return VK_FALSE;
-}
-
-std::uint32_t HeadsetGraphics::ValidationErrors() const
-{
-	return m_validation->errors.load();
-}
-
 void HeadsetGraphics::Open(OpenXrRuntime& runtime, bool validation)
 {
 	if (m_instance || m_preserved)
@@ -223,6 +162,55 @@ void HeadsetGraphics::Open(OpenXrRuntime& runtime, bool validation)
 	CheckVk(vkResult, "Create physical Vulkan device");
 }
 
+bool HeadsetGraphics::Close()
+{
+	if (!Drain())
+		return false;
+	if (m_device)
+		vkDestroyDevice(std::exchange(m_device, VK_NULL_HANDLE), nullptr);
+	if (m_messenger)
+	{
+		const auto destroy = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+			vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT"));
+		destroy(m_instance, m_messenger, nullptr);
+		m_messenger = VK_NULL_HANDLE;
+	}
+	if (m_instance)
+		vkDestroyInstance(std::exchange(m_instance, VK_NULL_HANDLE), nullptr);
+	return true;
+}
+
+bool HeadsetGraphics::Drain()
+{
+	if (m_preserved)
+		return false;
+	if (m_device && vkDeviceWaitIdle(m_device) != VK_SUCCESS)
+	{
+		PreserveNativeResources();
+		return false;
+	}
+	return true;
+}
+
+void HeadsetGraphics::PreserveNativeResources()
+{
+	if (!m_preserved)
+		std::cerr << "Headset GPU shutdown is uncertain; preserving native owners until host process exit\n";
+	m_preserved = true;
+	if (m_runtime)
+		m_runtime->PreserveNativeResources();
+}
+
+bool HeadsetGraphics::ResourcesPreserved() const
+{
+	return m_preserved;
+}
+
+std::uint32_t HeadsetGraphics::ValidationErrors() const
+{
+	return m_validation->errors.load();
+}
+
 VkInstance HeadsetGraphics::Instance() const
 {
 	return m_instance;
@@ -261,5 +249,17 @@ const VkPhysicalDeviceIDProperties& HeadsetGraphics::Identity() const
 const std::vector<const char*>& HeadsetGraphics::Extensions() const
 {
 	return m_extensions;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL HeadsetGraphics::Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+														   VkDebugUtilsMessageTypeFlagsEXT,
+														   const VkDebugUtilsMessengerCallbackDataEXT* message,
+														   void* owner)
+{
+	auto& state = *static_cast<ValidationState*>(owner);
+	if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+		++state.errors;
+	std::cerr << "Headset Vulkan validation: " << message->pMessage << '\n';
+	return VK_FALSE;
 }
 } // namespace simxr::headset

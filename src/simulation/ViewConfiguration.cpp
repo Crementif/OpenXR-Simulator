@@ -24,21 +24,6 @@ bool ValidViewFieldOfView(XrFovf fov) noexcept
 		   fov.angleDown < fov.angleUp;
 }
 
-static std::pair<float, float> InsetRange(float center, float minimum, float maximum, double halfAngle)
-{
-	const auto clamped = std::clamp(static_cast<double>(center), static_cast<double>(minimum) + halfAngle,
-									static_cast<double>(maximum) - halfAngle);
-	auto lower = static_cast<float>(clamped - halfAngle);
-	auto upper = static_cast<float>(clamped + halfAngle);
-	if (lower == upper)
-	{
-		// Preserve a nonzero representable interval when both endpoints round to the center.
-		lower = std::nextafter(lower, minimum);
-		upper = std::nextafter(upper, maximum);
-	}
-	return {lower, upper};
-}
-
 ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& settings)
 	: m_layout(layout), m_settings(settings)
 {
@@ -68,6 +53,21 @@ std::vector<ViewDescription> ViewConfiguration::Describe() const
 		views.push_back({1, ViewRole::Inset, m_settings.insetWidth, m_settings.insetHeight});
 	}
 	return views;
+}
+
+static std::pair<float, float> InsetRange(float center, float minimum, float maximum, double halfAngle)
+{
+	const auto clamped = std::clamp(static_cast<double>(center), static_cast<double>(minimum) + halfAngle,
+									static_cast<double>(maximum) - halfAngle);
+	auto lower = static_cast<float>(clamped - halfAngle);
+	auto upper = static_cast<float>(clamped + halfAngle);
+	if (lower == upper)
+	{
+		// Preserve a nonzero representable interval when both endpoints round to the center.
+		lower = std::nextafter(lower, minimum);
+		upper = std::nextafter(upper, maximum);
+	}
+	return {lower, upper};
 }
 
 LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool foveated) const
@@ -121,13 +121,14 @@ LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool fo
 	return result;
 }
 
+std::uint32_t ViewConfiguration::EyeCount() const
+{
+	return 2;
+}
+
 const ViewSettings& ViewConfiguration::Settings() const
 {
 	return m_settings;
 }
 
-std::uint32_t ViewConfiguration::EyeCount() const
-{
-	return 2;
-}
 } // namespace simxr

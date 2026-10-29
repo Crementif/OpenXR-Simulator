@@ -12,6 +12,7 @@
 namespace simxr::app
 {
 using Json = nlohmann::json;
+
 using namespace std::chrono_literals;
 
 static bool SupportedVersion(std::string_view version)
@@ -92,27 +93,106 @@ McpConnector::~McpConnector()
 	Stop();
 }
 
-void McpConnector::Send(const Json& message)
+void McpConnector::Run()
 {
-	std::lock_guard lock(m_outputMutex);
-	if (!m_closed.load())
-		std::cout << message.dump() << '\n' << std::flush;
-}
-
-void McpConnector::Invalidate(std::uint64_t generation)
-{
-	std::optional<Connection> retired;
+	try
 	{
-		std::lock_guard lock(m_stateMutex);
-		if (m_connection && m_connection->generation == generation)
+		m_monitor = std::thread([this] { Monitor(); });
+		for (unsigned index = 0; index < 8; ++index)
+			m_workers.emplace_back([this] { Work(false); });
+		m_workers.emplace_back([this] { Work(true); });
+		std::string line;
+		bool oversized = false;
+		for (char byte; std::cin.get(byte);)
 		{
-			retired = std::move(m_connection);
-			m_connection.reset();
-			m_stateChanged.notify_all();
+			if (byte != '\n')
+			{
+				if (line.size() < 1024 * 1024)
+					line.push_back(byte);
+				else
+					oversized = true;
+				continue;
+			}
+			auto message = oversized ? Json(Json::value_t::discarded) : Json::parse(line, nullptr, false);
+			line.clear();
+			oversized = false;
+			if (message.is_discarded())
+			{
+				Send(Error(nullptr, -32700, "Invalid or oversized JSON message"));
+				continue;
+			}
+			if (!message.is_object() || message.value("jsonrpc", Json()) != "2.0" || !message.contains("method") ||
+				!message["method"].is_string() ||
+				(message.contains("id") && !message["id"].is_string() && !message["id"].is_number_integer()))
+			{
+				Send(Error(nullptr, -32600, "Invalid request"));
+				continue;
+			}
+			const bool notification = !message.contains("id");
+			const bool cancel = notification && message["method"] == "notifications/cancelled";
+			const bool call = !notification && message["method"] == "tools/call";
+			std::string cancellationKey = call ? NewMcpIdentifier() : std::string{};
+			bool queued = false, duplicate = false, cancelledBeforeDispatch = false;
+			std::shared_ptr<Job> immediate;
+			{
+				std::lock_guard lock(m_queueMutex);
+				if (cancel && message.contains("params") && message["params"].is_object() &&
+					message["params"].contains("requestId") &&
+					(message["params"]["requestId"].is_string() || message["params"]["requestId"].is_number_integer()))
+				{
+					const auto found = m_calls.find(message["params"]["requestId"].dump());
+					if (found != m_calls.end())
+					{
+						found->second->cancelled = true;
+						cancelledBeforeDispatch = !found->second->started;
+						cancellationKey = found->second->cancellationKey;
+					}
+				}
+				const auto callId = call ? message["id"].dump() : std::string{};
+				duplicate = call && m_calls.contains(callId);
+				auto& queue = notification ? m_notifications : m_jobs;
+				if (!duplicate && !cancelledBeforeDispatch && (notification || queue.size() < 32))
+				{
+					auto job = std::make_shared<Job>();
+					job->message = message;
+					job->callId = callId;
+					job->cancellationKey = std::move(cancellationKey);
+					if (call)
+						m_calls.emplace(callId, job);
+					if (notification && queue.size() >= 32)
+						immediate = std::move(job);
+					else if (cancel)
+						queue.push_front(job);
+					else
+						queue.push_back(job);
+					queued = !immediate;
+				}
+			}
+			if (queued)
+				m_queueChanged.notify_all();
+			else if (immediate)
+			{
+				try
+				{
+					Handle(immediate);
+				}
+				catch (const std::exception& error)
+				{
+					std::fprintf(stderr, "MCP connector notification: %s\n", error.what());
+				}
+			}
+			else if (duplicate)
+				Send(Error(message["id"], -32600, "Request ID is already active"));
+			else if (!notification)
+				Send(Error(message["id"], -32000, "The connector request queue is full"));
 		}
 	}
-	if (retired)
-		DeleteSession(retired->endpoint.port, retired->endpoint.token, retired->session, retired->version);
+	catch (...)
+	{
+		Stop();
+		throw;
+	}
+	Stop();
 }
 
 void McpConnector::Monitor()
@@ -227,6 +307,47 @@ void McpConnector::Monitor()
 		m_stateChanged.wait_for(lock, 1s, [&] { return m_stopping || (current && !m_connection); });
 		if (m_stopping)
 			return;
+	}
+}
+
+void McpConnector::Work(bool notifications)
+{
+	while (true)
+	{
+		std::shared_ptr<Job> job;
+		{
+			std::unique_lock lock(m_queueMutex);
+			auto& queue = notifications ? m_notifications : m_jobs;
+			m_queueChanged.wait(lock, [&] { return m_closed.load() || !queue.empty(); });
+			if (m_closed.load())
+				return;
+			job = std::move(queue.front());
+			queue.pop_front();
+			m_queueChanged.notify_all();
+			if (job->cancelled)
+			{
+				m_calls.erase(job->callId);
+				continue;
+			}
+			job->started = true;
+		}
+		const auto id = job->message.value("id", Json());
+		const bool hasId = job->message.contains("id");
+		try
+		{
+			Handle(job);
+		}
+		catch (const std::exception& error)
+		{
+			std::fprintf(stderr, "MCP connector request: %s\n", error.what());
+			if (hasId)
+				Send(Error(id, -32603, "Connector request failed"));
+		}
+		if (!job->callId.empty())
+		{
+			std::lock_guard lock(m_queueMutex);
+			m_calls.erase(job->callId);
+		}
 	}
 }
 
@@ -392,147 +513,27 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 			: "The simulator request was interrupted; the connector will reconnect when it returns"));
 }
 
-void McpConnector::Work(bool notifications)
+void McpConnector::Send(const Json& message)
 {
-	while (true)
-	{
-		std::shared_ptr<Job> job;
-		{
-			std::unique_lock lock(m_queueMutex);
-			auto& queue = notifications ? m_notifications : m_jobs;
-			m_queueChanged.wait(lock, [&] { return m_closed.load() || !queue.empty(); });
-			if (m_closed.load())
-				return;
-			job = std::move(queue.front());
-			queue.pop_front();
-			m_queueChanged.notify_all();
-			if (job->cancelled)
-			{
-				m_calls.erase(job->callId);
-				continue;
-			}
-			job->started = true;
-		}
-		const auto id = job->message.value("id", Json());
-		const bool hasId = job->message.contains("id");
-		try
-		{
-			Handle(job);
-		}
-		catch (const std::exception& error)
-		{
-			std::fprintf(stderr, "MCP connector request: %s\n", error.what());
-			if (hasId)
-				Send(Error(id, -32603, "Connector request failed"));
-		}
-		if (!job->callId.empty())
-		{
-			std::lock_guard lock(m_queueMutex);
-			m_calls.erase(job->callId);
-		}
-	}
+	std::lock_guard lock(m_outputMutex);
+	if (!m_closed.load())
+		std::cout << message.dump() << '\n' << std::flush;
 }
 
-void McpConnector::Run()
+void McpConnector::Invalidate(std::uint64_t generation)
 {
-	try
+	std::optional<Connection> retired;
 	{
-		m_monitor = std::thread([this] { Monitor(); });
-		for (unsigned index = 0; index < 8; ++index)
-			m_workers.emplace_back([this] { Work(false); });
-		m_workers.emplace_back([this] { Work(true); });
-		std::string line;
-		bool oversized = false;
-		for (char byte; std::cin.get(byte);)
+		std::lock_guard lock(m_stateMutex);
+		if (m_connection && m_connection->generation == generation)
 		{
-			if (byte != '\n')
-			{
-				if (line.size() < 1024 * 1024)
-					line.push_back(byte);
-				else
-					oversized = true;
-				continue;
-			}
-			auto message = oversized ? Json(Json::value_t::discarded) : Json::parse(line, nullptr, false);
-			line.clear();
-			oversized = false;
-			if (message.is_discarded())
-			{
-				Send(Error(nullptr, -32700, "Invalid or oversized JSON message"));
-				continue;
-			}
-			if (!message.is_object() || message.value("jsonrpc", Json()) != "2.0" || !message.contains("method") ||
-				!message["method"].is_string() ||
-				(message.contains("id") && !message["id"].is_string() && !message["id"].is_number_integer()))
-			{
-				Send(Error(nullptr, -32600, "Invalid request"));
-				continue;
-			}
-			const bool notification = !message.contains("id");
-			const bool cancel = notification && message["method"] == "notifications/cancelled";
-			const bool call = !notification && message["method"] == "tools/call";
-			std::string cancellationKey = call ? NewMcpIdentifier() : std::string{};
-			bool queued = false, duplicate = false, cancelledBeforeDispatch = false;
-			std::shared_ptr<Job> immediate;
-			{
-				std::lock_guard lock(m_queueMutex);
-				if (cancel && message.contains("params") && message["params"].is_object() &&
-					message["params"].contains("requestId") &&
-					(message["params"]["requestId"].is_string() || message["params"]["requestId"].is_number_integer()))
-				{
-					const auto found = m_calls.find(message["params"]["requestId"].dump());
-					if (found != m_calls.end())
-					{
-						found->second->cancelled = true;
-						cancelledBeforeDispatch = !found->second->started;
-						cancellationKey = found->second->cancellationKey;
-					}
-				}
-				const auto callId = call ? message["id"].dump() : std::string{};
-				duplicate = call && m_calls.contains(callId);
-				auto& queue = notification ? m_notifications : m_jobs;
-				if (!duplicate && !cancelledBeforeDispatch && (notification || queue.size() < 32))
-				{
-					auto job = std::make_shared<Job>();
-					job->message = message;
-					job->callId = callId;
-					job->cancellationKey = std::move(cancellationKey);
-					if (call)
-						m_calls.emplace(callId, job);
-					if (notification && queue.size() >= 32)
-						immediate = std::move(job);
-					else if (cancel)
-						queue.push_front(job);
-					else
-						queue.push_back(job);
-					queued = !immediate;
-				}
-			}
-			if (queued)
-				m_queueChanged.notify_all();
-			else if (immediate)
-			{
-				try
-				{
-					Handle(immediate);
-				}
-				catch (const std::exception& error)
-				{
-					std::fprintf(stderr, "MCP connector notification: %s\n", error.what());
-				}
-			}
-			else if (duplicate)
-				Send(Error(message["id"], -32600, "Request ID is already active"));
-			else if (!notification)
-				Send(Error(message["id"], -32000, "The connector request queue is full"));
+			retired = std::move(m_connection);
+			m_connection.reset();
+			m_stateChanged.notify_all();
 		}
 	}
-	catch (...)
-	{
-		Stop();
-		throw;
-	}
-	Stop();
+	if (retired)
+		DeleteSession(retired->endpoint.port, retired->endpoint.token, retired->session, retired->version);
 }
 
 void McpConnector::Stop() noexcept

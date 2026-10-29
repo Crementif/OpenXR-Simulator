@@ -3,8 +3,6 @@
 
 namespace simxr
 {
-SwapchainWaits::Registration::Registration(SwapchainWaits& owner) : m_owner(&owner) {}
-
 SwapchainWaits::Registration::Registration(Registration&& other) noexcept
 	: m_owner(std::exchange(other.m_owner, nullptr))
 {}
@@ -14,6 +12,8 @@ SwapchainWaits::Registration::~Registration()
 	if (m_owner)
 		m_owner->Leave();
 }
+
+SwapchainWaits::Registration::Registration(SwapchainWaits& owner) : m_owner(&owner) {}
 
 std::optional<SwapchainWaits::Registration> SwapchainWaits::Enter()
 {

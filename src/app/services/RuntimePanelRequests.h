@@ -22,14 +22,17 @@ public:
 	void Connect(std::string path, std::optional<std::uint64_t> expectedProcess = {});
 	void Disconnect();
 	void Close() noexcept;
+
 	RuntimeConnectionSnapshot Snapshot() const;
 	bool RefreshEpoch();
 	std::uint64_t Epoch() const noexcept;
+
 	std::vector<PanelReply> Poll();
 	std::uint64_t Send(control::OpCode code, PanelWork kind, PanelFields fields = {}, std::uint64_t id = 0,
 					   std::vector<std::shared_ptr<control::TransferHandle>> handles = {});
 	bool Has(PanelWork kind, std::uint64_t id = 0) const;
 	bool Pending() const noexcept;
+
 	void Release(control::OpCode code, std::uint16_t field, std::uint64_t id, std::uint64_t session = 0,
 				 std::uint64_t generation = 0);
 	void FlushReleases();

@@ -297,9 +297,10 @@ static VulkanDeliveryRetirement& DeliveryRetirement()
 #endif
 }
 
-void ShutdownVulkanImageDelivery()
+void InitializeVulkanImageDelivery()
 {
-	DeliveryRetirement().Shutdown();
+	(void)DeliveryBudget();
+	(void)DeliveryRetirement();
 }
 
 void StopVulkanImageDelivery()
@@ -307,10 +308,9 @@ void StopVulkanImageDelivery()
 	DeliveryRetirement().Stop();
 }
 
-void InitializeVulkanImageDelivery()
+void ShutdownVulkanImageDelivery()
 {
-	(void)DeliveryBudget();
-	(void)DeliveryRetirement();
+	DeliveryRetirement().Shutdown();
 }
 
 class VulkanInspectionQueue
@@ -808,30 +808,288 @@ private:
 	const std::shared_ptr<std::condition_variable> m_changed;
 };
 
-std::shared_ptr<FrameReservation> VulkanInspection::Reserve(VulkanInspectionKind kind)
+CompletionStatus VulkanImageReadback::PollCompletion() const noexcept
 {
-	std::lock_guard lock(m_mutex);
-	CheckAdmission();
-	const auto& pool = kind == VulkanInspectionKind::History		? m_historyAdmissions
-					   : kind == VulkanInspectionKind::Reprojection ? m_reprojectionAdmissions
-																	: m_admissions;
-	auto admission = pool.Reserve();
-	if (!admission)
-		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
-	return admission;
+	try
+	{
+		m_queue->Collect();
+	}
+	catch (...)
+	{}
+	return m_work->PollCompletion();
 }
 
-void VulkanInspection::Publish(const std::shared_ptr<VulkanInspectionTransfer::State>& job)
+std::shared_ptr<const VulkanImagePixels> VulkanImageReadback::Pixels()
 {
+	if (PollCompletion() != CompletionStatus::Complete)
+		return {};
 	std::lock_guard lock(m_mutex);
-	CheckAdmission();
-	if (m_jobs.size() == m_capacity)
-		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
-	// The final admission check precedes one-shot semaphore export/import.
-	// Publication cannot allocate: the bounded list is fully reserved.
-	job->ImportReady(m_queue->External());
-	m_jobs.push_back(job);
-	m_changed->notify_all();
+	if (m_pixels)
+		return m_pixels;
+	m_pixels = m_work->ReadPixels();
+	return m_pixels;
+}
+
+VulkanImageReadback::VulkanImageReadback(std::shared_ptr<VulkanInspectionQueue> queue,
+										 std::shared_ptr<VulkanInspectionWork> work)
+	: m_queue(std::move(queue)), m_work(std::move(work))
+{}
+
+VulkanImageDelivery::~VulkanImageDelivery() = default;
+
+SharedImageKey VulkanImageDelivery::Key() const noexcept
+{
+	return m_resources->native->Key();
+}
+
+ImageCompletionKind VulkanImageDelivery::CompletionKind() const noexcept
+{
+	return m_resources->Queue()->CompletionKind();
+}
+
+const VulkanExternalImageDescriptor& VulkanImageDelivery::Descriptor() const noexcept
+{
+	return m_resources->native->Descriptor();
+}
+
+CompletionStatus VulkanImageDelivery::PollCompletion() const noexcept
+{
+	try
+	{
+		m_resources->Queue()->Collect();
+	}
+	catch (...)
+	{}
+	return m_resources->native->Poll();
+}
+
+CompletionStatus VulkanImageDelivery::PollConsumerCompletion() const noexcept
+{
+	return m_resources->native->ConsumerCompletion();
+}
+
+void VulkanImageDelivery::RegisterConsumer(const VulkanExternalIdentity& identity, VulkanExternalHandle& fd)
+{
+	m_resources->native->RegisterConsumer(m_resources->Queue()->External(), identity, fd, CompletionKind());
+}
+
+VulkanDeliveryHandles VulkanImageDelivery::ExportHandles(bool expose)
+{
+	return m_resources->native->ExportHandles(expose);
+}
+
+void VulkanImageDelivery::MarkExposed() noexcept
+{
+	m_resources->native->MarkExposed();
+}
+
+VulkanImageDelivery::VulkanImageDelivery(std::shared_ptr<Resources> resources) : m_resources(std::move(resources)) {}
+
+VulkanInspectionFrame::~VulkanInspectionFrame() = default;
+
+std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::FromImage(std::shared_ptr<VulkanImage> image,
+																		std::span<const FrameView> views, bool timeline)
+{
+	auto queue = std::make_shared<VulkanInspectionQueue>(image->device, timeline);
+	auto resources = Resources::Create(std::move(queue), std::move(image), {}, {});
+	resources->PublishTerminal(CompletionStatus::Complete, false);
+	return std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), views));
+}
+
+std::shared_ptr<VulkanInspectionFrame>
+VulkanInspectionFrame::Compose(const CompositionPlan& plan,
+							   std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources)
+{
+	if (sources.empty() || sources.size() != plan.draws.size() || !sources.front())
+		throw std::invalid_argument("Retained composition requires one source per draw");
+	const auto queue = sources.front()->m_resources->Queue();
+	std::vector<VulkanRetainedSource> retained;
+	retained.reserve(sources.size());
+	bool pending = false;
+	for (const auto& source : sources)
+	{
+		if (!source || source->m_resources->Queue() != queue)
+			throw std::invalid_argument("Retained composition sources must share one owned queue");
+		const auto status = source->PollCompletion();
+		if (status == CompletionStatus::Failed)
+			throw VulkanError(VK_ERROR_INITIALIZATION_FAILED, "Retained composition source failed");
+		pending |= status == CompletionStatus::Pending;
+		retained.push_back({source->m_resources->Image(), source->m_resources->Budget()});
+	}
+	if (pending)
+		return {};
+	auto frame = queue->PrepareComposition(plan, retained);
+	auto resources = Resources::Create(queue, frame->RetainImage(), frame->Reservation(), {}, frame,
+									   sources.front()->m_resources->DeliveryRetired());
+	auto output =
+		std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), frame->Views()));
+	queue->SubmitComposition(frame);
+	return output;
+}
+
+bool VulkanInspectionFrame::CanArchive() const noexcept
+{
+	return Image().device->encodeFamily != VK_QUEUE_FAMILY_IGNORED &&
+		   Image().device->decodeFamily != VK_QUEUE_FAMILY_IGNORED;
+}
+
+std::shared_ptr<const ArchivedFrame> VulkanInspectionFrame::Archive() const
+{
+	return m_resources->Queue()->Video()->Encode(
+		std::static_pointer_cast<const VulkanInspectionFrame>(shared_from_this()));
+}
+
+CompletionStatus VulkanInspectionFrame::PollCompletion() const noexcept
+{
+	return m_resources->Poll();
+}
+
+const VulkanImage& VulkanInspectionFrame::Image() const
+{
+	return *m_resources->Image();
+}
+
+VkImageView VulkanInspectionFrame::View(std::uint32_t eye) const
+{
+	return m_resources->View(eye);
+}
+
+ImageCompletionKind VulkanInspectionFrame::CompletionKind() const noexcept
+{
+	return m_resources->Queue()->CompletionKind();
+}
+
+bool VulkanInspectionFrame::CanShare() const noexcept
+{
+	return m_resources->Queue()->CanShare();
+}
+
+bool VulkanInspectionFrame::PromoteCaptureBudget(const FramePool& captures,
+												 std::shared_ptr<FrameReservation> reservation) const
+{
+	return m_resources->Promote(captures, std::move(reservation));
+}
+
+std::shared_ptr<VulkanImageReadback> VulkanInspectionFrame::Export(std::optional<std::uint32_t> layer,
+																   std::shared_ptr<const void> retirementOwner,
+																   std::optional<ImageRegion> region) const
+{
+	if (PollCompletion() != CompletionStatus::Complete)
+		throw VulkanError(VK_NOT_READY, "Inspection image is not ready for explicit export");
+	auto sourceBudget = m_resources->Budget();
+	auto work = m_resources->Queue()->Readback(m_resources->Image(), std::move(sourceBudget), layer,
+											   std::move(retirementOwner), region);
+	auto result = std::shared_ptr<VulkanImageReadback>(new VulkanImageReadback(m_resources->Queue(), work));
+	CheckVulkan(m_resources->Queue()->Submit(work), "Submit explicit export on owned inspection queue");
+	return result;
+}
+
+std::function<void()> VulkanInspectionFrame::Collector() const
+{
+	return [weak = std::weak_ptr<VulkanInspectionQueue>{m_resources->Queue()}] {
+		if (const auto queue = weak.lock())
+			queue->Collect();
+	};
+}
+
+std::shared_ptr<VulkanImageDelivery> VulkanInspectionFrame::Share() const
+{
+	if (!CanShare())
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Consumer external completion is unavailable");
+	if (PollCompletion() != CompletionStatus::Complete)
+		throw VulkanError(VK_NOT_READY, "Inspection image is not ready for sharing");
+	auto& queue = *m_resources->Queue();
+	queue.Collect();
+	auto slot = DeliveryBudget().Reserve(false);
+	if (!slot)
+		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Shared image delivery capacity exhausted");
+	auto sourceBudget = m_resources->Budget();
+	auto native = VulkanDeliveryNative::Prepare(queue, m_resources->Image(), std::move(sourceBudget), std::move(slot),
+												m_resources->DeliveryRetired());
+	auto resources = std::make_shared<VulkanImageDelivery::Resources>(m_resources->Queue(), native);
+	auto result = std::shared_ptr<VulkanImageDelivery>(new VulkanImageDelivery(std::move(resources)));
+	// Both retirement lists reserve their complete capacities before queue use.
+	DeliveryRetirement().Add(native);
+	const auto submitted = native->Submit(queue);
+	CheckVulkan(submitted, "Submit shared image on owned inspection queue");
+	return result;
+}
+
+VulkanInspectionFrame::VulkanInspectionFrame(std::shared_ptr<Resources> resources, std::span<const FrameView> views)
+	: FrameOutput(views), m_resources(std::move(resources))
+{}
+
+VulkanInspectionTransfer::~VulkanInspectionTransfer()
+{
+	m_state->Cancel();
+}
+
+void VulkanInspectionTransfer::Commit() noexcept
+{
+	m_state->Commit();
+}
+
+std::shared_ptr<VulkanInspectionFrame> VulkanInspectionTransfer::Output() const
+{
+	return m_state->Output();
+}
+
+VulkanInspectionTransfer::VulkanInspectionTransfer(std::shared_ptr<State> state) : m_state(std::move(state)) {}
+
+VulkanInspection::VulkanInspection(const VulkanExternalIdentity& identity, std::size_t capacity,
+								   std::shared_ptr<VulkanInspectionValidation> validation)
+	: m_capacity((capacity ? capacity : SnapshotBudget::MaxCapacity) + 3 + 32),
+	  m_admissions([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); })
+{
+	if (capacity > SnapshotBudget::MaxCapacity)
+		throw std::invalid_argument("Invalid inspection capacity");
+	DeliveryRetirement().Start();
+	m_queue = std::make_shared<VulkanInspectionQueue>(VulkanInspectionDevice(identity, std::move(validation)));
+	m_jobs.reserve(m_capacity);
+	m_worker = std::thread(&VulkanInspection::Run, this);
+}
+
+VulkanInspection::~VulkanInspection()
+{
+	Close();
+}
+
+std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(const std::shared_ptr<VulkanFrame>& source,
+																	std::function<void(CompletionStatus)> completed,
+																	std::function<void()> retired,
+																	VulkanInspectionKind kind,
+																	std::function<void(SharedImageKey)> deliveryRetired)
+{
+	if (!source || !source->ExternalImage())
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Frame is not externally shareable");
+	auto admission = Reserve(kind);
+	if (!source->ClaimInspection())
+		throw VulkanError(VK_ERROR_TOO_MANY_OBJECTS, "Frame already has an inspection consumer");
+
+	struct Claim
+	{
+		std::shared_ptr<VulkanFrame> source;
+		bool retained = false;
+
+		~Claim()
+		{
+			if (!retained)
+				source->CancelInspection();
+		}
+	} claim{source};
+
+	auto work = m_queue->ImportFrame(source);
+	work->Image()->retired = std::move(retired);
+	auto resources = VulkanInspectionFrame::Resources::Create(m_queue, work->Image(), source->Reservation(),
+															  std::move(completed), {}, std::move(deliveryRetired));
+	auto output =
+		std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), source->Views()));
+	auto job = std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work),
+																 std::move(output), m_changed);
+	auto transfer = std::unique_ptr<VulkanInspectionTransfer>(new VulkanInspectionTransfer(job));
+	claim.retained = true;
+	Publish(job);
+	return transfer;
 }
 
 VkResult VulkanInspection::Drain(std::uint64_t timeout)
@@ -879,6 +1137,42 @@ VkResult VulkanInspection::Close(std::uint64_t timeout)
 			job->AbandonUnfinished();
 	}
 	return result;
+}
+
+ImageCompletionKind VulkanInspection::CompletionKind() const noexcept
+{
+	return m_queue->CompletionKind();
+}
+
+bool VulkanInspection::CanShare() const noexcept
+{
+	return m_queue->CanShare();
+}
+
+std::shared_ptr<FrameReservation> VulkanInspection::Reserve(VulkanInspectionKind kind)
+{
+	std::lock_guard lock(m_mutex);
+	CheckAdmission();
+	const auto& pool = kind == VulkanInspectionKind::History		? m_historyAdmissions
+					   : kind == VulkanInspectionKind::Reprojection ? m_reprojectionAdmissions
+																	: m_admissions;
+	auto admission = pool.Reserve();
+	if (!admission)
+		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
+	return admission;
+}
+
+void VulkanInspection::Publish(const std::shared_ptr<VulkanInspectionTransfer::State>& job)
+{
+	std::lock_guard lock(m_mutex);
+	CheckAdmission();
+	if (m_jobs.size() == m_capacity)
+		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
+	// The final admission check precedes one-shot semaphore export/import.
+	// Publication cannot allocate: the bounded list is fully reserved.
+	job->ImportReady(m_queue->External());
+	m_jobs.push_back(job);
+	m_changed->notify_all();
 }
 
 void VulkanInspection::CheckAdmission() const
@@ -970,300 +1264,6 @@ void VulkanInspection::Run() noexcept
 			return;
 		}
 	}
-}
-
-VulkanInspectionFrame::VulkanInspectionFrame(std::shared_ptr<Resources> resources, std::span<const FrameView> views)
-	: FrameOutput(views), m_resources(std::move(resources))
-{}
-
-std::shared_ptr<VulkanInspectionFrame>
-VulkanInspectionFrame::Compose(const CompositionPlan& plan,
-							   std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources)
-{
-	if (sources.empty() || sources.size() != plan.draws.size() || !sources.front())
-		throw std::invalid_argument("Retained composition requires one source per draw");
-	const auto queue = sources.front()->m_resources->Queue();
-	std::vector<VulkanRetainedSource> retained;
-	retained.reserve(sources.size());
-	bool pending = false;
-	for (const auto& source : sources)
-	{
-		if (!source || source->m_resources->Queue() != queue)
-			throw std::invalid_argument("Retained composition sources must share one owned queue");
-		const auto status = source->PollCompletion();
-		if (status == CompletionStatus::Failed)
-			throw VulkanError(VK_ERROR_INITIALIZATION_FAILED, "Retained composition source failed");
-		pending |= status == CompletionStatus::Pending;
-		retained.push_back({source->m_resources->Image(), source->m_resources->Budget()});
-	}
-	if (pending)
-		return {};
-	auto frame = queue->PrepareComposition(plan, retained);
-	auto resources = Resources::Create(queue, frame->RetainImage(), frame->Reservation(), {}, frame,
-									   sources.front()->m_resources->DeliveryRetired());
-	auto output =
-		std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), frame->Views()));
-	queue->SubmitComposition(frame);
-	return output;
-}
-
-std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::FromImage(std::shared_ptr<VulkanImage> image,
-																		std::span<const FrameView> views, bool timeline)
-{
-	auto queue = std::make_shared<VulkanInspectionQueue>(image->device, timeline);
-	auto resources = Resources::Create(std::move(queue), std::move(image), {}, {});
-	resources->PublishTerminal(CompletionStatus::Complete, false);
-	return std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), views));
-}
-
-bool VulkanInspectionFrame::CanArchive() const noexcept
-{
-	return Image().device->encodeFamily != VK_QUEUE_FAMILY_IGNORED &&
-		   Image().device->decodeFamily != VK_QUEUE_FAMILY_IGNORED;
-}
-
-std::shared_ptr<const ArchivedFrame> VulkanInspectionFrame::Archive() const
-{
-	return m_resources->Queue()->Video()->Encode(
-		std::static_pointer_cast<const VulkanInspectionFrame>(shared_from_this()));
-}
-
-VulkanInspectionFrame::~VulkanInspectionFrame() = default;
-
-CompletionStatus VulkanInspectionFrame::PollCompletion() const noexcept
-{
-	return m_resources->Poll();
-}
-
-const VulkanImage& VulkanInspectionFrame::Image() const
-{
-	return *m_resources->Image();
-}
-
-VkImageView VulkanInspectionFrame::View(std::uint32_t eye) const
-{
-	return m_resources->View(eye);
-}
-
-bool VulkanInspectionFrame::PromoteCaptureBudget(const FramePool& captures,
-												 std::shared_ptr<FrameReservation> reservation) const
-{
-	return m_resources->Promote(captures, std::move(reservation));
-}
-
-VulkanImageReadback::VulkanImageReadback(std::shared_ptr<VulkanInspectionQueue> queue,
-										 std::shared_ptr<VulkanInspectionWork> work)
-	: m_queue(std::move(queue)), m_work(std::move(work))
-{}
-
-CompletionStatus VulkanImageReadback::PollCompletion() const noexcept
-{
-	try
-	{
-		m_queue->Collect();
-	}
-	catch (...)
-	{}
-	return m_work->PollCompletion();
-}
-
-std::shared_ptr<const VulkanImagePixels> VulkanImageReadback::Pixels()
-{
-	if (PollCompletion() != CompletionStatus::Complete)
-		return {};
-	std::lock_guard lock(m_mutex);
-	if (m_pixels)
-		return m_pixels;
-	m_pixels = m_work->ReadPixels();
-	return m_pixels;
-}
-
-std::shared_ptr<VulkanImageReadback> VulkanInspectionFrame::Export(std::optional<std::uint32_t> layer,
-																   std::shared_ptr<const void> retirementOwner,
-																   std::optional<ImageRegion> region) const
-{
-	if (PollCompletion() != CompletionStatus::Complete)
-		throw VulkanError(VK_NOT_READY, "Inspection image is not ready for explicit export");
-	auto sourceBudget = m_resources->Budget();
-	auto work = m_resources->Queue()->Readback(m_resources->Image(), std::move(sourceBudget), layer,
-											   std::move(retirementOwner), region);
-	auto result = std::shared_ptr<VulkanImageReadback>(new VulkanImageReadback(m_resources->Queue(), work));
-	CheckVulkan(m_resources->Queue()->Submit(work), "Submit explicit export on owned inspection queue");
-	return result;
-}
-
-VulkanImageDelivery::VulkanImageDelivery(std::shared_ptr<Resources> resources) : m_resources(std::move(resources)) {}
-
-VulkanImageDelivery::~VulkanImageDelivery() = default;
-
-SharedImageKey VulkanImageDelivery::Key() const noexcept
-{
-	return m_resources->native->Key();
-}
-
-const VulkanExternalImageDescriptor& VulkanImageDelivery::Descriptor() const noexcept
-{
-	return m_resources->native->Descriptor();
-}
-
-CompletionStatus VulkanImageDelivery::PollCompletion() const noexcept
-{
-	try
-	{
-		m_resources->Queue()->Collect();
-	}
-	catch (...)
-	{}
-	return m_resources->native->Poll();
-}
-
-CompletionStatus VulkanImageDelivery::PollConsumerCompletion() const noexcept
-{
-	return m_resources->native->ConsumerCompletion();
-}
-
-ImageCompletionKind VulkanImageDelivery::CompletionKind() const noexcept
-{
-	return m_resources->Queue()->CompletionKind();
-}
-
-void VulkanImageDelivery::RegisterConsumer(const VulkanExternalIdentity& identity, VulkanExternalHandle& fd)
-{
-	m_resources->native->RegisterConsumer(m_resources->Queue()->External(), identity, fd, CompletionKind());
-}
-
-VulkanDeliveryHandles VulkanImageDelivery::ExportHandles(bool expose)
-{
-	return m_resources->native->ExportHandles(expose);
-}
-
-void VulkanImageDelivery::MarkExposed() noexcept
-{
-	m_resources->native->MarkExposed();
-}
-
-std::function<void()> VulkanInspectionFrame::Collector() const
-{
-	return [weak = std::weak_ptr<VulkanInspectionQueue>{m_resources->Queue()}] {
-		if (const auto queue = weak.lock())
-			queue->Collect();
-	};
-}
-
-ImageCompletionKind VulkanInspectionFrame::CompletionKind() const noexcept
-{
-	return m_resources->Queue()->CompletionKind();
-}
-
-bool VulkanInspectionFrame::CanShare() const noexcept
-{
-	return m_resources->Queue()->CanShare();
-}
-
-std::shared_ptr<VulkanImageDelivery> VulkanInspectionFrame::Share() const
-{
-	if (!CanShare())
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Consumer external completion is unavailable");
-	if (PollCompletion() != CompletionStatus::Complete)
-		throw VulkanError(VK_NOT_READY, "Inspection image is not ready for sharing");
-	auto& queue = *m_resources->Queue();
-	queue.Collect();
-	auto slot = DeliveryBudget().Reserve(false);
-	if (!slot)
-		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Shared image delivery capacity exhausted");
-	auto sourceBudget = m_resources->Budget();
-	auto native = VulkanDeliveryNative::Prepare(queue, m_resources->Image(), std::move(sourceBudget), std::move(slot),
-												m_resources->DeliveryRetired());
-	auto resources = std::make_shared<VulkanImageDelivery::Resources>(m_resources->Queue(), native);
-	auto result = std::shared_ptr<VulkanImageDelivery>(new VulkanImageDelivery(std::move(resources)));
-	// Both retirement lists reserve their complete capacities before queue use.
-	DeliveryRetirement().Add(native);
-	const auto submitted = native->Submit(queue);
-	CheckVulkan(submitted, "Submit shared image on owned inspection queue");
-	return result;
-}
-
-VulkanInspectionTransfer::VulkanInspectionTransfer(std::shared_ptr<State> state) : m_state(std::move(state)) {}
-
-VulkanInspectionTransfer::~VulkanInspectionTransfer()
-{
-	m_state->Cancel();
-}
-
-void VulkanInspectionTransfer::Commit() noexcept
-{
-	m_state->Commit();
-}
-
-std::shared_ptr<VulkanInspectionFrame> VulkanInspectionTransfer::Output() const
-{
-	return m_state->Output();
-}
-
-VulkanInspection::VulkanInspection(const VulkanExternalIdentity& identity, std::size_t capacity,
-								   std::shared_ptr<VulkanInspectionValidation> validation)
-	: m_capacity((capacity ? capacity : SnapshotBudget::MaxCapacity) + 3 + 32),
-	  m_admissions([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); })
-{
-	if (capacity > SnapshotBudget::MaxCapacity)
-		throw std::invalid_argument("Invalid inspection capacity");
-	DeliveryRetirement().Start();
-	m_queue = std::make_shared<VulkanInspectionQueue>(VulkanInspectionDevice(identity, std::move(validation)));
-	m_jobs.reserve(m_capacity);
-	m_worker = std::thread(&VulkanInspection::Run, this);
-}
-
-ImageCompletionKind VulkanInspection::CompletionKind() const noexcept
-{
-	return m_queue->CompletionKind();
-}
-
-bool VulkanInspection::CanShare() const noexcept
-{
-	return m_queue->CanShare();
-}
-
-VulkanInspection::~VulkanInspection()
-{
-	Close();
-}
-
-std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(const std::shared_ptr<VulkanFrame>& source,
-																	std::function<void(CompletionStatus)> completed,
-																	std::function<void()> retired,
-																	VulkanInspectionKind kind,
-																	std::function<void(SharedImageKey)> deliveryRetired)
-{
-	if (!source || !source->ExternalImage())
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Frame is not externally shareable");
-	auto admission = Reserve(kind);
-	if (!source->ClaimInspection())
-		throw VulkanError(VK_ERROR_TOO_MANY_OBJECTS, "Frame already has an inspection consumer");
-
-	struct Claim
-	{
-		std::shared_ptr<VulkanFrame> source;
-		bool retained = false;
-
-		~Claim()
-		{
-			if (!retained)
-				source->CancelInspection();
-		}
-	} claim{source};
-
-	auto work = m_queue->ImportFrame(source);
-	work->Image()->retired = std::move(retired);
-	auto resources = VulkanInspectionFrame::Resources::Create(m_queue, work->Image(), source->Reservation(),
-															  std::move(completed), {}, std::move(deliveryRetired));
-	auto output =
-		std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), source->Views()));
-	auto job = std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work),
-																 std::move(output), m_changed);
-	auto transfer = std::unique_ptr<VulkanInspectionTransfer>(new VulkanInspectionTransfer(job));
-	claim.retained = true;
-	Publish(job);
-	return transfer;
 }
 
 } // namespace simxr

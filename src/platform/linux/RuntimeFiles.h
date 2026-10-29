@@ -27,14 +27,16 @@ class RuntimeLog
 public:
 	explicit RuntimeLog(std::filesystem::path directory);
 	~RuntimeLog();
+
 	bool Log(std::string message);
 	RuntimeLogStatus Status() const;
 	void Close();
 
 private:
-	void Run() noexcept;
 	void RecordError(std::string_view detail) noexcept;
 	void AppendLog(const std::vector<std::string>& messages);
+	void Run() noexcept;
+
 	std::filesystem::path m_directory;
 	mutable std::mutex m_mutex;
 	std::mutex m_closeMutex;

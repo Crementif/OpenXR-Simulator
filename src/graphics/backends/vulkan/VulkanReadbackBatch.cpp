@@ -91,10 +91,6 @@ struct VulkanReadbackBatch::Native
 	}
 };
 
-VulkanReadbackBatch::VulkanReadbackBatch(std::shared_ptr<VulkanDevice> device)
-	: m_native(std::make_unique<Native>(std::move(device)))
-{}
-
 std::shared_ptr<VulkanReadbackBatch> VulkanReadbackBatch::Prepare(std::shared_ptr<VulkanDevice> device,
 																  std::span<const VulkanReadbackRegion> regions)
 {
@@ -112,84 +108,6 @@ VulkanReadbackBatch::~VulkanReadbackBatch()
 		std::fputs("SimXR: explicit readback completion unknown; preserving charged native owners\n", stderr);
 		m_native->preservation.Preserve(std::move(m_native));
 	}
-}
-
-void VulkanReadbackBatch::Record(std::span<const VulkanReadbackRegion> regions)
-{
-	const auto& device = m_native->device;
-	const auto native = device->binding.device;
-	m_native->sources.reserve(regions.size());
-	for (const auto& region : regions)
-	{
-		const auto bytes = ValidateRegion(region, device);
-		m_native->sources.push_back({region.image, {}, {}, bytes});
-		auto& source = m_native->sources.back();
-		VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-		buffer.size = bytes;
-		buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-		CheckVulkan(vkCreateBuffer(native, &buffer, nullptr, &source.buffer), "Create explicit readback buffer");
-		VkMemoryRequirements requirements{};
-		vkGetBufferMemoryRequirements(native, source.buffer, &requirements);
-		VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-		allocation.allocationSize = requirements.size;
-		allocation.memoryTypeIndex = device->MemoryType(
-			requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		CheckVulkan(vkAllocateMemory(native, &allocation, nullptr, &source.memory),
-					"Allocate explicit readback memory");
-		CheckVulkan(vkBindBufferMemory(native, source.buffer, source.memory, 0), "Bind explicit readback buffer");
-	}
-	VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-	pool.queueFamilyIndex = device->binding.queueFamily;
-	CheckVulkan(vkCreateCommandPool(native, &pool, nullptr, &m_native->pool), "Create explicit readback commands");
-	VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-	allocate.commandPool = m_native->pool;
-	allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	allocate.commandBufferCount = 1;
-	CheckVulkan(vkAllocateCommandBuffers(native, &allocate, &m_native->command), "Allocate explicit readback commands");
-	VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-	CheckVulkan(vkCreateFence(native, &fence, nullptr, &m_native->fence), "Create explicit readback completion");
-	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	CheckVulkan(vkBeginCommandBuffer(m_native->command, &begin), "Begin explicit readback commands");
-	for (std::size_t index = 0; index < regions.size(); ++index)
-	{
-		const auto& region = regions[index];
-		VulkanImageBarrier(m_native->command, *region.image, region.image->ApplicationLayout(),
-						   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_WRITE_BIT,
-						   VK_ACCESS_TRANSFER_READ_BIT);
-		VkBufferImageCopy copy{};
-		copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, region.layer, 1};
-		copy.imageOffset = {region.offset.x, region.offset.y, 0};
-		copy.imageExtent = {region.extent.width, region.extent.height, 1};
-		auto sourceImage = region.image->image;
-		if (region.image->samples != VK_SAMPLE_COUNT_1_BIT)
-		{
-			auto& resolved = m_native->sources[index].resolved;
-			resolved = VulkanImage::Create(device, region.image->format, region.extent, 1,
-										   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_UNDEFINED,
-							   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
-			VkImageResolve resolve{};
-			resolve.srcSubresource = copy.imageSubresource;
-			resolve.srcOffset = copy.imageOffset;
-			resolve.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-			resolve.extent = copy.imageExtent;
-			vkCmdResolveImage(m_native->command, region.image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-							  resolved->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
-			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-							   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-							   VK_ACCESS_TRANSFER_READ_BIT);
-			sourceImage = resolved->image;
-			copy.imageSubresource.baseArrayLayer = 0;
-			copy.imageOffset = {};
-		}
-		vkCmdCopyImageToBuffer(m_native->command, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-							   m_native->sources[index].buffer, 1, &copy);
-		VulkanImageBarrier(m_native->command, *region.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-						   region.image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT,
-						   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-	}
-	CheckVulkan(vkEndCommandBuffer(m_native->command), "End explicit readback commands");
 }
 
 VkResult VulkanReadbackBatch::Submit() noexcept
@@ -280,5 +198,87 @@ std::vector<std::vector<std::uint8_t>> VulkanReadbackBatch::ReadPixels() const
 		result.push_back(std::move(pixels));
 	}
 	return result;
+}
+
+VulkanReadbackBatch::VulkanReadbackBatch(std::shared_ptr<VulkanDevice> device)
+	: m_native(std::make_unique<Native>(std::move(device)))
+{}
+
+void VulkanReadbackBatch::Record(std::span<const VulkanReadbackRegion> regions)
+{
+	const auto& device = m_native->device;
+	const auto native = device->binding.device;
+	m_native->sources.reserve(regions.size());
+	for (const auto& region : regions)
+	{
+		const auto bytes = ValidateRegion(region, device);
+		m_native->sources.push_back({region.image, {}, {}, bytes});
+		auto& source = m_native->sources.back();
+		VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+		buffer.size = bytes;
+		buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+		CheckVulkan(vkCreateBuffer(native, &buffer, nullptr, &source.buffer), "Create explicit readback buffer");
+		VkMemoryRequirements requirements{};
+		vkGetBufferMemoryRequirements(native, source.buffer, &requirements);
+		VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+		allocation.allocationSize = requirements.size;
+		allocation.memoryTypeIndex = device->MemoryType(
+			requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		CheckVulkan(vkAllocateMemory(native, &allocation, nullptr, &source.memory),
+					"Allocate explicit readback memory");
+		CheckVulkan(vkBindBufferMemory(native, source.buffer, source.memory, 0), "Bind explicit readback buffer");
+	}
+	VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+	pool.queueFamilyIndex = device->binding.queueFamily;
+	CheckVulkan(vkCreateCommandPool(native, &pool, nullptr, &m_native->pool), "Create explicit readback commands");
+	VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+	allocate.commandPool = m_native->pool;
+	allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	allocate.commandBufferCount = 1;
+	CheckVulkan(vkAllocateCommandBuffers(native, &allocate, &m_native->command), "Allocate explicit readback commands");
+	VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+	CheckVulkan(vkCreateFence(native, &fence, nullptr, &m_native->fence), "Create explicit readback completion");
+	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	CheckVulkan(vkBeginCommandBuffer(m_native->command, &begin), "Begin explicit readback commands");
+	for (std::size_t index = 0; index < regions.size(); ++index)
+	{
+		const auto& region = regions[index];
+		VulkanImageBarrier(m_native->command, *region.image, region.image->ApplicationLayout(),
+						   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_WRITE_BIT,
+						   VK_ACCESS_TRANSFER_READ_BIT);
+		VkBufferImageCopy copy{};
+		copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, region.layer, 1};
+		copy.imageOffset = {region.offset.x, region.offset.y, 0};
+		copy.imageExtent = {region.extent.width, region.extent.height, 1};
+		auto sourceImage = region.image->image;
+		if (region.image->samples != VK_SAMPLE_COUNT_1_BIT)
+		{
+			auto& resolved = m_native->sources[index].resolved;
+			resolved = VulkanImage::Create(device, region.image->format, region.extent, 1,
+										   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_UNDEFINED,
+							   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+			VkImageResolve resolve{};
+			resolve.srcSubresource = copy.imageSubresource;
+			resolve.srcOffset = copy.imageOffset;
+			resolve.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			resolve.extent = copy.imageExtent;
+			vkCmdResolveImage(m_native->command, region.image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+							  resolved->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
+			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+							   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+							   VK_ACCESS_TRANSFER_READ_BIT);
+			sourceImage = resolved->image;
+			copy.imageSubresource.baseArrayLayer = 0;
+			copy.imageOffset = {};
+		}
+		vkCmdCopyImageToBuffer(m_native->command, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+							   m_native->sources[index].buffer, 1, &copy);
+		VulkanImageBarrier(m_native->command, *region.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+						   region.image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT,
+						   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	}
+	CheckVulkan(vkEndCommandBuffer(m_native->command), "End explicit readback commands");
 }
 } // namespace simxr

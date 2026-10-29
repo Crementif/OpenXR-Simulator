@@ -36,6 +36,20 @@ public:
 	~VulkanBackend();
 	VulkanBackend(const VulkanBackend&) = delete;
 	VulkanBackend& operator=(const VulkanBackend&) = delete;
+
+	// Closes new reservation admission, even when readers delay native closure.
+	// Existing reservations remain usable until a successful Close. No queue access.
+	// Readers must release actual borrowed-device native owners first.
+	XrResult Close();
+	VkResult Drain(std::uint64_t timeout);
+
+	std::shared_ptr<VulkanDevice> Device() const;
+	bool Sharing() const;
+	FramePool Reservations() const;
+	FramePool HistoryReservations() const;
+	FramePool LiveReservations() const;
+	FramePool ReprojectionReservations() const;
+
 	std::shared_ptr<VulkanImage> CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
 											 VkImageUsageFlags usage, std::uint32_t mipLevels = 1,
 											 VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
@@ -44,19 +58,11 @@ public:
 	std::shared_ptr<VulkanSubmission> InitializeImage(std::shared_ptr<VulkanImage> image);
 	XrResult Submit(const std::shared_ptr<VulkanFrame>& frame);
 	XrResult Submit(std::span<const std::shared_ptr<VulkanFrame>> frames);
+
 	// Preparation records commands and reserves private storage, without submitting.
 	XrResult Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
 					 std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {},
 					 std::uint32_t outputLayers = 2);
-#ifdef _WIN32
-	// Copies a native API's completed composition or raw image into companion storage.
-	// The imported owner must retain the image and D3D fence semaphore together.
-	// readyValue zero denotes a binary native semaphore; nonzero is a timeline value.
-	XrResult PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready, std::uint64_t readyValue,
-							   std::shared_ptr<const void> owner, std::span<const FrameView> views,
-							   std::shared_ptr<VulkanFrame>& output,
-							   std::shared_ptr<FrameReservation> reservation = {});
-#endif
 	// One completed GENERAL-layout source per draw, with its retained budget.
 	// On a borrowed binding, the caller must retire all mapped frames and source
 	// readers before destroying the native device, just as for Prepare().
@@ -69,21 +75,22 @@ public:
 								 std::shared_ptr<FrameReservation> reservation = {});
 	XrResult PrepareRetainedLayer(const LayerImageDescription& source, const VulkanImageResolver& resolve,
 								  std::shared_ptr<VulkanFrame>& output);
-	FramePool ReprojectionReservations() const;
-	FramePool Reservations() const;
-	FramePool LiveReservations() const;
-	FramePool HistoryReservations() const;
+#ifdef _WIN32
+	// Copies a native API's completed composition or raw image into companion storage.
+	// The imported owner must retain the image and D3D fence semaphore together.
+	// readyValue zero denotes a binary native semaphore; nonzero is a timeline value.
+	XrResult PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready, std::uint64_t readyValue,
+							   std::shared_ptr<const void> owner, std::span<const FrameView> views,
+							   std::shared_ptr<VulkanFrame>& output,
+							   std::shared_ptr<FrameReservation> reservation = {});
+#endif
+
 	void RetireCompleted();
-	VkResult Drain(std::uint64_t timeout);
-	// Closes new reservation admission, even when readers delay native closure.
-	// Existing reservations remain usable until a successful Close. No queue access.
-	// Readers must release actual borrowed-device native owners first.
-	XrResult Close();
-	std::shared_ptr<VulkanDevice> Device() const;
-	bool Sharing() const;
 
 private:
 	struct Pipeline;
+	struct State;
+
 	static std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device,
 													bool multisampledDepth = false);
 	XrResult PrepareComposition(const CompositionPlan& plan, const VulkanImageResolver& resolve,
@@ -92,7 +99,7 @@ private:
 	XrResult PrepareImageCopy(const LayerImageDescription& source, const VulkanImageResolver& resolve,
 							  std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
 							  bool retained);
-	struct State;
+
 	std::unique_ptr<State> m_state;
 };
 } // namespace simxr

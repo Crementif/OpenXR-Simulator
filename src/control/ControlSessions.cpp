@@ -6,8 +6,6 @@
 
 namespace simxr::control
 {
-ControlSessions::ControlSessions(Runtime& runtime) : m_runtime(runtime) {}
-
 std::span<const ControlSession> ControlSessions::Snapshot::Sessions() const
 {
 	if (m_phase != Phase::Ready)
@@ -31,6 +29,8 @@ const ControlSession& ControlSessions::Snapshot::Resolve(ControlSessionId sessio
 		throw ControlRequestError{ErrorCode::StaleGeneration, "Session generation changed"};
 	return *found;
 }
+
+ControlSessions::ControlSessions(Runtime& runtime) : m_runtime(runtime) {}
 
 void ControlSessions::Discover(Snapshot& snapshot)
 {

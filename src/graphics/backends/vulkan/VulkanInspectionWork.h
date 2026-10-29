@@ -16,6 +16,7 @@ class VulkanInspectionWork final : public GpuCompletion
 {
 public:
 	~VulkanInspectionWork() override;
+
 	CompletionStatus PollCompletion() const noexcept override;
 	bool NativeIdle() const noexcept;
 	bool Submitted() const noexcept;
@@ -23,10 +24,12 @@ public:
 	VkResult WaitForProgress(std::uint64_t timeout) const noexcept;
 	void ReleaseSources();
 	std::shared_ptr<const VulkanImagePixels> ReadPixels() const;
+
 	CompletionStatus ProducerCompletion() const noexcept;
 	void ImportProducerReady(const VulkanExternalDevice& external);
 	void CommitProducer() noexcept;
 	void CancelProducer() noexcept;
+
 	const std::shared_ptr<VulkanImage>& Image() const noexcept;
 	const std::shared_ptr<VulkanExternalImage>& ExternalOutput() const noexcept;
 	const std::shared_ptr<VulkanExternalSemaphore>& Signal() const noexcept;
@@ -34,6 +37,7 @@ public:
 private:
 	friend class VulkanInspectionQueue;
 	struct Native;
+
 	explicit VulkanInspectionWork(std::shared_ptr<VulkanDevice> device, std::shared_ptr<FrameReservation> admission);
 	static std::shared_ptr<VulkanInspectionWork> Import(const std::shared_ptr<VulkanDevice>& device,
 														const VulkanExternalDevice& external,
@@ -49,6 +53,7 @@ private:
 			 std::shared_ptr<FrameReservation> admission, const std::shared_ptr<VulkanImage>& source,
 			 std::shared_ptr<FrameReservation> sourceBudget, const VulkanExternalImageSpec& spec);
 	VkResult Submit() noexcept;
+
 	std::unique_ptr<Native> m_native;
 	std::atomic<bool> m_submitted{false};
 	std::atomic<bool> m_ready{false};

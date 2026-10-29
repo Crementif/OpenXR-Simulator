@@ -35,18 +35,21 @@ public:
 	~VulkanSessionGraphics();
 	VulkanSessionGraphics(const VulkanSessionGraphics&) = delete;
 	VulkanSessionGraphics& operator=(const VulkanSessionGraphics&) = delete;
+
+	void BeginClose();
+	XrResult Drain(std::chrono::nanoseconds timeout = std::chrono::seconds(5));
+	XrResult FinishClose();
+
 	std::shared_ptr<VulkanDevice> Device() const;
 	control::ImageCapabilities Capabilities() const noexcept;
 	bool SupportsReprojection() const noexcept;
+
 	XrResult CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output);
 	SwapchainRef FindSwapchain(XrSwapchain handle) const;
 	void DestroySwapchain(const SwapchainRef& swapchain);
 	XrResult Acquire(VulkanSwapchain& swapchain, std::uint32_t& index);
 	std::optional<SwapchainWaits::Registration> EnterWait();
 	XrResult EndFrame(const XrFrameEndInfo& info);
-	void BeginClose();
-	XrResult Drain(std::chrono::nanoseconds timeout = std::chrono::seconds(5));
-	XrResult FinishClose();
 
 private:
 	class FrameBindings;

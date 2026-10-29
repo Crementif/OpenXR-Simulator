@@ -114,51 +114,6 @@ SimulationConnection::~SimulationConnection()
 	}
 }
 
-std::optional<CommandSource> SimulationConnection::Source(std::optional<CommandSourceKind> requested) const
-{
-	const auto kind = requested.value_or(m_kind.value_or(CommandSourceKind::Mcp));
-	if (kind != CommandSourceKind::Manual && kind != CommandSourceKind::Mcp && kind != CommandSourceKind::Rig &&
-		!(kind == CommandSourceKind::Device && m_kind == CommandSourceKind::Device))
-		return {};
-	if (m_kind && *m_kind != kind)
-		return {};
-	return CommandSource{kind, m_connection.value};
-}
-
-CommandSource SimulationConnection::RequestSource(const Message& request) const
-{
-	std::optional<CommandSourceKind> kind;
-	if (request.Find(tag::SourceKind))
-		kind = static_cast<CommandSourceKind>(RequireRequestU32(request, tag::SourceKind));
-	const auto source = Source(kind);
-	if (!source)
-		throw ControlRequestError{ErrorCode::Conflict, "A connection cannot change its simulation source kind"};
-	return *source;
-}
-
-void SimulationConnection::Track(const std::shared_ptr<Session>& session, CommandSource source)
-{
-	if (!session || source.id != m_connection.value || Source(source.kind) != source)
-		throw std::invalid_argument("Simulation source does not belong to this connection");
-	const auto found =
-		std::find_if(m_uses.begin(), m_uses.end(), [&](const auto& use) { return use.session == session; });
-	if (found == m_uses.end())
-	{
-		if (m_uses.size() == 64)
-			throw ControlRequestError{ErrorCode::Capacity, "Connection simulation session capacity exhausted"};
-		m_uses.push_back({session, source});
-	}
-	m_kind = source.kind;
-}
-
-bool SimulationConnection::OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept
-{
-	if (!m_kind || !capture.metadata || !capture.metadata->sequenceCapture)
-		return false;
-	const auto& receipt = *capture.metadata->sequenceCapture;
-	return receipt.request.owner == CommandSource{*m_kind, m_connection.value} && receipt.reservation.id == capture.id;
-}
-
 Message SimulationConnection::Dispatch(const Message& request, const ControlSession& binding, Message response,
 									   std::vector<SnapshotRecord>& held)
 {
@@ -350,4 +305,50 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 	response.fields.push_back(Field::Bytes(tag::Document, document.Encode(), true));
 	return response;
 }
+
+bool SimulationConnection::OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept
+{
+	if (!m_kind || !capture.metadata || !capture.metadata->sequenceCapture)
+		return false;
+	const auto& receipt = *capture.metadata->sequenceCapture;
+	return receipt.request.owner == CommandSource{*m_kind, m_connection.value} && receipt.reservation.id == capture.id;
+}
+
+std::optional<CommandSource> SimulationConnection::Source(std::optional<CommandSourceKind> requested) const
+{
+	const auto kind = requested.value_or(m_kind.value_or(CommandSourceKind::Mcp));
+	if (kind != CommandSourceKind::Manual && kind != CommandSourceKind::Mcp && kind != CommandSourceKind::Rig &&
+		!(kind == CommandSourceKind::Device && m_kind == CommandSourceKind::Device))
+		return {};
+	if (m_kind && *m_kind != kind)
+		return {};
+	return CommandSource{kind, m_connection.value};
+}
+
+CommandSource SimulationConnection::RequestSource(const Message& request) const
+{
+	std::optional<CommandSourceKind> kind;
+	if (request.Find(tag::SourceKind))
+		kind = static_cast<CommandSourceKind>(RequireRequestU32(request, tag::SourceKind));
+	const auto source = Source(kind);
+	if (!source)
+		throw ControlRequestError{ErrorCode::Conflict, "A connection cannot change its simulation source kind"};
+	return *source;
+}
+
+void SimulationConnection::Track(const std::shared_ptr<Session>& session, CommandSource source)
+{
+	if (!session || source.id != m_connection.value || Source(source.kind) != source)
+		throw std::invalid_argument("Simulation source does not belong to this connection");
+	const auto found =
+		std::find_if(m_uses.begin(), m_uses.end(), [&](const auto& use) { return use.session == session; });
+	if (found == m_uses.end())
+	{
+		if (m_uses.size() == 64)
+			throw ControlRequestError{ErrorCode::Capacity, "Connection simulation session capacity exhausted"};
+		m_uses.push_back({session, source});
+	}
+	m_kind = source.kind;
+}
+
 } // namespace simxr::control

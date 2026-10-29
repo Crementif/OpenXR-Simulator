@@ -270,60 +270,6 @@ DebugControllerSnapshot DebugController::Snapshot() const
 	return snapshot;
 }
 
-void DebugController::Run() noexcept
-{
-	while (true)
-	{
-		Poll();
-		std::unique_lock lock(m_state);
-		if (m_stopping)
-			return;
-		m_changed.wait_for(lock, m_config.pollInterval);
-		if (m_stopping)
-			return;
-	}
-}
-
-void DebugController::Publish(DebugOperation operation)
-{
-	std::lock_guard lock(m_state);
-	const auto entry = std::find_if(m_operations.begin(), m_operations.end(),
-									[&](const auto& value) { return value.id == operation.id; });
-	if (entry != m_operations.end())
-		*entry = std::move(operation);
-}
-
-void DebugController::Interrupt(DebugLeaseId lease, DebugProgress reason, std::optional<DebugOperationId> except)
-{
-	std::lock_guard lock(m_state);
-	for (auto& operation : m_operations)
-		if (operation.lease == lease && (!except || operation.id < *except) && Active(operation))
-		{
-			operation.phase = DebugPhase::Interrupted;
-			operation.progress = reason;
-		}
-}
-
-bool DebugController::ResumeSession()
-{
-	if (!m_manual)
-		return true;
-	m_session->CancelCaptureReservations();
-	const auto state = m_session->Snapshot();
-	if (state.running && state.generation == m_generation)
-	{
-		const auto boundary =
-			std::max(m_session->Scheduler().Snapshot().nextAdmission, m_session->Display().NextTick());
-		const auto anchor = m_clock->Now();
-		if (!m_session->Display().Resume(anchor, boundary) ||
-			XR_FAILED(m_session->Scheduler().Resume(anchor, boundary)))
-			return false;
-	}
-	m_manual = false;
-	m_boundaryCaptured = false;
-	return true;
-}
-
 void DebugController::Poll() noexcept
 {
 	std::lock_guard execute(m_execute);
@@ -422,245 +368,17 @@ void DebugController::Poll() noexcept
 	m_publishedTarget = m_cursorTarget;
 }
 
-void DebugController::Fail(DebugOperation& operation, DebugProgress progress, XrResult result)
+void DebugController::Run() noexcept
 {
-	operation.phase = DebugPhase::Failed;
-	operation.progress = progress;
-	operation.result = result;
-}
-
-bool DebugController::OtherAdmission(DebugOperationId current) const
-{
-	std::lock_guard lock(m_state);
-	return std::any_of(m_operations.begin(), m_operations.end(), [&](const auto& value) {
-		return value.id != current && value.phase == DebugPhase::Pending && Admission(value.request.command);
-	});
-}
-
-std::vector<SnapshotRecord> DebugController::OrderedCaptures(CaptureTarget target) const
-{
-	std::optional<FrameKey> cursor;
-	for (const auto& value : m_cursors)
-		if (value.target == target)
-			cursor = value.frame;
-	std::vector<SnapshotRecord> records;
-	for (const auto id : m_session->Captures().Snapshot().captures)
-		if (auto record = m_session->Captures().Read(id);
-			record && record->generation == m_generation && record->target == target && After(*record, cursor))
-			records.push_back(std::move(*record));
-	std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
-		if (left.frame && right.frame)
-			return *left.frame < *right.frame;
-		if (left.frame != right.frame)
-			return left.frame.has_value();
-		return left.id < right.id;
-	});
-	return records;
-}
-
-std::vector<SnapshotRecord> DebugController::Candidates(DebugOperation& operation) const
-{
-	auto records = OrderedCaptures(operation.request.target);
-	if (!operation.request.additionalTargets.empty())
-		std::erase_if(records, [&](const auto& record) {
-			return !record.frame ||
-				   std::any_of(operation.request.additionalTargets.begin(), operation.request.additionalTargets.end(),
-							   [&](const auto target) { return !m_session->Captures().Find(*record.frame, target); });
-		});
-	std::erase_if(records, [&](const auto& record) {
-		if (record.phase != SnapshotPhase::Discarded && record.phase != SnapshotPhase::Cancelled)
-			return false;
-		if (std::find(operation.diagnostics.begin(), operation.diagnostics.end(), record.id) ==
-			operation.diagnostics.end())
-			operation.diagnostics.push_back(record.id);
-		return true;
-	});
-	return records;
-}
-
-void DebugController::Own(DebugLeaseId lease, CaptureId capture)
-{
-	std::erase_if(m_owned, [&](const auto& owned) { return !m_session->Captures().Read(owned.capture); });
-	if (std::none_of(m_owned.begin(), m_owned.end(), [&](const auto& owned) { return owned.capture == capture; }))
+	while (true)
 	{
-		if (m_owned.size() == m_owned.capacity())
-			throw std::logic_error("Capture ownership exceeded snapshot capacity");
-		m_owned.push_back({lease, capture});
-	}
-}
-
-void DebugController::RetireOwned(std::optional<DebugLeaseId> lease)
-{
-	if (m_recordingLease && (!lease || *m_recordingLease == *lease))
-	{
-		m_session->StopImageRecording();
-		m_recordingLease.reset();
-	}
-	for (const auto& owned : m_owned)
-		if (!lease || owned.lease == *lease)
-		{
-			m_session->Captures().Release(owned.capture);
-			m_session->RefillImageRecording(owned.capture);
-		}
-	std::erase_if(m_owned, [&](const auto& owned) { return !lease || owned.lease == *lease; });
-	for (std::size_t index = 0;; ++index)
-	{
-		std::shared_ptr<const FrameOutput> retired;
-		{
-			std::lock_guard lock(m_state);
-			if (index == m_operations.size())
-				break;
-			auto& operation = m_operations[index];
-			if ((!lease || operation.lease == *lease) && operation.display)
-				retired = std::move(operation.display->output);
-		}
-	}
-}
-
-void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& record)
-{
-	operation.frame = record.frame;
-	operation.capture = record.id;
-	operation.result = record.phase == SnapshotPhase::Unavailable && XR_SUCCEEDED(record.result)
-						   ? XR_ERROR_FEATURE_UNSUPPORTED
-						   : record.result;
-	if (!Settled(record.phase))
-		return;
-	if (!operation.request.additionalTargets.empty())
-	{
-		std::vector<CaptureId> bundle{record.id};
-		for (const auto target : operation.request.additionalTargets)
-		{
-			const auto id = m_session->Captures().Find(*record.frame, target);
-			const auto member = id ? m_session->Captures().Read(*id) : std::nullopt;
-			if (!member || !Settled(member->phase))
-				return;
-			bundle.push_back(*id);
-			if (member->phase == SnapshotPhase::Failed || member->phase == SnapshotPhase::Unavailable)
-				operation.result = XR_FAILED(member->result) ? member->result : XR_ERROR_FEATURE_UNSUPPORTED;
-		}
-		operation.captures = std::move(bundle);
-	}
-	operation.phase = XR_FAILED(operation.result) || record.phase == SnapshotPhase::Failed ||
-							  record.phase == SnapshotPhase::Unavailable
-						  ? DebugPhase::Failed
-						  : DebugPhase::Complete;
-	operation.progress = record.phase == SnapshotPhase::Ready		? DebugProgress::SnapshotReady
-						 : record.phase == SnapshotPhase::Clear		? DebugProgress::Clear
-						 : record.phase == SnapshotPhase::Empty		? DebugProgress::Empty
-						 : record.phase == SnapshotPhase::Discarded ? DebugProgress::Discarded
-						 : record.phase == SnapshotPhase::Cancelled ? DebugProgress::Cancelled
-																	: DebugProgress::RetentionFailure;
-	if (operation.phase == DebugPhase::Failed)
-		operation.progress = DebugProgress::RetentionFailure;
-	if (operation.request.advanceDisplay && operation.request.command == DebugCommand::Step && record.metadata)
-		m_session->Display().Advance(record.metadata->prediction.displayTime);
-	m_cursor = record.frame;
-	m_cursorTarget = record.target;
-	// Raw requests only target future submissions. Once their retained records
-	// are gone, no historical composed image can recreate an old raw cursor.
-	const auto retained = m_session->Captures().Snapshot().captures;
-	std::erase_if(m_cursors, [&](const auto& cursor) {
-		return cursor.target.IsLayerImage() && std::none_of(retained.begin(), retained.end(), [&](auto id) {
-				   const auto value = m_session->Captures().Read(id);
-				   return value && value->generation == m_generation && value->target == cursor.target;
-			   });
-	});
-	if (record.frame)
-	{
-		auto cursor = std::find_if(m_cursors.begin(), m_cursors.end(),
-								   [&](const auto& value) { return value.target == record.target; });
-		if (cursor != m_cursors.end())
-			cursor->frame = *record.frame;
-		else
-		{
-			if (m_cursors.size() == m_cursors.capacity())
-				throw std::logic_error("Target cursors exceeded snapshot capacity");
-			m_cursors.push_back({record.target, *record.frame});
-		}
-	}
-	m_session->CancelCaptureReservations();
-}
-
-void DebugController::Settle(DebugOperation& operation)
-{
-	operation.outstanding.clear();
-	if (operation.request.command == DebugCommand::Pause)
-	{
-		bool settled = true;
-		for (const auto id : operation.captures)
-		{
-			const auto record = m_session->Captures().Read(id);
-			if (!record)
-			{
-				Fail(operation, DebugProgress::RetentionFailure, XR_ERROR_RUNTIME_FAILURE);
-				return;
-			}
-			if (record->phase == SnapshotPhase::Failed || record->phase == SnapshotPhase::Unavailable)
-			{
-				if (record->frame)
-					operation.outstanding.push_back(*record->frame);
-				Fail(operation, DebugProgress::RetentionFailure,
-					 XR_FAILED(record->result) ? record->result : XR_ERROR_RUNTIME_FAILURE);
-				return;
-			}
-			if (!Settled(record->phase))
-			{
-				settled = false;
-				if (record->frame)
-					operation.outstanding.push_back(*record->frame);
-			}
-		}
-		const auto pipeline = m_session->Scheduler().Snapshot();
-		for (const auto& frame : {pipeline.waited, pipeline.begun})
-			if (frame)
-			{
-				settled = false;
-				const FrameKey key{m_generation, frame->id};
-				if (std::find(operation.outstanding.begin(), operation.outstanding.end(), key) ==
-					operation.outstanding.end())
-					operation.outstanding.push_back(key);
-			}
-		operation.phase = settled ? DebugPhase::Complete : DebugPhase::Pending;
-		operation.progress = settled ? DebugProgress::Paused : DebugProgress::Pausing;
-		return;
-	}
-	if (operation.request.command == DebugCommand::StrictAdmission)
-	{
-		const auto record = m_session->Captures().Read(operation.captures.front());
-		if (!record)
-		{
-			operation.phase = DebugPhase::Cancelled;
-			operation.progress = DebugProgress::Cancelled;
-		}
-		else if (record->frame)
-		{
-			operation.phase = DebugPhase::Complete;
-			operation.progress = DebugProgress::Issued;
-			operation.frame = record->frame;
-			operation.capture = record->id;
-		}
-		return;
-	}
-	if (operation.request.command == DebugCommand::Step)
-	{
-		const auto records = Candidates(operation);
-		if (!records.empty() && records.front().frame)
-		{
-			const auto& record = records.front();
-			Inspect(operation, record);
-			if (!Active(operation))
-				return;
-			operation.outstanding.push_back(*record.frame);
-			operation.progress = record.phase == SnapshotPhase::GpuPending ? DebugProgress::GpuPending
-								 : record.phase == SnapshotPhase::Begun	   ? DebugProgress::Begun
-																		   : DebugProgress::Issued;
-		}
-		else
-			operation.progress = DebugProgress::WaitingSubmission;
-		const auto pipeline = m_session->Scheduler().Snapshot();
-		if (pipeline.waitPending && !pipeline.permits && operation.progress != DebugProgress::GpuPending)
-			operation.progress = DebugProgress::PipelineStall;
+		Poll();
+		std::unique_lock lock(m_state);
+		if (m_stopping)
+			return;
+		m_changed.wait_for(lock, m_config.pollInterval);
+		if (m_stopping)
+			return;
 	}
 }
 
@@ -987,4 +705,287 @@ void DebugController::Process(DebugOperation& operation)
 		Settle(operation);
 	}
 }
+
+void DebugController::Settle(DebugOperation& operation)
+{
+	operation.outstanding.clear();
+	if (operation.request.command == DebugCommand::Pause)
+	{
+		bool settled = true;
+		for (const auto id : operation.captures)
+		{
+			const auto record = m_session->Captures().Read(id);
+			if (!record)
+			{
+				Fail(operation, DebugProgress::RetentionFailure, XR_ERROR_RUNTIME_FAILURE);
+				return;
+			}
+			if (record->phase == SnapshotPhase::Failed || record->phase == SnapshotPhase::Unavailable)
+			{
+				if (record->frame)
+					operation.outstanding.push_back(*record->frame);
+				Fail(operation, DebugProgress::RetentionFailure,
+					 XR_FAILED(record->result) ? record->result : XR_ERROR_RUNTIME_FAILURE);
+				return;
+			}
+			if (!Settled(record->phase))
+			{
+				settled = false;
+				if (record->frame)
+					operation.outstanding.push_back(*record->frame);
+			}
+		}
+		const auto pipeline = m_session->Scheduler().Snapshot();
+		for (const auto& frame : {pipeline.waited, pipeline.begun})
+			if (frame)
+			{
+				settled = false;
+				const FrameKey key{m_generation, frame->id};
+				if (std::find(operation.outstanding.begin(), operation.outstanding.end(), key) ==
+					operation.outstanding.end())
+					operation.outstanding.push_back(key);
+			}
+		operation.phase = settled ? DebugPhase::Complete : DebugPhase::Pending;
+		operation.progress = settled ? DebugProgress::Paused : DebugProgress::Pausing;
+		return;
+	}
+	if (operation.request.command == DebugCommand::StrictAdmission)
+	{
+		const auto record = m_session->Captures().Read(operation.captures.front());
+		if (!record)
+		{
+			operation.phase = DebugPhase::Cancelled;
+			operation.progress = DebugProgress::Cancelled;
+		}
+		else if (record->frame)
+		{
+			operation.phase = DebugPhase::Complete;
+			operation.progress = DebugProgress::Issued;
+			operation.frame = record->frame;
+			operation.capture = record->id;
+		}
+		return;
+	}
+	if (operation.request.command == DebugCommand::Step)
+	{
+		const auto records = Candidates(operation);
+		if (!records.empty() && records.front().frame)
+		{
+			const auto& record = records.front();
+			Inspect(operation, record);
+			if (!Active(operation))
+				return;
+			operation.outstanding.push_back(*record.frame);
+			operation.progress = record.phase == SnapshotPhase::GpuPending ? DebugProgress::GpuPending
+								 : record.phase == SnapshotPhase::Begun	   ? DebugProgress::Begun
+																		   : DebugProgress::Issued;
+		}
+		else
+			operation.progress = DebugProgress::WaitingSubmission;
+		const auto pipeline = m_session->Scheduler().Snapshot();
+		if (pipeline.waitPending && !pipeline.permits && operation.progress != DebugProgress::GpuPending)
+			operation.progress = DebugProgress::PipelineStall;
+	}
+}
+
+void DebugController::Fail(DebugOperation& operation, DebugProgress progress, XrResult result)
+{
+	operation.phase = DebugPhase::Failed;
+	operation.progress = progress;
+	operation.result = result;
+}
+
+bool DebugController::ResumeSession()
+{
+	if (!m_manual)
+		return true;
+	m_session->CancelCaptureReservations();
+	const auto state = m_session->Snapshot();
+	if (state.running && state.generation == m_generation)
+	{
+		const auto boundary =
+			std::max(m_session->Scheduler().Snapshot().nextAdmission, m_session->Display().NextTick());
+		const auto anchor = m_clock->Now();
+		if (!m_session->Display().Resume(anchor, boundary) ||
+			XR_FAILED(m_session->Scheduler().Resume(anchor, boundary)))
+			return false;
+	}
+	m_manual = false;
+	m_boundaryCaptured = false;
+	return true;
+}
+
+void DebugController::Interrupt(DebugLeaseId lease, DebugProgress reason, std::optional<DebugOperationId> except)
+{
+	std::lock_guard lock(m_state);
+	for (auto& operation : m_operations)
+		if (operation.lease == lease && (!except || operation.id < *except) && Active(operation))
+		{
+			operation.phase = DebugPhase::Interrupted;
+			operation.progress = reason;
+		}
+}
+
+void DebugController::Publish(DebugOperation operation)
+{
+	std::lock_guard lock(m_state);
+	const auto entry = std::find_if(m_operations.begin(), m_operations.end(),
+									[&](const auto& value) { return value.id == operation.id; });
+	if (entry != m_operations.end())
+		*entry = std::move(operation);
+}
+
+bool DebugController::OtherAdmission(DebugOperationId current) const
+{
+	std::lock_guard lock(m_state);
+	return std::any_of(m_operations.begin(), m_operations.end(), [&](const auto& value) {
+		return value.id != current && value.phase == DebugPhase::Pending && Admission(value.request.command);
+	});
+}
+
+std::vector<SnapshotRecord> DebugController::OrderedCaptures(CaptureTarget target) const
+{
+	std::optional<FrameKey> cursor;
+	for (const auto& value : m_cursors)
+		if (value.target == target)
+			cursor = value.frame;
+	std::vector<SnapshotRecord> records;
+	for (const auto id : m_session->Captures().Snapshot().captures)
+		if (auto record = m_session->Captures().Read(id);
+			record && record->generation == m_generation && record->target == target && After(*record, cursor))
+			records.push_back(std::move(*record));
+	std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
+		if (left.frame && right.frame)
+			return *left.frame < *right.frame;
+		if (left.frame != right.frame)
+			return left.frame.has_value();
+		return left.id < right.id;
+	});
+	return records;
+}
+
+std::vector<SnapshotRecord> DebugController::Candidates(DebugOperation& operation) const
+{
+	auto records = OrderedCaptures(operation.request.target);
+	if (!operation.request.additionalTargets.empty())
+		std::erase_if(records, [&](const auto& record) {
+			return !record.frame ||
+				   std::any_of(operation.request.additionalTargets.begin(), operation.request.additionalTargets.end(),
+							   [&](const auto target) { return !m_session->Captures().Find(*record.frame, target); });
+		});
+	std::erase_if(records, [&](const auto& record) {
+		if (record.phase != SnapshotPhase::Discarded && record.phase != SnapshotPhase::Cancelled)
+			return false;
+		if (std::find(operation.diagnostics.begin(), operation.diagnostics.end(), record.id) ==
+			operation.diagnostics.end())
+			operation.diagnostics.push_back(record.id);
+		return true;
+	});
+	return records;
+}
+
+void DebugController::Own(DebugLeaseId lease, CaptureId capture)
+{
+	std::erase_if(m_owned, [&](const auto& owned) { return !m_session->Captures().Read(owned.capture); });
+	if (std::none_of(m_owned.begin(), m_owned.end(), [&](const auto& owned) { return owned.capture == capture; }))
+	{
+		if (m_owned.size() == m_owned.capacity())
+			throw std::logic_error("Capture ownership exceeded snapshot capacity");
+		m_owned.push_back({lease, capture});
+	}
+}
+
+void DebugController::RetireOwned(std::optional<DebugLeaseId> lease)
+{
+	if (m_recordingLease && (!lease || *m_recordingLease == *lease))
+	{
+		m_session->StopImageRecording();
+		m_recordingLease.reset();
+	}
+	for (const auto& owned : m_owned)
+		if (!lease || owned.lease == *lease)
+		{
+			m_session->Captures().Release(owned.capture);
+			m_session->RefillImageRecording(owned.capture);
+		}
+	std::erase_if(m_owned, [&](const auto& owned) { return !lease || owned.lease == *lease; });
+	for (std::size_t index = 0;; ++index)
+	{
+		std::shared_ptr<const FrameOutput> retired;
+		{
+			std::lock_guard lock(m_state);
+			if (index == m_operations.size())
+				break;
+			auto& operation = m_operations[index];
+			if ((!lease || operation.lease == *lease) && operation.display)
+				retired = std::move(operation.display->output);
+		}
+	}
+}
+
+void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& record)
+{
+	operation.frame = record.frame;
+	operation.capture = record.id;
+	operation.result = record.phase == SnapshotPhase::Unavailable && XR_SUCCEEDED(record.result)
+						   ? XR_ERROR_FEATURE_UNSUPPORTED
+						   : record.result;
+	if (!Settled(record.phase))
+		return;
+	if (!operation.request.additionalTargets.empty())
+	{
+		std::vector<CaptureId> bundle{record.id};
+		for (const auto target : operation.request.additionalTargets)
+		{
+			const auto id = m_session->Captures().Find(*record.frame, target);
+			const auto member = id ? m_session->Captures().Read(*id) : std::nullopt;
+			if (!member || !Settled(member->phase))
+				return;
+			bundle.push_back(*id);
+			if (member->phase == SnapshotPhase::Failed || member->phase == SnapshotPhase::Unavailable)
+				operation.result = XR_FAILED(member->result) ? member->result : XR_ERROR_FEATURE_UNSUPPORTED;
+		}
+		operation.captures = std::move(bundle);
+	}
+	operation.phase = XR_FAILED(operation.result) || record.phase == SnapshotPhase::Failed ||
+							  record.phase == SnapshotPhase::Unavailable
+						  ? DebugPhase::Failed
+						  : DebugPhase::Complete;
+	operation.progress = record.phase == SnapshotPhase::Ready		? DebugProgress::SnapshotReady
+						 : record.phase == SnapshotPhase::Clear		? DebugProgress::Clear
+						 : record.phase == SnapshotPhase::Empty		? DebugProgress::Empty
+						 : record.phase == SnapshotPhase::Discarded ? DebugProgress::Discarded
+						 : record.phase == SnapshotPhase::Cancelled ? DebugProgress::Cancelled
+																	: DebugProgress::RetentionFailure;
+	if (operation.phase == DebugPhase::Failed)
+		operation.progress = DebugProgress::RetentionFailure;
+	if (operation.request.advanceDisplay && operation.request.command == DebugCommand::Step && record.metadata)
+		m_session->Display().Advance(record.metadata->prediction.displayTime);
+	m_cursor = record.frame;
+	m_cursorTarget = record.target;
+	// Raw requests only target future submissions. Once their retained records
+	// are gone, no historical composed image can recreate an old raw cursor.
+	const auto retained = m_session->Captures().Snapshot().captures;
+	std::erase_if(m_cursors, [&](const auto& cursor) {
+		return cursor.target.IsLayerImage() && std::none_of(retained.begin(), retained.end(), [&](auto id) {
+				   const auto value = m_session->Captures().Read(id);
+				   return value && value->generation == m_generation && value->target == cursor.target;
+			   });
+	});
+	if (record.frame)
+	{
+		auto cursor = std::find_if(m_cursors.begin(), m_cursors.end(),
+								   [&](const auto& value) { return value.target == record.target; });
+		if (cursor != m_cursors.end())
+			cursor->frame = *record.frame;
+		else
+		{
+			if (m_cursors.size() == m_cursors.capacity())
+				throw std::logic_error("Target cursors exceeded snapshot capacity");
+			m_cursors.push_back({record.target, *record.frame});
+		}
+	}
+	m_session->CancelCaptureReservations();
+}
+
 } // namespace simxr

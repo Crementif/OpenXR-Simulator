@@ -285,78 +285,6 @@ static std::wstring PendingPipe(std::uint32_t process)
 	return LR"(\\.\pipe\SimXR.PendingConsumer.)" + std::to_wstring(process);
 }
 
-WindowsPendingDelivery::WindowsPendingDelivery(bool gated, std::uint32_t runtimeProcess)
-	: m_gated(gated), m_runtimeProcess(runtimeProcess ? runtimeProcess : GetCurrentProcessId())
-{
-	if (runtimeProcess)
-		return;
-	control::windows::Security security;
-	m_pipe = control::windows::Handle(
-		CreateNamedPipeW(PendingPipe(m_runtimeProcess).c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
-						 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 4096, 4096,
-						 0, &security.attributes));
-	Require(m_pipe.value != INVALID_HANDLE_VALUE, "Cannot create pending-consumer command pipe");
-	std::wstring executable(32768, L'\0');
-	const auto size = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
-	Require(size && size < executable.size(), "Cannot identify pending-consumer executable");
-	executable.resize(size);
-	auto command = L"\"" + executable + L"\" --pending-consumer " + std::to_wstring(m_runtimeProcess) +
-				   (m_gated ? L" gated" : L" pending");
-	STARTUPINFOW startup{sizeof(startup)};
-	PROCESS_INFORMATION child{};
-	Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-						   nullptr, &startup, &child),
-			"Cannot start isolated pending consumer");
-	m_process = control::windows::Handle(child.hProcess);
-	control::windows::Handle thread(child.hThread);
-	try
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-		while (!ConnectNamedPipe(m_pipe.value, nullptr))
-		{
-			const auto error = GetLastError();
-			if (error == ERROR_PIPE_CONNECTED)
-				break;
-			Require(error == ERROR_PIPE_LISTENING && std::chrono::steady_clock::now() < deadline &&
-						WaitForSingleObject(m_process.value, 0) == WAIT_TIMEOUT,
-					"Pending consumer did not connect");
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
-		DWORD mode = PIPE_READMODE_BYTE | PIPE_WAIT;
-		Require(SetNamedPipeHandleState(m_pipe.value, &mode, nullptr, nullptr), "Cannot configure consumer pipe");
-	}
-	catch (...)
-	{
-		TerminateProcess(m_process.value, 1);
-		WaitForSingleObject(m_process.value, 5000);
-		throw;
-	}
-}
-
-void WindowsPendingDelivery::Command(std::uint8_t command) const
-{
-	DWORD transferred = 0;
-	Require(WriteFile(m_pipe.value, &command, sizeof(command), &transferred, nullptr) && transferred == sizeof(command),
-			"Cannot send pending-consumer command");
-	std::array<char, 1024> response{};
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-	while (true)
-	{
-		DWORD available = 0;
-		Require(PeekNamedPipe(m_pipe.value, nullptr, 0, nullptr, &available, nullptr),
-				"Pending consumer closed its command pipe");
-		if (available >= response.size())
-			break;
-		Require(std::chrono::steady_clock::now() < deadline && WaitForSingleObject(m_process.value, 0) == WAIT_TIMEOUT,
-				"Pending consumer did not answer");
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
-	Require(ReadFile(m_pipe.value, response.data(), static_cast<DWORD>(response.size()), &transferred, nullptr) &&
-				transferred == response.size(),
-			"Incomplete pending-consumer response");
-	Require(response.front() == '\0', response.data());
-}
-
 int RunWindowsPendingConsumer(bool gated, std::uint32_t runtimeProcess)
 {
 	control::windows::Handle pipe(CreateFileW(PendingPipe(runtimeProcess).c_str(), GENERIC_READ | GENERIC_WRITE, 0,
@@ -407,6 +335,54 @@ int RunWindowsPendingConsumer(bool gated, std::uint32_t runtimeProcess)
 	}
 }
 
+WindowsPendingDelivery::WindowsPendingDelivery(bool gated, std::uint32_t runtimeProcess)
+	: m_gated(gated), m_runtimeProcess(runtimeProcess ? runtimeProcess : GetCurrentProcessId())
+{
+	if (runtimeProcess)
+		return;
+	control::windows::Security security;
+	m_pipe = control::windows::Handle(
+		CreateNamedPipeW(PendingPipe(m_runtimeProcess).c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+						 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 4096, 4096,
+						 0, &security.attributes));
+	Require(m_pipe.value != INVALID_HANDLE_VALUE, "Cannot create pending-consumer command pipe");
+	std::wstring executable(32768, L'\0');
+	const auto size = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+	Require(size && size < executable.size(), "Cannot identify pending-consumer executable");
+	executable.resize(size);
+	auto command = L"\"" + executable + L"\" --pending-consumer " + std::to_wstring(m_runtimeProcess) +
+				   (m_gated ? L" gated" : L" pending");
+	STARTUPINFOW startup{sizeof(startup)};
+	PROCESS_INFORMATION child{};
+	Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+						   nullptr, &startup, &child),
+			"Cannot start isolated pending consumer");
+	m_process = control::windows::Handle(child.hProcess);
+	control::windows::Handle thread(child.hThread);
+	try
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (!ConnectNamedPipe(m_pipe.value, nullptr))
+		{
+			const auto error = GetLastError();
+			if (error == ERROR_PIPE_CONNECTED)
+				break;
+			Require(error == ERROR_PIPE_LISTENING && std::chrono::steady_clock::now() < deadline &&
+						WaitForSingleObject(m_process.value, 0) == WAIT_TIMEOUT,
+					"Pending consumer did not connect");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		DWORD mode = PIPE_READMODE_BYTE | PIPE_WAIT;
+		Require(SetNamedPipeHandleState(m_pipe.value, &mode, nullptr, nullptr), "Cannot configure consumer pipe");
+	}
+	catch (...)
+	{
+		TerminateProcess(m_process.value, 1);
+		WaitForSingleObject(m_process.value, 5000);
+		throw;
+	}
+}
+
 WindowsPendingDelivery::~WindowsPendingDelivery()
 {
 	if (m_process.value != INVALID_HANDLE_VALUE)
@@ -438,56 +414,6 @@ WindowsPendingDelivery::~WindowsPendingDelivery()
 	m_device.reset();
 	if (s_validationErrors.load() != 0)
 		PreservePending("consumer device teardown reported Vulkan validation errors");
-}
-
-void WindowsPendingDelivery::StartWatchdog()
-{
-	m_watchdog = std::thread([this] {
-		try
-		{
-			std::unique_lock lock(m_watchdogMutex);
-			if (m_watchdogChanged.wait_for(lock, std::chrono::seconds(10), [this] { return m_stopWatchdog; }))
-				return;
-			m_watchdogExpired = true;
-			lock.unlock();
-			std::fputs("FAIL: pending-runtime watchdog expired after 10 seconds; signaling the GPU gate\n", stderr);
-			std::fflush(stderr);
-			VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-			signal.semaphore = m_gate;
-			signal.value = 1;
-			if (m_signal(m_device->binding.device, &signal) != VK_SUCCESS)
-				PreservePending("watchdog could not signal the GPU gate");
-			lock.lock();
-			if (!m_watchdogChanged.wait_for(lock, std::chrono::seconds(2), [this] { return m_stopWatchdog; }))
-				PreservePending("native teardown did not return after the watchdog released its gate");
-		}
-		catch (...)
-		{
-			PreservePending("pending-consumer watchdog failed");
-		}
-	});
-}
-
-void WindowsPendingDelivery::StopWatchdog()
-{
-	{
-		std::lock_guard lock(m_watchdogMutex);
-		m_stopWatchdog = true;
-	}
-	m_watchdogChanged.notify_all();
-	if (m_watchdog.joinable())
-		m_watchdog.join();
-}
-
-void WindowsPendingDelivery::CheckWatchdog() const
-{
-	if (m_process.value != INVALID_HANDLE_VALUE)
-	{
-		Command(4);
-		return;
-	}
-	if (m_watchdogExpired)
-		PreservePending("native call returned only after the watchdog released pending consumer work");
 }
 
 void WindowsPendingDelivery::Hold()
@@ -659,5 +585,79 @@ void WindowsPendingDelivery::ReleaseAndVerify()
 			? "pending-runtime: gate signaled; all eight slots recovered with new identities and completed GPU copies"
 			: "pending-runtime: late reads completed after producer destruction; all eight slots recovered with new "
 			  "identities");
+}
+
+void WindowsPendingDelivery::CheckWatchdog() const
+{
+	if (m_process.value != INVALID_HANDLE_VALUE)
+	{
+		Command(4);
+		return;
+	}
+	if (m_watchdogExpired)
+		PreservePending("native call returned only after the watchdog released pending consumer work");
+}
+
+void WindowsPendingDelivery::Command(std::uint8_t command) const
+{
+	DWORD transferred = 0;
+	Require(WriteFile(m_pipe.value, &command, sizeof(command), &transferred, nullptr) && transferred == sizeof(command),
+			"Cannot send pending-consumer command");
+	std::array<char, 1024> response{};
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+	while (true)
+	{
+		DWORD available = 0;
+		Require(PeekNamedPipe(m_pipe.value, nullptr, 0, nullptr, &available, nullptr),
+				"Pending consumer closed its command pipe");
+		if (available >= response.size())
+			break;
+		Require(std::chrono::steady_clock::now() < deadline && WaitForSingleObject(m_process.value, 0) == WAIT_TIMEOUT,
+				"Pending consumer did not answer");
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	Require(ReadFile(m_pipe.value, response.data(), static_cast<DWORD>(response.size()), &transferred, nullptr) &&
+				transferred == response.size(),
+			"Incomplete pending-consumer response");
+	Require(response.front() == '\0', response.data());
+}
+
+void WindowsPendingDelivery::StartWatchdog()
+{
+	m_watchdog = std::thread([this] {
+		try
+		{
+			std::unique_lock lock(m_watchdogMutex);
+			if (m_watchdogChanged.wait_for(lock, std::chrono::seconds(10), [this] { return m_stopWatchdog; }))
+				return;
+			m_watchdogExpired = true;
+			lock.unlock();
+			std::fputs("FAIL: pending-runtime watchdog expired after 10 seconds; signaling the GPU gate\n", stderr);
+			std::fflush(stderr);
+			VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+			signal.semaphore = m_gate;
+			signal.value = 1;
+			if (m_signal(m_device->binding.device, &signal) != VK_SUCCESS)
+				PreservePending("watchdog could not signal the GPU gate");
+			lock.lock();
+			if (!m_watchdogChanged.wait_for(lock, std::chrono::seconds(2), [this] { return m_stopWatchdog; }))
+				PreservePending("native teardown did not return after the watchdog released its gate");
+		}
+		catch (...)
+		{
+			PreservePending("pending-consumer watchdog failed");
+		}
+	});
+}
+
+void WindowsPendingDelivery::StopWatchdog()
+{
+	{
+		std::lock_guard lock(m_watchdogMutex);
+		m_stopWatchdog = true;
+	}
+	m_watchdogChanged.notify_all();
+	if (m_watchdog.joinable())
+		m_watchdog.join();
 }
 } // namespace simxr::probe

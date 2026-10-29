@@ -13,6 +13,11 @@ static Json Result(const Json& value, bool error = false)
 	return {{"content", Json::array({{{"type", "text"}, {"text", value.dump()}}})}, {"isError", error}};
 }
 
+McpSequenceJobs::~McpSequenceJobs()
+{
+	Close();
+}
+
 Json McpSequenceJobs::Definitions()
 {
 	auto start = mcp::SequenceCaptureDefinition();
@@ -145,6 +150,20 @@ std::optional<Json> McpSequenceJobs::Call(McpApplication& app, McpDebug& debug, 
 	}
 }
 
+void McpSequenceJobs::Close() noexcept
+{
+	std::lock_guard lifecycle(m_lifecycle);
+	{
+		std::lock_guard lock(m_mutex);
+		m_closed = true;
+		if (m_cancellation && !m_status.is_null() &&
+			(m_status.at("phase") == "starting" || m_status.at("phase") == "running"))
+			m_cancellation->Cancel();
+	}
+	if (m_worker.joinable())
+		m_worker.join();
+}
+
 void McpSequenceJobs::Run(McpApplication& app, McpDebug& debug, Json options,
 						  std::shared_ptr<McpCancellation> cancellation) noexcept
 {
@@ -186,22 +205,4 @@ void McpSequenceJobs::Run(McpApplication& app, McpDebug& debug, Json options,
 	}
 }
 
-void McpSequenceJobs::Close() noexcept
-{
-	std::lock_guard lifecycle(m_lifecycle);
-	{
-		std::lock_guard lock(m_mutex);
-		m_closed = true;
-		if (m_cancellation && !m_status.is_null() &&
-			(m_status.at("phase") == "starting" || m_status.at("phase") == "running"))
-			m_cancellation->Cancel();
-	}
-	if (m_worker.joinable())
-		m_worker.join();
-}
-
-McpSequenceJobs::~McpSequenceJobs()
-{
-	Close();
-}
 }

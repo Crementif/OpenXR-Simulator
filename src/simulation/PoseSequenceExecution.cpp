@@ -37,52 +37,6 @@ PoseSequenceExecution::PoseSequenceExecution(std::uint64_t id, CommandSource own
 		m_channels[index] = inherited[index] || m_program->Channels()[index];
 }
 
-void PoseSequenceExecution::Initialize(FrameId frame, const CommandConfiguration& initial)
-{
-	m_playback.Start(m_program, frame);
-	m_status.origin = frame;
-	m_head = initial.tracking.head;
-	m_controllers = initial.tracking.controllers;
-	m_controls = initial.input.controllers;
-	if (m_channels[0] || m_channels[1] || m_channels[2])
-	{
-		const auto head = NormalizedPose(m_head.pose);
-		if (!head)
-			throw std::invalid_argument("Invalid initial sequence head pose");
-		m_head.pose = *head;
-		m_angles = Angles(head->orientation);
-		for (std::size_t hand = 0; hand < 2; ++hand)
-		{
-			if (!m_channels[hand + 1])
-				continue;
-			const auto controller = NormalizedPose(m_controllers[hand].pose.pose);
-			if (!controller)
-				throw std::invalid_argument("Invalid initial sequence controller pose");
-			m_local[hand] = RelativePose(*controller, *head);
-		}
-	}
-	m_started = true;
-}
-
-std::vector<SimulationCommand> PoseSequenceExecution::Commands() const
-{
-	std::vector<SimulationCommand> commands;
-	commands.reserve(10);
-	for (std::size_t index = 0; index < m_channels.size(); ++index)
-		if (m_channels[index])
-			commands.push_back(TakeControl{static_cast<ControlChannel>(index)});
-	if (m_channels[0])
-		commands.push_back(SetHeadPose{m_head});
-	for (std::size_t hand = 0; hand < 2; ++hand)
-	{
-		if (m_channels[hand + 1])
-			commands.push_back(SetControllerPose{static_cast<std::uint32_t>(hand), m_controllers[hand]});
-		if (m_channels[hand + 3])
-			commands.push_back(SetControllerControls{static_cast<std::uint32_t>(hand), m_controls[hand]});
-	}
-	return commands;
-}
-
 PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, const CommandConfiguration& initial)
 {
 	PoseSequenceFrame result;
@@ -167,13 +121,60 @@ const PoseSequenceStatus& PoseSequenceExecution::Status() const noexcept
 	return m_status;
 }
 
+CommandSource PoseSequenceExecution::Source() const noexcept
+{
+	return {CommandSourceKind::Sequence, m_status.id};
+}
+
 std::shared_ptr<const PoseSequence> PoseSequenceExecution::Program() const noexcept
 {
 	return m_program;
 }
 
-CommandSource PoseSequenceExecution::Source() const noexcept
+void PoseSequenceExecution::Initialize(FrameId frame, const CommandConfiguration& initial)
 {
-	return {CommandSourceKind::Sequence, m_status.id};
+	m_playback.Start(m_program, frame);
+	m_status.origin = frame;
+	m_head = initial.tracking.head;
+	m_controllers = initial.tracking.controllers;
+	m_controls = initial.input.controllers;
+	if (m_channels[0] || m_channels[1] || m_channels[2])
+	{
+		const auto head = NormalizedPose(m_head.pose);
+		if (!head)
+			throw std::invalid_argument("Invalid initial sequence head pose");
+		m_head.pose = *head;
+		m_angles = Angles(head->orientation);
+		for (std::size_t hand = 0; hand < 2; ++hand)
+		{
+			if (!m_channels[hand + 1])
+				continue;
+			const auto controller = NormalizedPose(m_controllers[hand].pose.pose);
+			if (!controller)
+				throw std::invalid_argument("Invalid initial sequence controller pose");
+			m_local[hand] = RelativePose(*controller, *head);
+		}
+	}
+	m_started = true;
 }
+
+std::vector<SimulationCommand> PoseSequenceExecution::Commands() const
+{
+	std::vector<SimulationCommand> commands;
+	commands.reserve(10);
+	for (std::size_t index = 0; index < m_channels.size(); ++index)
+		if (m_channels[index])
+			commands.push_back(TakeControl{static_cast<ControlChannel>(index)});
+	if (m_channels[0])
+		commands.push_back(SetHeadPose{m_head});
+	for (std::size_t hand = 0; hand < 2; ++hand)
+	{
+		if (m_channels[hand + 1])
+			commands.push_back(SetControllerPose{static_cast<std::uint32_t>(hand), m_controllers[hand]});
+		if (m_channels[hand + 3])
+			commands.push_back(SetControllerControls{static_cast<std::uint32_t>(hand), m_controls[hand]});
+	}
+	return commands;
+}
+
 } // namespace simxr

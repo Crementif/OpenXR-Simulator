@@ -76,80 +76,6 @@ void SnapshotStore::Start(SessionGeneration generation)
 	m_running = true;
 }
 
-void SnapshotStore::CancelPendingLocked() noexcept
-{
-	for (auto& entry : m_entries)
-		if (entry.record.phase == SnapshotPhase::Reserved || entry.record.phase == SnapshotPhase::Issued ||
-			entry.record.phase == SnapshotPhase::Begun)
-		{
-			entry.record.phase = SnapshotPhase::Cancelled;
-			if (entry.cancelled)
-				entry.record.metadata = entry.cancelled;
-			entry.producer.reset();
-			entry.composedProducer.reset();
-			++entry.revision;
-			TraceTerminal(entry);
-		}
-}
-
-void SnapshotStore::TraceTerminal(Entry& entry) noexcept
-{
-	if (!m_history || entry.terminalTraced)
-		return;
-	const auto& record = entry.record;
-	const char* phase = nullptr;
-	bool ready = false;
-	switch (record.phase)
-	{
-	case SnapshotPhase::Ready:
-		phase = "ready";
-		ready = true;
-		break;
-	case SnapshotPhase::Clear:
-		phase = "clear";
-		ready = true;
-		break;
-	case SnapshotPhase::Empty:
-		phase = "empty";
-		ready = true;
-		break;
-	case SnapshotPhase::Discarded:
-		phase = "discarded";
-		break;
-	case SnapshotPhase::Cancelled:
-		phase = "cancelled";
-		break;
-	case SnapshotPhase::Failed:
-		phase = "failed";
-		break;
-	case SnapshotPhase::Unavailable:
-		phase = "unavailable";
-		break;
-	default:
-		return;
-	}
-	RuntimeTime time;
-	if (record.display)
-		time = record.display->time;
-	else if (record.metadata)
-		time = record.metadata->submission ? record.metadata->submission->displayTime
-										   : record.metadata->prediction.displayTime;
-	const auto target = record.target.kind == CaptureKind::ComposedEyes		  ? "composed"
-						: record.target.kind == CaptureKind::LayerView		  ? "layer_view"
-						: record.target.kind == CaptureKind::LayerDepth		  ? "layer_depth"
-						: record.target.kind == CaptureKind::LayerDepthLinear ? "layer_depth_linear"
-						: record.target.kind == CaptureKind::ProjectionLayers ? "projection_layers"
-						: record.target.kind == CaptureKind::QuadLayers		  ? "quad_layers"
-																			  : "display";
-	char detail[128];
-	std::snprintf(detail, sizeof(detail), "phase=%s; target=%s; layer=%" PRIu32 "; view=%" PRIu32, phase, target,
-				  record.target.layer, record.target.view);
-	m_history->Trace(ready ? FrameTraceKind::CaptureReady : FrameTraceKind::CaptureFailed,
-					 record.frame.value_or(FrameKey{record.generation, {}}), time, record.result,
-					 FrameDiagnosticCategory::Timing, record.id.value, detail);
-	entry.terminalTraced = true;
-}
-
 void SnapshotStore::Stop() noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -185,27 +111,6 @@ CaptureReservation SnapshotStore::Reserve(CaptureTarget target, std::shared_ptr<
 		m_entries.push_back(std::move(entry));
 	}
 	return {SnapshotAdmission::Accepted, id};
-}
-
-bool SnapshotStore::Bind(CaptureId id, std::shared_ptr<const FrameRecord> issued,
-						 std::shared_ptr<const FrameRecord> cancelled) noexcept
-{
-	if (!issued || !cancelled || issued->stage != FrameStage::Issued || cancelled->stage != FrameStage::Cancelled ||
-		issued->key != cancelled->key)
-		return false;
-	std::lock_guard lock(m_mutex);
-	auto entry =
-		std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
-	if (!m_running || entry == m_entries.end() || entry->released || entry->record.phase != SnapshotPhase::Reserved ||
-		entry->record.target.kind == CaptureKind::VirtualDisplay || issued->key.generation != m_generation ||
-		entry->record.generation != m_generation)
-		return false;
-	entry->record.frame = issued->key;
-	entry->record.metadata = std::move(issued);
-	entry->record.phase = SnapshotPhase::Issued;
-	entry->cancelled = std::move(cancelled);
-	++entry->revision;
-	return true;
 }
 
 CaptureReservation SnapshotStore::Pin(const std::shared_ptr<const FrameRecord>& metadata,
@@ -273,6 +178,27 @@ CaptureReservation SnapshotStore::Pin(const std::shared_ptr<const FrameRecord>& 
 		return {SnapshotAdmission::Closed, {}};
 	}
 	return capture;
+}
+
+bool SnapshotStore::Bind(CaptureId id, std::shared_ptr<const FrameRecord> issued,
+						 std::shared_ptr<const FrameRecord> cancelled) noexcept
+{
+	if (!issued || !cancelled || issued->stage != FrameStage::Issued || cancelled->stage != FrameStage::Cancelled ||
+		issued->key != cancelled->key)
+		return false;
+	std::lock_guard lock(m_mutex);
+	auto entry =
+		std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
+	if (!m_running || entry == m_entries.end() || entry->released || entry->record.phase != SnapshotPhase::Reserved ||
+		entry->record.target.kind == CaptureKind::VirtualDisplay || issued->key.generation != m_generation ||
+		entry->record.generation != m_generation)
+		return false;
+	entry->record.frame = issued->key;
+	entry->record.metadata = std::move(issued);
+	entry->record.phase = SnapshotPhase::Issued;
+	entry->cancelled = std::move(cancelled);
+	++entry->revision;
+	return true;
 }
 
 void SnapshotStore::Update(const std::shared_ptr<const FrameRecord>& metadata,
@@ -499,18 +425,6 @@ std::size_t SnapshotStore::Capacity() const
 	return m_slots.Capacity();
 }
 
-std::optional<SnapshotStore::Entry> SnapshotStore::ReleaseLocked(std::vector<Entry>::iterator entry) noexcept
-{
-	entry->released = true;
-	entry->producer.reset();
-	entry->composedProducer.reset();
-	if (Pending(entry->record.phase))
-		return {};
-	std::optional<Entry> released{std::move(*entry)};
-	m_entries.erase(entry);
-	return released;
-}
-
 bool SnapshotStore::Release(CaptureId id) noexcept
 {
 	std::optional<Entry> released;
@@ -566,6 +480,16 @@ void SnapshotStore::SetCapacity(std::size_t capacity)
 	m_slots.SetCapacity(capacity);
 }
 
+void SnapshotStore::RetireAll() noexcept
+{
+	{
+		std::lock_guard lock(m_mutex);
+		for (auto& entry : m_entries)
+			entry.released = true;
+	}
+	Poll();
+}
+
 void SnapshotStore::RetireSequenceCaptures(std::optional<CommandSource> owner) noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -581,16 +505,6 @@ void SnapshotStore::RetireSequenceCaptures(std::optional<CommandSource> owner) n
 		entry.producer.reset();
 		entry.composedProducer.reset();
 	}
-}
-
-void SnapshotStore::RetireAll() noexcept
-{
-	{
-		std::lock_guard lock(m_mutex);
-		for (auto& entry : m_entries)
-			entry.released = true;
-	}
-	Poll();
 }
 
 void SnapshotStore::Poll() noexcept
@@ -646,4 +560,91 @@ void SnapshotStore::Poll() noexcept
 		cursor = id;
 	}
 }
+
+std::optional<SnapshotStore::Entry> SnapshotStore::ReleaseLocked(std::vector<Entry>::iterator entry) noexcept
+{
+	entry->released = true;
+	entry->producer.reset();
+	entry->composedProducer.reset();
+	if (Pending(entry->record.phase))
+		return {};
+	std::optional<Entry> released{std::move(*entry)};
+	m_entries.erase(entry);
+	return released;
+}
+
+void SnapshotStore::CancelPendingLocked() noexcept
+{
+	for (auto& entry : m_entries)
+		if (entry.record.phase == SnapshotPhase::Reserved || entry.record.phase == SnapshotPhase::Issued ||
+			entry.record.phase == SnapshotPhase::Begun)
+		{
+			entry.record.phase = SnapshotPhase::Cancelled;
+			if (entry.cancelled)
+				entry.record.metadata = entry.cancelled;
+			entry.producer.reset();
+			entry.composedProducer.reset();
+			++entry.revision;
+			TraceTerminal(entry);
+		}
+}
+
+void SnapshotStore::TraceTerminal(Entry& entry) noexcept
+{
+	if (!m_history || entry.terminalTraced)
+		return;
+	const auto& record = entry.record;
+	const char* phase = nullptr;
+	bool ready = false;
+	switch (record.phase)
+	{
+	case SnapshotPhase::Ready:
+		phase = "ready";
+		ready = true;
+		break;
+	case SnapshotPhase::Clear:
+		phase = "clear";
+		ready = true;
+		break;
+	case SnapshotPhase::Empty:
+		phase = "empty";
+		ready = true;
+		break;
+	case SnapshotPhase::Discarded:
+		phase = "discarded";
+		break;
+	case SnapshotPhase::Cancelled:
+		phase = "cancelled";
+		break;
+	case SnapshotPhase::Failed:
+		phase = "failed";
+		break;
+	case SnapshotPhase::Unavailable:
+		phase = "unavailable";
+		break;
+	default:
+		return;
+	}
+	RuntimeTime time;
+	if (record.display)
+		time = record.display->time;
+	else if (record.metadata)
+		time = record.metadata->submission ? record.metadata->submission->displayTime
+										   : record.metadata->prediction.displayTime;
+	const auto target = record.target.kind == CaptureKind::ComposedEyes		  ? "composed"
+						: record.target.kind == CaptureKind::LayerView		  ? "layer_view"
+						: record.target.kind == CaptureKind::LayerDepth		  ? "layer_depth"
+						: record.target.kind == CaptureKind::LayerDepthLinear ? "layer_depth_linear"
+						: record.target.kind == CaptureKind::ProjectionLayers ? "projection_layers"
+						: record.target.kind == CaptureKind::QuadLayers		  ? "quad_layers"
+																			  : "display";
+	char detail[128];
+	std::snprintf(detail, sizeof(detail), "phase=%s; target=%s; layer=%" PRIu32 "; view=%" PRIu32, phase, target,
+				  record.target.layer, record.target.view);
+	m_history->Trace(ready ? FrameTraceKind::CaptureReady : FrameTraceKind::CaptureFailed,
+					 record.frame.value_or(FrameKey{record.generation, {}}), time, record.result,
+					 FrameDiagnosticCategory::Timing, record.id.value, detail);
+	entry.terminalTraced = true;
+}
+
 } // namespace simxr

@@ -275,12 +275,6 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 	return closed;
 }
 
-void PreferencesDialog::CancelCapture()
-{
-	m_capture = -1;
-	m_modifier = ImGuiKey_None;
-}
-
 bool PreferencesDialog::DrawKeyboard(CompanionSettings& settings, bool& dirty)
 {
 	if (ImGui::Checkbox("Remote desktop mouse drag", &settings.remoteMouseDrag))
@@ -326,51 +320,6 @@ bool PreferencesDialog::DrawKeyboard(CompanionSettings& settings, bool& dirty)
 		ImGui::EndTable();
 	}
 	return overBinding;
-}
-
-void PreferencesDialog::CaptureKey(CompanionSettings& settings, bool& dirty, bool overBinding)
-{
-	if (m_capture < 0 || ImGui::GetFrameCount() <= m_captureFrame)
-		return;
-	const auto& io = ImGui::GetIO();
-	bool mousePressed = false;
-	for (int button = 0; button < ImGuiMouseButton_COUNT; ++button)
-		mousePressed |= ImGui::IsMouseClicked(button);
-	if (io.MouseWheel != 0 || io.MouseWheelH != 0 ||
-		(!overBinding && (ImGui::IsAnyItemActive() || (mousePressed && ImGui::IsAnyItemHovered()))))
-	{
-		CancelCapture();
-		return;
-	}
-	const unsigned modifiers =
-		(io.KeyCtrl ? 1u : 0u) | (io.KeyShift ? 2u : 0u) | (io.KeyAlt ? 4u : 0u) | (io.KeySuper ? 8u : 0u);
-	ImGuiKey captured = ImGuiKey_None;
-	for (int index = ImGuiKey_NamedKey_BEGIN; index <= ImGuiKey_MouseX2; ++index)
-	{
-		const auto key = static_cast<ImGuiKey>(index);
-		if (key >= ImGuiKey_GamepadStart && key <= ImGuiKey_GamepadRStickDown)
-			continue;
-		if (!ImGui::IsKeyPressed(key, false))
-			continue;
-		if (key >= ImGuiKey_LeftCtrl && key <= ImGuiKey_RightSuper)
-		{
-			m_modifier = key;
-			continue;
-		}
-		captured = key;
-		break;
-	}
-	if (captured == ImGuiKey_None && m_modifier != ImGuiKey_None && ImGui::IsKeyReleased(m_modifier))
-		captured = m_modifier;
-	if (captured == ImGuiKey_None)
-		return;
-	PilotBinding binding{ImGui::GetKeyName(captured), modifiers};
-	if (captured >= ImGuiKey_LeftCtrl && captured <= ImGuiKey_RightSuper)
-		binding.modifiers &= ~(1u << ((captured - ImGuiKey_LeftCtrl) % 4));
-	auto& previous = settings.pilotBindings[static_cast<std::size_t>(m_capture)];
-	dirty |= previous != binding;
-	previous = std::move(binding);
-	CancelCapture();
 }
 
 void PreferencesDialog::DrawGamepad(CompanionSettings& settings, bool& dirty)
@@ -437,5 +386,56 @@ void PreferencesDialog::DrawGamepad(CompanionSettings& settings, bool& dirty)
 		}
 		ImGui::EndTable();
 	}
+}
+
+void PreferencesDialog::CaptureKey(CompanionSettings& settings, bool& dirty, bool overBinding)
+{
+	if (m_capture < 0 || ImGui::GetFrameCount() <= m_captureFrame)
+		return;
+	const auto& io = ImGui::GetIO();
+	bool mousePressed = false;
+	for (int button = 0; button < ImGuiMouseButton_COUNT; ++button)
+		mousePressed |= ImGui::IsMouseClicked(button);
+	if (io.MouseWheel != 0 || io.MouseWheelH != 0 ||
+		(!overBinding && (ImGui::IsAnyItemActive() || (mousePressed && ImGui::IsAnyItemHovered()))))
+	{
+		CancelCapture();
+		return;
+	}
+	const unsigned modifiers =
+		(io.KeyCtrl ? 1u : 0u) | (io.KeyShift ? 2u : 0u) | (io.KeyAlt ? 4u : 0u) | (io.KeySuper ? 8u : 0u);
+	ImGuiKey captured = ImGuiKey_None;
+	for (int index = ImGuiKey_NamedKey_BEGIN; index <= ImGuiKey_MouseX2; ++index)
+	{
+		const auto key = static_cast<ImGuiKey>(index);
+		if (key >= ImGuiKey_GamepadStart && key <= ImGuiKey_GamepadRStickDown)
+			continue;
+		if (!ImGui::IsKeyPressed(key, false))
+			continue;
+		if (key >= ImGuiKey_LeftCtrl && key <= ImGuiKey_RightSuper)
+		{
+			m_modifier = key;
+			continue;
+		}
+		captured = key;
+		break;
+	}
+	if (captured == ImGuiKey_None && m_modifier != ImGuiKey_None && ImGui::IsKeyReleased(m_modifier))
+		captured = m_modifier;
+	if (captured == ImGuiKey_None)
+		return;
+	PilotBinding binding{ImGui::GetKeyName(captured), modifiers};
+	if (captured >= ImGuiKey_LeftCtrl && captured <= ImGuiKey_RightSuper)
+		binding.modifiers &= ~(1u << ((captured - ImGuiKey_LeftCtrl) % 4));
+	auto& previous = settings.pilotBindings[static_cast<std::size_t>(m_capture)];
+	dirty |= previous != binding;
+	previous = std::move(binding);
+	CancelCapture();
+}
+
+void PreferencesDialog::CancelCapture()
+{
+	m_capture = -1;
+	m_modifier = ImGuiKey_None;
 }
 } // namespace simxr::app

@@ -215,46 +215,6 @@ XrResult FrameScheduler::Resume(HostTime anchor, DisplayTick boundary)
 	return XR_SUCCESS;
 }
 
-bool FrameScheduler::PublishExternalPrediction(SessionGeneration generation, std::uint64_t clockRevision,
-											   std::uint64_t attachment, std::uint64_t sequence, RuntimeTime target,
-											   Duration period, const std::function<bool()>& commitDisplay)
-{
-	std::lock_guard lock(m_mutex);
-	if (!m_state.running || m_state.paused || m_config.mode != ExecutionMode::RealTime || generation != m_generation ||
-		clockRevision != m_clockRevision || !attachment || !sequence || period < std::chrono::milliseconds(1) ||
-		period > std::chrono::milliseconds(100))
-		return false;
-	const auto now = m_clock->Now();
-	const auto runtimeNow =
-		FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)}.Map(now);
-	if (target <= runtimeNow || target.value - runtimeNow.value > period * 4 || now > HostTime::max() - period * 4)
-		return false;
-	if (m_external && now >= m_external->expires)
-		m_external.reset();
-	if (m_external &&
-		(m_external->attachment != attachment || sequence <= m_external->sequence || target <= m_external->target))
-		return false;
-	m_clock->Wake();
-	if (commitDisplay && !commitDisplay())
-		return false;
-	const auto consumed = m_external ? m_external->consumed : 0;
-	m_external = ExternalPrediction{attachment, sequence, consumed, target, period, now + period * 4};
-	++m_policyRevision;
-	m_changed.notify_all();
-	return true;
-}
-
-void FrameScheduler::ReleaseExternalPrediction(std::uint64_t attachment)
-{
-	std::lock_guard lock(m_mutex);
-	if (!m_external || m_external->attachment != attachment)
-		return;
-	m_external.reset();
-	++m_policyRevision;
-	m_clock->Wake();
-	m_changed.notify_all();
-}
-
 XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 								   const std::function<void(const FramePrediction&)>& reserve,
 								   std::unique_lock<std::mutex>* publication)
@@ -407,31 +367,60 @@ XrResult FrameScheduler::EndFrame(FramePrediction& prediction)
 	return XR_SUCCESS;
 }
 
+FramePipelineState FrameScheduler::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	auto state = m_state;
+	state.nextAdmission = m_nextAdmission;
+	return state;
+}
+
+bool FrameScheduler::PublishExternalPrediction(SessionGeneration generation, std::uint64_t clockRevision,
+											   std::uint64_t attachment, std::uint64_t sequence, RuntimeTime target,
+											   Duration period, const std::function<bool()>& commitDisplay)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused || m_config.mode != ExecutionMode::RealTime || generation != m_generation ||
+		clockRevision != m_clockRevision || !attachment || !sequence || period < std::chrono::milliseconds(1) ||
+		period > std::chrono::milliseconds(100))
+		return false;
+	const auto now = m_clock->Now();
+	const auto runtimeNow =
+		FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)}.Map(now);
+	if (target <= runtimeNow || target.value - runtimeNow.value > period * 4 || now > HostTime::max() - period * 4)
+		return false;
+	if (m_external && now >= m_external->expires)
+		m_external.reset();
+	if (m_external &&
+		(m_external->attachment != attachment || sequence <= m_external->sequence || target <= m_external->target))
+		return false;
+	m_clock->Wake();
+	if (commitDisplay && !commitDisplay())
+		return false;
+	const auto consumed = m_external ? m_external->consumed : 0;
+	m_external = ExternalPrediction{attachment, sequence, consumed, target, period, now + period * 4};
+	++m_policyRevision;
+	m_changed.notify_all();
+	return true;
+}
+
+void FrameScheduler::ReleaseExternalPrediction(std::uint64_t attachment)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_external || m_external->attachment != attachment)
+		return;
+	m_external.reset();
+	++m_policyRevision;
+	m_clock->Wake();
+	m_changed.notify_all();
+}
+
 std::optional<FrameClockMapping> FrameScheduler::ClockMapping() const
 {
 	std::lock_guard lock(m_mutex);
 	if (!m_state.running || m_state.paused || m_config.mode != ExecutionMode::RealTime)
 		return {};
 	return FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)};
-}
-
-std::optional<std::uint64_t> FrameScheduler::LiveInputClockRevision() const
-{
-	std::lock_guard lock(m_mutex);
-	if (!m_state.running || m_state.paused)
-		return {};
-	return m_config.mode == ExecutionMode::RealTime ? m_clockRevision : 0;
-}
-
-bool FrameScheduler::WithClockRevision(SessionGeneration generation, std::uint64_t revision,
-									   const std::function<void()>& admit)
-{
-	std::lock_guard lock(m_mutex);
-	if (!m_state.running || m_state.paused || generation != m_generation ||
-		revision != (m_config.mode == ExecutionMode::RealTime ? m_clockRevision : 0))
-		return false;
-	admit();
-	return true;
 }
 
 std::optional<FrameNativeClockMapping> FrameScheduler::NativeClockMapping() const
@@ -454,6 +443,25 @@ std::optional<FrameNativeClockMapping> FrameScheduler::NativeClockMapping() cons
 		sample->resolutionNanoseconds};
 }
 
+std::optional<std::uint64_t> FrameScheduler::LiveInputClockRevision() const
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused)
+		return {};
+	return m_config.mode == ExecutionMode::RealTime ? m_clockRevision : 0;
+}
+
+bool FrameScheduler::WithClockRevision(SessionGeneration generation, std::uint64_t revision,
+									   const std::function<void()>& admit)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused || generation != m_generation ||
+		revision != (m_config.mode == ExecutionMode::RealTime ? m_clockRevision : 0))
+		return false;
+	admit();
+	return true;
+}
+
 std::optional<RuntimeTime> FrameScheduler::MapHostTime(HostTime time, SessionGeneration generation,
 													   std::uint64_t revision) const
 {
@@ -464,11 +472,4 @@ std::optional<RuntimeTime> FrameScheduler::MapHostTime(HostTime time, SessionGen
 	return FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)}.Map(time);
 }
 
-FramePipelineState FrameScheduler::Snapshot() const
-{
-	std::lock_guard lock(m_mutex);
-	auto state = m_state;
-	state.nextAdmission = m_nextAdmission;
-	return state;
-}
 } // namespace simxr

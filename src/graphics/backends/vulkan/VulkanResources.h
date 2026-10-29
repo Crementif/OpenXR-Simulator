@@ -18,7 +18,9 @@ public:
 	~VulkanCommands();
 	VulkanCommands(const VulkanCommands&) = delete;
 	VulkanCommands& operator=(const VulkanCommands&) = delete;
+
 	void Reset();
+
 	VkCommandPool pool = VK_NULL_HANDLE;
 	VkCommandBuffer command = VK_NULL_HANDLE;
 	VkFence fence = VK_NULL_HANDLE;
@@ -27,6 +29,7 @@ public:
 
 private:
 	void Destroy() noexcept;
+
 	const VkDevice m_device;
 };
 
@@ -40,6 +43,7 @@ public:
 	~VulkanImage();
 	VulkanImage(const VulkanImage&) = delete;
 	VulkanImage& operator=(const VulkanImage&) = delete;
+
 	const std::shared_ptr<VulkanDevice> device;
 	VkImage image = VK_NULL_HANDLE;
 	VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -68,6 +72,7 @@ private:
 	static std::shared_ptr<VulkanImage> Lease(std::shared_ptr<VulkanImage> allocation);
 	explicit VulkanImage(std::shared_ptr<VulkanDevice> device);
 	const VulkanImage& Owner() const noexcept;
+
 	std::shared_ptr<VulkanImage> m_allocation;
 
 	struct CachedView

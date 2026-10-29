@@ -37,12 +37,15 @@ public:
 	~HeadsetBody();
 	HeadsetBody(const HeadsetBody&) = delete;
 	HeadsetBody& operator=(const HeadsetBody&) = delete;
+
 	void Open(XrSession session, BodyJointSet jointSet);
-	PhysicalBodySample Sample(XrTime time, XrSpace baseSpace, bool locate = true);
 	void Close();
+
+	PhysicalBodySample Sample(XrTime time, XrSpace baseSpace, bool locate = true);
 
 private:
 	PhysicalBodySkeleton ReadSkeleton() const;
+
 	OpenXrRuntime& m_runtime;
 	BodyJointSet m_jointSet = BodyJointSet::UpperBodyFB;
 	XrBodyTrackerFB m_fb = XR_NULL_HANDLE;

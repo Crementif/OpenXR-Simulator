@@ -24,6 +24,7 @@ class SequenceControl
 public:
 	static constexpr std::size_t MaxBytes = 16 * 1024 * 1024;
 	static constexpr std::size_t ChunkBytes = 256 * 1024;
+
 	InspectionValue Dispatch(const Message& request, const ControlSession& binding, CommandSource source,
 							 Message& response, std::vector<SnapshotRecord>& held);
 
@@ -33,6 +34,7 @@ private:
 						  Message& response);
 	InspectionValue Read(const Message& request, const ControlSession& binding, CommandSource source,
 						 std::vector<SnapshotRecord>& held);
+
 	std::uint64_t m_program = 0;
 	ControlSessionId m_session;
 	SessionGeneration m_generation;

@@ -58,30 +58,6 @@ bool LiveInputSlot::HasChannels(const Channels& owned)
 		   std::any_of(owned.begin(), owned.begin() + 5, [](bool value) { return value; });
 }
 
-void LiveInputSlot::Reset()
-{
-	*this = {};
-}
-
-void LiveInputSlot::AcknowledgeControls()
-{
-	for (auto& queue : m_transitions)
-		queue.awaitingSync = false;
-	if (m_trackersAwaitingSync)
-		m_dirty = true;
-	m_trackersAwaitingSync = false;
-}
-
-LiveInputStatus LiveInputSlot::Status() const
-{
-	return m_status;
-}
-
-bool LiveInputSlot::Expired(LiveInputClock::time_point now) const
-{
-	return m_status.owner && (m_status.phase != LiveInputPhase::Active || now - m_received >= m_latest.maxAge);
-}
-
 CommandResult LiveInputSlot::Write(CommandSource source, const LiveInputSample& sample, const Channels& owned,
 								   LiveInputClock::time_point now)
 {
@@ -366,4 +342,29 @@ std::optional<CommandOutcome> LiveInputSlot::Prepare(FrameId frame, SimulationTi
 	m_dirty = false;
 	return outcome;
 }
+
+LiveInputStatus LiveInputSlot::Status() const
+{
+	return m_status;
+}
+
+bool LiveInputSlot::Expired(LiveInputClock::time_point now) const
+{
+	return m_status.owner && (m_status.phase != LiveInputPhase::Active || now - m_received >= m_latest.maxAge);
+}
+
+void LiveInputSlot::AcknowledgeControls()
+{
+	for (auto& queue : m_transitions)
+		queue.awaitingSync = false;
+	if (m_trackersAwaitingSync)
+		m_dirty = true;
+	m_trackersAwaitingSync = false;
+}
+
+void LiveInputSlot::Reset()
+{
+	*this = {};
+}
+
 } // namespace simxr

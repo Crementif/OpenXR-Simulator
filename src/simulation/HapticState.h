@@ -62,20 +62,24 @@ class HapticState
 {
 public:
 	explicit HapticState(std::size_t historyCapacity = 256);
+
 	XrResult Apply(std::span<const HapticDevice> devices, XrAction action, XrPath subactionPath,
 				   const XrHapticVibration& vibration, RuntimeTime time, bool focused);
-	XrResult Stop(std::span<const HapticDevice> devices, XrAction action, RuntimeTime time, bool focused);
 	XrResult Apply(std::span<const InputDeviceId> devices, XrAction action, XrPath subactionPath,
 				   const XrHapticVibration& vibration, RuntimeTime time, bool focused);
+	XrResult Stop(std::span<const HapticDevice> devices, XrAction action, RuntimeTime time, bool focused);
 	XrResult Stop(std::span<const InputDeviceId> devices, XrAction action, RuntimeTime time, bool focused);
+
 	void LoseFocus(RuntimeTime time);
 	void RemoveAction(XrAction action, RuntimeTime time);
 	void Reset();
+
 	std::vector<HapticOutput> Snapshot(RuntimeTime time) const;
 
 private:
 	void Retire(std::size_t index, HapticStatus status, RuntimeTime time);
 	void Expire(RuntimeTime time);
+
 	mutable std::mutex m_mutex;
 	std::size_t m_historyCapacity;
 	std::vector<HapticOutput> m_active;

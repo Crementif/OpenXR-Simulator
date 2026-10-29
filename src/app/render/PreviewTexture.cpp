@@ -9,30 +9,6 @@
 
 namespace simxr::app
 {
-float PreviewAspect(const control::ImageDescription& image, std::optional<std::size_t> slice, bool correctProportions)
-{
-	const float pixels = image.width && image.height ? float(image.height) / image.width : 1;
-	if (!correctProportions || image.views.empty())
-		return pixels;
-	float aspect = 0;
-	const auto first = slice.value_or(0);
-	const auto end = slice ? first + 1 : image.arrayLayers;
-	for (auto index = first; index < end; ++index)
-	{
-		float value = pixels;
-		if (index < image.views.size())
-		{
-			const auto& fov = image.views[index].fov;
-			const float horizontal = std::abs(std::tan(fov.angleRight) - std::tan(fov.angleLeft));
-			const float vertical = std::abs(std::tan(fov.angleUp) - std::tan(fov.angleDown));
-			if (horizontal > 0 && vertical > 0 && std::isfinite(vertical / horizontal))
-				value = vertical / horizontal;
-		}
-		aspect = std::max(aspect, value);
-	}
-	return aspect > 0 ? aspect : pixels;
-}
-
 struct PreviewTexture::State
 {
 	struct Retirement;
@@ -183,6 +159,30 @@ struct PreviewTexture::State::Retirement
 	}
 };
 
+float PreviewAspect(const control::ImageDescription& image, std::optional<std::size_t> slice, bool correctProportions)
+{
+	const float pixels = image.width && image.height ? float(image.height) / image.width : 1;
+	if (!correctProportions || image.views.empty())
+		return pixels;
+	float aspect = 0;
+	const auto first = slice.value_or(0);
+	const auto end = slice ? first + 1 : image.arrayLayers;
+	for (auto index = first; index < end; ++index)
+	{
+		float value = pixels;
+		if (index < image.views.size())
+		{
+			const auto& fov = image.views[index].fov;
+			const float horizontal = std::abs(std::tan(fov.angleRight) - std::tan(fov.angleLeft));
+			const float vertical = std::abs(std::tan(fov.angleUp) - std::tan(fov.angleDown));
+			if (horizontal > 0 && vertical > 0 && std::isfinite(vertical / horizontal))
+				value = vertical / horizontal;
+		}
+		aspect = std::max(aspect, value);
+	}
+	return aspect > 0 ? aspect : pixels;
+}
+
 PreviewTexture::State::Retirement& PreviewTexture::State::Retirements()
 {
 	// Process lifetime is deliberate: neither shutdown order nor a failed wait
@@ -210,23 +210,6 @@ PreviewTexture::State::Reservation::~Reservation()
 void PreviewTexture::State::Reservation::Grow(std::uint64_t bytes)
 {
 	Retirements().Grow(index, bytes);
-}
-
-std::uint64_t PreviewTexture::SnapshotChargeBytes() const
-{
-	return State::Retirements().Charge(m_state->reservation.index);
-}
-
-std::uint64_t PreviewTexture::TotalSnapshotChargeBytes()
-{
-	return State::Retirements().TotalCharge();
-}
-
-bool PreviewTexture::CanReserveSnapshot(std::uint64_t imageBytes)
-{
-	imageBytes = std::max<std::uint64_t>(imageBytes, 16 * 1024 * 1024);
-	return imageBytes <= std::numeric_limits<std::uint64_t>::max() / 4 &&
-		   State::Retirements().CanReserve(imageBytes * 4);
 }
 
 PreviewTexture::PreviewTexture(const VulkanDeviceAccess& device, control::ImageDescription description)
@@ -288,6 +271,21 @@ control::ImageDeviceIdentity PreviewTexture::Identity() const
 #else
 	return {};
 #endif
+}
+
+const control::ImageDescription& PreviewTexture::Description() const
+{
+	return m_state->description;
+}
+
+std::size_t PreviewTexture::SliceCount() const
+{
+	return m_state->descriptors.size();
+}
+
+bool PreviewTexture::Ready() const
+{
+	return m_state->ready;
 }
 
 std::shared_ptr<control::TransferHandle> PreviewTexture::ConsumerFence()
@@ -361,21 +359,6 @@ CompletionStatus PreviewTexture::Poll()
 #endif
 }
 
-bool PreviewTexture::Ready() const
-{
-	return m_state->ready;
-}
-
-const control::ImageDescription& PreviewTexture::Description() const
-{
-	return m_state->description;
-}
-
-std::size_t PreviewTexture::SliceCount() const
-{
-	return m_state->descriptors.size();
-}
-
 void PreviewTexture::BeginFrame()
 {
 	m_state->drawn = false;
@@ -397,6 +380,18 @@ void PreviewTexture::Draw(float width, std::optional<std::size_t> slice, ImVec4 
 			ImGui::SameLine(0, 12 * ImGui::GetFontSize() / 16);
 	}
 	m_state->drawn = true;
+}
+
+VkImage PreviewTexture::UseForCopy()
+{
+	if (!m_state->ready)
+		return VK_NULL_HANDLE;
+	m_state->drawn = true;
+#if defined(__linux__) || defined(_WIN32)
+	return m_state->native->Image().image;
+#else
+	return VK_NULL_HANDLE;
+#endif
 }
 
 VkSemaphore PreviewTexture::ReadyWait() const
@@ -423,25 +418,6 @@ void PreviewTexture::ObserveCompletion(std::uint64_t serial)
 	m_state->completed = std::max(m_state->completed, serial);
 }
 
-VkImage PreviewTexture::UseForCopy()
-{
-	if (!m_state->ready)
-		return VK_NULL_HANDLE;
-	m_state->drawn = true;
-#if defined(__linux__) || defined(_WIN32)
-	return m_state->native->Image().image;
-#else
-	return VK_NULL_HANDLE;
-#endif
-}
-
-std::uint64_t PreviewTexture::PreservedBytes()
-{
-	auto& retirement = State::Retirements();
-	std::lock_guard lock(retirement.mutex);
-	return retirement.preservedBytes;
-}
-
 bool PreviewTexture::CanRetire(std::uint64_t completed)
 {
 	ObserveCompletion(completed);
@@ -461,5 +437,29 @@ void PreviewTexture::PreserveUnfinished(std::uint64_t completed) noexcept
 	catch (...)
 	{}
 	State::Retirements().Preserve(std::move(m_state));
+}
+
+std::uint64_t PreviewTexture::SnapshotChargeBytes() const
+{
+	return State::Retirements().Charge(m_state->reservation.index);
+}
+
+std::uint64_t PreviewTexture::PreservedBytes()
+{
+	auto& retirement = State::Retirements();
+	std::lock_guard lock(retirement.mutex);
+	return retirement.preservedBytes;
+}
+
+std::uint64_t PreviewTexture::TotalSnapshotChargeBytes()
+{
+	return State::Retirements().TotalCharge();
+}
+
+bool PreviewTexture::CanReserveSnapshot(std::uint64_t imageBytes)
+{
+	imageBytes = std::max<std::uint64_t>(imageBytes, 16 * 1024 * 1024);
+	return imageBytes <= std::numeric_limits<std::uint64_t>::max() / 4 &&
+		   State::Retirements().CanReserve(imageBytes * 4);
 }
 } // namespace simxr::app

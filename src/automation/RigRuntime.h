@@ -72,38 +72,47 @@ public:
 	RigRuntime(RigExchange exchange, RigProgress& progress);
 	RigRuntime(const RigRuntime&) = delete;
 	RigRuntime& operator=(const RigRuntime&) = delete;
+
 	void Configure(control::ControlSessionId session, std::uint64_t generation);
 	std::string Cleanup();
+
 	void ObserveCompatibility();
 	void Wait(std::chrono::milliseconds duration);
+
 	std::uint64_t Schedule(CommandTarget target, CommandLatePolicy policy, std::vector<SimulationCommand> commands);
 	std::vector<std::byte> AwaitTransaction(std::uint64_t transaction);
+
 	void PauseApplication();
 	void ResumeApplication();
 	ScriptStep StepApplication(ScriptCaptureTarget target);
 	ScriptStep StepDisplay();
 	void AdvanceToFrame(FrameId target);
+
 	void StartImageRecording(ScriptCaptureTarget target, std::uint32_t capacity, std::uint64_t frames);
 	void StopImageRecording();
 	ScriptImageRecording ImageRecording();
 	ScriptCapture Capture(std::uint64_t capture);
+
 	std::vector<std::byte> StartInputRecording();
 	std::vector<std::byte> StopInputRecording();
 	std::vector<std::byte> ReadInputRecording(std::uint64_t offset, std::uint64_t count);
+
 	ScriptInspection Inspect(std::uint64_t capture);
 	std::vector<std::byte> ProjectionHistory(std::uint32_t count);
 	std::vector<std::byte> ImageHistory(std::uint32_t count, control::TargetKind target);
 	void ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
 					   control::TargetKind target);
+
 	ScriptInspection BeginImageWindow(control::TargetKind target);
 	std::vector<std::byte> ImageWindow(std::uint64_t window);
 	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
 						   std::optional<std::uint32_t> arraySlice);
 	control::IncidentSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
 											  std::optional<std::array<XrRect2Di, 2>> rectangles);
-	void ReleaseImageWindow(std::uint64_t window);
 	std::optional<control::IncidentSample> SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
 															  std::optional<std::array<XrRect2Di, 2>> rectangles);
+	void ReleaseImageWindow(std::uint64_t window);
+
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
@@ -112,12 +121,28 @@ public:
 	void Export(std::uint64_t capture, const std::string& path, std::optional<ScriptCaptureTarget> target,
 				std::optional<std::uint32_t> arraySlice);
 	void ReleaseCapture(std::uint64_t capture);
+
 	ScriptGameOperation GameCommand(std::uint32_t kind, const std::string& payload);
 	std::vector<std::byte> AwaitGame(std::uint64_t game, std::uint64_t operation);
 	std::vector<std::byte> GameState();
 
 private:
+	class RemoteResource;
 	using Fields = std::vector<control::Field>;
+
+	Fields Session() const;
+	Fields Source() const;
+	control::Message Call(control::OpCode opcode, Fields fields);
+	control::Message Exchange(control::OpCode opcode, Fields fields);
+	control::Message Debug(control::CommandKind kind, Fields fields = {});
+	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
+	control::IncidentSample SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles);
+	void ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
+	void RenewLease();
+	void PollAgain();
+	void CleanupCall(control::OpCode opcode, Fields fields);
+	void ReleaseUnchecked(control::OpCode opcode, std::uint16_t tag, std::uint64_t id) noexcept;
+
 	RigExchange m_exchange;
 	RigProgress& m_progress;
 	control::ControlSessionId m_session;
@@ -129,18 +154,5 @@ private:
 	std::chrono::steady_clock::time_point m_nextRenew;
 	std::vector<std::uint64_t> m_captures;
 	std::vector<std::uint64_t> m_inspections;
-	void RenewLease();
-	void PollAgain();
-	Fields Session() const;
-	Fields Source() const;
-	control::Message Call(control::OpCode opcode, Fields fields);
-	control::Message Exchange(control::OpCode opcode, Fields fields);
-	void CleanupCall(control::OpCode opcode, Fields fields);
-	control::Message Debug(control::CommandKind kind, Fields fields = {});
-	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
-	void ReleaseUnchecked(control::OpCode opcode, std::uint16_t tag, std::uint64_t id) noexcept;
-	control::IncidentSample SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles);
-	void ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
-	class RemoteResource;
 };
 } // namespace simxr::automation

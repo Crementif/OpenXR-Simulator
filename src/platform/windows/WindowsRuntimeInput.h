@@ -31,12 +31,14 @@ class WindowsRuntimeInput
 {
 public:
 	WindowsRuntimeInput();
+
 	RuntimeInputSnapshot Snapshot() const;
 	RuntimeInputSnapshot Poll(std::chrono::nanoseconds period, WindowsRuntimeFiles& files);
 	RuntimeHeadPose Head() const;
 
 private:
 	RuntimeInputSnapshot SnapshotLocked() const;
+
 	mutable std::mutex m_mutex;
 	RuntimeHeadPose m_head;
 	std::optional<std::uint32_t> m_renderWidth, m_renderHeight;

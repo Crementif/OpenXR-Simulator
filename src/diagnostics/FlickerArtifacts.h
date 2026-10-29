@@ -39,16 +39,20 @@ class ArtifactQueue
 public:
 	void Add(IncidentUpdate update, const PreviewMonitor& monitor);
 	void Add(IncidentUpdate update, const UiMonitor& monitor);
+
 	bool Empty() const;
 	std::optional<ArtifactJob> Take();
 	void Complete(ArtifactCharge charge);
+
 	size_t Outstanding() const;
 	size_t OutstandingBytes() const;
 	uint64_t Dropped() const;
+
 	bool TakeRenderDocRequest();
 
 private:
 	void Admit(Artifact artifact);
+
 	std::deque<ArtifactJob> m_jobs;
 	size_t m_outstanding = 0;
 	size_t m_bytes = 0;

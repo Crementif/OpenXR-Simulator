@@ -15,234 +15,6 @@ static RuntimeFrameRun RunOf(const RuntimeView& state)
 	return {state.epoch, state.session, state.generation};
 }
 
-void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
-							   bool matchesTarget)
-{
-	m_history.ObserveScript(runtime, run, state, matchesTarget);
-}
-
-void TimelinePanel::Observe(const RuntimeView& runtime)
-{
-	m_history.Observe(runtime, runtime.recording);
-}
-
-void TimelinePanel::SavedRecording(std::string path, const RuntimeView& runtime)
-{
-	m_history.SavedRecording(std::move(path), RunOf(runtime));
-}
-
-void TimelinePanel::Play(RuntimePanels& runtime, const std::string& path)
-{
-	try
-	{
-		runtime.RequestReplay(OpenSavedRecording(path));
-	}
-	catch (const std::exception& error)
-	{
-		m_history.Error(std::string("Cannot play take: ") + error.what(), runtime.View().historySeconds);
-	}
-}
-
-void TimelinePanel::ReplayTake(const std::string& path, const RuntimeView& state, std::uint64_t scriptRun)
-{
-	m_history.ReplayTake(scriptRun, path, state);
-	m_ghost.reset();
-	for (const auto& take : m_takes)
-		if (take.path == path)
-			m_ghost = Ghost{take, RunOf(state), state.latestFrame, scriptRun};
-}
-
-void TimelinePanel::DrawGhost(const HistoryStore& history)
-{
-	if (!m_ghost)
-		return;
-	const auto* replay = m_history.FindScript(m_ghost->scriptRun);
-	if (!replay || replay->first.Run() != m_ghost->target)
-		return;
-	const auto run = m_ghost->target;
-	const auto origin = m_ghost->anchor ? history.Find(m_ghost->anchor->identity, run.epoch)
-										: history.Find(replay->first.identity, run.epoch);
-	const auto segment = origin ? std::optional{history.SegmentAt(*origin)}
-								: history.LatestSegment({run.session, run.generation, 0}, run.epoch);
-	if (!segment)
-		return;
-	const auto after = [&](std::uint64_t frame) {
-		auto begin = segment->first, end = segment->second;
-		while (begin < end)
-		{
-			const auto middle = begin + (end - begin) / 2;
-			if (history.At(middle).identity.frame <= frame)
-				begin = middle + 1;
-			else
-				end = middle;
-		}
-		return begin;
-	};
-	const auto end = after(replay->last.identity.frame);
-	if (!m_ghost->anchor)
-	{
-		const auto first = after(m_ghost->afterFrame);
-		if (first >= end)
-			return;
-		auto begin = first, limit = end;
-		while (begin < limit)
-		{
-			const auto middle = begin + (limit - begin) / 2;
-			if (history.Query(first, middle + 1).driven)
-				limit = middle;
-			else
-				begin = middle + 1;
-		}
-		const auto& frame = history.At(begin < end ? begin : end - 1);
-		const auto observed = (begin < end ? begin + 1 : end) - first;
-		if (frame.identity.frame - m_ghost->afterFrame != observed)
-		{
-			m_ghost.reset();
-			return;
-		}
-		m_ghost->afterFrame = frame.identity.frame;
-		if (begin < end)
-			m_ghost->anchor = frame;
-	}
-	if (!m_ghost->anchor)
-		return;
-	const auto& source = m_ghost->source;
-	const auto first = history.Find(source.first, source.epoch), last = history.Find(source.last, source.epoch);
-	const auto anchor = history.Find(m_ghost->anchor->identity, m_ghost->anchor->epoch);
-	if (first && last && anchor && *last >= *first && *anchor < end)
-		m_canvas.DrawGhost(history, *first, *last, *anchor, end - 1);
-}
-
-void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow)
-{
-	if (!state.sessionAvailable || area.width <= 0 || area.height <= 0)
-		return;
-	const auto segment = history.LatestSegment({state.session, state.generation, 0}, state.epoch);
-	if (!segment)
-		return;
-	// The last 90 frames of this run, and every missed frame in the last 10 s.
-	const auto last = segment->second - 1;
-	const auto& newest = history.At(last);
-	std::size_t first = last;
-	float sum = 0, minimum = newest.frameMilliseconds, maximum = 0, cpuSum = 0, gpuSum = 0;
-	std::size_t cpuCount = 0, gpuCount = 0;
-	while (first > segment->first && last - first < 89)
-		--first;
-	for (auto index = first; index <= last; ++index)
-	{
-		const float value = history.At(index).frameMilliseconds;
-		sum += value;
-		minimum = std::min(minimum, value);
-		maximum = std::max(maximum, value);
-		if (history.At(index).cpuMilliseconds >= 0)
-		{
-			cpuSum += history.At(index).cpuMilliseconds;
-			++cpuCount;
-		}
-		if (history.At(index).compositorGpuMilliseconds >= 0)
-		{
-			gpuSum += history.At(index).compositorGpuMilliseconds;
-			++gpuCount;
-		}
-	}
-	const auto count = last - first + 1;
-	const float average = sum / count, budget = newest.periodMilliseconds;
-	const float cpu = cpuCount ? cpuSum / cpuCount : -1, gpu = gpuCount ? gpuSum / gpuCount : -1;
-	const auto missed =
-		history.Query(std::max(segment->first, history.LowerBound(newest.seconds - 10)), last + 1).missed;
-	// Green at budget, amber when frames run long, red when frames were missed.
-	const ImU32 color = state.manual										   ? theme::TextDim
-						: missed > 3 || (cpu >= 0 ? cpu : average) > budget	   ? theme::Record
-						: missed || (cpu >= 0 ? cpu : average) >= budget * .9f ? theme::Warn
-																			   : theme::Ok;
-	char text[48];
-	if (oneRow)
-		std::snprintf(text, sizeof(text), "%.0f fps", average > 0 ? 1000 / average : 0);
-	else
-		std::snprintf(text, sizeof(text), "%.0f fps, %.1f ms", average > 0 ? 1000 / average : 0, average);
-	auto* draw = ImGui::GetWindowDrawList();
-	const float font = ImGui::GetFontSize(), scale = font / 16;
-	const float textY = oneRow ? area.y + (area.height - font) / 2 : area.y + 2 * scale;
-	draw->AddText({area.x, textY}, color, text);
-	const ImVec2 hoverMin{area.x, area.y}, hoverMax{area.x + area.width, area.y + area.height};
-	// A sparkline under the numbers: one bar per frame, dashed budget at mid height.
-	float sparkTop = textY + font + 3 * scale;
-	const float sparkBottom = area.y + area.height - 3 * scale;
-	if (!oneRow && cpu >= 0 && sparkBottom - sparkTop >= font + 3 * scale)
-	{
-		char cpuText[48];
-		std::snprintf(cpuText, sizeof(cpuText), "CPU span %.1f ms", cpu);
-		draw->PushClipRect(hoverMin, hoverMax, true);
-		draw->AddText({area.x, sparkTop}, theme::TextDim, cpuText);
-		draw->PopClipRect();
-		sparkTop += font + 3 * scale;
-	}
-	if (!oneRow && sparkBottom - sparkTop >= 10 * scale)
-	{
-		const float height = sparkBottom - sparkTop, step = area.width / 90;
-		for (auto index = first; index <= last; ++index)
-		{
-			const auto& frame = history.At(index);
-			const float work = frame.cpuMilliseconds >= 0 ? frame.cpuMilliseconds : frame.frameMilliseconds;
-			const float bar = std::min(height, height * work / (2 * std::max(1.f, budget)));
-			const float x = area.x + (index - first) * step;
-			const ImU32 tone = frame.flags & (HistoryLate | HistoryDropped) ? theme::Record
-							   : work >= budget * .9f						? theme::Warn
-																			: theme::Accent;
-			draw->AddRectFilled({x, sparkBottom - bar}, {x + std::max(1.f, step - scale), sparkBottom}, tone);
-		}
-		const float middle = sparkBottom - height / 2;
-		for (float dash = area.x; dash < area.x + area.width; dash += 6 * scale)
-			draw->AddLine({dash, middle}, {std::min(area.x + area.width, dash + 3 * scale), middle},
-						  theme::Fade(theme::TextDim, .7f), scale);
-	}
-	if (ImGui::IsMouseHoveringRect(hoverMin, hoverMax) && ImGui::IsWindowHovered())
-	{
-		ImGui::BeginTooltip();
-		ImGui::Text("Last %zu application intervals (ms): min %.1f / avg %.1f / max %.1f", count, minimum, average,
-					maximum);
-		ImGui::TextDisabled("Display period %.1f ms. %zu misses / 10 s", budget, missed);
-		char gpuText[32] = "unavailable";
-		if (gpu >= 0)
-			std::snprintf(gpuText, sizeof(gpuText), "%.2f ms", gpu);
-		if (cpu >= 0)
-			ImGui::TextDisabled("CPU span %.1f ms. Compositor GPU %s", cpu, gpuText);
-		else
-			ImGui::TextDisabled("CPU span unavailable. Compositor GPU %s", gpuText);
-		ImGui::TextDisabled("Application GPU time is unavailable");
-		ImGui::EndTooltip();
-	}
-}
-
-void TimelinePanel::DrawLegend()
-{
-	if (!ImGui::BeginPopup("Timeline legend"))
-		return;
-	const auto row = [](const char* name, const char* meaning) {
-		ImGui::TextUnformatted(name);
-		ImGui::SameLine(ImGui::GetFontSize() * 7);
-		ImGui::TextDisabled("%s", meaning);
-	};
-	SectionLabel("Lanes");
-	row("Frame time", "One bar per frame. Dashed line is the frame budget");
-	row("", "Amber ran long, red missed its display time");
-	row("paused", "The app was paused and advanced one frame at a time.");
-	row("Images", "Saved images. Diamonds mark snapshots. Filled diamonds are pinned.");
-	row("Input", "Left hand above, right hand below. Shading marks scripts and replays.");
-	row("Red band", "Click the tab to play a take or open the Library.");
-	row("Blue band", "A replay or script drove these frames");
-	row("Ruler dots", "Connections, pauses and script output. Triangles mark saved points.");
-	SectionLabel("Mouse and keys");
-	row("Wheel", "Zoom around the pointer");
-	row("Middle drag", "Pan");
-	row("Click", "Show that frame");
-	row("Drag ruler", "Select a range");
-	row(", and .", "Go to the previous or next frame. Hold Shift to jump between markers.");
-	row("M", "Add a marker");
-	row("Home / End", "Fit everything / go live");
-	ImGui::EndPopup();
-}
-
 bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 {
 	const auto& state = runtime.View();
@@ -630,5 +402,233 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	if (const auto& span = m_history.Recording())
 		clip(("Span/" + std::to_string(span->id)).c_str(), *span);
 	return inspect;
+}
+
+void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
+							   bool matchesTarget)
+{
+	m_history.ObserveScript(runtime, run, state, matchesTarget);
+}
+
+void TimelinePanel::Observe(const RuntimeView& runtime)
+{
+	m_history.Observe(runtime, runtime.recording);
+}
+
+void TimelinePanel::SavedRecording(std::string path, const RuntimeView& runtime)
+{
+	m_history.SavedRecording(std::move(path), RunOf(runtime));
+}
+
+void TimelinePanel::ReplayTake(const std::string& path, const RuntimeView& state, std::uint64_t scriptRun)
+{
+	m_history.ReplayTake(scriptRun, path, state);
+	m_ghost.reset();
+	for (const auto& take : m_takes)
+		if (take.path == path)
+			m_ghost = Ghost{take, RunOf(state), state.latestFrame, scriptRun};
+}
+
+void TimelinePanel::Play(RuntimePanels& runtime, const std::string& path)
+{
+	try
+	{
+		runtime.RequestReplay(OpenSavedRecording(path));
+	}
+	catch (const std::exception& error)
+	{
+		m_history.Error(std::string("Cannot play take: ") + error.what(), runtime.View().historySeconds);
+	}
+}
+
+void TimelinePanel::DrawGhost(const HistoryStore& history)
+{
+	if (!m_ghost)
+		return;
+	const auto* replay = m_history.FindScript(m_ghost->scriptRun);
+	if (!replay || replay->first.Run() != m_ghost->target)
+		return;
+	const auto run = m_ghost->target;
+	const auto origin = m_ghost->anchor ? history.Find(m_ghost->anchor->identity, run.epoch)
+										: history.Find(replay->first.identity, run.epoch);
+	const auto segment = origin ? std::optional{history.SegmentAt(*origin)}
+								: history.LatestSegment({run.session, run.generation, 0}, run.epoch);
+	if (!segment)
+		return;
+	const auto after = [&](std::uint64_t frame) {
+		auto begin = segment->first, end = segment->second;
+		while (begin < end)
+		{
+			const auto middle = begin + (end - begin) / 2;
+			if (history.At(middle).identity.frame <= frame)
+				begin = middle + 1;
+			else
+				end = middle;
+		}
+		return begin;
+	};
+	const auto end = after(replay->last.identity.frame);
+	if (!m_ghost->anchor)
+	{
+		const auto first = after(m_ghost->afterFrame);
+		if (first >= end)
+			return;
+		auto begin = first, limit = end;
+		while (begin < limit)
+		{
+			const auto middle = begin + (limit - begin) / 2;
+			if (history.Query(first, middle + 1).driven)
+				limit = middle;
+			else
+				begin = middle + 1;
+		}
+		const auto& frame = history.At(begin < end ? begin : end - 1);
+		const auto observed = (begin < end ? begin + 1 : end) - first;
+		if (frame.identity.frame - m_ghost->afterFrame != observed)
+		{
+			m_ghost.reset();
+			return;
+		}
+		m_ghost->afterFrame = frame.identity.frame;
+		if (begin < end)
+			m_ghost->anchor = frame;
+	}
+	if (!m_ghost->anchor)
+		return;
+	const auto& source = m_ghost->source;
+	const auto first = history.Find(source.first, source.epoch), last = history.Find(source.last, source.epoch);
+	const auto anchor = history.Find(m_ghost->anchor->identity, m_ghost->anchor->epoch);
+	if (first && last && anchor && *last >= *first && *anchor < end)
+		m_canvas.DrawGhost(history, *first, *last, *anchor, end - 1);
+}
+
+void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow)
+{
+	if (!state.sessionAvailable || area.width <= 0 || area.height <= 0)
+		return;
+	const auto segment = history.LatestSegment({state.session, state.generation, 0}, state.epoch);
+	if (!segment)
+		return;
+	// The last 90 frames of this run, and every missed frame in the last 10 s.
+	const auto last = segment->second - 1;
+	const auto& newest = history.At(last);
+	std::size_t first = last;
+	float sum = 0, minimum = newest.frameMilliseconds, maximum = 0, cpuSum = 0, gpuSum = 0;
+	std::size_t cpuCount = 0, gpuCount = 0;
+	while (first > segment->first && last - first < 89)
+		--first;
+	for (auto index = first; index <= last; ++index)
+	{
+		const float value = history.At(index).frameMilliseconds;
+		sum += value;
+		minimum = std::min(minimum, value);
+		maximum = std::max(maximum, value);
+		if (history.At(index).cpuMilliseconds >= 0)
+		{
+			cpuSum += history.At(index).cpuMilliseconds;
+			++cpuCount;
+		}
+		if (history.At(index).compositorGpuMilliseconds >= 0)
+		{
+			gpuSum += history.At(index).compositorGpuMilliseconds;
+			++gpuCount;
+		}
+	}
+	const auto count = last - first + 1;
+	const float average = sum / count, budget = newest.periodMilliseconds;
+	const float cpu = cpuCount ? cpuSum / cpuCount : -1, gpu = gpuCount ? gpuSum / gpuCount : -1;
+	const auto missed =
+		history.Query(std::max(segment->first, history.LowerBound(newest.seconds - 10)), last + 1).missed;
+	// Green at budget, amber when frames run long, red when frames were missed.
+	const ImU32 color = state.manual										   ? theme::TextDim
+						: missed > 3 || (cpu >= 0 ? cpu : average) > budget	   ? theme::Record
+						: missed || (cpu >= 0 ? cpu : average) >= budget * .9f ? theme::Warn
+																			   : theme::Ok;
+	char text[48];
+	if (oneRow)
+		std::snprintf(text, sizeof(text), "%.0f fps", average > 0 ? 1000 / average : 0);
+	else
+		std::snprintf(text, sizeof(text), "%.0f fps, %.1f ms", average > 0 ? 1000 / average : 0, average);
+	auto* draw = ImGui::GetWindowDrawList();
+	const float font = ImGui::GetFontSize(), scale = font / 16;
+	const float textY = oneRow ? area.y + (area.height - font) / 2 : area.y + 2 * scale;
+	draw->AddText({area.x, textY}, color, text);
+	const ImVec2 hoverMin{area.x, area.y}, hoverMax{area.x + area.width, area.y + area.height};
+	// A sparkline under the numbers: one bar per frame, dashed budget at mid height.
+	float sparkTop = textY + font + 3 * scale;
+	const float sparkBottom = area.y + area.height - 3 * scale;
+	if (!oneRow && cpu >= 0 && sparkBottom - sparkTop >= font + 3 * scale)
+	{
+		char cpuText[48];
+		std::snprintf(cpuText, sizeof(cpuText), "CPU span %.1f ms", cpu);
+		draw->PushClipRect(hoverMin, hoverMax, true);
+		draw->AddText({area.x, sparkTop}, theme::TextDim, cpuText);
+		draw->PopClipRect();
+		sparkTop += font + 3 * scale;
+	}
+	if (!oneRow && sparkBottom - sparkTop >= 10 * scale)
+	{
+		const float height = sparkBottom - sparkTop, step = area.width / 90;
+		for (auto index = first; index <= last; ++index)
+		{
+			const auto& frame = history.At(index);
+			const float work = frame.cpuMilliseconds >= 0 ? frame.cpuMilliseconds : frame.frameMilliseconds;
+			const float bar = std::min(height, height * work / (2 * std::max(1.f, budget)));
+			const float x = area.x + (index - first) * step;
+			const ImU32 tone = frame.flags & (HistoryLate | HistoryDropped) ? theme::Record
+							   : work >= budget * .9f						? theme::Warn
+																			: theme::Accent;
+			draw->AddRectFilled({x, sparkBottom - bar}, {x + std::max(1.f, step - scale), sparkBottom}, tone);
+		}
+		const float middle = sparkBottom - height / 2;
+		for (float dash = area.x; dash < area.x + area.width; dash += 6 * scale)
+			draw->AddLine({dash, middle}, {std::min(area.x + area.width, dash + 3 * scale), middle},
+						  theme::Fade(theme::TextDim, .7f), scale);
+	}
+	if (ImGui::IsMouseHoveringRect(hoverMin, hoverMax) && ImGui::IsWindowHovered())
+	{
+		ImGui::BeginTooltip();
+		ImGui::Text("Last %zu application intervals (ms): min %.1f / avg %.1f / max %.1f", count, minimum, average,
+					maximum);
+		ImGui::TextDisabled("Display period %.1f ms. %zu misses / 10 s", budget, missed);
+		char gpuText[32] = "unavailable";
+		if (gpu >= 0)
+			std::snprintf(gpuText, sizeof(gpuText), "%.2f ms", gpu);
+		if (cpu >= 0)
+			ImGui::TextDisabled("CPU span %.1f ms. Compositor GPU %s", cpu, gpuText);
+		else
+			ImGui::TextDisabled("CPU span unavailable. Compositor GPU %s", gpuText);
+		ImGui::TextDisabled("Application GPU time is unavailable");
+		ImGui::EndTooltip();
+	}
+}
+
+void TimelinePanel::DrawLegend()
+{
+	if (!ImGui::BeginPopup("Timeline legend"))
+		return;
+	const auto row = [](const char* name, const char* meaning) {
+		ImGui::TextUnformatted(name);
+		ImGui::SameLine(ImGui::GetFontSize() * 7);
+		ImGui::TextDisabled("%s", meaning);
+	};
+	SectionLabel("Lanes");
+	row("Frame time", "One bar per frame. Dashed line is the frame budget");
+	row("", "Amber ran long, red missed its display time");
+	row("paused", "The app was paused and advanced one frame at a time.");
+	row("Images", "Saved images. Diamonds mark snapshots. Filled diamonds are pinned.");
+	row("Input", "Left hand above, right hand below. Shading marks scripts and replays.");
+	row("Red band", "Click the tab to play a take or open the Library.");
+	row("Blue band", "A replay or script drove these frames");
+	row("Ruler dots", "Connections, pauses and script output. Triangles mark saved points.");
+	SectionLabel("Mouse and keys");
+	row("Wheel", "Zoom around the pointer");
+	row("Middle drag", "Pan");
+	row("Click", "Show that frame");
+	row("Drag ruler", "Select a range");
+	row(", and .", "Go to the previous or next frame. Hold Shift to jump between markers.");
+	row("M", "Add a marker");
+	row("Home / End", "Fit everything / go live");
+	ImGui::EndPopup();
 }
 } // namespace simxr::app

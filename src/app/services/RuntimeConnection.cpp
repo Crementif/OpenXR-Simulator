@@ -23,6 +23,130 @@ RuntimeConnection::RuntimeConnection(const RuntimeConnectionConfig& configuratio
 	m_worker = std::thread([this] { Run(); });
 }
 
+RuntimeConnection::~RuntimeConnection()
+{
+	Close();
+}
+
+std::uint64_t RuntimeConnection::Connect(std::string path, std::optional<std::uint64_t> expectedProcess)
+{
+	std::vector<Queued> requests;
+	std::vector<RuntimeReply> replies;
+	control::ControlPacket hello;
+	requests.reserve(m_configuration.maxPending);
+	replies.reserve(m_configuration.maxReplies);
+	std::lock_guard lock(m_mutex);
+	if (m_stopping || m_workerExited || m_snapshot.epoch == std::numeric_limits<std::uint64_t>::max())
+		return 0;
+	m_requests.swap(requests);
+	m_replies.swap(replies);
+	hello = std::move(m_snapshot.hello);
+	m_snapshot.path = std::move(path);
+	m_expectedProcess = expectedProcess;
+	m_snapshot.detail.clear();
+	m_snapshot.appName.clear();
+	m_snapshot.peerProcess = 0;
+	m_snapshot.state = RuntimeConnectionState::Connecting;
+	m_snapshot.inFlight = false;
+	m_requested = true;
+	++m_snapshot.epoch;
+	m_changed.notify_all();
+	return m_snapshot.epoch;
+}
+
+void RuntimeConnection::Disconnect(std::optional<std::uint64_t> expectedEpoch)
+{
+	std::vector<Queued> requests;
+	std::vector<RuntimeReply> replies;
+	control::ControlPacket hello;
+	std::lock_guard lock(m_mutex);
+	if (m_stopping || (expectedEpoch && *expectedEpoch != m_snapshot.epoch))
+		return;
+	m_requests.swap(requests);
+	m_replies.swap(replies);
+	hello = std::move(m_snapshot.hello);
+	m_requested = false;
+	m_snapshot.peerProcess = 0;
+	m_snapshot.state = RuntimeConnectionState::Disconnected;
+	m_snapshot.inFlight = false;
+	m_snapshot.detail.clear();
+	m_snapshot.appName.clear();
+	if (m_snapshot.epoch != std::numeric_limits<std::uint64_t>::max())
+		++m_snapshot.epoch;
+	m_changed.notify_all();
+}
+
+void RuntimeConnection::Close() noexcept
+{
+	std::vector<Queued> requests;
+	std::vector<RuntimeReply> replies;
+	control::ControlPacket hello;
+	bool self;
+	{
+		std::lock_guard lock(m_mutex);
+		self = !m_workerExited && m_workerId == std::this_thread::get_id();
+	}
+	// A packet callback on the worker cannot join itself, and must not wait on
+	// the lifecycle mutex while an external owner is joining that worker.
+	std::unique_lock lifecycle(m_lifecycle, std::defer_lock);
+	if (!self)
+		lifecycle.lock();
+	{
+		std::lock_guard lock(m_mutex);
+		m_stopping = true;
+		m_requested = false;
+		m_snapshot.state = RuntimeConnectionState::Disconnected;
+		m_snapshot.inFlight = false;
+		m_snapshot.appName.clear();
+		m_requests.swap(requests);
+		m_replies.swap(replies);
+		hello = std::move(m_snapshot.hello);
+	}
+	m_changed.notify_all();
+	if (!self && m_worker.joinable())
+		m_worker.join();
+	if (lifecycle.owns_lock())
+		lifecycle.unlock();
+	// Last packet/FD readers may reenter Close or Snapshot after both locks end.
+}
+
+std::uint64_t RuntimeConnection::Submit(control::ControlPacket request)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_stopping || m_workerExited || m_snapshot.state != RuntimeConnectionState::Connected || !m_nextTicket ||
+		m_requests.size() + m_replies.size() + (m_snapshot.inFlight ? 1 : 0) >= m_configuration.maxPending)
+		return 0;
+	const auto ticket = m_nextTicket;
+	m_requests.push_back({ticket, m_snapshot.epoch, std::move(request)});
+	++m_nextTicket;
+	m_changed.notify_all();
+	return ticket;
+}
+
+std::vector<RuntimeReply> RuntimeConnection::Poll()
+{
+	std::vector<RuntimeReply> result;
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_replies.empty())
+			return result;
+	}
+	result.reserve(m_configuration.maxReplies);
+	std::lock_guard lock(m_mutex);
+	result.swap(m_replies);
+	m_changed.notify_all();
+	return result;
+}
+
+RuntimeConnectionSnapshot RuntimeConnection::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	auto result = m_snapshot;
+	result.queued = m_requests.size();
+	result.ready = m_replies.size();
+	return result;
+}
+
 bool RuntimeConnection::Current(std::uint64_t epoch)
 {
 	std::lock_guard lock(m_mutex);
@@ -54,6 +178,7 @@ void RuntimeConnection::Reply(RuntimeReply reply)
 	m_replies.push_back(std::move(reply)); // Capacity was reserved before the request began.
 	m_changed.notify_all();
 }
+
 #if defined(__linux__) || defined(_WIN32)
 static std::string TimeoutDetail(const control::ControlExchangeTimeout& error, std::uint16_t opcode,
 								 std::chrono::milliseconds deadline)
@@ -84,6 +209,7 @@ control::ControlPacket RuntimeConnection::Exchange(control::LocalControlClient& 
 	}
 }
 #endif
+
 void RuntimeConnection::Run() noexcept
 {
 	{
@@ -253,129 +379,5 @@ void RuntimeConnection::RunChecked()
 		}
 		Reply(std::move(reply));
 	}
-}
-
-RuntimeConnection::~RuntimeConnection()
-{
-	Close();
-}
-
-std::uint64_t RuntimeConnection::Connect(std::string path, std::optional<std::uint64_t> expectedProcess)
-{
-	std::vector<Queued> requests;
-	std::vector<RuntimeReply> replies;
-	control::ControlPacket hello;
-	requests.reserve(m_configuration.maxPending);
-	replies.reserve(m_configuration.maxReplies);
-	std::lock_guard lock(m_mutex);
-	if (m_stopping || m_workerExited || m_snapshot.epoch == std::numeric_limits<std::uint64_t>::max())
-		return 0;
-	m_requests.swap(requests);
-	m_replies.swap(replies);
-	hello = std::move(m_snapshot.hello);
-	m_snapshot.path = std::move(path);
-	m_expectedProcess = expectedProcess;
-	m_snapshot.detail.clear();
-	m_snapshot.appName.clear();
-	m_snapshot.peerProcess = 0;
-	m_snapshot.state = RuntimeConnectionState::Connecting;
-	m_snapshot.inFlight = false;
-	m_requested = true;
-	++m_snapshot.epoch;
-	m_changed.notify_all();
-	return m_snapshot.epoch;
-}
-
-void RuntimeConnection::Disconnect(std::optional<std::uint64_t> expectedEpoch)
-{
-	std::vector<Queued> requests;
-	std::vector<RuntimeReply> replies;
-	control::ControlPacket hello;
-	std::lock_guard lock(m_mutex);
-	if (m_stopping || (expectedEpoch && *expectedEpoch != m_snapshot.epoch))
-		return;
-	m_requests.swap(requests);
-	m_replies.swap(replies);
-	hello = std::move(m_snapshot.hello);
-	m_requested = false;
-	m_snapshot.peerProcess = 0;
-	m_snapshot.state = RuntimeConnectionState::Disconnected;
-	m_snapshot.inFlight = false;
-	m_snapshot.detail.clear();
-	m_snapshot.appName.clear();
-	if (m_snapshot.epoch != std::numeric_limits<std::uint64_t>::max())
-		++m_snapshot.epoch;
-	m_changed.notify_all();
-}
-
-std::uint64_t RuntimeConnection::Submit(control::ControlPacket request)
-{
-	std::lock_guard lock(m_mutex);
-	if (m_stopping || m_workerExited || m_snapshot.state != RuntimeConnectionState::Connected || !m_nextTicket ||
-		m_requests.size() + m_replies.size() + (m_snapshot.inFlight ? 1 : 0) >= m_configuration.maxPending)
-		return 0;
-	const auto ticket = m_nextTicket;
-	m_requests.push_back({ticket, m_snapshot.epoch, std::move(request)});
-	++m_nextTicket;
-	m_changed.notify_all();
-	return ticket;
-}
-
-std::vector<RuntimeReply> RuntimeConnection::Poll()
-{
-	std::vector<RuntimeReply> result;
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_replies.empty())
-			return result;
-	}
-	result.reserve(m_configuration.maxReplies);
-	std::lock_guard lock(m_mutex);
-	result.swap(m_replies);
-	m_changed.notify_all();
-	return result;
-}
-
-RuntimeConnectionSnapshot RuntimeConnection::Snapshot() const
-{
-	std::lock_guard lock(m_mutex);
-	auto result = m_snapshot;
-	result.queued = m_requests.size();
-	result.ready = m_replies.size();
-	return result;
-}
-
-void RuntimeConnection::Close() noexcept
-{
-	std::vector<Queued> requests;
-	std::vector<RuntimeReply> replies;
-	control::ControlPacket hello;
-	bool self;
-	{
-		std::lock_guard lock(m_mutex);
-		self = !m_workerExited && m_workerId == std::this_thread::get_id();
-	}
-	// A packet callback on the worker cannot join itself, and must not wait on
-	// the lifecycle mutex while an external owner is joining that worker.
-	std::unique_lock lifecycle(m_lifecycle, std::defer_lock);
-	if (!self)
-		lifecycle.lock();
-	{
-		std::lock_guard lock(m_mutex);
-		m_stopping = true;
-		m_requested = false;
-		m_snapshot.state = RuntimeConnectionState::Disconnected;
-		m_snapshot.inFlight = false;
-		m_snapshot.appName.clear();
-		m_requests.swap(requests);
-		m_replies.swap(replies);
-		hello = std::move(m_snapshot.hello);
-	}
-	m_changed.notify_all();
-	if (!self && m_worker.joinable())
-		m_worker.join();
-	if (lifecycle.owns_lock())
-		lifecycle.unlock();
-	// Last packet/FD readers may reenter Close or Snapshot after both locks end.
 }
 } // namespace simxr::app

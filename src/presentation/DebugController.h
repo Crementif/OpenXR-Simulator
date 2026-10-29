@@ -182,9 +182,11 @@ public:
 	DebugController(std::shared_ptr<Session> session, std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>(),
 					DebugControllerConfig config = {});
 	~DebugController();
-	void Close(bool resume = true) noexcept;
 	DebugController(const DebugController&) = delete;
 	DebugController& operator=(const DebugController&) = delete;
+
+	void Close(bool resume = true) noexcept;
+
 	// Nonzero expected generations serialize with session lifecycle transitions.
 	// Lock order is execute -> session lifecycle -> controller state.
 	std::optional<DebugLease> Acquire(SessionGeneration expected = {});
@@ -215,6 +217,7 @@ private:
 	void Own(DebugLeaseId lease, CaptureId capture);
 	void RetireOwned(std::optional<DebugLeaseId> lease = {});
 	void Inspect(DebugOperation& operation, const SnapshotRecord& record);
+
 	std::shared_ptr<Session> m_session;
 	std::shared_ptr<Clock> m_clock;
 	const DebugControllerConfig m_config;

@@ -26,44 +26,6 @@ static XrTime MonotonicTime()
 	return time.tv_sec * 1000000000LL + time.tv_nsec;
 }
 
-static std::filesystem::path ReadDataDirectory()
-{
-	const char* explicitPath = std::getenv("SIMXR_DATA_DIR");
-	if (explicitPath && *explicitPath)
-		return explicitPath;
-	const char* base = std::getenv("XDG_DATA_HOME");
-	if (base && *base)
-		return std::filesystem::path(base) / "OpenXR-Simulator";
-	const char* home = std::getenv("HOME");
-	return std::filesystem::path(home ? home : ".") / ".local/share/OpenXR-Simulator";
-}
-
-const ExtensionRegistry& LinuxRuntime::Extensions()
-{
-	static constexpr std::array<std::string_view, 4> s_vulkanCommands{
-		"xrGetVulkanInstanceExtensionsKHR", "xrGetVulkanDeviceExtensionsKHR", "xrGetVulkanGraphicsDeviceKHR",
-		"xrGetVulkanGraphicsRequirementsKHR"};
-	static constexpr std::array<std::string_view, 4> s_vulkan2Commands{
-		"xrCreateVulkanInstanceKHR", "xrCreateVulkanDeviceKHR", "xrGetVulkanGraphicsDevice2KHR",
-		"xrGetVulkanGraphicsRequirements2KHR"};
-	static constexpr std::array<std::string_view, 2> s_timeCommands{"xrConvertTimespecTimeToTimeKHR",
-																	"xrConvertTimeToTimespecTimeKHR"};
-	static const std::vector<ExtensionDefinition> s_definitions = [] {
-		std::vector<ExtensionDefinition> result{
-			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, s_vulkanCommands},
-			{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
-			{XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME, XR_KHR_convert_timespec_time_SPEC_VERSION, s_timeCommands}};
-		const auto simulation = SimulationExtensions({true, true});
-		result.insert(result.end(), simulation.begin(), simulation.end());
-		if (!std::getenv("SIMXR_VULKAN_V1_ONLY"))
-			result.push_back(
-				{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, s_vulkan2Commands});
-		return result;
-	}();
-	static const ExtensionRegistry s_registry(s_definitions);
-	return s_registry;
-}
-
 LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::filesystem::path& directory,
 							 ExecutionMode executionMode)
 	: core(std::move(instance)), mode(executionMode),
@@ -116,6 +78,39 @@ LinuxRuntime::~LinuxRuntime()
 {
 	CloseControlEndpoint();
 	m_core.Close();
+}
+
+const ExtensionRegistry& LinuxRuntime::Extensions()
+{
+	static constexpr std::array<std::string_view, 4> s_vulkanCommands{
+		"xrGetVulkanInstanceExtensionsKHR", "xrGetVulkanDeviceExtensionsKHR", "xrGetVulkanGraphicsDeviceKHR",
+		"xrGetVulkanGraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 4> s_vulkan2Commands{
+		"xrCreateVulkanInstanceKHR", "xrCreateVulkanDeviceKHR", "xrGetVulkanGraphicsDevice2KHR",
+		"xrGetVulkanGraphicsRequirements2KHR"};
+	static constexpr std::array<std::string_view, 2> s_timeCommands{"xrConvertTimespecTimeToTimeKHR",
+																	"xrConvertTimeToTimespecTimeKHR"};
+	static const std::vector<ExtensionDefinition> s_definitions = [] {
+		std::vector<ExtensionDefinition> result{
+			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, s_vulkanCommands},
+			{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
+			{XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME, XR_KHR_convert_timespec_time_SPEC_VERSION, s_timeCommands}};
+		const auto simulation = SimulationExtensions({true, true});
+		result.insert(result.end(), simulation.begin(), simulation.end());
+		if (!std::getenv("SIMXR_VULKAN_V1_ONLY"))
+			result.push_back(
+				{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, s_vulkan2Commands});
+		return result;
+	}();
+	static const ExtensionRegistry s_registry(s_definitions);
+	return s_registry;
+}
+
+RuntimeTime LinuxRuntime::SessionTime(const SessionBinding& session)
+{
+	if (session.owner->mode == ExecutionMode::Deterministic)
+		return session.core->Snapshot().time;
+	return {Duration{MonotonicTime()}};
 }
 
 Runtime& LinuxRuntime::Core() noexcept
@@ -184,6 +179,30 @@ XrResult LinuxRuntime::CreateInstance(const XrInstanceCreateInfo* info, XrInstan
 	m_currentInstance = attached;
 	*output = attached;
 	creation.committed = true;
+	return XR_SUCCESS;
+}
+
+XrResult LinuxRuntime::DestroyInstance(XrInstance handle)
+{
+	std::lock_guard lifecycle(m_lifecycleMutex);
+	const auto instance = FindInstance(handle);
+	std::unique_lock lock(m_mutex);
+	if (!FindInstance(instance))
+		return XR_ERROR_HANDLE_INVALID;
+	if (const auto session = CurrentSession())
+	{
+		lock.unlock();
+		const auto result = DestroySession(session);
+		if (XR_FAILED(result))
+			return result;
+		lock.lock();
+	}
+	instance->Log("destroy instance");
+	m_core.DestroyInstance(instance);
+	m_instances.Remove(instance);
+	m_currentInstance = XR_NULL_HANDLE;
+	lock.unlock();
+	instance->Close();
 	return XR_SUCCESS;
 }
 
@@ -344,43 +363,6 @@ XrResult LinuxRuntime::DestroySession(XrSession handle)
 	return XR_SUCCESS;
 }
 
-XrResult LinuxRuntime::DestroyInstance(XrInstance handle)
-{
-	std::lock_guard lifecycle(m_lifecycleMutex);
-	const auto instance = FindInstance(handle);
-	std::unique_lock lock(m_mutex);
-	if (!FindInstance(instance))
-		return XR_ERROR_HANDLE_INVALID;
-	if (const auto session = CurrentSession())
-	{
-		lock.unlock();
-		const auto result = DestroySession(session);
-		if (XR_FAILED(result))
-			return result;
-		lock.lock();
-	}
-	instance->Log("destroy instance");
-	m_core.DestroyInstance(instance);
-	m_instances.Remove(instance);
-	m_currentInstance = XR_NULL_HANDLE;
-	lock.unlock();
-	instance->Close();
-	return XR_SUCCESS;
-}
-
-RuntimeTime LinuxRuntime::SessionTime(const SessionBinding& session)
-{
-	if (session.owner->mode == ExecutionMode::Deterministic)
-		return session.core->Snapshot().time;
-	return {Duration{MonotonicTime()}};
-}
-
-const std::filesystem::path& LinuxRuntime::DataDirectory()
-{
-	std::call_once(m_dataDirectoryOnce, [this] { m_dataDirectory = ReadDataDirectory(); });
-	return m_dataDirectory;
-}
-
 void LinuxRuntime::StartControlEndpoint()
 {
 	std::lock_guard lock(m_endpointMutex);
@@ -406,6 +388,16 @@ void LinuxRuntime::StartControlEndpoint()
 	}
 }
 
+bool LinuxRuntime::Shutdown()
+{
+	std::lock_guard lifecycle(m_lifecycleMutex);
+	if (!m_core.Instances().empty())
+		return false;
+	CloseControlEndpoint();
+	m_core.Close();
+	return true;
+}
+
 void LinuxRuntime::CloseControlEndpoint() noexcept
 {
 	std::lock_guard lock(m_endpointMutex);
@@ -416,13 +408,22 @@ void LinuxRuntime::CloseControlEndpoint() noexcept
 		m_control->Close();
 }
 
-bool LinuxRuntime::Shutdown()
+static std::filesystem::path ReadDataDirectory()
 {
-	std::lock_guard lifecycle(m_lifecycleMutex);
-	if (!m_core.Instances().empty())
-		return false;
-	CloseControlEndpoint();
-	m_core.Close();
-	return true;
+	const char* explicitPath = std::getenv("SIMXR_DATA_DIR");
+	if (explicitPath && *explicitPath)
+		return explicitPath;
+	const char* base = std::getenv("XDG_DATA_HOME");
+	if (base && *base)
+		return std::filesystem::path(base) / "OpenXR-Simulator";
+	const char* home = std::getenv("HOME");
+	return std::filesystem::path(home ? home : ".") / ".local/share/OpenXR-Simulator";
 }
+
+const std::filesystem::path& LinuxRuntime::DataDirectory()
+{
+	std::call_once(m_dataDirectoryOnce, [this] { m_dataDirectory = ReadDataDirectory(); });
+	return m_dataDirectory;
+}
+
 } // namespace simxr

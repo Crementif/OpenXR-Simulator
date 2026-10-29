@@ -30,21 +30,32 @@ public:
 	~UiRenderer();
 	UiRenderer(const UiRenderer&) = delete;
 	UiRenderer& operator=(const UiRenderer&) = delete;
+
 	void ProcessEvent(const SDL_Event& event);
 	bool BeginFrame();
 	// transfers records GPU copies before the UI pass in the same submission.
 	bool Render(std::span<const VkSemaphore> readyWaits = {},
 				const std::function<void(VkCommandBuffer)>& transfers = {});
-	VulkanDeviceAccess DeviceAccess() const;
-	std::uint64_t CompletedFrames();
 	void WaitIdle();
 	void RequestScreenshot(std::filesystem::path path);
+
+	VulkanDeviceAccess DeviceAccess() const;
 	std::string DeviceName() const;
+	std::uint64_t CompletedFrames();
 	std::uint64_t SubmittedFrames() const;
 	std::uint32_t RebuildCount() const;
 
 private:
 	struct Resources;
+
+	static void CheckResult(VkResult result);
+	void Initialize(Window& owner, bool validation, std::shared_ptr<ValidationLog> log, bool screenshots,
+					bool proofConsumer);
+	void CreateSwapchain();
+	void PrepareReadback();
+	void RecordReadback(VkCommandBuffer command, VkImage source);
+	void WriteScreenshot();
+
 	std::shared_ptr<Resources> m_resources;
 	Window* m_window = nullptr;
 	bool m_rendererReady = false;
@@ -56,12 +67,5 @@ private:
 	std::uint32_t m_creations = 0;
 	std::string m_adapter;
 	std::filesystem::path m_screenshotPath;
-	static void CheckResult(VkResult result);
-	void Initialize(Window& owner, bool validation, std::shared_ptr<ValidationLog> log, bool screenshots,
-					bool proofConsumer);
-	void CreateSwapchain();
-	void PrepareReadback();
-	void RecordReadback(VkCommandBuffer command, VkImage source);
-	void WriteScreenshot();
 };
 } // namespace simxr::app

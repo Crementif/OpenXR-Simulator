@@ -41,23 +41,27 @@ class HeadsetOutput
 public:
 	explicit HeadsetOutput(HeadsetGraphics& graphics);
 	~HeadsetOutput();
+
 	void Open(OpenXrRuntime& runtime, XrSession session);
+	bool Close();
+
+	void Poll();
 	// physicalFromWorld maps simulator-world image poses into the current base space.
 	// A successful call releases an image and returns the exact projection to submit.
 	bool Draw(std::shared_ptr<const HeadsetImageFrame> source, XrPosef physicalFromWorld,
 			  const std::array<XrFovf, 2>& physicalFovs = {});
 	bool DrawScreen(std::shared_ptr<const HeadsetImageFrame> source);
+
 	XrSwapchain Swapchain() const;
 	XrExtent2Di Extent() const;
 	std::shared_ptr<VulkanDevice> Device() const;
 	const std::array<XrCompositionLayerProjectionView, 2>& Projection() const;
-	void Poll();
-	bool Close();
 
 private:
 	bool Copy(std::shared_ptr<const HeadsetImageFrame> source, const std::optional<std::array<XrFovf, 2>>& fovs);
 	void Record(HeadsetOutputImage& target, const VulkanImage& pixels, bool inspection);
 	void Label(HeadsetOutputImage& target);
+
 	HeadsetGraphics& m_graphics;
 	std::unique_ptr<HeadsetOutputResources> m_resources;
 	XrSwapchain m_swapchain = XR_NULL_HANDLE;

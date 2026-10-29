@@ -32,30 +32,35 @@ public:
 
 	Runtime(const ExtensionRegistry& extensions, const RuntimeConfiguration& configuration = {});
 	~Runtime();
+
 	XrResult CreateInstance(const XrInstanceCreateInfo* info, InstanceRef& output);
 	XrResult DestroyInstance(XrInstance instance);
 	XrResult CreateSession(XrInstance owner, SessionRef& output,
 						   std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
 	XrResult DestroySession(XrSession session);
+
 	InstanceRef FindInstance(XrInstance instance) const;
 	SessionRef FindSession(XrSession session) const;
 	SessionRef FindSession(XrSession session, XrInstance owner) const;
 	std::vector<XrInstance> Instances() const;
 	std::vector<XrSession> Sessions(XrInstance owner) const;
 	RuntimeConfiguration Configuration() const;
-	std::shared_ptr<DebugController> Debugger(XrSession session, const DebugControllerConfig& configuration = {});
 	GameBridge& Game();
+
+	std::shared_ptr<DebugController> Debugger(XrSession session, const DebugControllerConfig& configuration = {});
 	void CloseDebugger(XrSession session);
+
 	void Close();
 
 private:
+	struct DebugService;
+	using DebugServices = std::unordered_map<XrSession, std::shared_ptr<DebugService>>;
+
 	const ExtensionRegistry m_extensions;
 	const RuntimeConfiguration m_configuration;
 	mutable std::mutex m_mutex;
 	HandleRegistry<XrInstance, Instance, std::uint32_t> m_instances;
 	HandleRegistry<XrSession, Session, XrInstance> m_sessions;
-	struct DebugService;
-	using DebugServices = std::unordered_map<XrSession, std::shared_ptr<DebugService>>;
 	std::unique_ptr<DebugServices> m_debuggers = std::make_unique<DebugServices>();
 	GameBridge m_game;
 	bool m_closed = false;

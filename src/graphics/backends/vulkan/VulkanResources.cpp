@@ -31,6 +31,14 @@ VulkanCommands::~VulkanCommands()
 	Destroy();
 }
 
+void VulkanCommands::Reset()
+{
+	CheckVulkan(vkResetCommandPool(m_device, pool, 0), "Reset completed command pool");
+	if (descriptors)
+		CheckVulkan(vkResetDescriptorPool(m_device, descriptors, 0), "Reset completed descriptors");
+	CheckVulkan(vkResetFences(m_device, 1, &fence), "Reset completed fence");
+}
+
 void VulkanCommands::Destroy() noexcept
 {
 	if (pool)
@@ -42,16 +50,6 @@ void VulkanCommands::Destroy() noexcept
 	if (fence)
 		vkDestroyFence(m_device, fence, nullptr);
 }
-
-void VulkanCommands::Reset()
-{
-	CheckVulkan(vkResetCommandPool(m_device, pool, 0), "Reset completed command pool");
-	if (descriptors)
-		CheckVulkan(vkResetDescriptorPool(m_device, descriptors, 0), "Reset completed descriptors");
-	CheckVulkan(vkResetFences(m_device, 1, &fence), "Reset completed fence");
-}
-
-VulkanImage::VulkanImage(std::shared_ptr<VulkanDevice> owner) : device(std::move(owner)) {}
 
 std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> device, VkFormat format,
 												 VkExtent2D extent, std::uint32_t layers, VkImageUsageFlags usage,
@@ -115,23 +113,6 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 	return result;
 }
 
-std::shared_ptr<VulkanImage> VulkanImage::Lease(std::shared_ptr<VulkanImage> allocation)
-{
-	auto result = std::shared_ptr<VulkanImage>(new VulkanImage(allocation->device));
-	result->m_allocation = std::move(allocation);
-	const auto& source = *result->m_allocation;
-	result->image = source.image;
-	result->memory = source.memory;
-	result->allocationSize = source.allocationSize;
-	result->format = source.format;
-	result->extent = source.extent;
-	result->layers = source.layers;
-	result->mipLevels = source.mipLevels;
-	result->samples = source.samples;
-	result->usage = source.usage;
-	return result;
-}
-
 VulkanImage::~VulkanImage()
 {
 	for (const auto& cached : m_framebuffers)
@@ -175,14 +156,6 @@ VkImageLayout VulkanImage::ApplicationLayout() const
 												  : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 }
 
-const VulkanImage& VulkanImage::Owner() const noexcept
-{
-	const auto* owner = this;
-	while (owner->m_allocation)
-		owner = owner->m_allocation.get();
-	return *owner;
-}
-
 VkImageView VulkanImage::View(std::uint32_t slice, VkImageAspectFlags aspect) const
 {
 	const auto& owner = Owner();
@@ -223,6 +196,33 @@ VkFramebuffer VulkanImage::Framebuffer(VkRenderPass pass, std::uint32_t slice) c
 				"Create cached framebuffer");
 	owner.m_framebuffers.push_back({pass, slice, framebuffer});
 	return framebuffer;
+}
+
+std::shared_ptr<VulkanImage> VulkanImage::Lease(std::shared_ptr<VulkanImage> allocation)
+{
+	auto result = std::shared_ptr<VulkanImage>(new VulkanImage(allocation->device));
+	result->m_allocation = std::move(allocation);
+	const auto& source = *result->m_allocation;
+	result->image = source.image;
+	result->memory = source.memory;
+	result->allocationSize = source.allocationSize;
+	result->format = source.format;
+	result->extent = source.extent;
+	result->layers = source.layers;
+	result->mipLevels = source.mipLevels;
+	result->samples = source.samples;
+	result->usage = source.usage;
+	return result;
+}
+
+VulkanImage::VulkanImage(std::shared_ptr<VulkanDevice> owner) : device(std::move(owner)) {}
+
+const VulkanImage& VulkanImage::Owner() const noexcept
+{
+	const auto* owner = this;
+	while (owner->m_allocation)
+		owner = owner->m_allocation.get();
+	return *owner;
 }
 
 void VulkanImageBarrier(VkCommandBuffer command, const VulkanImage& image, VkImageLayout previous, VkImageLayout next,

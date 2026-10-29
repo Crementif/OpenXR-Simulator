@@ -67,6 +67,75 @@ CompanionFrameReceiver::~CompanionFrameReceiver()
 	Destroy(m_source);
 }
 
+void CompanionFrameReceiver::Poll()
+{
+	if (m_finished)
+		return;
+	if (!m_initialized)
+	{
+		if (!Readable(m_channel))
+			return;
+		Initialize();
+	}
+	for (std::uint32_t index = 0; index < m_received; ++index)
+	{
+		auto& frame = m_frames[index];
+		if (frame.copied)
+			continue;
+		const auto status = vkGetFenceStatus(m_access.device, frame.completion);
+		if (status == VK_NOT_READY)
+			continue;
+		Check(status, "observe companion private frame completion");
+		sharing::Send(m_channel, &index, sizeof(index));
+		frame.copied = true;
+		std::printf("Companion proof frame=%u retained=private-GPU sourceReusable=yes\n", index + 1);
+	}
+	if (m_received < m_frames.size() && Readable(m_channel))
+	{
+		std::uint32_t frame = UINT32_MAX;
+		sharing::Descriptors descriptors;
+		sharing::Receive(m_channel, &frame, sizeof(frame), descriptors);
+		if (frame != m_received)
+			throw std::runtime_error("Companion proof frame identity mismatch");
+		SubmitCopy(m_received++);
+	}
+}
+
+std::vector<CompanionProofFrame> CompanionFrameReceiver::ReadyFrames() const
+{
+	std::vector<CompanionProofFrame> result;
+	for (std::uint32_t index = 0; index < m_frames.size(); ++index)
+		if (m_frames[index].copied)
+			result.push_back({index + 1, m_frames[index].output.view, m_sampler, m_frames[index].sampleReady});
+	return result;
+}
+
+bool CompanionFrameReceiver::AllCopied() const
+{
+	return std::all_of(m_frames.begin(), m_frames.end(), [](const auto& frame) { return frame.copied; });
+}
+
+void CompanionFrameReceiver::MarkSampled(std::uint32_t id)
+{
+	if (!id || id > m_frames.size() || !m_frames[id - 1].copied)
+		throw std::invalid_argument("Companion proof sampled an unavailable image");
+	m_frames[id - 1].sampled = true;
+}
+
+void CompanionFrameReceiver::Finish(bool verifyPixels)
+{
+	if (m_finished)
+		return;
+	if (!std::all_of(m_frames.begin(), m_frames.end(), [](const auto& frame) { return frame.sampled; }))
+		throw std::logic_error("Companion proof has not sampled every retained image");
+	if (verifyPixels)
+		Verify();
+	const std::uint32_t count = 3;
+	sharing::Send(m_channel, &count, sizeof(count));
+	m_finished = true;
+	std::puts("Companion proof: three private GPU images retained and sampled after source reuse");
+}
+
 void CompanionFrameReceiver::Drain() noexcept
 {
 	for (const auto& frame : m_frames)
@@ -246,40 +315,6 @@ void CompanionFrameReceiver::SubmitCopy(std::uint32_t index)
 	frame.submitted = true;
 }
 
-void CompanionFrameReceiver::Poll()
-{
-	if (m_finished)
-		return;
-	if (!m_initialized)
-	{
-		if (!Readable(m_channel))
-			return;
-		Initialize();
-	}
-	for (std::uint32_t index = 0; index < m_received; ++index)
-	{
-		auto& frame = m_frames[index];
-		if (frame.copied)
-			continue;
-		const auto status = vkGetFenceStatus(m_access.device, frame.completion);
-		if (status == VK_NOT_READY)
-			continue;
-		Check(status, "observe companion private frame completion");
-		sharing::Send(m_channel, &index, sizeof(index));
-		frame.copied = true;
-		std::printf("Companion proof frame=%u retained=private-GPU sourceReusable=yes\n", index + 1);
-	}
-	if (m_received < m_frames.size() && Readable(m_channel))
-	{
-		std::uint32_t frame = UINT32_MAX;
-		sharing::Descriptors descriptors;
-		sharing::Receive(m_channel, &frame, sizeof(frame), descriptors);
-		if (frame != m_received)
-			throw std::runtime_error("Companion proof frame identity mismatch");
-		SubmitCopy(m_received++);
-	}
-}
-
 void CompanionFrameReceiver::Verify()
 {
 	constexpr VkDeviceSize bytes = ImageExtent.width * ImageExtent.height * 4;
@@ -397,40 +432,5 @@ void CompanionFrameReceiver::Verify()
 										 std::to_string(byte));
 		std::printf("Companion proof explicitAnalysis frame=%u exactRGBA=passed pixels=4096\n", index + 1);
 	}
-}
-
-std::vector<CompanionProofFrame> CompanionFrameReceiver::ReadyFrames() const
-{
-	std::vector<CompanionProofFrame> result;
-	for (std::uint32_t index = 0; index < m_frames.size(); ++index)
-		if (m_frames[index].copied)
-			result.push_back({index + 1, m_frames[index].output.view, m_sampler, m_frames[index].sampleReady});
-	return result;
-}
-
-bool CompanionFrameReceiver::AllCopied() const
-{
-	return std::all_of(m_frames.begin(), m_frames.end(), [](const auto& frame) { return frame.copied; });
-}
-
-void CompanionFrameReceiver::MarkSampled(std::uint32_t id)
-{
-	if (!id || id > m_frames.size() || !m_frames[id - 1].copied)
-		throw std::invalid_argument("Companion proof sampled an unavailable image");
-	m_frames[id - 1].sampled = true;
-}
-
-void CompanionFrameReceiver::Finish(bool verifyPixels)
-{
-	if (m_finished)
-		return;
-	if (!std::all_of(m_frames.begin(), m_frames.end(), [](const auto& frame) { return frame.sampled; }))
-		throw std::logic_error("Companion proof has not sampled every retained image");
-	if (verifyPixels)
-		Verify();
-	const std::uint32_t count = 3;
-	sharing::Send(m_channel, &count, sizeof(count));
-	m_finished = true;
-	std::puts("Companion proof: three private GPU images retained and sampled after source reuse");
 }
 } // namespace simxr::app

@@ -46,19 +46,23 @@ public:
 	~McpApplication();
 	McpApplication(const McpApplication&) = delete;
 	McpApplication& operator=(const McpApplication&) = delete;
+
+	void Close() noexcept;
+	void Poll(ApplicationCatalog& applications);
+
 	std::optional<nlohmann::json> Call(std::string name, nlohmann::json arguments,
 									   const std::shared_ptr<McpCancellation>& cancellation,
 									   std::shared_ptr<AutomationOwner> owner = {});
 	std::optional<ApplicationSnapshot> Lookup(const std::string& application,
 											  const std::shared_ptr<McpCancellation>& cancellation);
 	nlohmann::json ApplicationDocument(const ApplicationSnapshot& application) const;
-	void Poll(ApplicationCatalog& applications);
-	void Close() noexcept;
+
 	bool Windowless() const noexcept;
 
 private:
 	struct Request;
 	bool Wait(const std::shared_ptr<Request>& request);
+
 	std::mutex m_mutex;
 	std::deque<std::shared_ptr<Request>> m_pending;
 	std::string m_instanceId;

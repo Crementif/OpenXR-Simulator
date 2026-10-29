@@ -32,6 +32,7 @@ public:
 	~McpConnector();
 	McpConnector(const McpConnector&) = delete;
 	McpConnector& operator=(const McpConnector&) = delete;
+
 	void Run();
 
 private:
@@ -57,6 +58,7 @@ private:
 	void Send(const nlohmann::json& message);
 	void Invalidate(std::uint64_t generation);
 	void Stop() noexcept;
+
 	std::optional<McpEndpoint> m_fixedEndpoint;
 #ifdef SIMXR_MCP_DISCOVERY
 	std::unique_ptr<McpInstanceDiscovery> m_discovery;

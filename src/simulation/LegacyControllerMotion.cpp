@@ -34,6 +34,38 @@ LegacyControllerMotion::LegacyControllerMotion()
 	m_controllers[1].local = {{0.2f, -0.3f, -0.4f}, 0, std::numbers::pi_v<float> / 2, 0};
 }
 
+ControllerMotionResult LegacyControllerMotion::Update(const ControllerMotionFrame& frame)
+{
+	// Validate hand identities before mutating any channel. Frame input contains
+	// no callbacks or native resources; evaluation and publication cannot allocate.
+	if (frame.pose)
+		HandIndex(frame.pose->hand);
+	if (frame.hold && frame.hold->hand)
+		HandIndex(*frame.hold->hand);
+	std::lock_guard lock(m_mutex);
+	AdvanceGlides(frame.glideSeconds);
+	const auto toggled = ApplyKeyboard(frame.keyboard);
+	if (frame.pose)
+		ApplyPose(*frame.pose);
+	if (frame.hold)
+		ApplyHoldEdit(*frame.hold);
+	ApplyHolds();
+	m_head = frame.head;
+	return {SnapshotLocked(m_head), toggled};
+}
+
+ControllerMotionSnapshot LegacyControllerMotion::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	return SnapshotLocked(m_head);
+}
+
+ControllerMotionSnapshot LegacyControllerMotion::Snapshot(ControllerHeadPose head) const
+{
+	std::lock_guard lock(m_mutex);
+	return SnapshotLocked(head);
+}
+
 std::size_t LegacyControllerMotion::HandIndex(ControllerHand hand)
 {
 	switch (hand)
@@ -239,26 +271,6 @@ void LegacyControllerMotion::ApplyHolds()
 	}
 }
 
-ControllerMotionResult LegacyControllerMotion::Update(const ControllerMotionFrame& frame)
-{
-	// Validate hand identities before mutating any channel. Frame input contains
-	// no callbacks or native resources; evaluation and publication cannot allocate.
-	if (frame.pose)
-		HandIndex(frame.pose->hand);
-	if (frame.hold && frame.hold->hand)
-		HandIndex(*frame.hold->hand);
-	std::lock_guard lock(m_mutex);
-	AdvanceGlides(frame.glideSeconds);
-	const auto toggled = ApplyKeyboard(frame.keyboard);
-	if (frame.pose)
-		ApplyPose(*frame.pose);
-	if (frame.hold)
-		ApplyHoldEdit(*frame.hold);
-	ApplyHolds();
-	m_head = frame.head;
-	return {SnapshotLocked(m_head), toggled};
-}
-
 ControllerMotionSnapshot LegacyControllerMotion::SnapshotLocked(ControllerHeadPose head) const
 {
 	ControllerMotionSnapshot snapshot;
@@ -271,15 +283,4 @@ ControllerMotionSnapshot LegacyControllerMotion::SnapshotLocked(ControllerHeadPo
 	return snapshot;
 }
 
-ControllerMotionSnapshot LegacyControllerMotion::Snapshot() const
-{
-	std::lock_guard lock(m_mutex);
-	return SnapshotLocked(m_head);
-}
-
-ControllerMotionSnapshot LegacyControllerMotion::Snapshot(ControllerHeadPose head) const
-{
-	std::lock_guard lock(m_mutex);
-	return SnapshotLocked(head);
-}
 } // namespace simxr::legacy

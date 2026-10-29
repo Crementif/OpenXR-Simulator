@@ -15,12 +15,6 @@ void HistoryCoverage::Add(FrameIdentity identity, std::uint64_t epoch, std::uint
 	m_next.push_back({identity, epoch, capture, flags & (HistoryPreview | HistorySnapshot | HistoryPinned)});
 }
 
-bool HistoryCoverage::Less(const Entry& left, const Entry& right)
-{
-	return std::tie(left.epoch, left.identity.session, left.identity.run, left.identity.frame) <
-		   std::tie(right.epoch, right.identity.session, right.identity.run, right.identity.frame);
-}
-
 void HistoryCoverage::Apply(HistoryStore& history)
 {
 	if (m_store != &history)
@@ -77,5 +71,11 @@ void HistoryCoverage::Apply(HistoryStore& history)
 	m_store = &history;
 	m_identityRevision = history.IdentityRevision();
 	m_previous.swap(m_next);
+}
+
+bool HistoryCoverage::Less(const Entry& left, const Entry& right)
+{
+	return std::tie(left.epoch, left.identity.session, left.identity.run, left.identity.frame) <
+		   std::tie(right.epoch, right.identity.session, right.identity.run, right.identity.frame);
 }
 } // namespace simxr::app

@@ -26,10 +26,12 @@ public:
 	~WorkerConnection();
 	WorkerConnection(const WorkerConnection&) = delete;
 	WorkerConnection& operator=(const WorkerConnection&) = delete;
+
 	control::Message Exchange(control::OpCode opcode, std::vector<control::Field> fields);
 	void Stop() noexcept;
 	// Called on the exchange worker (or after joining it) to finish native ownership.
 	void Close() noexcept;
+
 	bool Failed() const noexcept;
 
 	std::uint64_t Capabilities() const
@@ -39,6 +41,7 @@ public:
 
 private:
 	control::Message Request(control::OpCode code, std::vector<control::Field> fields);
+
 	std::string m_endpoint, m_name;
 	std::uint64_t m_required, m_capabilities = 0;
 	std::optional<std::uint64_t> m_expectedProcess;

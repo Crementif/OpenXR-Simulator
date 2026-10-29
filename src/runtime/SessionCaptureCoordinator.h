@@ -39,11 +39,16 @@ public:
 	class Submission;
 	class Boundary;
 	class SequenceCapture;
+
 	explicit SessionCaptureCoordinator(FrameHistory& history);
 	~SessionCaptureCoordinator();
+
 	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews,
 					   bool filteredComposition);
 	FrameImageHistory::Retired Start(SessionGeneration generation);
+	void Stop() noexcept;
+	void Retire() noexcept;
+
 	XrResult EnableImageHistory();
 	bool SupportsImageHistory() const;
 
@@ -52,21 +57,22 @@ public:
 		return m_images;
 	}
 
-	void Stop() noexcept;
-	void Retire() noexcept;
 	SnapshotStore& Snapshots();
 	bool Supports(CaptureTarget target = {}) const;
 	// May release completed native owners. Call outside Session/caller locks.
 	void Collect() const;
 	void ReclaimSnapshots(std::size_t producers, std::size_t slots);
+
 	CaptureBoundaryResult ReserveBundle(std::span<const CaptureTarget> targets);
 	SequenceCapture PrepareSequenceCapture(const std::optional<SequenceCaptureIntent>& request);
 	std::pair<XrResult, std::shared_ptr<FrameReservation>> PrepareProducer(FrameKey frame, CaptureTarget target);
+
 	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
 										  std::span<CaptureId> captures = {});
 	void StopImageRecording() noexcept;
 	ImageRecordingSnapshot ImageRecording() const;
 	CaptureId RefillImageRecording(CaptureId released);
+
 	void BindIssued(const std::shared_ptr<const FrameRecord>& issued,
 					const std::shared_ptr<const FrameRecord>& cancelled);
 	void ObserveFrame(FrameKey frame);
@@ -82,6 +88,7 @@ private:
 	std::size_t CancelQueuedLocked() noexcept;
 	SnapshotAdmission Promote(const std::shared_ptr<const FrameOutput>& output,
 							  std::shared_ptr<FrameReservation> producer);
+
 	FrameHistory& m_history;
 	mutable std::mutex m_mutex;
 	std::optional<FramePool> m_pool;

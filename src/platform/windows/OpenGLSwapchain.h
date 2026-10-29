@@ -20,14 +20,15 @@ namespace simxr::windows
 class OpenGLSwapchain final
 {
 public:
-	static std::span<const std::int64_t> Formats() noexcept;
-	static XrResult MaxSampleCount(std::uint32_t& output);
 	// Output must be empty; every failure leaves it unchanged.
 	static XrResult Create(HDC device, HGLRC context, const XrSwapchainCreateInfo& description,
 						   std::unique_ptr<OpenGLSwapchain>& output);
 	~OpenGLSwapchain();
 	OpenGLSwapchain(const OpenGLSwapchain&) = delete;
 	OpenGLSwapchain& operator=(const OpenGLSwapchain&) = delete;
+
+	static std::span<const std::int64_t> Formats() noexcept;
+	static XrResult MaxSampleCount(std::uint32_t& output);
 
 	std::span<const GLuint> Images() const noexcept;
 	GLenum Format() const noexcept;

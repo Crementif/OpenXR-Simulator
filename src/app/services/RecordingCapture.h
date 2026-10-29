@@ -32,6 +32,7 @@ public:
 	~RecordingCapture();
 	RecordingCapture(const RecordingCapture&) = delete;
 	RecordingCapture& operator=(const RecordingCapture&) = delete;
+
 	void SetTarget(RecordingTarget target);
 	bool Start(std::filesystem::path directory);
 	void Stop();
@@ -46,6 +47,7 @@ private:
 
 	void Run();
 	void Capture(WorkerConnection& connection, const Job& job);
+
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::thread m_worker;

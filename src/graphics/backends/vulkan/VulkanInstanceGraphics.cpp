@@ -195,16 +195,6 @@ XrResult VulkanInstanceGraphics::DeviceExtensions(XrSystemId system, std::uint32
 	return WriteExtensions(*m_deviceExtensions, capacity, count, output);
 }
 
-std::optional<VulkanInstanceGraphics::Selection> VulkanInstanceGraphics::FindSelection(VkPhysicalDevice device) const
-{
-	const auto found = std::find_if(m_selections.begin(), m_selections.end(), [device](const Selection& selection) {
-		return selection.physicalDevice == device;
-	});
-	if (found == m_selections.end())
-		return {};
-	return *found;
-}
-
 XrResult VulkanInstanceGraphics::PhysicalDevice(XrSystemId system, VkInstance instance, VkPhysicalDevice* output)
 {
 	if (system != 1)
@@ -348,4 +338,15 @@ XrResult VulkanInstanceGraphics::SessionBinding(const XrSessionCreateInfo& info,
 			  binding->queueIndex};
 	return XR_SUCCESS;
 }
+
+std::optional<VulkanInstanceGraphics::Selection> VulkanInstanceGraphics::FindSelection(VkPhysicalDevice device) const
+{
+	const auto found = std::find_if(m_selections.begin(), m_selections.end(), [device](const Selection& selection) {
+		return selection.physicalDevice == device;
+	});
+	if (found == m_selections.end())
+		return {};
+	return *found;
+}
+
 } // namespace simxr

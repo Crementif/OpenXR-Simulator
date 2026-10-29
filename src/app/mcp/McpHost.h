@@ -24,17 +24,21 @@ public:
 	~McpHost();
 	McpHost(const McpHost&) = delete;
 	McpHost& operator=(const McpHost&) = delete;
+
 	void SetPreference(bool enabled);
 	void StopForSession();
 	void Retry();
+
 	void Update();
 	void Poll(ApplicationCatalog& applications);
+
 	McpUiState State() const;
 
 private:
 	struct Running;
 	void Start();
 	void Retire();
+
 	std::unique_ptr<Running> m_running;
 	std::unique_ptr<McpInstanceRegistration> m_startupRegistration;
 	std::thread m_stopper;

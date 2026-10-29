@@ -26,9 +26,19 @@ public:
 	ApplicationTabs(ProcessSupervisor& processes, UiRenderer& renderer, Window& window, bool enabled,
 					std::string endpoint, bool showTabs);
 	~ApplicationTabs();
+
 	RuntimePanels& ActiveRuntime();
 	WorkspacePanels& ActiveWorkspace();
+	std::size_t Count() const noexcept;
 	void OpenApplication(RunningApp app);
+	bool PilotActive() const;
+	void FocusLost();
+	void Draw();
+	std::vector<VkSemaphore> ReadyWaits() const;
+	void RecordTransfers(VkCommandBuffer command);
+	void Submitted(std::uint64_t serial);
+	void Finish();
+
 	std::uint64_t LaunchApplication(const LaunchProfile& profile) override;
 	void RequestApplicationClose(std::uint64_t id) override;
 	void RequestApplicationRestart(std::uint64_t id, std::uint64_t expectedProcess) override;
@@ -42,14 +52,6 @@ public:
 	void ControlLuau(std::uint64_t id, std::uint64_t run, LuauControl action,
 					 const std::shared_ptr<AutomationOwner>& owner) override;
 #endif
-	std::size_t Count() const noexcept;
-	bool PilotActive() const;
-	void FocusLost();
-	void Draw();
-	std::vector<VkSemaphore> ReadyWaits() const;
-	void RecordTransfers(VkCommandBuffer command);
-	void Submitted(std::uint64_t serial);
-	void Finish();
 
 private:
 	struct Tab;

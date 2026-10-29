@@ -43,34 +43,6 @@ std::optional<std::pair<std::size_t, std::size_t>> TimelineSpan::Range(const His
 	return std::pair{*begin, *end};
 }
 
-void TimelineHistory::Push(RuntimeFrameRun run, double seconds, std::string text, bool failed)
-{
-	m_events.push_back({run, std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
-						seconds, std::move(text), failed});
-	if (m_events.size() > 128)
-		m_events.erase(m_events.begin());
-}
-
-void TimelineHistory::Error(std::string text, double seconds)
-{
-	Push({}, seconds, std::move(text), true);
-}
-
-TimelineSpan TimelineHistory::Start(TimelinePoint point, bool replay)
-{
-	return {point, point, m_nextSpan++, replay};
-}
-
-void TimelineHistory::Close(std::optional<TimelineSpan>& span, std::vector<TimelineSpan>& destination)
-{
-	if (!span)
-		return;
-	destination.push_back(std::move(*span));
-	span.reset();
-	if (destination.size() > 128)
-		destination.erase(destination.begin());
-}
-
 void TimelineHistory::Observe(const SessionView& state, bool recording)
 {
 	const auto point = PointOf(state);
@@ -230,5 +202,33 @@ const TimelineSpan* TimelineHistory::FindScript(std::uint64_t run) const
 		if (span->scriptRun == run)
 			return &*span;
 	return nullptr;
+}
+
+void TimelineHistory::Error(std::string text, double seconds)
+{
+	Push({}, seconds, std::move(text), true);
+}
+
+void TimelineHistory::Push(RuntimeFrameRun run, double seconds, std::string text, bool failed)
+{
+	m_events.push_back({run, std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
+						seconds, std::move(text), failed});
+	if (m_events.size() > 128)
+		m_events.erase(m_events.begin());
+}
+
+TimelineSpan TimelineHistory::Start(TimelinePoint point, bool replay)
+{
+	return {point, point, m_nextSpan++, replay};
+}
+
+void TimelineHistory::Close(std::optional<TimelineSpan>& span, std::vector<TimelineSpan>& destination)
+{
+	if (!span)
+		return;
+	destination.push_back(std::move(*span));
+	span.reset();
+	if (destination.size() > 128)
+		destination.erase(destination.begin());
 }
 } // namespace simxr::app

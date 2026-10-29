@@ -54,12 +54,6 @@ BodyTracking::BodyTracking(XrSession owner, const TrackingSystem& tracking, cons
 		throw std::invalid_argument("Missing body tracking owner");
 }
 
-bool BodyTracking::Enabled(std::string_view extension) const
-{
-	return m_enabled.Contains(extension) &&
-		   (extension == XR_BD_BODY_TRACKING_EXTENSION_NAME || m_enabled.Contains(XR_FB_BODY_TRACKING_EXTENSION_NAME));
-}
-
 XrResult BodyTracking::CreateFB(const XrBodyTrackerCreateInfoFB* info, XrBodyTrackerFB* output)
 {
 	if (!Enabled(XR_FB_BODY_TRACKING_EXTENSION_NAME))
@@ -121,55 +115,6 @@ XrResult BodyTracking::DestroyBD(XrBodyTrackerBD tracker)
 	if (!Enabled(XR_BD_BODY_TRACKING_EXTENSION_NAME))
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	return m_bd.Erase(tracker) ? XR_SUCCESS : XR_ERROR_HANDLE_INVALID;
-}
-
-XrResult BodyTracking::QueryAt(XrSpace base, XrTime time, std::optional<Query>& query) const
-{
-	PoseSample basePose;
-	auto result = m_spaces.WorldPose(base, {Duration{time}}, basePose);
-	if (XR_FAILED(result))
-		return result;
-	auto snapshot = m_tracking.Sample({Duration{time}});
-	if (snapshot)
-		query = Query{std::move(*snapshot), basePose, {Duration{time}}};
-	else
-		query.reset();
-	return XR_SUCCESS;
-}
-
-TrackingSnapshot BodyTracking::Calibrated(TrackingSnapshot snapshot, const std::optional<float>& height)
-{
-	if (!height || snapshot.input.bodyObservation)
-		return snapshot;
-	auto proportions = snapshot.proportions;
-	const double scale = static_cast<double>(*height) / proportions.height;
-	const double shoulderWidth = proportions.shoulderWidth * scale;
-	const double hipWidth = proportions.hipWidth * scale;
-	if (shoulderWidth > std::numeric_limits<float>::max() || hipWidth > std::numeric_limits<float>::max())
-		throw std::invalid_argument("Calibrated body proportions are not representable");
-	proportions.height = *height;
-	proportions.shoulderWidth = static_cast<float>(shoulderWidth);
-	proportions.hipWidth = static_cast<float>(hipWidth);
-	BodyModel model(proportions);
-	auto result = TrackingSystem::Evaluate(snapshot.time, snapshot.input, model);
-	result.body.skeletonRevision = snapshot.body.skeletonRevision;
-	return result;
-}
-
-PoseSample BodyTracking::InBase(const PoseSample& joint, const PoseSample& base)
-{
-	PoseSample result{RelativePose(joint.pose, base.pose), 0, std::min(joint.sampleTime, base.sampleTime)};
-	for (auto bit : {XR_SPACE_LOCATION_ORIENTATION_VALID_BIT, XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT})
-		if (Has(joint.flags, bit) && Has(base.flags, bit))
-			result.flags |= bit;
-	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
-		Has(base.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
-		result.flags |= XR_SPACE_LOCATION_POSITION_VALID_BIT;
-	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) &&
-		Has(base.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
-		result.flags |= XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
-	result.flags = FinitePoseFlags(result.pose, result.flags);
-	return result;
 }
 
 XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocateInfoFB* info,
@@ -422,4 +367,60 @@ void BodyTracking::Clear()
 	auto retiredFB = m_fb.RetireAll();
 	auto retiredBD = m_bd.RetireAll();
 }
+
+bool BodyTracking::Enabled(std::string_view extension) const
+{
+	return m_enabled.Contains(extension) &&
+		   (extension == XR_BD_BODY_TRACKING_EXTENSION_NAME || m_enabled.Contains(XR_FB_BODY_TRACKING_EXTENSION_NAME));
+}
+
+XrResult BodyTracking::QueryAt(XrSpace base, XrTime time, std::optional<Query>& query) const
+{
+	PoseSample basePose;
+	auto result = m_spaces.WorldPose(base, {Duration{time}}, basePose);
+	if (XR_FAILED(result))
+		return result;
+	auto snapshot = m_tracking.Sample({Duration{time}});
+	if (snapshot)
+		query = Query{std::move(*snapshot), basePose, {Duration{time}}};
+	else
+		query.reset();
+	return XR_SUCCESS;
+}
+
+TrackingSnapshot BodyTracking::Calibrated(TrackingSnapshot snapshot, const std::optional<float>& height)
+{
+	if (!height || snapshot.input.bodyObservation)
+		return snapshot;
+	auto proportions = snapshot.proportions;
+	const double scale = static_cast<double>(*height) / proportions.height;
+	const double shoulderWidth = proportions.shoulderWidth * scale;
+	const double hipWidth = proportions.hipWidth * scale;
+	if (shoulderWidth > std::numeric_limits<float>::max() || hipWidth > std::numeric_limits<float>::max())
+		throw std::invalid_argument("Calibrated body proportions are not representable");
+	proportions.height = *height;
+	proportions.shoulderWidth = static_cast<float>(shoulderWidth);
+	proportions.hipWidth = static_cast<float>(hipWidth);
+	BodyModel model(proportions);
+	auto result = TrackingSystem::Evaluate(snapshot.time, snapshot.input, model);
+	result.body.skeletonRevision = snapshot.body.skeletonRevision;
+	return result;
+}
+
+PoseSample BodyTracking::InBase(const PoseSample& joint, const PoseSample& base)
+{
+	PoseSample result{RelativePose(joint.pose, base.pose), 0, std::min(joint.sampleTime, base.sampleTime)};
+	for (auto bit : {XR_SPACE_LOCATION_ORIENTATION_VALID_BIT, XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT})
+		if (Has(joint.flags, bit) && Has(base.flags, bit))
+			result.flags |= bit;
+	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+		Has(base.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+		result.flags |= XR_SPACE_LOCATION_POSITION_VALID_BIT;
+	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) &&
+		Has(base.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
+		result.flags |= XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	result.flags = FinitePoseFlags(result.pose, result.flags);
+	return result;
+}
+
 } // namespace simxr

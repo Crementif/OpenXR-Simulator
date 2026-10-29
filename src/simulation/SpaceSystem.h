@@ -29,18 +29,21 @@ public:
 
 	SpaceSystem(XrSession owner, const TrackingSystem& tracking, ActionSource source = {},
 				ActionValidator validator = {}, EventQueue* events = nullptr, bool combinedEye = false);
+
 	XrResult CreateReferenceSpace(XrReferenceSpaceType type, XrPosef offset, XrSpace& output);
 	XrResult CreateActionSpace(XrAction action, XrPath subaction, XrPosef offset, XrSpace& output);
 	XrResult Destroy(XrSpace space);
 	void RemoveAction(XrAction action);
 	void Clear();
 	bool Owns(XrSpace space) const;
+
 	XrResult Sample(XrSpace space, RuntimeTime time, SpaceSample& output) const;
 	XrResult WorldPose(XrSpace space, RuntimeTime time, PoseSample& output) const;
 	XrResult Locate(XrSpace space, XrSpace base, RuntimeTime time, SpaceLocation& output) const;
 	XrResult Bounds(XrReferenceSpaceType type, XrExtent2Df& output) const;
 	XrResult SetStageBounds(std::optional<XrExtent2Df> bounds);
 	XrResult Recenter(RuntimeTime time);
+
 	// Starts a fresh time domain without invalidating handles or emitting changes.
 	// Invalid input leaves the previous history and stage bounds unchanged.
 	XrResult StartGeneration(RuntimeTime epoch, ReferenceSpaceState state);
@@ -65,10 +68,10 @@ private:
 	};
 
 	std::optional<Origin> OriginAt(RuntimeTime time) const;
-	XrResult ApplyOrigin(RuntimeTime time, const ReferenceSpaceState& state, bool requireNewTime, bool requested);
 	PoseSample Resolve(const SpaceRecord& record, RuntimeTime time, const std::optional<Origin>& origin) const;
 	static bool SameEntity(const SpaceRecord& left, const SpaceRecord& right);
 	PoseSample Relative(const SpaceRecord& target, const SpaceRecord& base, RuntimeTime time) const;
+	XrResult ApplyOrigin(RuntimeTime time, const ReferenceSpaceState& state, bool requireNewTime, bool requested);
 
 	static constexpr std::size_t OriginHistoryCapacity = 128;
 	const XrSession m_ownerSession;

@@ -3,8 +3,6 @@
 
 namespace simxr
 {
-VulkanFrameSync::VulkanFrameSync(std::shared_ptr<VulkanExternalSemaphore> producer) : m_producer(std::move(producer)) {}
-
 VkSemaphore VulkanFrameSync::Signal() const noexcept
 {
 	return m_producer->Get();
@@ -23,6 +21,8 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanFrameSync::Import(const VulkanExt
 	m_consumer = consumer.ImportSemaphore(m_producer->Identity(), handle);
 	return m_consumer;
 }
+
+VulkanFrameSync::VulkanFrameSync(std::shared_ptr<VulkanExternalSemaphore> producer) : m_producer(std::move(producer)) {}
 
 void VulkanFrameSync::MarkConsumed() noexcept
 {
@@ -57,6 +57,16 @@ std::shared_ptr<VulkanFrameSync> VulkanFrameSyncPool::Acquire()
 		sync.release(), [pool](VulkanFrameSync* retired) { pool->Recycle(std::unique_ptr<VulkanFrameSync>(retired)); });
 }
 
+void VulkanFrameSyncPool::Close()
+{
+	decltype(m_available) retired;
+	{
+		std::lock_guard lock(m_mutex);
+		m_closed = true;
+		retired.swap(m_available);
+	}
+}
+
 void VulkanFrameSyncPool::Recycle(std::unique_ptr<VulkanFrameSync> sync)
 {
 	if (!sync->m_consumed.load() || m_producer->Device()->lost.load() || !sync->m_consumer ||
@@ -73,13 +83,4 @@ void VulkanFrameSyncPool::Recycle(std::unique_ptr<VulkanFrameSync> sync)
 		}
 }
 
-void VulkanFrameSyncPool::Close()
-{
-	decltype(m_available) retired;
-	{
-		std::lock_guard lock(m_mutex);
-		m_closed = true;
-		retired.swap(m_available);
-	}
-}
 } // namespace simxr

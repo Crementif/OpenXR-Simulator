@@ -6,6 +6,8 @@
 
 namespace simxr
 {
+TrackingSystem::TrackingSystem(std::size_t historyCapacity) : m_history(historyCapacity) {}
+
 static PoseSample Normalize(PoseSample sample, RuntimeTime time)
 {
 	const auto pose = NormalizedPose(sample.pose);
@@ -21,8 +23,6 @@ static PoseSample Normalize(PoseSample sample, RuntimeTime time)
 	sample.sampleTime = time;
 	return sample;
 }
-
-TrackingSystem::TrackingSystem(std::size_t historyCapacity) : m_history(historyCapacity) {}
 
 TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState& state, const BodyModel& body)
 {

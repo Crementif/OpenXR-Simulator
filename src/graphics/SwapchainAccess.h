@@ -19,12 +19,15 @@ public:
 	using InitializeImage = std::function<std::shared_ptr<const GpuCompletion>(std::uint32_t)>;
 
 	explicit SwapchainAccess(std::uint32_t imageCount, bool staticImage = false);
+
 	XrResult Acquire(std::uint32_t& index, const InitializeImage& initialize = {});
 	XrResult Wait(XrDuration timeout);
 	XrResult Release();
+
 	std::optional<std::uint32_t> ReleasedImage() const;
 	void MarkUsed(std::uint32_t index, const std::shared_ptr<const GpuCompletion>& completion);
 	void MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion);
+
 	void Close();
 
 private:

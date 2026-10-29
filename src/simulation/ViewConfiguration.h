@@ -73,8 +73,10 @@ class ViewConfiguration
 {
 public:
 	explicit ViewConfiguration(ViewLayout layout = ViewLayout::Stereo, const ViewSettings& settings = {});
+
 	std::vector<ViewDescription> Describe() const;
 	LocatedViews Locate(const TrackingSnapshot& snapshot, bool foveated = false) const;
+
 	std::uint32_t EyeCount() const;
 	const ViewSettings& Settings() const;
 

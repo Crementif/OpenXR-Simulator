@@ -44,14 +44,6 @@ Session::~Session()
 	Close();
 }
 
-void Session::Transition(XrSessionState state, RuntimeTime time)
-{
-	m_interaction.SetFocused(state == XR_SESSION_STATE_FOCUSED, time);
-	m_state.state = state;
-	m_state.time = time;
-	m_instance.Events().Push(SessionStateEvent{m_handle, state, time});
-}
-
 XrResult Session::Ready(RuntimeTime time)
 {
 	std::lock_guard lock(m_mutex);
@@ -198,34 +190,6 @@ void Session::Close()
 	Close(std::nullopt);
 }
 
-void Session::Close(std::optional<SessionGeneration> expectedGeneration)
-{
-	FrameImageHistory::Retired retiredHistory;
-	std::lock_guard lifecycle(m_lifecycleMutex);
-	std::unique_lock lock(m_mutex);
-	if (m_state.closed || (expectedGeneration && *expectedGeneration != m_state.generation))
-		return;
-	++m_revision;
-	m_state.closed = true;
-	m_state.running = false;
-	m_publication.Stop();
-	m_scheduler.Stop();
-	m_previewHistory.CloseAdmission();
-	m_history.CancelPending();
-	m_captures.Stop();
-	m_interaction.LoseFocus(m_state.time);
-	m_body.Clear();
-	m_spaces.Clear();
-	m_instance.Events().RemoveSession(m_handle);
-	m_liveInputWorker.request_stop();
-	lock.unlock();
-	if (m_liveInputWorker.joinable())
-		m_liveInputWorker.join();
-	m_display.Stop();
-	retiredHistory = m_captures.Images().Clear();
-	m_captures.Retire();
-}
-
 XrResult Session::WaitFrame(FramePrediction& prediction,
 							const std::function<XrResult(const FramePrediction&)>& publishNative)
 {
@@ -335,18 +299,6 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 	m_history.Trace(FrameTraceKind::WaitReturned, {traceFrame.generation, prediction.id}, prediction.displayTime,
 					result);
 	return result;
-}
-
-bool Session::WithDebugGeneration(SessionGeneration generation, const std::function<void()>& work, bool requireRunning)
-{
-	std::lock_guard lifecycle(m_lifecycleMutex);
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_state.closed || m_state.generation != generation || (requireRunning && !m_state.running))
-			return false;
-	}
-	work();
-	return true;
 }
 
 XrResult Session::BeginFrame()
@@ -530,15 +482,6 @@ XrResult Session::StopHaptic(const XrHapticActionInfo* info)
 									m_state.state == XR_SESSION_STATE_FOCUSED);
 }
 
-std::optional<HapticSnapshot> Session::ObserveHaptics(SessionGeneration generation)
-{
-	std::lock_guard lock(m_mutex);
-	if (m_state.closed || m_state.generation != generation)
-		return {};
-	const auto time = std::max(m_state.time, m_publication.Input().Snapshot().time);
-	return HapticSnapshot{time, m_interaction.Haptics().Snapshot(time)};
-}
-
 SessionSnapshot Session::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
@@ -560,16 +503,6 @@ FrameHistory& Session::History()
 	return m_history;
 }
 
-VirtualDisplay& Session::Display()
-{
-	return m_display;
-}
-
-SnapshotStore& Session::Captures()
-{
-	return m_captures.Snapshots();
-}
-
 XrResult Session::EnableImageHistory()
 {
 	std::lock_guard lock(m_mutex);
@@ -584,6 +517,16 @@ bool Session::SupportsImageHistory() const
 FrameImageHistory& Session::ImageHistory()
 {
 	return m_captures.Images();
+}
+
+VirtualDisplay& Session::Display()
+{
+	return m_display;
+}
+
+SnapshotStore& Session::Captures()
+{
+	return m_captures.Snapshots();
 }
 
 XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CapturePromoter promoter, bool depthViews,
@@ -715,6 +658,15 @@ HapticState& Session::Haptics()
 	return m_interaction.Haptics();
 }
 
+std::optional<HapticSnapshot> Session::ObserveHaptics(SessionGeneration generation)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_state.closed || m_state.generation != generation)
+		return {};
+	const auto time = std::max(m_state.time, m_publication.Input().Snapshot().time);
+	return HapticSnapshot{time, m_interaction.Haptics().Snapshot(time)};
+}
+
 InputState& Session::Input()
 {
 	return m_publication.Input();
@@ -745,6 +697,25 @@ const EnabledExtensions& Session::Extensions() const
 	return m_instance.Extensions();
 }
 
+void Session::PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings, FrameId frame)
+{
+	const ViewConfiguration validatedViews(ViewLayout::Stereo, settings);
+	std::lock_guard lock(m_mutex);
+	if (m_state.closed)
+		throw std::logic_error("Session is closed");
+	if (frame.value && frame != m_state.lastIssued.id)
+		throw std::invalid_argument("Tracking frame is not current");
+	m_publication.PublishTracking(time, std::move(state), settings, m_state.state == XR_SESSION_STATE_FOCUSED);
+}
+
+XrResult Session::PublishInput(InputSnapshot input)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_state.closed)
+		return XR_ERROR_SESSION_LOST;
+	return m_publication.PublishInput(std::move(input));
+}
+
 CommandScheduler& Session::Commands()
 {
 	return m_publication.Commands();
@@ -754,12 +725,6 @@ bool Session::WithCommandGeneration(SessionGeneration generation, const std::fun
 									bool requireRunning)
 {
 	return WithDebugGeneration(generation, work, requireRunning);
-}
-
-void Session::StopPoseSequence(CommandSource source)
-{
-	std::lock_guard lock(m_mutex);
-	m_publication.StopPoseSequence(source);
 }
 
 void Session::ReleaseCommandSource(CommandSource source, bool retire)
@@ -777,6 +742,12 @@ void Session::ReleaseCommandSource(CommandSource source, bool retire)
 	m_captures.Snapshots().RetireSequenceCaptures(source);
 }
 
+void Session::StopPoseSequence(CommandSource source)
+{
+	std::lock_guard lock(m_mutex);
+	m_publication.StopPoseSequence(source);
+}
+
 XrResult Session::ConfigureCommands(std::uint64_t seed, std::optional<CommandConfiguration> initial,
 									bool overrideInitial)
 {
@@ -789,37 +760,18 @@ XrResult Session::ConfigureCommands(std::uint64_t seed, std::optional<CommandCon
 	return XR_SUCCESS;
 }
 
-RecordingResult Session::StartCommandRecording(bool drain, CommandSource owner)
-{
-	std::scoped_lock lock(m_mutex, m_publicationMutex);
-	if (m_state.closed || !m_state.running)
-		return RecordingResult::Closed;
-	return m_publication.StartRecording(m_spaces.RecordingState(m_state.time), drain, owner);
-}
-
 CommandConfiguration Session::CommandConfigurationSnapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_publication.ConfigurationSnapshot(m_state.lastIssued);
 }
 
-XrResult Session::PublishInput(InputSnapshot input)
+RecordingResult Session::StartCommandRecording(bool drain, CommandSource owner)
 {
-	std::lock_guard lock(m_mutex);
-	if (m_state.closed)
-		return XR_ERROR_SESSION_LOST;
-	return m_publication.PublishInput(std::move(input));
-}
-
-void Session::PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings, FrameId frame)
-{
-	const ViewConfiguration validatedViews(ViewLayout::Stereo, settings);
-	std::lock_guard lock(m_mutex);
-	if (m_state.closed)
-		throw std::logic_error("Session is closed");
-	if (frame.value && frame != m_state.lastIssued.id)
-		throw std::invalid_argument("Tracking frame is not current");
-	m_publication.PublishTracking(time, std::move(state), settings, m_state.state == XR_SESSION_STATE_FOCUSED);
+	std::scoped_lock lock(m_mutex, m_publicationMutex);
+	if (m_state.closed || !m_state.running)
+		return RecordingResult::Closed;
+	return m_publication.StartRecording(m_spaces.RecordingState(m_state.time), drain, owner);
 }
 
 XrResult Session::LocateViews(const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity,
@@ -869,4 +821,53 @@ LocatedViews Session::ViewsAt(RuntimeTime time, bool foveated) const
 		return {time};
 	return m_publication.ViewsAt(time, foveated);
 }
+
+void Session::Close(std::optional<SessionGeneration> expectedGeneration)
+{
+	FrameImageHistory::Retired retiredHistory;
+	std::lock_guard lifecycle(m_lifecycleMutex);
+	std::unique_lock lock(m_mutex);
+	if (m_state.closed || (expectedGeneration && *expectedGeneration != m_state.generation))
+		return;
+	++m_revision;
+	m_state.closed = true;
+	m_state.running = false;
+	m_publication.Stop();
+	m_scheduler.Stop();
+	m_previewHistory.CloseAdmission();
+	m_history.CancelPending();
+	m_captures.Stop();
+	m_interaction.LoseFocus(m_state.time);
+	m_body.Clear();
+	m_spaces.Clear();
+	m_instance.Events().RemoveSession(m_handle);
+	m_liveInputWorker.request_stop();
+	lock.unlock();
+	if (m_liveInputWorker.joinable())
+		m_liveInputWorker.join();
+	m_display.Stop();
+	retiredHistory = m_captures.Images().Clear();
+	m_captures.Retire();
+}
+
+bool Session::WithDebugGeneration(SessionGeneration generation, const std::function<void()>& work, bool requireRunning)
+{
+	std::lock_guard lifecycle(m_lifecycleMutex);
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_state.closed || m_state.generation != generation || (requireRunning && !m_state.running))
+			return false;
+	}
+	work();
+	return true;
+}
+
+void Session::Transition(XrSessionState state, RuntimeTime time)
+{
+	m_interaction.SetFocused(state == XR_SESSION_STATE_FOCUSED, time);
+	m_state.state = state;
+	m_state.time = time;
+	m_instance.Events().Push(SessionStateEvent{m_handle, state, time});
+}
+
 } // namespace simxr

@@ -41,11 +41,6 @@ Runtime::Runtime(const ExtensionRegistry& extensions, const RuntimeConfiguration
 		throw std::invalid_argument("Invalid runtime configuration");
 }
 
-GameBridge& Runtime::Game()
-{
-	return m_game;
-}
-
 Runtime::~Runtime()
 {
 	Close();
@@ -99,6 +94,39 @@ XrResult Runtime::CreateInstance(const XrInstanceCreateInfo* info, InstanceRef& 
 	return XR_SUCCESS;
 }
 
+XrResult Runtime::DestroyInstance(XrInstance handle)
+{
+	InstanceRef retired;
+	std::vector<SessionRef> sessions;
+	std::vector<std::shared_ptr<DebugService>> debuggers;
+	{
+		std::lock_guard lock(m_mutex);
+		retired = m_instances.Find(handle);
+		if (!retired)
+			return XR_ERROR_HANDLE_INVALID;
+		const auto children = m_sessions.Children(handle);
+		sessions.reserve(children.size());
+		debuggers.reserve(children.size());
+		for (auto child : children)
+			sessions.push_back(m_sessions.Find(child));
+		for (auto child : children)
+		{
+			m_sessions.Erase(child);
+			if (const auto entry = m_debuggers->find(child); entry != m_debuggers->end())
+			{
+				debuggers.push_back(std::move(entry->second));
+				m_debuggers->erase(entry);
+			}
+		}
+		m_instances.Erase(handle);
+	}
+	for (auto& session : sessions)
+		session->Close();
+	for (auto& debugger : debuggers)
+		debugger->Close();
+	return XR_SUCCESS;
+}
+
 XrResult Runtime::CreateSession(XrInstance owner, SessionRef& output, std::shared_ptr<Clock> clock)
 {
 	if (!clock)
@@ -141,39 +169,6 @@ XrResult Runtime::DestroySession(XrSession handle)
 	return XR_SUCCESS;
 }
 
-XrResult Runtime::DestroyInstance(XrInstance handle)
-{
-	InstanceRef retired;
-	std::vector<SessionRef> sessions;
-	std::vector<std::shared_ptr<DebugService>> debuggers;
-	{
-		std::lock_guard lock(m_mutex);
-		retired = m_instances.Find(handle);
-		if (!retired)
-			return XR_ERROR_HANDLE_INVALID;
-		const auto children = m_sessions.Children(handle);
-		sessions.reserve(children.size());
-		debuggers.reserve(children.size());
-		for (auto child : children)
-			sessions.push_back(m_sessions.Find(child));
-		for (auto child : children)
-		{
-			m_sessions.Erase(child);
-			if (const auto entry = m_debuggers->find(child); entry != m_debuggers->end())
-			{
-				debuggers.push_back(std::move(entry->second));
-				m_debuggers->erase(entry);
-			}
-		}
-		m_instances.Erase(handle);
-	}
-	for (auto& session : sessions)
-		session->Close();
-	for (auto& debugger : debuggers)
-		debugger->Close();
-	return XR_SUCCESS;
-}
-
 Runtime::InstanceRef Runtime::FindInstance(XrInstance handle) const
 {
 	std::lock_guard lock(m_mutex);
@@ -207,6 +202,11 @@ std::vector<XrSession> Runtime::Sessions(XrInstance owner) const
 RuntimeConfiguration Runtime::Configuration() const
 {
 	return m_configuration;
+}
+
+GameBridge& Runtime::Game()
+{
+	return m_game;
 }
 
 std::shared_ptr<DebugController> Runtime::Debugger(XrSession handle, const DebugControllerConfig& configuration)

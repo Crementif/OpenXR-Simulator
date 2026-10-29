@@ -36,45 +36,6 @@ HeadsetOutput::~HeadsetOutput()
 	Close();
 }
 
-bool HeadsetOutput::Close()
-{
-	if (!m_resources && !m_swapchain)
-		return !m_graphics.ResourcesPreserved();
-	if (!m_graphics.Drain())
-	{
-		if (m_resources)
-			m_resources->preservation.Preserve(std::move(m_resources));
-		return false;
-	}
-	if (m_resources && m_resources->mapper)
-	{
-		for (auto& image : m_resources->images)
-		{
-			image.source.reset();
-			image.mapped.reset();
-		}
-		if (XR_FAILED(m_resources->mapper->Close()))
-		{
-			m_graphics.PreserveNativeResources();
-			m_resources->preservation.Preserve(std::move(m_resources));
-			return false;
-		}
-	}
-	m_resources.reset();
-	if (m_swapchain)
-	{
-		if (XR_FAILED(xrDestroySwapchain(m_swapchain)))
-		{
-			m_graphics.PreserveNativeResources();
-			return false;
-		}
-		m_swapchain = XR_NULL_HANDLE;
-	}
-	m_acquired.reset();
-	m_waited = false;
-	return true;
-}
-
 void HeadsetOutput::Open(OpenXrRuntime& runtime, XrSession session)
 {
 	if (m_resources || m_swapchain || m_graphics.ResourcesPreserved())
@@ -202,6 +163,45 @@ void HeadsetOutput::Open(OpenXrRuntime& runtime, XrSession session)
 	}
 }
 
+bool HeadsetOutput::Close()
+{
+	if (!m_resources && !m_swapchain)
+		return !m_graphics.ResourcesPreserved();
+	if (!m_graphics.Drain())
+	{
+		if (m_resources)
+			m_resources->preservation.Preserve(std::move(m_resources));
+		return false;
+	}
+	if (m_resources && m_resources->mapper)
+	{
+		for (auto& image : m_resources->images)
+		{
+			image.source.reset();
+			image.mapped.reset();
+		}
+		if (XR_FAILED(m_resources->mapper->Close()))
+		{
+			m_graphics.PreserveNativeResources();
+			m_resources->preservation.Preserve(std::move(m_resources));
+			return false;
+		}
+	}
+	m_resources.reset();
+	if (m_swapchain)
+	{
+		if (XR_FAILED(xrDestroySwapchain(m_swapchain)))
+		{
+			m_graphics.PreserveNativeResources();
+			return false;
+		}
+		m_swapchain = XR_NULL_HANDLE;
+	}
+	m_acquired.reset();
+	m_waited = false;
+	return true;
+}
+
 void HeadsetOutput::Poll()
 {
 	if (!m_resources)
@@ -218,102 +218,6 @@ void HeadsetOutput::Poll()
 		}
 	if (m_resources->mapper)
 		m_resources->mapper->RetireCompleted();
-}
-
-void HeadsetOutput::Label(HeadsetOutputImage& target)
-{
-	// Small fixed diagnostic lettering, rendered with attachment clears like the test pattern.
-	constexpr std::array<std::array<unsigned, 7>, 10> letters{{{31, 4, 4, 4, 4, 4, 31},
-															   {17, 25, 25, 21, 19, 19, 17},
-															   {15, 16, 16, 14, 1, 1, 30},
-															   {30, 17, 17, 30, 16, 16, 16},
-															   {31, 16, 16, 30, 16, 16, 31},
-															   {15, 16, 16, 16, 16, 16, 15},
-															   {31, 4, 4, 4, 4, 4, 4},
-															   {31, 4, 4, 4, 4, 4, 31},
-															   {14, 17, 17, 17, 17, 17, 14},
-															   {17, 25, 25, 21, 19, 19, 17}}};
-	const auto scale = std::min(m_extent.width / 64, m_extent.height / 10);
-	if (scale < 1)
-		throw std::runtime_error("Physical image is too small for the inspection label");
-	for (std::size_t eye = 0; eye < 2; ++eye)
-	{
-		VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-		pass.renderPass = m_resources->labelPass;
-		pass.framebuffer = target.framebuffers[eye];
-		pass.renderArea.extent = {static_cast<std::uint32_t>(m_extent.width),
-								  static_cast<std::uint32_t>(m_extent.height)};
-		vkCmdBeginRenderPass(target.command, &pass, VK_SUBPASS_CONTENTS_INLINE);
-		VkClearAttachment ink{};
-		ink.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		ink.clearValue.color = {{.02f, .02f, .02f, 1}};
-		VkClearRect band{
-			{{0, 0}, {static_cast<std::uint32_t>(m_extent.width), static_cast<std::uint32_t>(scale * 9)}}, 0, 1};
-		vkCmdClearAttachments(target.command, 1, &ink, 1, &band);
-		ink.clearValue.color = {{1, 1, 1, 1}};
-		for (std::size_t letter = 0; letter < letters.size(); ++letter)
-			for (unsigned row = 0; row < 7; ++row)
-				for (unsigned column = 0; column < 5; ++column)
-					if (letters[letter][row] & (1u << (4 - column)))
-					{
-						VkClearRect cell{
-							{{static_cast<int>((letter * 6 + column + 2) * scale), static_cast<int>((row + 1) * scale)},
-							 {static_cast<std::uint32_t>(scale), static_cast<std::uint32_t>(scale)}},
-							0,
-							1};
-						vkCmdClearAttachments(target.command, 1, &ink, 1, &cell);
-					}
-		vkCmdEndRenderPass(target.command);
-	}
-}
-
-void HeadsetOutput::Record(HeadsetOutputImage& target, const VulkanImage& pixels, bool inspection)
-{
-	VkFormatProperties properties{};
-	vkGetPhysicalDeviceFormatProperties(m_graphics.PhysicalDevice(), pixels.format, &properties);
-	constexpr auto required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-	if ((properties.optimalTilingFeatures & required) != required || pixels.layers != 2 ||
-		!(pixels.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || pixels.extent.width > INT32_MAX ||
-		pixels.extent.height > INT32_MAX)
-		throw std::runtime_error("Private headset image cannot be scaled by the physical device");
-	CheckVk(vkResetCommandBuffer(target.command, 0), "Reset physical output command");
-	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	CheckVk(vkBeginCommandBuffer(target.command, &begin), "Begin physical output command");
-	std::array<VkImageMemoryBarrier, 2> barriers{};
-	for (auto& barrier : barriers)
-	{
-		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2};
-	}
-	barriers[0].image = pixels.image;
-	barriers[0].oldLayout = barriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-	barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-	barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-	barriers[1].image = target.image;
-	barriers[1].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	vkCmdPipelineBarrier(target.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
-						 nullptr, 0, nullptr, barriers.size(), barriers.data());
-	VkImageBlit blit{};
-	blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 2};
-	blit.srcOffsets[1] = {static_cast<std::int32_t>(pixels.extent.width),
-						  static_cast<std::int32_t>(pixels.extent.height), 1};
-	blit.dstOffsets[1] = {m_extent.width, m_extent.height, 1};
-	vkCmdBlitImage(target.command, pixels.image, VK_IMAGE_LAYOUT_GENERAL, target.image,
-				   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-	auto release = barriers[1];
-	release.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	release.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	release.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-	vkCmdPipelineBarrier(target.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-						 0, 0, nullptr, 0, nullptr, 1, &release);
-	if (inspection)
-		Label(target);
-	CheckVk(vkEndCommandBuffer(target.command), "Finish physical output command");
 }
 
 bool HeadsetOutput::Draw(std::shared_ptr<const HeadsetImageFrame> source, XrPosef physicalFromWorld,
@@ -366,6 +270,16 @@ XrSwapchain HeadsetOutput::Swapchain() const
 XrExtent2Di HeadsetOutput::Extent() const
 {
 	return m_extent;
+}
+
+std::shared_ptr<VulkanDevice> HeadsetOutput::Device() const
+{
+	return m_resources && m_resources->mapper ? m_resources->mapper->Device() : nullptr;
+}
+
+const std::array<XrCompositionLayerProjectionView, 2>& HeadsetOutput::Projection() const
+{
+	return m_projection;
 }
 
 bool HeadsetOutput::Copy(std::shared_ptr<const HeadsetImageFrame> source,
@@ -436,13 +350,99 @@ bool HeadsetOutput::Copy(std::shared_ptr<const HeadsetImageFrame> source,
 	return true;
 }
 
-const std::array<XrCompositionLayerProjectionView, 2>& HeadsetOutput::Projection() const
+void HeadsetOutput::Record(HeadsetOutputImage& target, const VulkanImage& pixels, bool inspection)
 {
-	return m_projection;
+	VkFormatProperties properties{};
+	vkGetPhysicalDeviceFormatProperties(m_graphics.PhysicalDevice(), pixels.format, &properties);
+	constexpr auto required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+	if ((properties.optimalTilingFeatures & required) != required || pixels.layers != 2 ||
+		!(pixels.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || pixels.extent.width > INT32_MAX ||
+		pixels.extent.height > INT32_MAX)
+		throw std::runtime_error("Private headset image cannot be scaled by the physical device");
+	CheckVk(vkResetCommandBuffer(target.command, 0), "Reset physical output command");
+	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	CheckVk(vkBeginCommandBuffer(target.command, &begin), "Begin physical output command");
+	std::array<VkImageMemoryBarrier, 2> barriers{};
+	for (auto& barrier : barriers)
+	{
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2};
+	}
+	barriers[0].image = pixels.image;
+	barriers[0].oldLayout = barriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	barriers[1].image = target.image;
+	barriers[1].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	vkCmdPipelineBarrier(target.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+						 nullptr, 0, nullptr, barriers.size(), barriers.data());
+	VkImageBlit blit{};
+	blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 2};
+	blit.srcOffsets[1] = {static_cast<std::int32_t>(pixels.extent.width),
+						  static_cast<std::int32_t>(pixels.extent.height), 1};
+	blit.dstOffsets[1] = {m_extent.width, m_extent.height, 1};
+	vkCmdBlitImage(target.command, pixels.image, VK_IMAGE_LAYOUT_GENERAL, target.image,
+				   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+	auto release = barriers[1];
+	release.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	release.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	release.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	vkCmdPipelineBarrier(target.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+						 0, 0, nullptr, 0, nullptr, 1, &release);
+	if (inspection)
+		Label(target);
+	CheckVk(vkEndCommandBuffer(target.command), "Finish physical output command");
 }
 
-std::shared_ptr<VulkanDevice> HeadsetOutput::Device() const
+void HeadsetOutput::Label(HeadsetOutputImage& target)
 {
-	return m_resources && m_resources->mapper ? m_resources->mapper->Device() : nullptr;
+	// Small fixed diagnostic lettering, rendered with attachment clears like the test pattern.
+	constexpr std::array<std::array<unsigned, 7>, 10> letters{{{31, 4, 4, 4, 4, 4, 31},
+															   {17, 25, 25, 21, 19, 19, 17},
+															   {15, 16, 16, 14, 1, 1, 30},
+															   {30, 17, 17, 30, 16, 16, 16},
+															   {31, 16, 16, 30, 16, 16, 31},
+															   {15, 16, 16, 16, 16, 16, 15},
+															   {31, 4, 4, 4, 4, 4, 4},
+															   {31, 4, 4, 4, 4, 4, 31},
+															   {14, 17, 17, 17, 17, 17, 14},
+															   {17, 25, 25, 21, 19, 19, 17}}};
+	const auto scale = std::min(m_extent.width / 64, m_extent.height / 10);
+	if (scale < 1)
+		throw std::runtime_error("Physical image is too small for the inspection label");
+	for (std::size_t eye = 0; eye < 2; ++eye)
+	{
+		VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+		pass.renderPass = m_resources->labelPass;
+		pass.framebuffer = target.framebuffers[eye];
+		pass.renderArea.extent = {static_cast<std::uint32_t>(m_extent.width),
+								  static_cast<std::uint32_t>(m_extent.height)};
+		vkCmdBeginRenderPass(target.command, &pass, VK_SUBPASS_CONTENTS_INLINE);
+		VkClearAttachment ink{};
+		ink.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		ink.clearValue.color = {{.02f, .02f, .02f, 1}};
+		VkClearRect band{
+			{{0, 0}, {static_cast<std::uint32_t>(m_extent.width), static_cast<std::uint32_t>(scale * 9)}}, 0, 1};
+		vkCmdClearAttachments(target.command, 1, &ink, 1, &band);
+		ink.clearValue.color = {{1, 1, 1, 1}};
+		for (std::size_t letter = 0; letter < letters.size(); ++letter)
+			for (unsigned row = 0; row < 7; ++row)
+				for (unsigned column = 0; column < 5; ++column)
+					if (letters[letter][row] & (1u << (4 - column)))
+					{
+						VkClearRect cell{
+							{{static_cast<int>((letter * 6 + column + 2) * scale), static_cast<int>((row + 1) * scale)},
+							 {static_cast<std::uint32_t>(scale), static_cast<std::uint32_t>(scale)}},
+							0,
+							1};
+						vkCmdClearAttachments(target.command, 1, &ink, 1, &cell);
+					}
+		vkCmdEndRenderPass(target.command);
+	}
 }
 } // namespace simxr::headset

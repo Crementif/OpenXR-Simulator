@@ -29,6 +29,7 @@ class OpenGLFrame final : public FrameOutput
 {
 public:
 	~OpenGLFrame() override;
+
 	CompletionStatus PollCompletion() const noexcept override;
 	// Queued reads still require source retirement when Submit fails.
 	bool SourcesUsed() const noexcept;
@@ -39,7 +40,9 @@ public:
 private:
 	friend class OpenGLBackend;
 	struct Resources;
+
 	OpenGLFrame(std::shared_ptr<OpenGLContext> context, std::span<const FrameView> views);
+
 	std::unique_ptr<Resources> m_resources;
 };
 
@@ -51,6 +54,7 @@ public:
 	OpenGLBackend(HDC applicationDevice, HGLRC applicationContext, std::shared_ptr<VulkanDevice> delivery,
 				  std::span<const char* const> extensions);
 	~OpenGLBackend();
+
 	// Validate application features before allocating the native delivery device.
 	static VulkanExternalIdentity Identity(HDC device, HGLRC context);
 	XrResult Prepare(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
@@ -63,6 +67,7 @@ private:
 	XrResult PrepareImage(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
 						  const VulkanExternalImageSpec& description, GLenum format, bool retained,
 						  std::shared_ptr<OpenGLFrame>& output);
+
 	const HDC m_applicationDevice;
 	const HGLRC m_applicationContext;
 	std::shared_ptr<OpenGLContext> m_context;

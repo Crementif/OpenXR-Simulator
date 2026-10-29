@@ -19,22 +19,6 @@ OpenXrRuntime::~OpenXrRuntime()
 		xrDestroyInstance(m_instance);
 }
 
-void OpenXrRuntime::PreserveNativeResources()
-{
-	m_preserved = true;
-}
-
-bool OpenXrRuntime::ResourcesPreserved() const
-{
-	return m_preserved;
-}
-
-bool OpenXrRuntime::Supports(std::string_view extension) const
-{
-	return std::any_of(m_extensions.begin(), m_extensions.end(),
-					   [&](const auto& item) { return item.extensionName == extension; });
-}
-
 void OpenXrRuntime::Open()
 {
 	if (m_instance)
@@ -104,6 +88,22 @@ void OpenXrRuntime::Open()
 			"Read stereo views");
 }
 
+void OpenXrRuntime::PreserveNativeResources()
+{
+	m_preserved = true;
+}
+
+bool OpenXrRuntime::ResourcesPreserved() const
+{
+	return m_preserved;
+}
+
+bool OpenXrRuntime::Supports(std::string_view extension) const
+{
+	return std::any_of(m_extensions.begin(), m_extensions.end(),
+					   [&](const auto& item) { return item.extensionName == extension; });
+}
+
 PFN_xrVoidFunction OpenXrRuntime::Procedure(const char* name) const
 {
 	PFN_xrVoidFunction procedure = nullptr;
@@ -123,14 +123,14 @@ XrSystemId OpenXrRuntime::System() const
 	return m_system;
 }
 
-const HeadsetBodyCapabilities& OpenXrRuntime::BodyCapabilities() const
-{
-	return m_bodyCapabilities;
-}
-
 const XrInstanceProperties& OpenXrRuntime::Properties() const
 {
 	return m_properties;
+}
+
+const HeadsetBodyCapabilities& OpenXrRuntime::BodyCapabilities() const
+{
+	return m_bodyCapabilities;
 }
 
 const std::vector<XrViewConfigurationView>& OpenXrRuntime::Views() const

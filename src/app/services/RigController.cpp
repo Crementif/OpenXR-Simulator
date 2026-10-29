@@ -70,34 +70,16 @@ RigController::~RigController()
 	m_transport.reset();
 }
 
-void RigController::Start(RigTarget target, std::string source, std::string name, const ScriptOptions& options,
-						  bool replay, std::filesystem::path archive, std::optional<std::uint64_t> expectedProcess)
+void RigController::RunScript(RigTarget target, const std::string& path, const ScriptOptions& options)
 {
-	if (IsActive())
-		throw std::runtime_error("Stop the current rig before starting another");
-	if (m_runId == std::numeric_limits<std::uint64_t>::max())
-		throw std::runtime_error("Rig run identity exhausted");
-	if (target.endpoint.empty() || !target.session || !target.generation)
-		throw std::runtime_error("Select a running session on a connected runtime first");
-	automation::RigOptions run;
-	run.session = {target.session};
-	run.generation = target.generation;
-	run.seed = options.seed;
-	run.source = std::move(source);
-	run.recordingArchive = std::move(archive);
-	run.name = name;
-	run.deadline = std::chrono::seconds(std::clamp(options.deadlineSeconds, 1, 3600));
-	run.memoryLimit = static_cast<std::size_t>(std::clamp(options.memoryMiB, 1, 512)) * 1024 * 1024;
-	m_runner.Join();
-	m_transport.emplace(target.endpoint, "simxr_companion_rig",
-						static_cast<std::uint64_t>(wire::Capability::SimulationCommands), expectedProcess);
-	m_runner.Start(std::move(run));
-	m_script = std::move(name);
-	m_target = std::move(target);
-	m_recordingReplay = replay;
-	m_owner.reset();
-	++m_runId;
-	m_error.clear();
+	try
+	{
+		Start(std::move(target), LoadScript(Utf8Path(path)), path, options, false);
+	}
+	catch (const std::exception& error)
+	{
+		m_error = error.what();
+	}
 }
 
 std::uint64_t RigController::RunSource(RigTarget target, std::string source, std::string name,
@@ -113,29 +95,6 @@ std::uint64_t RigController::RunSource(RigTarget target, std::string source, std
 	if (!owner->active.load())
 		m_runner.Cancel();
 	return m_runId;
-}
-
-bool RigController::OwnedBy(const std::shared_ptr<AutomationOwner>& owner, std::uint64_t run) const noexcept
-{
-	return owner && owner->active.load() && m_owner == owner && m_runId == run && run != 0;
-}
-
-void RigController::CancelDisconnected()
-{
-	if (m_owner && !m_owner->active.load() && IsActive())
-		m_runner.Cancel();
-}
-
-void RigController::RunScript(RigTarget target, const std::string& path, const ScriptOptions& options)
-{
-	try
-	{
-		Start(std::move(target), LoadScript(Utf8Path(path)), path, options, false);
-	}
-	catch (const std::exception& error)
-	{
-		m_error = error.what();
-	}
 }
 
 void RigController::ReplayRecording(RigTarget target, const std::string& path, std::uint64_t seed)
@@ -178,6 +137,66 @@ void RigController::Cancel()
 		m_runner.Cancel();
 }
 
+void RigController::CancelDisconnected()
+{
+	if (m_owner && !m_owner->active.load() && IsActive())
+		m_runner.Cancel();
+}
+
+void RigController::PrepareLaunch(const LaunchProfile& profile)
+{
+	m_launch.reset();
+	if (profile.rig.empty())
+		return;
+	if (IsActive())
+		throw std::runtime_error("Stop the current rig before launching another rig profile");
+	auto file = Utf8Path(profile.rig);
+	if (!file.is_absolute())
+	{
+		if (profile.workingDirectory.empty() || !Utf8Path(profile.workingDirectory).is_absolute())
+			throw std::runtime_error("A relative rig path requires an absolute profile working directory");
+		file = Utf8Path(profile.workingDirectory) / file;
+	}
+	m_launch = Launch{LoadScript(file), PathText(file)};
+	m_error.clear();
+}
+
+void RigController::AttachLaunch(const LaunchedSession& session)
+{
+	if (!m_launch)
+		return;
+	auto pending = std::move(*m_launch);
+	m_launch.reset();
+	Start({session.endpoint, session.session, session.generation}, std::move(pending.source), std::move(pending.name),
+		  {}, false);
+}
+
+bool RigController::IsActive() const
+{
+	const auto phase = m_runner.Phase();
+	return phase == automation::RigPhase::Running || phase == automation::RigPhase::Paused;
+}
+
+std::uint64_t RigController::RunId() const noexcept
+{
+	return m_runId;
+}
+
+bool RigController::OwnedBy(const std::shared_ptr<AutomationOwner>& owner, std::uint64_t run) const noexcept
+{
+	return owner && owner->active.load() && m_owner == owner && m_runId == run && run != 0;
+}
+
+bool RigController::MatchesTarget(const RigTarget& target) const noexcept
+{
+	return m_runId && m_target == target;
+}
+
+automation::RigSnapshot RigController::Snapshot() const
+{
+	return m_runner.Snapshot();
+}
+
 const std::string& RigController::Script() const noexcept
 {
 	return m_script;
@@ -196,27 +215,6 @@ bool RigController::WaitingForLaunch() const noexcept
 const std::string& RigController::Error() const noexcept
 {
 	return m_error;
-}
-
-std::uint64_t RigController::RunId() const noexcept
-{
-	return m_runId;
-}
-
-automation::RigSnapshot RigController::Snapshot() const
-{
-	return m_runner.Snapshot();
-}
-
-bool RigController::MatchesTarget(const RigTarget& target) const noexcept
-{
-	return m_runId && m_target == target;
-}
-
-bool RigController::IsActive() const
-{
-	const auto phase = m_runner.Phase();
-	return phase == automation::RigPhase::Running || phase == automation::RigPhase::Paused;
 }
 
 std::string RigController::SaveReport(const std::string& path, bool junit)
@@ -265,31 +263,33 @@ std::optional<RigReportResult> RigController::TakeReportResult()
 	return m_report.get();
 }
 
-void RigController::PrepareLaunch(const LaunchProfile& profile)
+void RigController::Start(RigTarget target, std::string source, std::string name, const ScriptOptions& options,
+						  bool replay, std::filesystem::path archive, std::optional<std::uint64_t> expectedProcess)
 {
-	m_launch.reset();
-	if (profile.rig.empty())
-		return;
 	if (IsActive())
-		throw std::runtime_error("Stop the current rig before launching another rig profile");
-	auto file = Utf8Path(profile.rig);
-	if (!file.is_absolute())
-	{
-		if (profile.workingDirectory.empty() || !Utf8Path(profile.workingDirectory).is_absolute())
-			throw std::runtime_error("A relative rig path requires an absolute profile working directory");
-		file = Utf8Path(profile.workingDirectory) / file;
-	}
-	m_launch = Launch{LoadScript(file), PathText(file)};
+		throw std::runtime_error("Stop the current rig before starting another");
+	if (m_runId == std::numeric_limits<std::uint64_t>::max())
+		throw std::runtime_error("Rig run identity exhausted");
+	if (target.endpoint.empty() || !target.session || !target.generation)
+		throw std::runtime_error("Select a running session on a connected runtime first");
+	automation::RigOptions run;
+	run.session = {target.session};
+	run.generation = target.generation;
+	run.seed = options.seed;
+	run.source = std::move(source);
+	run.recordingArchive = std::move(archive);
+	run.name = name;
+	run.deadline = std::chrono::seconds(std::clamp(options.deadlineSeconds, 1, 3600));
+	run.memoryLimit = static_cast<std::size_t>(std::clamp(options.memoryMiB, 1, 512)) * 1024 * 1024;
+	m_runner.Join();
+	m_transport.emplace(target.endpoint, "simxr_companion_rig",
+						static_cast<std::uint64_t>(wire::Capability::SimulationCommands), expectedProcess);
+	m_runner.Start(std::move(run));
+	m_script = std::move(name);
+	m_target = std::move(target);
+	m_recordingReplay = replay;
+	m_owner.reset();
+	++m_runId;
 	m_error.clear();
-}
-
-void RigController::AttachLaunch(const LaunchedSession& session)
-{
-	if (!m_launch)
-		return;
-	auto pending = std::move(*m_launch);
-	m_launch.reset();
-	Start({session.endpoint, session.session, session.generation}, std::move(pending.source), std::move(pending.name),
-		  {}, false);
 }
 } // namespace simxr::app

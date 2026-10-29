@@ -30,26 +30,31 @@ public:
 	~Window();
 	Window(const Window&) = delete;
 	Window& operator=(const Window&) = delete;
+
 	SDL_Window* Native() const;
 	std::pair<int, int> PixelSize() const;
+	void Resize(int width, int height);
+
 	// Pilot motion stays with the pilot; other events go to the UI owner.
 	bool PollEvents(const std::function<void(const SDL_Event&)>& processEvent = {});
 	bool TakeFocusLost();
 	bool Focused() const;
+
+	bool CapturePointer(bool enabled, bool relative = true);
+	std::pair<float, float> TakePointerMotion();
+
 	GamepadSample ReadGamepad(const GamepadBindings& bindings);
 	bool Rumble(std::array<std::uint16_t, 2> motors,
 				std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
 	bool HasGamepad() const noexcept;
 	std::uint32_t GamepadIdentity() const noexcept;
-	void Resize(int width, int height);
-	bool CapturePointer(bool enabled, bool relative = true);
-	std::pair<float, float> TakePointerMotion();
 
 private:
+	void OpenGamepad();
+
 	SDL_Window* m_window = nullptr;
 	SDL_Gamepad* m_gamepad = nullptr;
 	GamepadFeedback m_feedback;
-	void OpenGamepad();
 	bool m_focusLost = false;
 	bool m_pointerCaptured = false;
 	bool m_pointerRelative = false;

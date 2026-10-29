@@ -26,6 +26,7 @@ class D3D12Frame final : public FrameOutput
 {
 public:
 	~D3D12Frame() override;
+
 	CompletionStatus PollCompletion() const noexcept override;
 
 	bool SourcesUsed() const noexcept
@@ -40,8 +41,10 @@ public:
 
 private:
 	friend class D3D12Backend;
+
 	D3D12Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
 			   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views);
+
 	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;
 	const std::shared_ptr<const windows::WindowsLibrary> m_runtimeLibrary;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_texture;
@@ -68,6 +71,7 @@ public:
 	using Source = D3D12CompositionSource;
 	D3D12Backend(ID3D12Device* device, ID3D12CommandQueue* queue);
 	~D3D12Backend();
+
 	HRESULT Prepare(const CompositionPlan& plan, std::span<const D3D12CompositionSource> sources,
 					std::shared_ptr<D3D12Frame>& output, std::uint32_t outputLayers = 2);
 	HRESULT PrepareCapture(const LayerImageDescription& image, D3D12CompositionSource source,
@@ -77,6 +81,7 @@ public:
 private:
 	HRESULT Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES state,
 					 std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output);
+
 	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;
 	const std::shared_ptr<const windows::WindowsLibrary> m_runtimeLibrary;
 	Microsoft::WRL::ComPtr<ID3D12Device> m_device;

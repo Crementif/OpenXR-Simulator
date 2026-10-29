@@ -136,6 +136,81 @@ std::optional<PresentationTick> PresentationController::AdvanceExternal(RuntimeT
 	return AdvanceAt(target, generation, transform, true, current);
 }
 
+void PresentationController::Stop() noexcept
+{
+	std::optional<PresentationSubmission> released;
+	std::shared_ptr<const FrameOutput> releasedImage;
+	std::optional<PresentationSubmission> releasedClear;
+	{
+		std::lock_guard lock(m_mutex);
+		m_running = false;
+		++m_revision;
+		for (auto& entry : m_entries)
+			entry.retiring = true;
+		released = std::move(m_current);
+		m_current.reset();
+		releasedImage = std::move(m_displayOutput);
+		releasedClear = std::move(m_liveClear);
+		m_liveClear.reset();
+	}
+}
+
+std::size_t PresentationController::PollRetired()
+{
+	std::vector<Observation> observed;
+	{
+		std::lock_guard lock(m_mutex);
+		for (const auto& entry : m_entries)
+			if (entry.retiring)
+				observed.push_back({entry.submission});
+	}
+	for (auto& value : observed)
+		value.status = value.submission.output ? value.submission.output->PollCompletion() : CompletionStatus::Complete;
+	std::lock_guard lock(m_mutex);
+	std::erase_if(m_entries, [&](const auto& entry) {
+		return entry.retiring && std::any_of(observed.begin(), observed.end(), [&](const auto& value) {
+				   return value.submission.key == entry.submission.key && value.status != CompletionStatus::Pending;
+			   });
+	});
+	return static_cast<std::size_t>(
+		std::count_if(m_entries.begin(), m_entries.end(), [](const auto& entry) { return entry.retiring; }));
+}
+
+PresentationSnapshot PresentationController::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	PresentationSnapshot result{m_running, m_generation, m_capacity, m_lastSubmitted, m_latest, {}, {}};
+	result.liveClear = m_liveClear ? std::optional{m_liveClear->key} : std::nullopt;
+	result.coalescedLiveClears = m_coalescedLiveClears;
+	if (result.latest && m_current)
+	{
+		result.latest->output = m_displayOutput;
+		result.latest->reprojection = m_current->reprojection;
+	}
+	for (const auto& entry : m_entries)
+		(entry.retiring ? result.retiring : result.queued).push_back(entry.submission.key);
+	return result;
+}
+
+std::vector<PresentationSubmission> PresentationController::Retain() const
+{
+	std::vector<PresentationSubmission> retained;
+	{
+		std::lock_guard lock(m_mutex);
+		retained.reserve(m_entries.size() + (m_current ? 1 : 0) + (m_liveClear ? 1 : 0));
+		if (m_current)
+			retained.push_back(*m_current);
+		if (m_liveClear && (!m_current || m_current->key != m_liveClear->key))
+			retained.push_back(*m_liveClear);
+		for (const auto& entry : m_entries)
+			if (!entry.retiring && (!m_current || m_current->key != entry.submission.key))
+				retained.push_back(entry.submission);
+	}
+	std::sort(retained.begin(), retained.end(),
+			  [](const auto& left, const auto& right) { return left.key < right.key; });
+	return retained;
+}
+
 std::optional<PresentationTick> PresentationController::AdvanceAt(RuntimeTime now,
 																  std::optional<SessionGeneration> generation,
 																  const ImageTransform& transform, bool exact,
@@ -294,78 +369,4 @@ std::optional<PresentationTick> PresentationController::AdvanceAt(RuntimeTime no
 	return next;
 }
 
-void PresentationController::Stop() noexcept
-{
-	std::optional<PresentationSubmission> released;
-	std::shared_ptr<const FrameOutput> releasedImage;
-	std::optional<PresentationSubmission> releasedClear;
-	{
-		std::lock_guard lock(m_mutex);
-		m_running = false;
-		++m_revision;
-		for (auto& entry : m_entries)
-			entry.retiring = true;
-		released = std::move(m_current);
-		m_current.reset();
-		releasedImage = std::move(m_displayOutput);
-		releasedClear = std::move(m_liveClear);
-		m_liveClear.reset();
-	}
-}
-
-std::size_t PresentationController::PollRetired()
-{
-	std::vector<Observation> observed;
-	{
-		std::lock_guard lock(m_mutex);
-		for (const auto& entry : m_entries)
-			if (entry.retiring)
-				observed.push_back({entry.submission});
-	}
-	for (auto& value : observed)
-		value.status = value.submission.output ? value.submission.output->PollCompletion() : CompletionStatus::Complete;
-	std::lock_guard lock(m_mutex);
-	std::erase_if(m_entries, [&](const auto& entry) {
-		return entry.retiring && std::any_of(observed.begin(), observed.end(), [&](const auto& value) {
-				   return value.submission.key == entry.submission.key && value.status != CompletionStatus::Pending;
-			   });
-	});
-	return static_cast<std::size_t>(
-		std::count_if(m_entries.begin(), m_entries.end(), [](const auto& entry) { return entry.retiring; }));
-}
-
-PresentationSnapshot PresentationController::Snapshot() const
-{
-	std::lock_guard lock(m_mutex);
-	PresentationSnapshot result{m_running, m_generation, m_capacity, m_lastSubmitted, m_latest, {}, {}};
-	result.liveClear = m_liveClear ? std::optional{m_liveClear->key} : std::nullopt;
-	result.coalescedLiveClears = m_coalescedLiveClears;
-	if (result.latest && m_current)
-	{
-		result.latest->output = m_displayOutput;
-		result.latest->reprojection = m_current->reprojection;
-	}
-	for (const auto& entry : m_entries)
-		(entry.retiring ? result.retiring : result.queued).push_back(entry.submission.key);
-	return result;
-}
-
-std::vector<PresentationSubmission> PresentationController::Retain() const
-{
-	std::vector<PresentationSubmission> retained;
-	{
-		std::lock_guard lock(m_mutex);
-		retained.reserve(m_entries.size() + (m_current ? 1 : 0) + (m_liveClear ? 1 : 0));
-		if (m_current)
-			retained.push_back(*m_current);
-		if (m_liveClear && (!m_current || m_current->key != m_liveClear->key))
-			retained.push_back(*m_liveClear);
-		for (const auto& entry : m_entries)
-			if (!entry.retiring && (!m_current || m_current->key != entry.submission.key))
-				retained.push_back(entry.submission);
-	}
-	std::sort(retained.begin(), retained.end(),
-			  [](const auto& left, const auto& right) { return left.key < right.key; });
-	return retained;
-}
 } // namespace simxr

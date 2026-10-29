@@ -29,6 +29,7 @@ class IncidentAnalysis
 {
 public:
 	explicit IncidentAnalysis(bool ui);
+
 	AnalysisObservation Observe(std::uint64_t frame, std::span<const std::byte> pixels, std::uint32_t width,
 								std::uint32_t height, std::uint32_t stride, PixelOrder order,
 								const std::array<std::array<std::int32_t, 4>, 2>& rectangles = {});
@@ -42,6 +43,7 @@ public:
 private:
 	void Track(std::uint64_t frame);
 	void Reset();
+
 	bool m_ui;
 	AnalysisCounts m_counts;
 	std::uint64_t m_segmentSamples = 0;

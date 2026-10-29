@@ -60,36 +60,6 @@ void FrameImageWindow::Append(const HistoricalImage& image) noexcept
 	m_entries[m_preCount + m_postCount++] = SelectImage(image, m_view);
 }
 
-FrameImageHistory::StartedWindow FrameImageHistory::BeginWindow(ImageHistoryView view)
-{
-	StartedWindow started{std::make_shared<FrameImageWindow>(), {}};
-	std::lock_guard lock(m_mutex);
-	started.previous = m_window.lock();
-	if (started.previous)
-	{
-		std::lock_guard previousLock(started.previous->m_mutex);
-		if (!started.previous->m_interrupted && started.previous->m_postCount != FrameImageWindow::PostCount)
-		{
-			started.window.reset();
-			return started;
-		}
-	}
-	if (!m_count)
-	{
-		started.window.reset();
-		return started;
-	}
-	auto& window = *started.window;
-	window.m_generation = m_generation;
-	window.m_view = view;
-	window.m_preCount = m_count;
-	for (std::size_t i = 0; i < m_count; ++i)
-		window.m_entries[i] = SelectImage(m_entries[(m_next + Capacity - m_count + i) % Capacity], view);
-	window.m_trigger = window.m_entries[m_count - 1].metadata->key.frame;
-	m_window = started.window;
-	return started;
-}
-
 FrameImageHistory::~FrameImageHistory()
 {
 	auto retired = Clear();
@@ -147,6 +117,36 @@ FrameImageHistory::Retired FrameImageHistory::Append(HistoricalImage image) noex
 	else
 		++m_count;
 	return retired;
+}
+
+FrameImageHistory::StartedWindow FrameImageHistory::BeginWindow(ImageHistoryView view)
+{
+	StartedWindow started{std::make_shared<FrameImageWindow>(), {}};
+	std::lock_guard lock(m_mutex);
+	started.previous = m_window.lock();
+	if (started.previous)
+	{
+		std::lock_guard previousLock(started.previous->m_mutex);
+		if (!started.previous->m_interrupted && started.previous->m_postCount != FrameImageWindow::PostCount)
+		{
+			started.window.reset();
+			return started;
+		}
+	}
+	if (!m_count)
+	{
+		started.window.reset();
+		return started;
+	}
+	auto& window = *started.window;
+	window.m_generation = m_generation;
+	window.m_view = view;
+	window.m_preCount = m_count;
+	for (std::size_t i = 0; i < m_count; ++i)
+		window.m_entries[i] = SelectImage(m_entries[(m_next + Capacity - m_count + i) % Capacity], view);
+	window.m_trigger = window.m_entries[m_count - 1].metadata->key.frame;
+	m_window = started.window;
+	return started;
 }
 
 ImageHistorySnapshot FrameImageHistory::Snapshot(std::size_t count, ImageHistoryView view) const

@@ -62,14 +62,17 @@ public:
 	~HeadsetActions();
 	HeadsetActions(const HeadsetActions&) = delete;
 	HeadsetActions& operator=(const HeadsetActions&) = delete;
+
 	void Open(XrSession session, bool trackers = false);
 	HeadsetInputSample Sample(XrTime time, XrSpace baseSpace);
+
 	bool ApplyHaptic(std::uint32_t hand, float amplitude, float frequency, XrDuration remaining);
 	bool StopHaptic(std::uint32_t hand);
 
 private:
 	XrPath Path(const char* text) const;
 	XrAction CreateAction(const char* name, XrActionType type);
+
 	OpenXrRuntime& m_runtime;
 	std::optional<HeadsetTrackers> m_trackers;
 	XrSession m_session = XR_NULL_HANDLE;

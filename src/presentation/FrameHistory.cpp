@@ -21,23 +21,32 @@ static bool Pending(FrameStage stage)
 	return stage == FrameStage::Issued || stage == FrameStage::Begun;
 }
 
+std::optional<Duration> FrameRecord::CpuFrameTime() const noexcept
+{
+	if (!submission || !submission->diagnostics)
+		return {};
+	std::optional<Duration> begin, end;
+	for (const auto& event : submission->diagnostics->events)
+	{
+		if (event.frame != key || event.result != XR_SUCCESS || !event.sequence)
+			continue;
+		if (event.kind == FrameTraceKind::WaitReturned)
+			begin = event.hostTime;
+		if (event.kind == FrameTraceKind::Submitted)
+			end = event.hostTime;
+	}
+	if (!begin || !end || *end < *begin)
+		return {};
+	if (begin->count() < 0 && end->count() > std::numeric_limits<Duration::rep>::max() + begin->count())
+		return {};
+	return *end - *begin;
+}
+
 FrameHistory::FrameHistory(std::size_t capacity, std::size_t diagnosticCapacity)
 	: m_capacity(capacity), m_diagnostics(std::make_shared<FrameDiagnosticsJournal>(diagnosticCapacity))
 {
 	if (capacity < 2)
 		throw std::invalid_argument("Frame history requires pipeline capacity");
-}
-
-FrameDiagnostic FrameHistory::Trace(FrameTraceKind kind, FrameKey frame, RuntimeTime time, XrResult result,
-									FrameDiagnosticCategory category, std::uint64_t related,
-									std::string_view detail) noexcept
-{
-	return m_diagnostics->Trace(kind, frame, time, result, category, related, detail);
-}
-
-FrameDiagnostics FrameHistory::Diagnostics(std::uint64_t after, std::size_t count, std::optional<FrameKey> frame) const
-{
-	return m_diagnostics->Read(after, count, frame);
 }
 
 SessionGeneration FrameHistory::StartGeneration(RuntimeTime origin)
@@ -47,16 +56,6 @@ SessionGeneration FrameHistory::StartGeneration(RuntimeTime origin)
 	m_generation = NextGeneration();
 	m_origin = origin;
 	return m_generation;
-}
-
-FrameHistory::Records::iterator FrameHistory::Current(FrameId frame)
-{
-	const FrameKey key{m_generation, frame};
-	auto found =
-		std::find_if(m_records.begin(), m_records.end(), [&](const auto& value) { return value.record->key == key; });
-	if (found == m_records.end())
-		throw std::logic_error("Unknown frame history identity");
-	return found;
 }
 
 void FrameHistory::Issue(
@@ -141,27 +140,6 @@ void FrameHistory::Begin(FrameId frame, std::optional<FrameId> discarded)
 	Trace(FrameTraceKind::Begun, current->record->key, current->record->prediction.displayTime);
 }
 
-std::optional<Duration> FrameRecord::CpuFrameTime() const noexcept
-{
-	if (!submission || !submission->diagnostics)
-		return {};
-	std::optional<Duration> begin, end;
-	for (const auto& event : submission->diagnostics->events)
-	{
-		if (event.frame != key || event.result != XR_SUCCESS || !event.sequence)
-			continue;
-		if (event.kind == FrameTraceKind::WaitReturned)
-			begin = event.hostTime;
-		if (event.kind == FrameTraceKind::Submitted)
-			end = event.hostTime;
-	}
-	if (!begin || !end || *end < *begin)
-		return {};
-	if (begin->count() < 0 && end->count() > std::numeric_limits<Duration::rep>::max() + begin->count())
-		return {};
-	return *end - *begin;
-}
-
 XrResult FrameHistory::Submit(FrameId frame, FrameSubmissionState state, const std::function<XrResult()>& beforeCommit)
 {
 	std::lock_guard lock(m_mutex);
@@ -206,16 +184,6 @@ XrResult FrameHistory::Submit(FrameId frame, FrameSubmissionState state, const s
 	return XR_SUCCESS;
 }
 
-void FrameHistory::CancelPendingLocked() noexcept
-{
-	for (auto& entry : m_records)
-		if (Pending(entry.record->stage))
-		{
-			Trace(FrameTraceKind::Cancelled, entry.record->key, entry.record->prediction.displayTime);
-			entry.record = entry.cancelled;
-		}
-}
-
 void FrameHistory::CancelPending() noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -230,6 +198,14 @@ std::shared_ptr<const FrameRecord> FrameHistory::Find(FrameKey key) const
 	return found == m_records.end() ? nullptr : found->record;
 }
 
+std::shared_ptr<const FrameRecord> FrameHistory::CancellationRecord(FrameKey key) const
+{
+	std::lock_guard lock(m_mutex);
+	const auto found =
+		std::find_if(m_records.begin(), m_records.end(), [&](const auto& value) { return value.record->key == key; });
+	return found == m_records.end() ? nullptr : found->cancelled;
+}
+
 FrameHistorySnapshot FrameHistory::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
@@ -241,11 +217,35 @@ FrameHistorySnapshot FrameHistory::Snapshot() const
 	return result;
 }
 
-std::shared_ptr<const FrameRecord> FrameHistory::CancellationRecord(FrameKey key) const
+FrameDiagnostic FrameHistory::Trace(FrameTraceKind kind, FrameKey frame, RuntimeTime time, XrResult result,
+									FrameDiagnosticCategory category, std::uint64_t related,
+									std::string_view detail) noexcept
 {
-	std::lock_guard lock(m_mutex);
-	const auto found =
+	return m_diagnostics->Trace(kind, frame, time, result, category, related, detail);
+}
+
+FrameDiagnostics FrameHistory::Diagnostics(std::uint64_t after, std::size_t count, std::optional<FrameKey> frame) const
+{
+	return m_diagnostics->Read(after, count, frame);
+}
+
+FrameHistory::Records::iterator FrameHistory::Current(FrameId frame)
+{
+	const FrameKey key{m_generation, frame};
+	auto found =
 		std::find_if(m_records.begin(), m_records.end(), [&](const auto& value) { return value.record->key == key; });
-	return found == m_records.end() ? nullptr : found->cancelled;
+	if (found == m_records.end())
+		throw std::logic_error("Unknown frame history identity");
+	return found;
+}
+
+void FrameHistory::CancelPendingLocked() noexcept
+{
+	for (auto& entry : m_records)
+		if (Pending(entry.record->stage))
+		{
+			Trace(FrameTraceKind::Cancelled, entry.record->key, entry.record->prediction.displayTime);
+			entry.record = entry.cancelled;
+		}
 }
 } // namespace simxr

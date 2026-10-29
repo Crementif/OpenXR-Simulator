@@ -30,11 +30,6 @@ XrResult HapticState::Apply(std::span<const HapticDevice> devices, XrAction acti
 	return Apply(Controllers(devices), action, subactionPath, vibration, time, focused);
 }
 
-XrResult HapticState::Stop(std::span<const HapticDevice> devices, XrAction action, RuntimeTime time, bool focused)
-{
-	return Stop(Controllers(devices), action, time, focused);
-}
-
 XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction action, XrPath subactionPath,
 							const XrHapticVibration& vibration, RuntimeTime time, bool focused)
 {
@@ -79,6 +74,11 @@ XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction act
 	return XR_SUCCESS;
 }
 
+XrResult HapticState::Stop(std::span<const HapticDevice> devices, XrAction action, RuntimeTime time, bool focused)
+{
+	return Stop(Controllers(devices), action, time, focused);
+}
+
 XrResult HapticState::Stop(std::span<const InputDeviceId> devices, XrAction action, RuntimeTime time, bool focused)
 {
 	if (time.value.count() < 0 ||
@@ -93,25 +93,6 @@ XrResult HapticState::Stop(std::span<const InputDeviceId> devices, XrAction acti
 			std::find(devices.begin(), devices.end(), m_active[index].device) != devices.end())
 			Retire(index, HapticStatus::Stopped, time);
 	return XR_SUCCESS;
-}
-
-void HapticState::Retire(std::size_t index, HapticStatus status, RuntimeTime time)
-{
-	auto output = m_active[index];
-	output.status = status;
-	if (status != HapticStatus::Expired)
-		output.end = std::max(time, output.start);
-	if (m_history.size() == m_historyCapacity)
-		m_history.erase(m_history.begin());
-	m_history.push_back(output);
-	m_active.erase(m_active.begin() + static_cast<std::ptrdiff_t>(index));
-}
-
-void HapticState::Expire(RuntimeTime time)
-{
-	for (std::size_t index = m_active.size(); index-- > 0;)
-		if (m_active[index].end && *m_active[index].end <= time)
-			Retire(index, HapticStatus::Expired, time);
 }
 
 void HapticState::LoseFocus(RuntimeTime time)
@@ -152,4 +133,24 @@ std::vector<HapticOutput> HapticState::Snapshot(RuntimeTime time) const
 	std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.sequence < b.sequence; });
 	return result;
 }
+
+void HapticState::Retire(std::size_t index, HapticStatus status, RuntimeTime time)
+{
+	auto output = m_active[index];
+	output.status = status;
+	if (status != HapticStatus::Expired)
+		output.end = std::max(time, output.start);
+	if (m_history.size() == m_historyCapacity)
+		m_history.erase(m_history.begin());
+	m_history.push_back(output);
+	m_active.erase(m_active.begin() + static_cast<std::ptrdiff_t>(index));
+}
+
+void HapticState::Expire(RuntimeTime time)
+{
+	for (std::size_t index = m_active.size(); index-- > 0;)
+		if (m_active[index].end && *m_active[index].end <= time)
+			Retire(index, HapticStatus::Expired, time);
+}
+
 } // namespace simxr

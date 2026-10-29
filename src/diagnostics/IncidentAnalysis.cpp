@@ -11,32 +11,6 @@ IncidentAnalysis::IncidentAnalysis(bool ui) : m_ui(ui)
 		m_preview.emplace(std::filesystem::path{});
 }
 
-void IncidentAnalysis::Reset()
-{
-	m_segmentSamples = 0;
-	if (m_ui)
-		m_uiMonitor.emplace(std::filesystem::path{});
-	else
-		m_preview.emplace(std::filesystem::path{});
-}
-
-void IncidentAnalysis::Track(std::uint64_t frame)
-{
-	if (m_lastFrame && (*m_lastFrame == UINT64_MAX || frame != *m_lastFrame + 1))
-	{
-		++m_counts.gaps;
-		Reset();
-	}
-	m_lastFrame = frame;
-}
-
-void IncidentAnalysis::Skip(std::uint64_t frame)
-{
-	Track(frame);
-	++m_counts.skipped;
-	Reset();
-}
-
 AnalysisObservation IncidentAnalysis::Observe(std::uint64_t frame, std::span<const std::byte> pixels,
 											  std::uint32_t width, std::uint32_t height, std::uint32_t stride,
 											  PixelOrder order,
@@ -76,6 +50,32 @@ AnalysisObservation IncidentAnalysis::Observe(std::uint64_t frame, std::span<con
 			reason = m_preview->Snapshot().incidents.lastReason;
 	}
 	return {false, std::move(reason)};
+}
+
+void IncidentAnalysis::Skip(std::uint64_t frame)
+{
+	Track(frame);
+	++m_counts.skipped;
+	Reset();
+}
+
+void IncidentAnalysis::Track(std::uint64_t frame)
+{
+	if (m_lastFrame && (*m_lastFrame == UINT64_MAX || frame != *m_lastFrame + 1))
+	{
+		++m_counts.gaps;
+		Reset();
+	}
+	m_lastFrame = frame;
+}
+
+void IncidentAnalysis::Reset()
+{
+	m_segmentSamples = 0;
+	if (m_ui)
+		m_uiMonitor.emplace(std::filesystem::path{});
+	else
+		m_preview.emplace(std::filesystem::path{});
 }
 
 }

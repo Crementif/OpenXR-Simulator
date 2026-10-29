@@ -61,50 +61,6 @@ GameBridge::GameBridge(std::size_t observationCapacity)
 	m_sources.reserve(64);
 }
 
-void GameBridge::Observe(GameObservation observation) noexcept
-{
-	if (m_observationNext == std::numeric_limits<std::uint64_t>::max())
-	{
-		m_observationFailed = true;
-		return;
-	}
-	observation.sequence = m_observationNext;
-	observation.game = m_state.game;
-	observation.revision = m_state.revision;
-	observation.capabilities = m_state.capabilities;
-	try
-	{
-		observation.time = ReadNativeClockSample();
-	}
-	catch (...)
-	{
-		// Keep the event, but do not invent a timestamp when correlation fails.
-	}
-	m_observations[m_observationNext % m_observations.size()] = std::move(observation);
-	++m_observationNext;
-}
-
-GameObservationPage GameBridge::Observations(std::optional<std::uint64_t> offset, std::size_t count) const
-{
-	if (count > 16)
-		throw std::invalid_argument("Game observation pages contain at most 16 records");
-	std::lock_guard lock(m_mutex);
-	GameObservationPage page;
-	page.state = m_state;
-	page.total = m_observationNext;
-	page.floor = page.total > m_observations.size() ? page.total - m_observations.size() : 0;
-	if (offset && *offset > page.total)
-		throw std::invalid_argument("Game observation offset is beyond the journal");
-	page.offset = std::max(offset.value_or(page.floor), page.floor);
-	page.gap = offset && *offset < page.floor;
-	page.failed = m_observationFailed;
-	page.next = page.offset + std::min<std::uint64_t>(count, page.total - page.offset);
-	page.observations.reserve(static_cast<std::size_t>(page.next - page.offset));
-	for (auto cursor = page.offset; cursor < page.next; ++cursor)
-		page.observations.push_back(*m_observations[cursor % m_observations.size()]);
-	return page;
-}
-
 std::uint64_t GameBridge::Register(std::uint32_t capabilities)
 {
 	if (!capabilities || (capabilities & ~7U))
@@ -124,6 +80,21 @@ std::uint64_t GameBridge::Register(std::uint32_t capabilities)
 	return m_state.game;
 }
 
+void GameBridge::Unregister(std::uint64_t game) noexcept
+{
+	std::lock_guard lock(m_mutex);
+	if (!game || m_state.game != game)
+		return;
+	GameObservation unregistered;
+	unregistered.kind = GameObservationKind::Unregistered;
+	Observe(std::move(unregistered));
+	for (auto& command : m_commands)
+		if (!Terminal(command.phase))
+			command.phase = GameCommandPhase::Interrupted;
+	m_state.capabilities = 0;
+	m_state.game = 0;
+}
+
 void GameBridge::Close() noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -136,21 +107,6 @@ void GameBridge::Close() noexcept
 		Observe(std::move(closed));
 	}
 	m_closed = true;
-	for (auto& command : m_commands)
-		if (!Terminal(command.phase))
-			command.phase = GameCommandPhase::Interrupted;
-	m_state.capabilities = 0;
-	m_state.game = 0;
-}
-
-void GameBridge::Unregister(std::uint64_t game) noexcept
-{
-	std::lock_guard lock(m_mutex);
-	if (!game || m_state.game != game)
-		return;
-	GameObservation unregistered;
-	unregistered.kind = GameObservationKind::Unregistered;
-	Observe(std::move(unregistered));
 	for (auto& command : m_commands)
 		if (!Terminal(command.phase))
 			command.phase = GameCommandPhase::Interrupted;
@@ -274,6 +230,27 @@ void GameBridge::Disconnect(std::uint64_t source, bool retire) noexcept
 		std::erase_if(m_sources, [&](const auto& cursor) { return cursor.source == source; });
 }
 
+GameObservationPage GameBridge::Observations(std::optional<std::uint64_t> offset, std::size_t count) const
+{
+	if (count > 16)
+		throw std::invalid_argument("Game observation pages contain at most 16 records");
+	std::lock_guard lock(m_mutex);
+	GameObservationPage page;
+	page.state = m_state;
+	page.total = m_observationNext;
+	page.floor = page.total > m_observations.size() ? page.total - m_observations.size() : 0;
+	if (offset && *offset > page.total)
+		throw std::invalid_argument("Game observation offset is beyond the journal");
+	page.offset = std::max(offset.value_or(page.floor), page.floor);
+	page.gap = offset && *offset < page.floor;
+	page.failed = m_observationFailed;
+	page.next = page.offset + std::min<std::uint64_t>(count, page.total - page.offset);
+	page.observations.reserve(static_cast<std::size_t>(page.next - page.offset));
+	for (auto cursor = page.offset; cursor < page.next; ++cursor)
+		page.observations.push_back(*m_observations[cursor % m_observations.size()]);
+	return page;
+}
+
 GameBridgeSnapshot GameBridge::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
@@ -359,4 +336,28 @@ bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcep
 	};
 	return true;
 }
+
+void GameBridge::Observe(GameObservation observation) noexcept
+{
+	if (m_observationNext == std::numeric_limits<std::uint64_t>::max())
+	{
+		m_observationFailed = true;
+		return;
+	}
+	observation.sequence = m_observationNext;
+	observation.game = m_state.game;
+	observation.revision = m_state.revision;
+	observation.capabilities = m_state.capabilities;
+	try
+	{
+		observation.time = ReadNativeClockSample();
+	}
+	catch (...)
+	{
+		// Keep the event, but do not invent a timestamp when correlation fails.
+	}
+	m_observations[m_observationNext % m_observations.size()] = std::move(observation);
+	++m_observationNext;
+}
+
 } // namespace simxr

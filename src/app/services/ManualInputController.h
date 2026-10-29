@@ -38,6 +38,7 @@ public:
 	~ManualInputController();
 	ManualInputController(const ManualInputController&) = delete;
 	ManualInputController& operator=(const ManualInputController&) = delete;
+
 	void SetTarget(ManualInputTarget target);
 	bool Submit(SimulationEdit edit, bool continuous = false);
 	void DiscardUnsentPose();
@@ -47,6 +48,7 @@ public:
 private:
 	void Run() noexcept;
 	void RunChecked();
+
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	ManualInputTarget m_target;

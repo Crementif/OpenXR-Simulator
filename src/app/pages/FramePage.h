@@ -16,7 +16,10 @@ class FramePage
 {
 public:
 	FramePage(RuntimeSession& session, DocumentTree& documents);
+
 	void Prepare(const Selection& selection, const RuntimeView& view);
+	void Draw(ShellState& shell, const RuntimeView& view);
+	void DrawExpanded(ImVec2 size);
 
 	bool Active() const
 	{
@@ -33,10 +36,8 @@ public:
 		m_rigView.expanded = expanded;
 	}
 
-	void DrawExpanded(ImVec2 size);
 	ShellRect RigViewRect() const;
 	std::array<ShellRect, MaxTrackerDevices + 3> RigDevicePoints() const;
-	void Draw(ShellState& shell, const RuntimeView& view);
 
 private:
 	void DrawRig(ImVec2 size);

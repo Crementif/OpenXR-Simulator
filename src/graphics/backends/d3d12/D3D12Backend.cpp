@@ -94,11 +94,6 @@ static bool ColorFormat(DXGI_FORMAT resource, DXGI_FORMAT view)
 		   (resource == DXGI_FORMAT_R10G10B10A2_TYPELESS && view == DXGI_FORMAT_R10G10B10A2_UNORM);
 }
 
-D3D12Frame::D3D12Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
-					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
-	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
-{}
-
 D3D12Frame::~D3D12Frame()
 {
 	if (m_textureHandle)
@@ -134,6 +129,11 @@ HANDLE D3D12Frame::FenceHandle() const noexcept
 {
 	return m_fenceHandle;
 }
+
+D3D12Frame::D3D12Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
+					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
+	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
+{}
 
 struct D3D12Backend::PendingFrames
 {
@@ -232,50 +232,6 @@ D3D12Backend::~D3D12Backend()
 	if (std::any_of(m_pending->frames.begin(), m_pending->frames.end(),
 					[](const auto& frame) { return frame->PollCompletion() == CompletionStatus::Pending; }))
 		m_pending.release(); // Preserved frames keep their process-wide reservation charged.
-}
-
-HRESULT D3D12Backend::Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES state,
-							   std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output)
-{
-	std::erase_if(m_pending->frames,
-				  [](const auto& frame) { return frame->PollCompletion() != CompletionStatus::Pending; });
-	auto& pool = retained ? m_retainedFrames : m_frames;
-	auto reservation = pool.Reserve();
-	if (!reservation)
-		return DXGI_ERROR_WAS_STILL_DRAWING;
-	auto frame = std::shared_ptr<D3D12Frame>(new D3D12Frame(m_dxgiLibrary, m_runtimeLibrary, views));
-	frame->m_queue = m_queue;
-	frame->m_root = m_root;
-	frame->m_pipeline = m_pipeline;
-	frame->m_depthMultisample = m_depthMultisample;
-	D3D12_HEAP_PROPERTIES heap{};
-	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-	auto result = m_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_SHARED, &description, state, nullptr,
-													IID_PPV_ARGS(&frame->m_texture));
-	if (FAILED(result))
-		return result;
-	result =
-		m_device->CreateSharedHandle(frame->m_texture.Get(), nullptr, GENERIC_ALL, nullptr, &frame->m_textureHandle);
-	if (FAILED(result))
-		return result;
-	result = m_device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&frame->m_fence));
-	if (FAILED(result))
-		return result;
-	result = m_device->CreateSharedHandle(frame->m_fence.Get(), nullptr, GENERIC_ALL, nullptr, &frame->m_fenceHandle);
-	if (FAILED(result))
-		return result;
-	result = m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&frame->m_allocator));
-	if (FAILED(result))
-		return result;
-	result = m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, frame->m_allocator.Get(), m_pipeline.Get(),
-										 IID_PPV_ARGS(&frame->m_commands));
-	if (FAILED(result))
-		return result;
-	if (!pool.Consume(reservation))
-		return E_UNEXPECTED;
-	frame->m_reservation = std::move(reservation);
-	output = std::move(frame);
-	return S_OK;
 }
 
 HRESULT D3D12Backend::Prepare(const CompositionPlan& plan, std::span<const D3D12CompositionSource> sources,
@@ -548,4 +504,49 @@ HRESULT D3D12Backend::Submit(const std::shared_ptr<D3D12Frame>& frame)
 	m_queue->ExecuteCommandLists(1, commands);
 	return m_queue->Signal(frame->m_fence.Get(), D3D12Frame::ReadyValue);
 }
+
+HRESULT D3D12Backend::Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES state,
+							   std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output)
+{
+	std::erase_if(m_pending->frames,
+				  [](const auto& frame) { return frame->PollCompletion() != CompletionStatus::Pending; });
+	auto& pool = retained ? m_retainedFrames : m_frames;
+	auto reservation = pool.Reserve();
+	if (!reservation)
+		return DXGI_ERROR_WAS_STILL_DRAWING;
+	auto frame = std::shared_ptr<D3D12Frame>(new D3D12Frame(m_dxgiLibrary, m_runtimeLibrary, views));
+	frame->m_queue = m_queue;
+	frame->m_root = m_root;
+	frame->m_pipeline = m_pipeline;
+	frame->m_depthMultisample = m_depthMultisample;
+	D3D12_HEAP_PROPERTIES heap{};
+	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+	auto result = m_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_SHARED, &description, state, nullptr,
+													IID_PPV_ARGS(&frame->m_texture));
+	if (FAILED(result))
+		return result;
+	result =
+		m_device->CreateSharedHandle(frame->m_texture.Get(), nullptr, GENERIC_ALL, nullptr, &frame->m_textureHandle);
+	if (FAILED(result))
+		return result;
+	result = m_device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&frame->m_fence));
+	if (FAILED(result))
+		return result;
+	result = m_device->CreateSharedHandle(frame->m_fence.Get(), nullptr, GENERIC_ALL, nullptr, &frame->m_fenceHandle);
+	if (FAILED(result))
+		return result;
+	result = m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&frame->m_allocator));
+	if (FAILED(result))
+		return result;
+	result = m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, frame->m_allocator.Get(), m_pipeline.Get(),
+										 IID_PPV_ARGS(&frame->m_commands));
+	if (FAILED(result))
+		return result;
+	if (!pool.Consume(reservation))
+		return E_UNEXPECTED;
+	frame->m_reservation = std::move(reservation);
+	output = std::move(frame);
+	return S_OK;
+}
+
 } // namespace simxr

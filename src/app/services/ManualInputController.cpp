@@ -6,6 +6,7 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 using Clock = std::chrono::steady_clock;
 
 static void Check(const wire::Message& reply)
@@ -40,6 +41,85 @@ ManualInputController::~ManualInputController()
 	}
 	m_changed.notify_all();
 	m_worker.join();
+}
+
+void ManualInputController::SetTarget(ManualInputTarget target)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_stopping || m_target == target)
+		return;
+	m_target = std::move(target);
+	++m_revision;
+	m_snapshot = {};
+	m_edits.clear();
+	m_pose.reset();
+	if (m_current)
+		m_current->Stop();
+	m_changed.notify_all();
+}
+
+bool ManualInputController::Submit(SimulationEdit edit, bool continuous)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_stopping || m_target.endpoint.empty() || !m_target.session)
+		return false;
+	if (const auto transaction = std::get_if<ManualTransaction>(&edit))
+	{
+		continuous |= transaction->continuous;
+		if (!continuous && m_edits.size() + (m_pose ? 1 : 0) >= 32)
+		{
+			m_snapshot.error = "Too many inputs. Release the controls and try again.";
+			if (!transaction->releaseEdge)
+				return false;
+			// A safety release retires queued presses rather than losing a release edge.
+			edit = ReleaseManualInputs{};
+		}
+	}
+	if (std::holds_alternative<ReleaseManualInputs>(edit))
+	{
+		m_edits.clear();
+		m_pose.reset();
+	}
+	m_snapshot.error.clear();
+	m_snapshot.editPending = true;
+	if (continuous)
+	{
+		m_pose = std::move(edit);
+		m_snapshot.posePending = true;
+	}
+	else
+	{
+		if (m_pose)
+		{
+			m_edits.push_back(std::move(*m_pose));
+			m_pose.reset();
+		}
+		m_edits.push_back(std::move(edit));
+	}
+	m_changed.notify_all();
+	return true;
+}
+
+void ManualInputController::DiscardUnsentPose()
+{
+	std::lock_guard lock(m_mutex);
+	m_pose.reset();
+}
+
+void ManualInputController::Refresh()
+{
+	std::lock_guard lock(m_mutex);
+	if (m_stopping)
+		return;
+	m_refresh = true;
+	m_snapshot.error.clear();
+	m_changed.notify_all();
+}
+
+ManualInputSnapshot ManualInputController::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_snapshot;
 }
 
 void ManualInputController::Run() noexcept
@@ -222,84 +302,5 @@ void ManualInputController::RunChecked()
 			nextRead = Clock::now() + std::chrono::milliseconds(500);
 		}
 	}
-}
-
-void ManualInputController::SetTarget(ManualInputTarget target)
-{
-	std::lock_guard lock(m_mutex);
-	if (m_stopping || m_target == target)
-		return;
-	m_target = std::move(target);
-	++m_revision;
-	m_snapshot = {};
-	m_edits.clear();
-	m_pose.reset();
-	if (m_current)
-		m_current->Stop();
-	m_changed.notify_all();
-}
-
-bool ManualInputController::Submit(SimulationEdit edit, bool continuous)
-{
-	std::lock_guard lock(m_mutex);
-	if (m_stopping || m_target.endpoint.empty() || !m_target.session)
-		return false;
-	if (const auto transaction = std::get_if<ManualTransaction>(&edit))
-	{
-		continuous |= transaction->continuous;
-		if (!continuous && m_edits.size() + (m_pose ? 1 : 0) >= 32)
-		{
-			m_snapshot.error = "Too many inputs. Release the controls and try again.";
-			if (!transaction->releaseEdge)
-				return false;
-			// A safety release retires queued presses rather than losing a release edge.
-			edit = ReleaseManualInputs{};
-		}
-	}
-	if (std::holds_alternative<ReleaseManualInputs>(edit))
-	{
-		m_edits.clear();
-		m_pose.reset();
-	}
-	m_snapshot.error.clear();
-	m_snapshot.editPending = true;
-	if (continuous)
-	{
-		m_pose = std::move(edit);
-		m_snapshot.posePending = true;
-	}
-	else
-	{
-		if (m_pose)
-		{
-			m_edits.push_back(std::move(*m_pose));
-			m_pose.reset();
-		}
-		m_edits.push_back(std::move(edit));
-	}
-	m_changed.notify_all();
-	return true;
-}
-
-void ManualInputController::DiscardUnsentPose()
-{
-	std::lock_guard lock(m_mutex);
-	m_pose.reset();
-}
-
-void ManualInputController::Refresh()
-{
-	std::lock_guard lock(m_mutex);
-	if (m_stopping)
-		return;
-	m_refresh = true;
-	m_snapshot.error.clear();
-	m_changed.notify_all();
-}
-
-ManualInputSnapshot ManualInputController::Snapshot() const
-{
-	std::lock_guard lock(m_mutex);
-	return m_snapshot;
 }
 } // namespace simxr::app

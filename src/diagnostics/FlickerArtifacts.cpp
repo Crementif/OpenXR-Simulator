@@ -332,21 +332,6 @@ void ArtifactQueue::Add(IncidentUpdate update, const UiMonitor& monitor)
 		Admit(std::move(*update.sample));
 }
 
-void ArtifactQueue::Admit(Artifact artifact)
-{
-	const auto charge = Charge(artifact);
-	if (m_outstanding >= s_maxArtifactJobs || charge.bytes > s_maxArtifactBytes - m_bytes ||
-		charge.samples > s_maxArtifactSamples - m_samples)
-	{
-		++m_dropped;
-		return;
-	}
-	m_jobs.push_back({std::move(artifact), charge});
-	++m_outstanding;
-	m_bytes += charge.bytes;
-	m_samples += charge.samples;
-}
-
 bool ArtifactQueue::Empty() const
 {
 	return m_jobs.empty();
@@ -386,6 +371,21 @@ uint64_t ArtifactQueue::Dropped() const
 bool ArtifactQueue::TakeRenderDocRequest()
 {
 	return std::exchange(m_renderDocRequested, false);
+}
+
+void ArtifactQueue::Admit(Artifact artifact)
+{
+	const auto charge = Charge(artifact);
+	if (m_outstanding >= s_maxArtifactJobs || charge.bytes > s_maxArtifactBytes - m_bytes ||
+		charge.samples > s_maxArtifactSamples - m_samples)
+	{
+		++m_dropped;
+		return;
+	}
+	m_jobs.push_back({std::move(artifact), charge});
+	++m_outstanding;
+	m_bytes += charge.bytes;
+	m_samples += charge.samples;
 }
 
 void WriteArtifact(const Artifact& artifact)

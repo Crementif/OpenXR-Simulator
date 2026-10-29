@@ -19,6 +19,7 @@ class SpatialEditor
 {
 public:
 	SpatialEditor(PlayerRig& rig, ManualInputController& input, UndoStack& undo);
+
 	void Observe(const ManualInputSnapshot& snapshot, bool piloting);
 	void SetContext(bool editable, bool lookingBack, std::span<const FrameView> eyes,
 					const control::Message* historical, std::uint64_t historyIdentity);
@@ -26,6 +27,7 @@ public:
 	void Cancel();
 	// Called after all spatial surfaces; hidden widgets cannot retain a gesture.
 	void EndFrame();
+
 	// The rig view at the top of a device page.
 	void DrawRigView(Selection& selection);
 	// Rotation ball for the selected device.
@@ -33,29 +35,7 @@ public:
 	void DrawRig(Selection& selection, ImVec2 size);
 	bool DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 maximum, const FrameView& camera, unsigned eye);
 	void DrawExpanded(Selection& selection, ImVec2 size);
-
-	ShellRect RotationBallRect() const
-	{
-		return m_rotationBallRect;
-	}
-
-	const std::array<ShellRect, MaxTrackerDevices + 3>& MarkerRects() const
-	{
-		return m_markerRects;
-	}
-
-	ShellRect RigViewRect() const;
-	std::array<ShellRect, MaxTrackerDevices + 3> RigDevicePoints() const;
-
-	bool Expanded() const
-	{
-		return m_view.expanded;
-	}
-
-	void SetExpanded(bool expanded)
-	{
-		m_view.expanded = expanded;
-	}
+	void DrawSpaceToggle();
 
 	bool Active() const;
 
@@ -69,7 +49,28 @@ public:
 		return m_editable && m_observed.has_value();
 	}
 
-	void DrawSpaceToggle();
+	bool Expanded() const
+	{
+		return m_view.expanded;
+	}
+
+	void SetExpanded(bool expanded)
+	{
+		m_view.expanded = expanded;
+	}
+
+	ShellRect RotationBallRect() const
+	{
+		return m_rotationBallRect;
+	}
+
+	const std::array<ShellRect, MaxTrackerDevices + 3>& MarkerRects() const
+	{
+		return m_markerRects;
+	}
+
+	ShellRect RigViewRect() const;
+	std::array<ShellRect, MaxTrackerDevices + 3> RigDevicePoints() const;
 
 private:
 	static int SelectedDevice(const Selection& selection);

@@ -18,8 +18,10 @@ public:
 	~HeadsetTestPattern();
 	HeadsetTestPattern(const HeadsetTestPattern&) = delete;
 	HeadsetTestPattern& operator=(const HeadsetTestPattern&) = delete;
+
 	void Open(XrSession session);
 	bool Draw();
+
 	XrSwapchain Swapchain() const;
 	XrExtent2Di Extent() const;
 
@@ -33,6 +35,7 @@ private:
 	};
 
 	void Record(Image& image);
+
 	HeadsetGraphics& m_graphics;
 	XrSwapchain m_swapchain = XR_NULL_HANDLE;
 	VkRenderPass m_renderPass = VK_NULL_HANDLE;

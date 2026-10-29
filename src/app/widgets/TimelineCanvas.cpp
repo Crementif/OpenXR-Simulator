@@ -6,13 +6,6 @@
 
 namespace simxr::app
 {
-void TimelineCanvas::Zoom(double first, double last) noexcept
-{
-	m_span = m_zoomSpan = std::max(.05, last - first) * 1.2;
-	m_start = (first + last - m_span) / 2;
-	m_fit = false;
-}
-
 void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 {
 	const auto top = ImGui::GetCursorScreenPos();
@@ -606,5 +599,12 @@ void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t sourceFi
 			}
 	}
 	draw->PopClipRect();
+}
+
+void TimelineCanvas::Zoom(double first, double last) noexcept
+{
+	m_span = m_zoomSpan = std::max(.05, last - first) * 1.2;
+	m_start = (first + last - m_span) / 2;
+	m_fit = false;
 }
 } // namespace simxr::app

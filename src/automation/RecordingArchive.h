@@ -32,6 +32,7 @@ class RecordingArchiveWriter
 public:
 	RecordingArchiveWriter(const std::filesystem::path& directory, const control::Message& start,
 						   const std::optional<control::Message>& gameOrigin = {});
+
 	std::uint64_t Append(const control::Message& page);
 	void AppendGame(const control::Message& page, std::string_view phase = "page");
 	void Finish(const control::Message& stopped);
@@ -43,6 +44,7 @@ public:
 
 private:
 	void Write(const control::Message& message);
+
 	std::ofstream m_output;
 	RecordingArchiveState m_state;
 	bool m_failed = false, m_gameFormat = false;
@@ -53,6 +55,7 @@ class RecordingArchiveReader
 {
 public:
 	explicit RecordingArchiveReader(const std::filesystem::path& directory);
+
 	std::optional<RecordingPage> Next(std::stop_token stop = {});
 	std::optional<RecordingArchiveEvent> NextEvent();
 
@@ -63,6 +66,7 @@ public:
 
 private:
 	std::optional<control::Message> Read();
+
 	std::ifstream m_input;
 	RecordingArchiveState m_state;
 	bool m_end = false, m_gameFormat = false;

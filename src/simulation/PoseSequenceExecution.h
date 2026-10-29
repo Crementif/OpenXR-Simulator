@@ -32,9 +32,11 @@ class PoseSequenceExecution
 public:
 	PoseSequenceExecution(std::uint64_t id, CommandSource owner, std::shared_ptr<const PoseSequence> program,
 						  std::array<bool, ControlChannelCount> inherited = {});
+
 	PoseSequenceFrame Prepare(FrameId frame, const CommandConfiguration& initial);
 	void Accept(FrameId frame, CommandResult result) noexcept;
 	void Cancel() noexcept;
+
 	bool CanPrepare() const noexcept;
 	bool HasControl(const std::array<bool, ControlChannelCount>& owned) const noexcept;
 	const PoseSequenceStatus& Status() const noexcept;
@@ -44,6 +46,7 @@ public:
 private:
 	void Initialize(FrameId frame, const CommandConfiguration& initial);
 	std::vector<SimulationCommand> Commands() const;
+
 	std::shared_ptr<const PoseSequence> m_program;
 	PoseSequencePlayback m_playback;
 	PoseSequenceStatus m_status;

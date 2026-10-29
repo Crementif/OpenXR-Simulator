@@ -19,22 +19,27 @@ namespace simxr
 class VirtualDisplay
 {
 public:
+	using HeadSampler = std::function<PoseSample(RuntimeTime)>;
+
 	explicit VirtualDisplay(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>(), std::size_t capacity = 8,
 							FrameHistory* history = nullptr, PresentationController::CompletionObserver completed = {});
 	~VirtualDisplay();
 	VirtualDisplay(const VirtualDisplay&) = delete;
 	VirtualDisplay& operator=(const VirtualDisplay&) = delete;
-	using HeadSampler = std::function<PoseSample(RuntimeTime)>;
+
 	// Configure only while stopped. The sampler must not acquire session/lifecycle locks.
 	void ConfigurePolicy(PresentationPolicy policy, HeadSampler sampleHead = {});
 	PresentationPolicy Policy() const;
+
 	void Start(SessionGeneration generation, const DisplayTimeline& timeline, ExecutionMode mode,
 			   std::optional<HostTime> hostEpoch = {});
 	void Stop() noexcept;
+
 	// Pause joins wall-clock advancement without closing producer admission.
 	bool Pause();
 	bool Resume(HostTime hostAnchor, DisplayTick boundary);
 	bool Paused() const;
+
 	// Queue only; the existing display worker performs all image observation and
 	// publication. Clock-domain validation belongs to the session coordinator.
 	bool PublishExternalPrediction(SessionGeneration generation, std::uint64_t attachment, std::uint64_t sequence,
@@ -61,6 +66,7 @@ private:
 												bool exact = false, const std::function<bool()>& current = {});
 	void StopLocked() noexcept;
 	void Run() noexcept;
+
 	std::shared_ptr<Clock> m_clock;
 	std::shared_ptr<Clock> m_waiter;
 	PresentationController m_controller;

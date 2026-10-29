@@ -45,12 +45,6 @@ InspectionValue InspectionValue::Revision(std::uint64_t value)
 	return Scalar(InspectionType::Revision, Field::U64(1, value));
 }
 
-std::vector<std::byte> InspectionValue::Encode(std::string_view name) const
-{
-	return EncodeFields(std::array{Field::Text(1, name, true), Field::U32(2, static_cast<std::uint32_t>(type), true),
-								   Field::Bytes(3, data, true)});
-}
-
 InspectionValue InspectionValue::Object(std::vector<std::pair<std::string, InspectionValue>> fields)
 {
 	std::vector<Field> result;
@@ -82,6 +76,12 @@ InspectionValue InspectionValue::Array(std::vector<InspectionValue> values)
 		pages.push_back(Field::Bytes(static_cast<std::uint16_t>(pages.size() + 1), EncodeFields(page), true));
 	}
 	return {InspectionType::Array, EncodeFields(pages)};
+}
+
+std::vector<std::byte> InspectionValue::Encode(std::string_view name) const
+{
+	return EncodeFields(std::array{Field::Text(1, name, true), Field::U32(2, static_cast<std::uint32_t>(type), true),
+								   Field::Bytes(3, data, true)});
 }
 
 InspectionStore::InspectionStore(std::size_t frames, std::size_t revisions, std::size_t bytes)

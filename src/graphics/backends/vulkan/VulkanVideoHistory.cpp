@@ -35,18 +35,6 @@ public:
 	}
 };
 
-void VulkanVideoHistory::Configure(VkExtent2D extent, std::uint32_t layers)
-{
-	// Padding also admits small probe/previews on encoders with larger minima.
-	const VkExtent2D coded{std::max(128u, (extent.width + 15) / 16 * 16) * layers,
-						   std::max(128u, (extent.height + 15) / 16 * 16)};
-	if (!m_conversion || m_conversion->Extent().width != coded.width || m_conversion->Extent().height != coded.height)
-	{
-		m_conversion.reset();
-		m_conversion = std::make_unique<VulkanVideoConversion>(m_device, coded);
-	}
-}
-
 std::shared_ptr<const ArchivedFrame> VulkanVideoHistory::Encode(std::shared_ptr<const VulkanInspectionFrame> source)
 {
 	std::lock_guard lock(m_mutex);
@@ -88,5 +76,17 @@ std::shared_ptr<const FrameOutput> VulkanVideoHistory::Decode(const VulkanH264Pi
 	if (!frame->PromoteCaptureBudget(budget, std::move(reservation)))
 		throw std::runtime_error("Decoded history image budget transfer failed");
 	return frame;
+}
+
+void VulkanVideoHistory::Configure(VkExtent2D extent, std::uint32_t layers)
+{
+	// Padding also admits small probe/previews on encoders with larger minima.
+	const VkExtent2D coded{std::max(128u, (extent.width + 15) / 16 * 16) * layers,
+						   std::max(128u, (extent.height + 15) / 16 * 16)};
+	if (!m_conversion || m_conversion->Extent().width != coded.width || m_conversion->Extent().height != coded.height)
+	{
+		m_conversion.reset();
+		m_conversion = std::make_unique<VulkanVideoConversion>(m_device, coded);
+	}
 }
 } // namespace simxr

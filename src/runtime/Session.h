@@ -55,6 +55,7 @@ public:
 	Session(XrSession handle, std::shared_ptr<Instance> instance,
 			std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
 	~Session();
+
 	XrResult Ready(RuntimeTime time);
 	XrResult Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config,
 				   PresentationPolicy policy = PresentationPolicy::Repeat,
@@ -64,6 +65,7 @@ public:
 	XrResult SetState(XrSessionState state, RuntimeTime time);
 	void SetFocused(bool focused, RuntimeTime time);
 	void Close();
+
 	// Native publication runs after admission with session/publication locks released.
 	// Failure retires only the admitted generation, including partially published state.
 	XrResult WaitFrame(FramePrediction& prediction,
@@ -75,11 +77,13 @@ public:
 					  const std::function<XrResult()>& submit = {}, std::span<const CaptureOutput> captures = {},
 					  FrameSubmissionPolicy policy = FrameSubmissionPolicy::Exact,
 					  const ReprojectionInput& reprojection = {}, std::shared_ptr<const FrameGpuTiming> gpuTiming = {});
+
 	XrResult Attach(const XrSessionActionSetsAttachInfo& info);
 	XrResult SyncActions(const XrActionsSyncInfo& info,
 						 std::optional<std::array<ControllerControls, 2>> nativeControls = std::nullopt);
 	XrResult ApplyHaptic(const XrHapticActionInfo* info, const XrHapticBaseHeader* feedback);
 	XrResult StopHaptic(const XrHapticActionInfo* info);
+
 	SessionSnapshot Snapshot() const;
 	std::shared_ptr<Clock> ClockSource() const;
 	FrameScheduler& Scheduler();
@@ -95,6 +99,7 @@ public:
 
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
+
 	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {},
 								  bool depthViews = false, bool filteredComposition = false);
 	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
@@ -109,6 +114,7 @@ public:
 	std::size_t CancelCaptureReservations();
 	CaptureBoundaryResult CaptureBoundary(std::optional<FrameKey> after = {});
 	bool SupportsCapture(CaptureTarget target = {}) const;
+
 	HapticState& Haptics();
 	std::optional<HapticSnapshot> ObserveHaptics(SessionGeneration generation);
 	InputState& Input();
@@ -117,8 +123,10 @@ public:
 	SpaceSystem& Spaces();
 	BodyTracking& Body();
 	const EnabledExtensions& Extensions() const;
+
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings = {}, FrameId frame = {});
 	XrResult PublishInput(InputSnapshot input);
+
 	CommandScheduler& Commands();
 	CommandResult SubmitLiveInput(SessionGeneration generation, CommandSource source, const LiveInputSample& sample);
 	bool SubmitDisplayPrediction(SessionGeneration generation, CommandSource source, std::uint64_t attachment,
@@ -135,6 +143,7 @@ public:
 							   bool overrideInitial = true);
 	CommandConfiguration CommandConfigurationSnapshot() const;
 	RecordingResult StartCommandRecording(bool drain = false, CommandSource owner = ApplicationAutomationSource);
+
 	XrResult LocateViews(const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count,
 						 XrView* views);
 	XrViewConfigurationType ActiveViewConfiguration() const;
@@ -142,12 +151,14 @@ public:
 	LocatedViews ViewsAt(RuntimeTime time, bool foveated = false) const;
 
 private:
-	void Close(std::optional<SessionGeneration> expectedGeneration);
 	friend class DebugController;
+
+	void Close(std::optional<SessionGeneration> expectedGeneration);
 	bool WithDebugGeneration(SessionGeneration generation, const std::function<void()>& work,
 							 bool requireRunning = true);
 	void Transition(XrSessionState state, RuntimeTime time);
 	void WatchLiveInput(std::stop_token stop);
+
 	XrSession m_handle;
 	std::shared_ptr<Instance> m_instanceOwner;
 	Instance& m_instance;

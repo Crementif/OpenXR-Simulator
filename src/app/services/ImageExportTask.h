@@ -35,6 +35,7 @@ class ImageExportWriter
 public:
 	ImageExportWriter();
 	~ImageExportWriter();
+
 	bool Save(std::string path, std::vector<std::byte> bytes, ImageExportMetadata metadata = {});
 	bool Busy() const;
 	std::optional<ImageExportWriteResult> TakeResult();
@@ -50,6 +51,7 @@ private:
 	};
 
 	void Run() noexcept;
+
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::optional<Job> m_job;
@@ -64,13 +66,16 @@ class ImageExportTask
 {
 public:
 	explicit ImageExportTask(RuntimePanelRequests& requests);
+
 	void ResetEpoch();
 	bool Request(std::uint64_t reader, std::string path);
 	bool RequestVideo(std::uint64_t session, std::uint64_t generation, std::uint64_t first, std::uint64_t last,
 					  std::string path);
+
+	void Poll();
 	bool Handle(const PanelTask& task, const control::Message& message);
 	void Failed(const PanelTask& task, std::string detail);
-	void Poll();
+
 	bool Busy() const;
 	const std::string& Detail() const noexcept;
 
@@ -82,6 +87,7 @@ public:
 private:
 	void Abort(std::string detail);
 	void ReleaseRemote();
+
 	RuntimePanelRequests& m_requests;
 	ImageExportWriter m_writer;
 	std::uint64_t m_id = 0, m_offset = 0, m_size = 0;

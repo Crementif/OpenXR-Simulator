@@ -105,155 +105,6 @@ void PreviewPanel::CancelInteraction()
 	m_gestureImage.reset();
 }
 
-bool PreviewPanel::SameGestureTarget(const PreviewImageSummary& image) const
-{
-	return m_gestureImage && m_gestureImage->scope == image.scope && m_gestureImage->live == image.live &&
-		   (image.live || m_gestureImage->id == image.id) && m_gestureImage->target == image.target &&
-		   m_gestureImage->layer == image.layer && m_gestureImage->view == image.view &&
-		   m_gestureImage->slices == image.slices && m_gestureImage->description.width == image.description.width &&
-		   m_gestureImage->description.height == image.description.height && m_gestureSlice == m_slice &&
-		   SameRect(m_gestureCrop, m_crop.value_or(ImVec4{0, 0, 1, 1}));
-}
-
-bool PreviewPanel::DrawKept(const RuntimeView& view)
-{
-	if (view.time.following || !view.connected || m_slice != 0 || (!m_fit && !m_crop))
-		return false;
-	auto& history = m_session.Preview().History();
-	const auto shot = history.Nearest(view.time.cursor, view.time.epoch);
-	if (!shot || shot->frame != view.time.cursor || shot->epoch != view.time.epoch)
-		return false;
-	const auto crop = m_crop.value_or(ImVec4{0, 0, 1, 1});
-	const auto available = ImGui::GetContentRegionAvail();
-	const float aspect = shot->aspect * (crop.w - crop.y) / (crop.z - crop.x);
-	const float width = std::max(16.f, std::min(available.x, available.y / aspect));
-	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, (available.x - width) / 2));
-	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.f, (available.y - width * aspect) / 2));
-	history.Draw(*shot, width, crop);
-	const auto origin = ImGui::GetWindowPos();
-	ImGui::GetWindowDrawList()->AddText({origin.x + 8, origin.y + 8}, theme::TextDim, "Preview");
-	return true;
-}
-
-void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
-{
-	const auto available = ImGui::GetContentRegionAvail();
-	const auto origin = ImGui::GetCursorScreenPos();
-	const float unit = ImGui::GetFontSize() / 17;
-	const ImVec2 center{origin.x + available.x / 2, origin.y + available.y / 2};
-	auto* draw = ImGui::GetWindowDrawList();
-	const auto line = [&](const char* text, float y, ImU32 color) {
-		const auto size = ImGui::CalcTextSize(text);
-		draw->AddText({center.x - size.x / 2, y}, color, text);
-	};
-	if (!view.connected)
-	{
-		DrawIcon(draw, Icon::App, {center.x, center.y - 72 * unit}, 40 * unit, theme::TextDim);
-		line("OpenXR Simulator", center.y - 44 * unit, theme::Text);
-		line("Launch or connect an OpenXR app", center.y - 14 * unit, theme::Text);
-		const auto& style = ImGui::GetStyle();
-		const float addWidth = ImGui::CalcTextSize("Add application").x + style.FramePadding.x * 2;
-		const float connectWidth = ImGui::CalcTextSize("Connect").x + style.FramePadding.x * 2;
-		const bool stacked = addWidth + style.ItemSpacing.x + connectWidth > available.x;
-		const float width = stacked ? std::max(addWidth, connectWidth) : addWidth + style.ItemSpacing.x + connectWidth;
-		ImGui::SetCursorScreenPos({center.x - width / 2, center.y + 16 * unit});
-		if (ImGui::Button("Add application"))
-			shell.addApplication = true;
-		ImGui::SetItemTooltip("Choose an application to launch with OpenXR Simulator");
-		if (!stacked)
-			ImGui::SameLine();
-		else
-			ImGui::SetCursorScreenPos({center.x - connectWidth / 2, ImGui::GetCursorScreenPos().y});
-		if (ImGui::Button("Connect"))
-			shell.openAppPicker = true;
-		ImGui::SetItemTooltip("Find or connect to an application that is already running");
-		return;
-	}
-	if (!view.time.following)
-	{
-		const auto text = "Frame " + std::to_string(view.time.cursor.frame);
-		line(text.c_str(), center.y - 20 * unit, theme::Text);
-		line(m_session.LoadingPastImage() ? "Loading frame image..." : "Image not kept", center.y + 4 * unit,
-			 theme::TextDim);
-		return;
-	}
-	const float angle = static_cast<float>(ImGui::GetTime()) * 6;
-	draw->PathArcTo({center.x, center.y - 24 * unit}, 10 * unit, angle, angle + 4.4f);
-	draw->PathStroke(theme::TextDim, ImDrawFlags_None, 2 * unit);
-	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026", center.y,
-		 theme::TextDim);
-}
-
-bool PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live, bool imageVisible)
-{
-	const float scale = ImGui::GetFontSize() / 17, margin = 8 * scale;
-	const ImVec2 padding{4 * scale, 4 * scale};
-	const auto origin = ImGui::GetWindowPos();
-	const auto& style = ImGui::GetStyle();
-	const float height = ImGui::GetFrameHeight();
-	const float availableWidth = std::max(1.0f, std::floor(ImGui::GetWindowWidth() - margin * 2));
-	const float contentWidth = std::max(1.0f, availableWidth - padding.x * 2);
-	const auto zoom = ZoomLabel(m_fit, m_crop.has_value(), m_zoom);
-	const float labelWidth = height + ImGui::CalcTextSize(zoom.c_str()).x + style.FramePadding.x;
-	const bool compact = labelWidth + height + style.ItemSpacing.x > contentWidth;
-	const float viewWidth = compact ? height : labelWidth;
-	const float cropWidth = height + ImGui::CalcTextSize("Reset crop").x + style.FramePadding.x;
-	const bool showCrop = m_crop && viewWidth + cropWidth + height + style.ItemSpacing.x * 2 <= contentWidth;
-	const float controlsWidth =
-		viewWidth + height + style.ItemSpacing.x + (showCrop ? cropWidth + style.ItemSpacing.x : 0);
-	const float rowHeight = height;
-	const float primaryHeight = std::ceil(padding.y * 2 + rowHeight);
-	std::string header = live ? "" : "PAST";
-	if (const auto label = ImageLabel(image); !label.empty())
-		header += (header.empty() ? "" : ", ") + label;
-	const float headerHeight = header.empty() ? 0 : ImGui::GetFontSize() + style.ItemSpacing.y;
-	const bool showHeader = headerHeight && primaryHeight + headerHeight <= ImGui::GetWindowHeight();
-	const float panelHeight = std::min(primaryHeight + (showHeader ? headerHeight : 0), ImGui::GetWindowHeight());
-	const float verticalMargin = std::min(margin, std::max(0.0f, (ImGui::GetWindowHeight() - panelHeight) / 2));
-	const float width = std::min(
-		availableWidth,
-		std::ceil(std::max(controlsWidth, showHeader ? ImGui::CalcTextSize(header.c_str()).x : 0) + padding.x * 2));
-	ImGui::SetCursorScreenPos({origin.x + ImGui::GetWindowWidth() - width - margin, origin.y + verticalMargin});
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Fade(theme::Bg, .72f));
-	ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::Radius * scale);
-	// A scrollbar must not steal width and push the primary controls onto a clipped row.
-	ImGui::SetNextWindowScroll({0, 0});
-	if (ImGui::BeginChild("Image controls", {width, panelHeight}, ImGuiChildFlags_AlwaysUseWindowPadding,
-						  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
-	{
-		if (showHeader)
-		{
-			const auto minimum = ImGui::GetCursorScreenPos();
-			const ImVec2 maximum{minimum.x + width - padding.x * 2, minimum.y + ImGui::GetFontSize()};
-			auto* draw = ImGui::GetWindowDrawList();
-			draw->PushClipRect(minimum, maximum, true);
-			draw->AddText(minimum, live ? theme::TextDim : theme::Past, header.c_str());
-			draw->PopClipRect();
-			ImGui::Dummy({maximum.x - minimum.x, ImGui::GetFontSize()});
-			ImGui::SetItemTooltip("%s", header.c_str());
-		}
-		DrawViewButton(image, imageVisible, compact);
-		if (showCrop)
-		{
-			ImGui::SameLine();
-			if (IconButton("Reset crop", Icon::Crop, "Show the whole image", false, "Reset crop"))
-			{
-				CancelInteraction();
-				m_crop.reset();
-			}
-		}
-		ImGui::SameLine();
-		m_spatial.DrawSpaceToggle();
-	}
-	const auto position = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
-	const bool hovered = ImGui::IsMouseHoveringRect(position, {position.x + size.x, position.y + size.y}, false);
-	ImGui::EndChild();
-	ImGui::PopStyleVar(2);
-	ImGui::PopStyleColor();
-	return hovered;
-}
-
 std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view,
 															   bool inputAvailable)
 {
@@ -409,6 +260,76 @@ void PreviewPanel::UpdateImage(const ImageArea& area, const PreviewImageSummary&
 	}
 }
 
+bool PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live, bool imageVisible)
+{
+	const float scale = ImGui::GetFontSize() / 17, margin = 8 * scale;
+	const ImVec2 padding{4 * scale, 4 * scale};
+	const auto origin = ImGui::GetWindowPos();
+	const auto& style = ImGui::GetStyle();
+	const float height = ImGui::GetFrameHeight();
+	const float availableWidth = std::max(1.0f, std::floor(ImGui::GetWindowWidth() - margin * 2));
+	const float contentWidth = std::max(1.0f, availableWidth - padding.x * 2);
+	const auto zoom = ZoomLabel(m_fit, m_crop.has_value(), m_zoom);
+	const float labelWidth = height + ImGui::CalcTextSize(zoom.c_str()).x + style.FramePadding.x;
+	const bool compact = labelWidth + height + style.ItemSpacing.x > contentWidth;
+	const float viewWidth = compact ? height : labelWidth;
+	const float cropWidth = height + ImGui::CalcTextSize("Reset crop").x + style.FramePadding.x;
+	const bool showCrop = m_crop && viewWidth + cropWidth + height + style.ItemSpacing.x * 2 <= contentWidth;
+	const float controlsWidth =
+		viewWidth + height + style.ItemSpacing.x + (showCrop ? cropWidth + style.ItemSpacing.x : 0);
+	const float rowHeight = height;
+	const float primaryHeight = std::ceil(padding.y * 2 + rowHeight);
+	std::string header = live ? "" : "PAST";
+	if (const auto label = ImageLabel(image); !label.empty())
+		header += (header.empty() ? "" : ", ") + label;
+	const float headerHeight = header.empty() ? 0 : ImGui::GetFontSize() + style.ItemSpacing.y;
+	const bool showHeader = headerHeight && primaryHeight + headerHeight <= ImGui::GetWindowHeight();
+	const float panelHeight = std::min(primaryHeight + (showHeader ? headerHeight : 0), ImGui::GetWindowHeight());
+	const float verticalMargin = std::min(margin, std::max(0.0f, (ImGui::GetWindowHeight() - panelHeight) / 2));
+	const float width = std::min(
+		availableWidth,
+		std::ceil(std::max(controlsWidth, showHeader ? ImGui::CalcTextSize(header.c_str()).x : 0) + padding.x * 2));
+	ImGui::SetCursorScreenPos({origin.x + ImGui::GetWindowWidth() - width - margin, origin.y + verticalMargin});
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Fade(theme::Bg, .72f));
+	ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::Radius * scale);
+	// A scrollbar must not steal width and push the primary controls onto a clipped row.
+	ImGui::SetNextWindowScroll({0, 0});
+	if (ImGui::BeginChild("Image controls", {width, panelHeight}, ImGuiChildFlags_AlwaysUseWindowPadding,
+						  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+	{
+		if (showHeader)
+		{
+			const auto minimum = ImGui::GetCursorScreenPos();
+			const ImVec2 maximum{minimum.x + width - padding.x * 2, minimum.y + ImGui::GetFontSize()};
+			auto* draw = ImGui::GetWindowDrawList();
+			draw->PushClipRect(minimum, maximum, true);
+			draw->AddText(minimum, live ? theme::TextDim : theme::Past, header.c_str());
+			draw->PopClipRect();
+			ImGui::Dummy({maximum.x - minimum.x, ImGui::GetFontSize()});
+			ImGui::SetItemTooltip("%s", header.c_str());
+		}
+		DrawViewButton(image, imageVisible, compact);
+		if (showCrop)
+		{
+			ImGui::SameLine();
+			if (IconButton("Reset crop", Icon::Crop, "Show the whole image", false, "Reset crop"))
+			{
+				CancelInteraction();
+				m_crop.reset();
+			}
+		}
+		ImGui::SameLine();
+		m_spatial.DrawSpaceToggle();
+	}
+	const auto position = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+	const bool hovered = ImGui::IsMouseHoveringRect(position, {position.x + size.x, position.y + size.y}, false);
+	ImGui::EndChild();
+	ImGui::PopStyleVar(2);
+	ImGui::PopStyleColor();
+	return hovered;
+}
+
 void PreviewPanel::DrawViewButton(const PreviewImageSummary& image, bool imageVisible, bool compact)
 {
 	const auto zoom = ZoomLabel(m_fit, m_crop.has_value(), m_zoom);
@@ -558,5 +479,84 @@ void PreviewPanel::PickCrop(const ImageArea& area, bool hovered)
 	if (picked.z - picked.x > .01f && picked.w - picked.y > .01f)
 		m_crop = picked;
 	CancelInteraction();
+}
+
+bool PreviewPanel::SameGestureTarget(const PreviewImageSummary& image) const
+{
+	return m_gestureImage && m_gestureImage->scope == image.scope && m_gestureImage->live == image.live &&
+		   (image.live || m_gestureImage->id == image.id) && m_gestureImage->target == image.target &&
+		   m_gestureImage->layer == image.layer && m_gestureImage->view == image.view &&
+		   m_gestureImage->slices == image.slices && m_gestureImage->description.width == image.description.width &&
+		   m_gestureImage->description.height == image.description.height && m_gestureSlice == m_slice &&
+		   SameRect(m_gestureCrop, m_crop.value_or(ImVec4{0, 0, 1, 1}));
+}
+
+void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
+{
+	const auto available = ImGui::GetContentRegionAvail();
+	const auto origin = ImGui::GetCursorScreenPos();
+	const float unit = ImGui::GetFontSize() / 17;
+	const ImVec2 center{origin.x + available.x / 2, origin.y + available.y / 2};
+	auto* draw = ImGui::GetWindowDrawList();
+	const auto line = [&](const char* text, float y, ImU32 color) {
+		const auto size = ImGui::CalcTextSize(text);
+		draw->AddText({center.x - size.x / 2, y}, color, text);
+	};
+	if (!view.connected)
+	{
+		DrawIcon(draw, Icon::App, {center.x, center.y - 72 * unit}, 40 * unit, theme::TextDim);
+		line("OpenXR Simulator", center.y - 44 * unit, theme::Text);
+		line("Launch or connect an OpenXR app", center.y - 14 * unit, theme::Text);
+		const auto& style = ImGui::GetStyle();
+		const float addWidth = ImGui::CalcTextSize("Add application").x + style.FramePadding.x * 2;
+		const float connectWidth = ImGui::CalcTextSize("Connect").x + style.FramePadding.x * 2;
+		const bool stacked = addWidth + style.ItemSpacing.x + connectWidth > available.x;
+		const float width = stacked ? std::max(addWidth, connectWidth) : addWidth + style.ItemSpacing.x + connectWidth;
+		ImGui::SetCursorScreenPos({center.x - width / 2, center.y + 16 * unit});
+		if (ImGui::Button("Add application"))
+			shell.addApplication = true;
+		ImGui::SetItemTooltip("Choose an application to launch with OpenXR Simulator");
+		if (!stacked)
+			ImGui::SameLine();
+		else
+			ImGui::SetCursorScreenPos({center.x - connectWidth / 2, ImGui::GetCursorScreenPos().y});
+		if (ImGui::Button("Connect"))
+			shell.openAppPicker = true;
+		ImGui::SetItemTooltip("Find or connect to an application that is already running");
+		return;
+	}
+	if (!view.time.following)
+	{
+		const auto text = "Frame " + std::to_string(view.time.cursor.frame);
+		line(text.c_str(), center.y - 20 * unit, theme::Text);
+		line(m_session.LoadingPastImage() ? "Loading frame image..." : "Image not kept", center.y + 4 * unit,
+			 theme::TextDim);
+		return;
+	}
+	const float angle = static_cast<float>(ImGui::GetTime()) * 6;
+	draw->PathArcTo({center.x, center.y - 24 * unit}, 10 * unit, angle, angle + 4.4f);
+	draw->PathStroke(theme::TextDim, ImDrawFlags_None, 2 * unit);
+	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026", center.y,
+		 theme::TextDim);
+}
+
+bool PreviewPanel::DrawKept(const RuntimeView& view)
+{
+	if (view.time.following || !view.connected || m_slice != 0 || (!m_fit && !m_crop))
+		return false;
+	auto& history = m_session.Preview().History();
+	const auto shot = history.Nearest(view.time.cursor, view.time.epoch);
+	if (!shot || shot->frame != view.time.cursor || shot->epoch != view.time.epoch)
+		return false;
+	const auto crop = m_crop.value_or(ImVec4{0, 0, 1, 1});
+	const auto available = ImGui::GetContentRegionAvail();
+	const float aspect = shot->aspect * (crop.w - crop.y) / (crop.z - crop.x);
+	const float width = std::max(16.f, std::min(available.x, available.y / aspect));
+	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, (available.x - width) / 2));
+	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.f, (available.y - width * aspect) / 2));
+	history.Draw(*shot, width, crop);
+	const auto origin = ImGui::GetWindowPos();
+	ImGui::GetWindowDrawList()->AddText({origin.x + 8, origin.y + 8}, theme::TextDim, "Preview");
+	return true;
 }
 } // namespace simxr::app

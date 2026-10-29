@@ -54,26 +54,6 @@ void TransientDebug::Wait()
 	Check();
 }
 
-std::shared_ptr<McpCancellation> TransientDebug::Begin()
-{
-	Check();
-	auto cancellation = std::make_shared<McpCancellation>();
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_terminated || m_cancellation->Requested() || std::chrono::steady_clock::now() >= m_deadline)
-			cancellation->Cancel();
-		else
-			m_active = cancellation;
-	}
-	return cancellation;
-}
-
-void TransientDebug::End() noexcept
-{
-	std::lock_guard lock(m_mutex);
-	m_active.reset();
-}
-
 McpConnection TransientDebug::Connect(const std::string& application)
 {
 	const auto cancellation = Begin();
@@ -94,6 +74,28 @@ McpConnection TransientDebug::Connect(const std::string& application)
 	if (!result)
 		throw TransientError(m_operation + " operation was interrupted");
 	return std::move(*result);
+}
+
+control::Message TransientDebug::Request(const std::string& connection, control::OpCode opcode,
+										 std::vector<control::Field> fields)
+{
+	const auto cancellation = Begin();
+	control::Message response;
+	try
+	{
+		Check();
+		response = m_debug.Request(m_application, connection, opcode, std::move(fields), cancellation);
+	}
+	catch (...)
+	{
+		End();
+		Check();
+		throw;
+	}
+	End();
+	Check();
+	CheckResponse(response);
+	return response;
 }
 
 std::shared_ptr<const CachedImage> TransientDebug::Render(const std::string& connection,
@@ -140,26 +142,24 @@ ApplicationSnapshot TransientDebug::Application(const std::string& application)
 	return std::move(*result);
 }
 
-control::Message TransientDebug::Request(const std::string& connection, control::OpCode opcode,
-										 std::vector<control::Field> fields)
+std::shared_ptr<McpCancellation> TransientDebug::Begin()
 {
-	const auto cancellation = Begin();
-	control::Message response;
-	try
-	{
-		Check();
-		response = m_debug.Request(m_application, connection, opcode, std::move(fields), cancellation);
-	}
-	catch (...)
-	{
-		End();
-		Check();
-		throw;
-	}
-	End();
 	Check();
-	CheckResponse(response);
-	return response;
+	auto cancellation = std::make_shared<McpCancellation>();
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_terminated || m_cancellation->Requested() || std::chrono::steady_clock::now() >= m_deadline)
+			cancellation->Cancel();
+		else
+			m_active = cancellation;
+	}
+	return cancellation;
+}
+
+void TransientDebug::End() noexcept
+{
+	std::lock_guard lock(m_mutex);
+	m_active.reset();
 }
 
 void TransientDebug::CheckResponse(const control::Message& response)
@@ -172,5 +172,4 @@ void TransientDebug::CheckResponse(const control::Message& response)
 							 code);
 	}
 }
-
 }

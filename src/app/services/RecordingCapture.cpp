@@ -103,6 +103,58 @@ RecordingCaptureSnapshot RecordingCapture::Snapshot() const
 	return m_snapshot;
 }
 
+void RecordingCapture::Run()
+{
+	while (true)
+	{
+		Job job;
+		std::shared_ptr<WorkerConnection> connection;
+		{
+			std::unique_lock lock(m_mutex);
+			m_changed.wait(lock, [&] { return m_exiting || m_pending.has_value(); });
+			if (m_exiting)
+				return;
+			job = std::move(*m_pending);
+			m_pending.reset();
+		}
+		std::string error;
+		try
+		{
+			connection =
+				std::make_shared<WorkerConnection>(job.target.endpoint, "simxr_companion_capture",
+												   static_cast<std::uint64_t>(wire::Capability::CommandRecording) |
+													   static_cast<std::uint64_t>(wire::Capability::RecordingDrain));
+			{
+				std::lock_guard lock(m_mutex);
+				m_current = connection;
+				if (m_exiting || m_retired)
+					connection->Stop();
+			}
+			Capture(*connection, job);
+		}
+		catch (const std::exception& exception)
+		{
+			error = exception.what();
+		}
+		catch (...)
+		{
+			error = "Unknown recording capture failure";
+		}
+		{
+			std::lock_guard lock(m_mutex);
+			m_current.reset();
+		}
+		connection.reset();
+		{
+			std::lock_guard lock(m_mutex);
+			m_snapshot.error = std::move(error);
+			m_snapshot.phase =
+				m_snapshot.error.empty() ? RecordingCapturePhase::Complete : RecordingCapturePhase::Incomplete;
+			m_snapshot.busy = false;
+		}
+	}
+}
+
 void RecordingCapture::Capture(WorkerConnection& connection, const Job& job)
 {
 	if (std::filesystem::exists(job.directory))
@@ -206,55 +258,4 @@ void RecordingCapture::Capture(WorkerConnection& connection, const Job& job)
 	}
 }
 
-void RecordingCapture::Run()
-{
-	while (true)
-	{
-		Job job;
-		std::shared_ptr<WorkerConnection> connection;
-		{
-			std::unique_lock lock(m_mutex);
-			m_changed.wait(lock, [&] { return m_exiting || m_pending.has_value(); });
-			if (m_exiting)
-				return;
-			job = std::move(*m_pending);
-			m_pending.reset();
-		}
-		std::string error;
-		try
-		{
-			connection =
-				std::make_shared<WorkerConnection>(job.target.endpoint, "simxr_companion_capture",
-												   static_cast<std::uint64_t>(wire::Capability::CommandRecording) |
-													   static_cast<std::uint64_t>(wire::Capability::RecordingDrain));
-			{
-				std::lock_guard lock(m_mutex);
-				m_current = connection;
-				if (m_exiting || m_retired)
-					connection->Stop();
-			}
-			Capture(*connection, job);
-		}
-		catch (const std::exception& exception)
-		{
-			error = exception.what();
-		}
-		catch (...)
-		{
-			error = "Unknown recording capture failure";
-		}
-		{
-			std::lock_guard lock(m_mutex);
-			m_current.reset();
-		}
-		connection.reset();
-		{
-			std::lock_guard lock(m_mutex);
-			m_snapshot.error = std::move(error);
-			m_snapshot.phase =
-				m_snapshot.error.empty() ? RecordingCapturePhase::Complete : RecordingCapturePhase::Incomplete;
-			m_snapshot.busy = false;
-		}
-	}
-}
 } // namespace simxr::app

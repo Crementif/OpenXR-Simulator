@@ -64,13 +64,16 @@ public:
 	~RuntimeConnection();
 	RuntimeConnection(const RuntimeConnection&) = delete;
 	RuntimeConnection& operator=(const RuntimeConnection&) = delete;
+
 	std::uint64_t Connect(std::string path, std::optional<std::uint64_t> expectedProcess = {});
 	void Disconnect(std::optional<std::uint64_t> expectedEpoch = {});
+	void Close() noexcept;
+
 	// Zero means closed, not connected, or bounded admission exhausted.
 	std::uint64_t Submit(control::ControlPacket request);
 	std::vector<RuntimeReply> Poll();
+
 	RuntimeConnectionSnapshot Snapshot() const;
-	void Close() noexcept;
 
 private:
 	struct Queued
@@ -88,6 +91,7 @@ private:
 									std::uint64_t epoch);
 	void Run() noexcept;
 	void RunChecked();
+
 	const RuntimeConnectionConfig m_configuration;
 	mutable std::mutex m_mutex;
 	std::mutex m_lifecycle;

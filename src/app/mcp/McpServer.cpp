@@ -276,18 +276,6 @@ McpServer::~McpServer()
 	Stop();
 }
 
-std::uint16_t McpServer::Port() const noexcept
-{
-	return m_port;
-}
-
-std::size_t McpServer::ClientSessions() const
-{
-	std::lock_guard lock(m_sessionMutex);
-	return static_cast<std::size_t>(
-		std::ranges::count_if(m_sessions, [](const auto& entry) { return entry.second->initialized; }));
-}
-
 void McpServer::Stop() noexcept
 {
 	m_application.Close();
@@ -320,202 +308,16 @@ void McpServer::Stop() noexcept
 		m_worker.join();
 }
 
-void McpServer::ReapExpired()
+std::uint16_t McpServer::Port() const noexcept
 {
-	std::vector<std::shared_ptr<Session>> expired;
-	{
-		std::lock_guard lock(m_sessionMutex);
-		const auto now = std::chrono::steady_clock::now();
-		for (auto entry = m_sessions.begin(); entry != m_sessions.end();)
-		{
-			if (entry->second->calls.empty() && now - entry->second->lastUsed > std::chrono::minutes(30))
-			{
-				entry->second->automationOwner->active.store(false);
-				expired.push_back(entry->second);
-				entry = m_sessions.erase(entry);
-			}
-			else
-				++entry;
-		}
-		std::erase_if(m_artifacts, [&](const auto& item) {
-			return item.second->expires <= now || !m_sessions.contains(item.second->session);
-		});
-	}
-	for (const auto& session : expired)
-	{
-		session->sequenceJobs.Close();
-		session->debug.Close();
-	}
+	return m_port;
 }
 
-bool McpServer::Authorize(const httplib::Request& request, httplib::Response& response) const
+std::size_t McpServer::ClientSessions() const
 {
-	const auto host = request.get_header_value("Host");
-	const auto local = "127.0.0.1:" + std::to_string(m_port);
-	const auto localhost = "localhost:" + std::to_string(m_port);
-	if (request.get_header_value_count("Host") != 1 || (host != local && host != localhost) ||
-		request.get_header_value_count("Origin") > 1 ||
-		(request.has_header("Origin") && request.get_header_value("Origin") != "http://" + local &&
-		 request.get_header_value("Origin") != "http://" + localhost))
-	{
-		response.status = 403;
-		return false;
-	}
-	const auto authorization = request.get_header_value("Authorization");
-	if (request.get_header_value_count("Authorization") != 1 || !authorization.starts_with("Bearer ") ||
-		!EqualToken(std::string_view(authorization).substr(7), m_token))
-	{
-		response.status = 401;
-		response.set_header("WWW-Authenticate", "Bearer");
-		return false;
-	}
-	const auto version = request.get_header_value("MCP-Protocol-Version");
-	if (request.get_header_value_count("MCP-Protocol-Version") > 1 || (!version.empty() && !SupportedVersion(version)))
-	{
-		response.status = 400;
-		return false;
-	}
-	return true;
-}
-
-void McpServer::DeleteSession(const httplib::Request& request, httplib::Response& response)
-{
-	if (request.get_header_value_count("MCP-Session-Id") != 1)
-	{
-		response.status = 400;
-		return;
-	}
-	std::shared_ptr<Session> session;
-	{
-		std::lock_guard lock(m_sessionMutex);
-		const auto found = m_sessions.find(request.get_header_value("MCP-Session-Id"));
-		if (found == m_sessions.end())
-		{
-			response.status = 404;
-			return;
-		}
-		session = found->second;
-		const auto version = request.get_header_value("MCP-Protocol-Version");
-		if (!version.empty() && version != session->version)
-		{
-			response.status = 400;
-			return;
-		}
-		session->automationOwner->active.store(false);
-		m_sessions.erase(found);
-		std::erase_if(m_artifacts, [&](const auto& item) {
-			return item.second->session == request.get_header_value("MCP-Session-Id");
-		});
-		for (const auto& [id, call] : session->calls)
-			call.cancellation->Cancel();
-	}
-	session->sequenceJobs.Close();
-	session->debug.Close();
-	response.status = 204;
-}
-
-void McpServer::DownloadArtifact(const httplib::Request& request, httplib::Response& response)
-{
-	if (request.get_header_value_count("MCP-Session-Id") > 1)
-	{
-		response.status = 400;
-		return;
-	}
-	std::shared_ptr<Artifact> artifact;
-	std::shared_ptr<Session> session;
-	{
-		std::lock_guard lock(m_sessionMutex);
-		const auto found = m_artifacts.find(request.matches[1].str());
-		if (found == m_artifacts.end() || found->second->expires <= std::chrono::steady_clock::now())
-		{
-			response.status = 404;
-			return;
-		}
-		artifact = found->second;
-		const auto owner = m_sessions.find(artifact->session);
-		if (owner == m_sessions.end() || !owner->second->initialized ||
-			(request.has_header("MCP-Session-Id") && request.get_header_value("MCP-Session-Id") != artifact->session))
-		{
-			response.status = 404;
-			return;
-		}
-		session = owner->second;
-		const auto version = request.get_header_value("MCP-Protocol-Version");
-		if (!version.empty() && version != session->version)
-		{
-			response.status = 400;
-			return;
-		}
-		session->lastUsed = std::chrono::steady_clock::now();
-	}
-	auto active = m_activeDownloads.load();
-	while (true)
-	{
-		if (active >= 2)
-		{
-			response.status = 503;
-			return;
-		}
-		if (m_activeDownloads.compare_exchange_weak(active, active + 1))
-			break;
-	}
-	std::shared_ptr<McpDownloadSlot> slot;
-	try
-	{
-		slot = std::make_shared<McpDownloadSlot>(m_activeDownloads);
-	}
-	catch (...)
-	{
-		--m_activeDownloads;
-		throw;
-	}
-	try
-	{
-		const auto cancellation = std::make_shared<McpCancellation>();
-		const auto result = session->debug.Call(
-			m_application, "debug_export_info",
-			{{"connection", artifact->connection}, {"export", std::to_string(artifact->ticket)}}, cancellation);
-		if (!result || result->value("isError", true))
-		{
-			response.status = 404;
-			return;
-		}
-		const auto info = Json::parse(result->at("content").at(0).at("text").get<std::string>());
-		if (info.value("phase", "") != "complete" || info.value("total_bytes", "") != std::to_string(artifact->size))
-		{
-			response.status = 404;
-			return;
-		}
-	}
-	catch (...)
-	{
-		response.status = 404;
-		return;
-	}
-	response.set_header("Cache-Control", "no-store");
-	response.set_header("X-Content-Type-Options", "nosniff");
-	response.set_header("Content-Disposition", artifact->mediaType == "video/mp4"
-												   ? "attachment; filename=simxr-clip.mp4"
-												   : "attachment; filename=simxr-image.raw");
-	response.set_content_provider(
-		static_cast<std::size_t>(artifact->size), artifact->mediaType,
-		[this, session, artifact, slot](std::size_t offset, std::size_t length, httplib::DataSink& sink) {
-			(void)slot;
-			if (!length || offset >= artifact->size)
-				return false;
-			try
-			{
-				const auto amount =
-					std::min<std::uint64_t>({length, artifact->size - offset, control::MaxPayload - 4096});
-				const auto bytes =
-					session->debug.ReadArtifact(m_application, artifact->connection, artifact->ticket, offset, amount);
-				return sink.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-			}
-			catch (...)
-			{
-				return false;
-			}
-		});
+	std::lock_guard lock(m_sessionMutex);
+	return static_cast<std::size_t>(
+		std::ranges::count_if(m_sessions, [](const auto& entry) { return entry.second->initialized; }));
 }
 
 void McpServer::Route(const httplib::Request& request, httplib::Response& response)
@@ -871,5 +673,203 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 	}
 	response.set_content(Json({{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(result)}}).dump(),
 						 "application/json");
+}
+
+void McpServer::DownloadArtifact(const httplib::Request& request, httplib::Response& response)
+{
+	if (request.get_header_value_count("MCP-Session-Id") > 1)
+	{
+		response.status = 400;
+		return;
+	}
+	std::shared_ptr<Artifact> artifact;
+	std::shared_ptr<Session> session;
+	{
+		std::lock_guard lock(m_sessionMutex);
+		const auto found = m_artifacts.find(request.matches[1].str());
+		if (found == m_artifacts.end() || found->second->expires <= std::chrono::steady_clock::now())
+		{
+			response.status = 404;
+			return;
+		}
+		artifact = found->second;
+		const auto owner = m_sessions.find(artifact->session);
+		if (owner == m_sessions.end() || !owner->second->initialized ||
+			(request.has_header("MCP-Session-Id") && request.get_header_value("MCP-Session-Id") != artifact->session))
+		{
+			response.status = 404;
+			return;
+		}
+		session = owner->second;
+		const auto version = request.get_header_value("MCP-Protocol-Version");
+		if (!version.empty() && version != session->version)
+		{
+			response.status = 400;
+			return;
+		}
+		session->lastUsed = std::chrono::steady_clock::now();
+	}
+	auto active = m_activeDownloads.load();
+	while (true)
+	{
+		if (active >= 2)
+		{
+			response.status = 503;
+			return;
+		}
+		if (m_activeDownloads.compare_exchange_weak(active, active + 1))
+			break;
+	}
+	std::shared_ptr<McpDownloadSlot> slot;
+	try
+	{
+		slot = std::make_shared<McpDownloadSlot>(m_activeDownloads);
+	}
+	catch (...)
+	{
+		--m_activeDownloads;
+		throw;
+	}
+	try
+	{
+		const auto cancellation = std::make_shared<McpCancellation>();
+		const auto result = session->debug.Call(
+			m_application, "debug_export_info",
+			{{"connection", artifact->connection}, {"export", std::to_string(artifact->ticket)}}, cancellation);
+		if (!result || result->value("isError", true))
+		{
+			response.status = 404;
+			return;
+		}
+		const auto info = Json::parse(result->at("content").at(0).at("text").get<std::string>());
+		if (info.value("phase", "") != "complete" || info.value("total_bytes", "") != std::to_string(artifact->size))
+		{
+			response.status = 404;
+			return;
+		}
+	}
+	catch (...)
+	{
+		response.status = 404;
+		return;
+	}
+	response.set_header("Cache-Control", "no-store");
+	response.set_header("X-Content-Type-Options", "nosniff");
+	response.set_header("Content-Disposition", artifact->mediaType == "video/mp4"
+												   ? "attachment; filename=simxr-clip.mp4"
+												   : "attachment; filename=simxr-image.raw");
+	response.set_content_provider(
+		static_cast<std::size_t>(artifact->size), artifact->mediaType,
+		[this, session, artifact, slot](std::size_t offset, std::size_t length, httplib::DataSink& sink) {
+			(void)slot;
+			if (!length || offset >= artifact->size)
+				return false;
+			try
+			{
+				const auto amount =
+					std::min<std::uint64_t>({length, artifact->size - offset, control::MaxPayload - 4096});
+				const auto bytes =
+					session->debug.ReadArtifact(m_application, artifact->connection, artifact->ticket, offset, amount);
+				return sink.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+			}
+			catch (...)
+			{
+				return false;
+			}
+		});
+}
+
+void McpServer::DeleteSession(const httplib::Request& request, httplib::Response& response)
+{
+	if (request.get_header_value_count("MCP-Session-Id") != 1)
+	{
+		response.status = 400;
+		return;
+	}
+	std::shared_ptr<Session> session;
+	{
+		std::lock_guard lock(m_sessionMutex);
+		const auto found = m_sessions.find(request.get_header_value("MCP-Session-Id"));
+		if (found == m_sessions.end())
+		{
+			response.status = 404;
+			return;
+		}
+		session = found->second;
+		const auto version = request.get_header_value("MCP-Protocol-Version");
+		if (!version.empty() && version != session->version)
+		{
+			response.status = 400;
+			return;
+		}
+		session->automationOwner->active.store(false);
+		m_sessions.erase(found);
+		std::erase_if(m_artifacts, [&](const auto& item) {
+			return item.second->session == request.get_header_value("MCP-Session-Id");
+		});
+		for (const auto& [id, call] : session->calls)
+			call.cancellation->Cancel();
+	}
+	session->sequenceJobs.Close();
+	session->debug.Close();
+	response.status = 204;
+}
+
+void McpServer::ReapExpired()
+{
+	std::vector<std::shared_ptr<Session>> expired;
+	{
+		std::lock_guard lock(m_sessionMutex);
+		const auto now = std::chrono::steady_clock::now();
+		for (auto entry = m_sessions.begin(); entry != m_sessions.end();)
+		{
+			if (entry->second->calls.empty() && now - entry->second->lastUsed > std::chrono::minutes(30))
+			{
+				entry->second->automationOwner->active.store(false);
+				expired.push_back(entry->second);
+				entry = m_sessions.erase(entry);
+			}
+			else
+				++entry;
+		}
+		std::erase_if(m_artifacts, [&](const auto& item) {
+			return item.second->expires <= now || !m_sessions.contains(item.second->session);
+		});
+	}
+	for (const auto& session : expired)
+	{
+		session->sequenceJobs.Close();
+		session->debug.Close();
+	}
+}
+
+bool McpServer::Authorize(const httplib::Request& request, httplib::Response& response) const
+{
+	const auto host = request.get_header_value("Host");
+	const auto local = "127.0.0.1:" + std::to_string(m_port);
+	const auto localhost = "localhost:" + std::to_string(m_port);
+	if (request.get_header_value_count("Host") != 1 || (host != local && host != localhost) ||
+		request.get_header_value_count("Origin") > 1 ||
+		(request.has_header("Origin") && request.get_header_value("Origin") != "http://" + local &&
+		 request.get_header_value("Origin") != "http://" + localhost))
+	{
+		response.status = 403;
+		return false;
+	}
+	const auto authorization = request.get_header_value("Authorization");
+	if (request.get_header_value_count("Authorization") != 1 || !authorization.starts_with("Bearer ") ||
+		!EqualToken(std::string_view(authorization).substr(7), m_token))
+	{
+		response.status = 401;
+		response.set_header("WWW-Authenticate", "Bearer");
+		return false;
+	}
+	const auto version = request.get_header_value("MCP-Protocol-Version");
+	if (request.get_header_value_count("MCP-Protocol-Version") > 1 || (!version.empty() && !SupportedVersion(version)))
+	{
+		response.status = 400;
+		return false;
+	}
+	return true;
 }
 } // namespace simxr::app

@@ -31,16 +31,6 @@ static constexpr std::array s_sharingNames{VulkanExternalMemoryExtension, Vulkan
 static constexpr VkImageUsageFlags s_imageUsages = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 												   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-bool VulkanExternalImageSpec::operator==(const VulkanExternalImageSpec& right) const noexcept
-{
-	const auto& left = *this;
-	return left.format == right.format && left.extent.width == right.extent.width &&
-		   left.extent.height == right.extent.height && left.extent.depth == right.extent.depth &&
-		   left.arrayLayers == right.arrayLayers && left.mipLevels == right.mipLevels &&
-		   left.samples == right.samples && left.usage == right.usage && left.tiling == right.tiling &&
-		   left.imageType == right.imageType && left.flags == right.flags;
-}
-
 static bool SupportedShape(const VulkanExternalImageSpec& image)
 {
 	return (image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_R8G8B8A8_UNORM ||
@@ -250,6 +240,16 @@ VulkanExternalHandle VulkanExternalHandle::Duplicate() const
 	return VulkanExternalHandle(result);
 }
 
+bool VulkanExternalImageSpec::operator==(const VulkanExternalImageSpec& right) const noexcept
+{
+	const auto& left = *this;
+	return left.format == right.format && left.extent.width == right.extent.width &&
+		   left.extent.height == right.extent.height && left.extent.depth == right.extent.depth &&
+		   left.arrayLayers == right.arrayLayers && left.mipLevels == right.mipLevels &&
+		   left.samples == right.samples && left.usage == right.usage && left.tiling == right.tiling &&
+		   left.imageType == right.imageType && left.flags == right.flags;
+}
+
 bool VulkanExternalCapabilities::CanExportImage() const noexcept
 {
 	return result == VK_SUCCESS && (memory.compatibleHandleTypes & s_memoryHandle) &&
@@ -284,91 +284,6 @@ bool VulkanExternalFenceCapabilities::CanImport() const noexcept
 {
 	return result == VK_SUCCESS && (fence.compatibleHandleTypes & s_fenceHandle) &&
 		   (fence.externalFenceFeatures & VK_EXTERNAL_FENCE_FEATURE_IMPORTABLE_BIT);
-}
-
-VulkanExternalFence::VulkanExternalFence(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
-										 VulkanGetFenceHandle getFenceHandle, bool exportable)
-	: m_device(std::move(device)), m_identity(identity), m_getFenceHandle(getFenceHandle), m_exportable(exportable)
-{}
-
-VulkanExternalFence::~VulkanExternalFence()
-{
-	if (m_fence)
-		vkDestroyFence(m_device->binding.device, m_fence, nullptr);
-}
-
-VkFence VulkanExternalFence::Get() const noexcept
-{
-	return m_fence;
-}
-
-std::shared_ptr<VulkanDevice> VulkanExternalFence::Device() const noexcept
-{
-	return m_device;
-}
-
-const VulkanExternalIdentity& VulkanExternalFence::Identity() const noexcept
-{
-	return m_identity;
-}
-
-VulkanExternalHandle VulkanExternalFence::ExportOnce()
-{
-	std::lock_guard lock(m_exportMutex);
-	RequireLive(*m_device);
-	if (!m_exportable || m_exported || !m_getFenceHandle)
-		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Fence is unavailable for one-shot export");
-#ifdef _WIN32
-	VkFenceGetWin32HandleInfoKHR info{VK_STRUCTURE_TYPE_FENCE_GET_WIN32_HANDLE_INFO_KHR};
-#else
-	VkFenceGetFdInfoKHR info{VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR};
-#endif
-	info.fence = m_fence;
-	info.handleType = s_fenceHandle;
-	VulkanNativeHandle descriptor = InvalidVulkanHandle;
-	CheckVulkan(m_getFenceHandle(m_device->binding.device, &info, &descriptor), "Export fence native handle");
-	VulkanExternalHandle result(descriptor);
-	if (!result)
-		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Fence export returned an invalid descriptor");
-	PreventInheritance(result);
-	m_exported = true;
-	return result;
-}
-
-CompletionStatus VulkanExternalFence::PollCompletion() const noexcept
-{
-	auto status = m_status.load();
-	if (status != CompletionStatus::Pending)
-		return status;
-	const auto native =
-		m_device->lost.load() ? VK_ERROR_DEVICE_LOST : vkGetFenceStatus(m_device->binding.device, m_fence);
-	if (native == VK_NOT_READY)
-		return m_status.load();
-	if (native == VK_ERROR_DEVICE_LOST)
-		m_device->lost.store(true);
-	const auto observed = native == VK_SUCCESS ? CompletionStatus::Complete : CompletionStatus::Failed;
-	m_status.compare_exchange_strong(status, observed);
-	return m_status.load();
-}
-
-VulkanExternalFenceCapabilities VulkanExternalDevice::QueryFence(VkPhysicalDevice physical,
-																 std::uint32_t instanceApiVersion)
-{
-	VulkanExternalFenceCapabilities result;
-	if (!physical || instanceApiVersion < VK_API_VERSION_1_1)
-		return result;
-	VkPhysicalDeviceProperties properties;
-	vkGetPhysicalDeviceProperties(physical, &properties);
-	if (properties.apiVersion < VK_API_VERSION_1_1)
-		return result;
-	constexpr std::array names{VulkanExternalFenceExtension};
-	result.result = PhysicalExtensions(physical, names);
-	if (result.result != VK_SUCCESS)
-		return result;
-	VkPhysicalDeviceExternalFenceInfo info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO};
-	info.handleType = s_fenceHandle;
-	vkGetPhysicalDeviceExternalFenceProperties(physical, &info, &result.fence);
-	return result;
 }
 
 VulkanExternalImage::VulkanExternalImage(std::shared_ptr<VulkanImage> image, VulkanExternalImageDescriptor descriptor,
@@ -477,68 +392,101 @@ VulkanExternalHandle VulkanExternalSemaphore::ExportOnce()
 	return result;
 }
 
-VulkanExternalCapabilities VulkanExternalDevice::Query(VkPhysicalDevice physical, const VulkanExternalImageSpec& image,
-													   std::uint32_t instanceApiVersion)
+VulkanExternalTimeline::VulkanExternalTimeline(std::shared_ptr<VulkanExternalSemaphore> semaphore,
+											   PFN_vkGetSemaphoreCounterValueKHR counter)
+	: m_semaphore(std::move(semaphore)), m_counter(counter)
+{}
+
+VkSemaphore VulkanExternalTimeline::Get() const noexcept
 {
-	VulkanExternalCapabilities result;
-	if (!physical || instanceApiVersion < VK_API_VERSION_1_1)
-	{
-		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
-		return result;
-	}
-	if (!SupportedShape(image))
-		return result;
-	VkPhysicalDeviceProperties deviceProperties;
-	vkGetPhysicalDeviceProperties(physical, &deviceProperties);
-	if (deviceProperties.apiVersion < VK_API_VERSION_1_1)
-	{
-		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
-		return result;
-	}
-	result.result = PhysicalExtensions(physical);
-	if (result.result != VK_SUCCESS)
-		return result;
-	VkPhysicalDeviceExternalImageFormatInfo external{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO};
-	external.handleType = s_memoryHandle;
-	VkPhysicalDeviceImageFormatInfo2 info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2, &external};
-	info.format = image.format;
-	info.type = image.imageType;
-	info.tiling = image.tiling;
-	info.usage = image.usage;
-	info.flags = image.flags;
-	VkExternalImageFormatProperties properties{VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
-	VkImageFormatProperties2 format{VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2, &properties};
-	result.result = vkGetPhysicalDeviceImageFormatProperties2(physical, &info, &format);
-	if (result.result != VK_SUCCESS)
-		return result;
-	result.imageLimits = format.imageFormatProperties;
-	result.memory = properties.externalMemoryProperties;
-	result.semaphore = SemaphoreCapabilities(physical);
-	const auto& limits = result.imageLimits;
-	if (image.extent.width > limits.maxExtent.width || image.extent.height > limits.maxExtent.height ||
-		image.extent.depth > limits.maxExtent.depth || image.arrayLayers > limits.maxArrayLayers ||
-		image.mipLevels > limits.maxMipLevels || !(limits.sampleCounts & image.samples))
-		result.result = VK_ERROR_FORMAT_NOT_SUPPORTED;
+	return m_semaphore->Get();
+}
+
+VulkanExternalHandle VulkanExternalTimeline::ExportOnce()
+{
+	return m_semaphore->ExportOnce();
+}
+
+CompletionStatus VulkanExternalTimeline::PollCompletion() const noexcept
+{
+	auto status = m_status.load();
+	if (status != CompletionStatus::Pending)
+		return status;
+	const auto device = m_semaphore->Device();
+	std::uint64_t value = 0;
+	const auto result = device->lost.load() ? VK_ERROR_DEVICE_LOST : m_counter(device->binding.device, Get(), &value);
+	if (result == VK_SUCCESS && value == 0)
+		return m_status.load();
+	if (result == VK_ERROR_DEVICE_LOST)
+		device->lost.store(true);
+	const auto observed = result == VK_SUCCESS && value == 1 ? CompletionStatus::Complete : CompletionStatus::Failed;
+	m_status.compare_exchange_strong(status, observed);
+	return m_status.load();
+}
+
+VulkanExternalFence::VulkanExternalFence(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
+										 VulkanGetFenceHandle getFenceHandle, bool exportable)
+	: m_device(std::move(device)), m_identity(identity), m_getFenceHandle(getFenceHandle), m_exportable(exportable)
+{}
+
+VulkanExternalFence::~VulkanExternalFence()
+{
+	if (m_fence)
+		vkDestroyFence(m_device->binding.device, m_fence, nullptr);
+}
+
+VkFence VulkanExternalFence::Get() const noexcept
+{
+	return m_fence;
+}
+
+std::shared_ptr<VulkanDevice> VulkanExternalFence::Device() const noexcept
+{
+	return m_device;
+}
+
+const VulkanExternalIdentity& VulkanExternalFence::Identity() const noexcept
+{
+	return m_identity;
+}
+
+VulkanExternalHandle VulkanExternalFence::ExportOnce()
+{
+	std::lock_guard lock(m_exportMutex);
+	RequireLive(*m_device);
+	if (!m_exportable || m_exported || !m_getFenceHandle)
+		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Fence is unavailable for one-shot export");
+#ifdef _WIN32
+	VkFenceGetWin32HandleInfoKHR info{VK_STRUCTURE_TYPE_FENCE_GET_WIN32_HANDLE_INFO_KHR};
+#else
+	VkFenceGetFdInfoKHR info{VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR};
+#endif
+	info.fence = m_fence;
+	info.handleType = s_fenceHandle;
+	VulkanNativeHandle descriptor = InvalidVulkanHandle;
+	CheckVulkan(m_getFenceHandle(m_device->binding.device, &info, &descriptor), "Export fence native handle");
+	VulkanExternalHandle result(descriptor);
+	if (!result)
+		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Fence export returned an invalid descriptor");
+	PreventInheritance(result);
+	m_exported = true;
 	return result;
 }
 
-VulkanExternalCapabilities VulkanExternalDevice::ImageCapabilities(const VulkanExternalImageSpec& image) const
+CompletionStatus VulkanExternalFence::PollCompletion() const noexcept
 {
-	{
-		std::lock_guard lock(m_imageQueryMutex);
-		for (const auto& query : m_imageQueries)
-			if (query.capabilities.result == VK_SUCCESS && query.image == image)
-				return query.capabilities;
-	}
-	const auto capabilities = Query(m_device->binding.physicalDevice, image, m_instanceApiVersion);
-	// Keep only successful, device-local queries. Transient failures remain retryable.
-	if (capabilities.result == VK_SUCCESS)
-	{
-		std::lock_guard lock(m_imageQueryMutex);
-		m_imageQueries[m_nextImageQuery] = {image, capabilities};
-		m_nextImageQuery = (m_nextImageQuery + 1) % m_imageQueries.size();
-	}
-	return capabilities;
+	auto status = m_status.load();
+	if (status != CompletionStatus::Pending)
+		return status;
+	const auto native =
+		m_device->lost.load() ? VK_ERROR_DEVICE_LOST : vkGetFenceStatus(m_device->binding.device, m_fence);
+	if (native == VK_NOT_READY)
+		return m_status.load();
+	if (native == VK_ERROR_DEVICE_LOST)
+		m_device->lost.store(true);
+	const auto observed = native == VK_SUCCESS ? CompletionStatus::Complete : CompletionStatus::Failed;
+	m_status.compare_exchange_strong(status, observed);
+	return m_status.load();
 }
 
 VulkanExternalDevice::VulkanExternalDevice(std::shared_ptr<VulkanDevice> device,
@@ -591,6 +539,125 @@ VulkanExternalDevice::VulkanExternalDevice(std::shared_ptr<VulkanDevice> device,
 	}
 }
 
+VulkanExternalCapabilities VulkanExternalDevice::Query(VkPhysicalDevice physical, const VulkanExternalImageSpec& image,
+													   std::uint32_t instanceApiVersion)
+{
+	VulkanExternalCapabilities result;
+	if (!physical || instanceApiVersion < VK_API_VERSION_1_1)
+	{
+		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
+		return result;
+	}
+	if (!SupportedShape(image))
+		return result;
+	VkPhysicalDeviceProperties deviceProperties;
+	vkGetPhysicalDeviceProperties(physical, &deviceProperties);
+	if (deviceProperties.apiVersion < VK_API_VERSION_1_1)
+	{
+		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
+		return result;
+	}
+	result.result = PhysicalExtensions(physical);
+	if (result.result != VK_SUCCESS)
+		return result;
+	VkPhysicalDeviceExternalImageFormatInfo external{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO};
+	external.handleType = s_memoryHandle;
+	VkPhysicalDeviceImageFormatInfo2 info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2, &external};
+	info.format = image.format;
+	info.type = image.imageType;
+	info.tiling = image.tiling;
+	info.usage = image.usage;
+	info.flags = image.flags;
+	VkExternalImageFormatProperties properties{VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
+	VkImageFormatProperties2 format{VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2, &properties};
+	result.result = vkGetPhysicalDeviceImageFormatProperties2(physical, &info, &format);
+	if (result.result != VK_SUCCESS)
+		return result;
+	result.imageLimits = format.imageFormatProperties;
+	result.memory = properties.externalMemoryProperties;
+	result.semaphore = SemaphoreCapabilities(physical);
+	const auto& limits = result.imageLimits;
+	if (image.extent.width > limits.maxExtent.width || image.extent.height > limits.maxExtent.height ||
+		image.extent.depth > limits.maxExtent.depth || image.arrayLayers > limits.maxArrayLayers ||
+		image.mipLevels > limits.maxMipLevels || !(limits.sampleCounts & image.samples))
+		result.result = VK_ERROR_FORMAT_NOT_SUPPORTED;
+	return result;
+}
+
+VulkanExternalFenceCapabilities VulkanExternalDevice::QueryFence(VkPhysicalDevice physical,
+																 std::uint32_t instanceApiVersion)
+{
+	VulkanExternalFenceCapabilities result;
+	if (!physical || instanceApiVersion < VK_API_VERSION_1_1)
+		return result;
+	VkPhysicalDeviceProperties properties;
+	vkGetPhysicalDeviceProperties(physical, &properties);
+	if (properties.apiVersion < VK_API_VERSION_1_1)
+		return result;
+	constexpr std::array names{VulkanExternalFenceExtension};
+	result.result = PhysicalExtensions(physical, names);
+	if (result.result != VK_SUCCESS)
+		return result;
+	VkPhysicalDeviceExternalFenceInfo info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO};
+	info.handleType = s_fenceHandle;
+	vkGetPhysicalDeviceExternalFenceProperties(physical, &info, &result.fence);
+	return result;
+}
+
+VulkanExternalCapabilities VulkanExternalDevice::QueryTimeline(VkPhysicalDevice physical, std::uint32_t api)
+{
+	VulkanExternalCapabilities result;
+	if (!physical || api < VK_API_VERSION_1_1)
+		return result;
+	VkPhysicalDeviceProperties properties;
+	vkGetPhysicalDeviceProperties(physical, &properties);
+	if (properties.apiVersion < VK_API_VERSION_1_1)
+	{
+		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
+		return result;
+	}
+	constexpr std::array names{VulkanExternalSemaphoreExtension, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+	const bool coreTimeline = api >= VK_API_VERSION_1_2 && properties.apiVersion >= VK_API_VERSION_1_2;
+	result.result = PhysicalExtensions(physical, std::span(names).first(coreTimeline ? 1 : names.size()));
+	if (result.result != VK_SUCCESS)
+		return result;
+	VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+	VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
+	vkGetPhysicalDeviceFeatures2(physical, &features);
+	if (!timeline.timelineSemaphore)
+	{
+		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
+		return result;
+	}
+	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	VkPhysicalDeviceExternalSemaphoreInfo info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO, &type};
+	info.handleType = s_semaphoreHandle;
+	vkGetPhysicalDeviceExternalSemaphoreProperties(physical, &info, &result.semaphore);
+	return result;
+}
+
+bool VulkanExternalDevice::TimelineCommandsEnabled() const noexcept
+{
+	return m_counter != nullptr;
+}
+
+std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::CreateExportableTimeline() const
+{
+	return std::shared_ptr<VulkanExternalTimeline>(new VulkanExternalTimeline(CreateSemaphore(true), m_counter));
+}
+
+std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::ImportTimeline(const VulkanExternalIdentity& identity,
+																			 VulkanExternalHandle& handle) const
+{
+	// Allocate the wrapper before consuming caller ownership.
+	auto duplicate = handle.Duplicate();
+	auto result = std::shared_ptr<VulkanExternalTimeline>(
+		new VulkanExternalTimeline(ImportSemaphore(identity, duplicate, true), m_counter));
+	handle.Reset();
+	return result;
+}
+
 const VulkanExternalIdentity& VulkanExternalDevice::Identity() const noexcept
 {
 	return m_identity;
@@ -599,34 +666,6 @@ const VulkanExternalIdentity& VulkanExternalDevice::Identity() const noexcept
 std::shared_ptr<VulkanDevice> VulkanExternalDevice::Device() const noexcept
 {
 	return m_device;
-}
-
-std::shared_ptr<VulkanImage> VulkanExternalDevice::CreateImage(const VulkanExternalImageSpec& spec) const
-{
-	auto result = std::shared_ptr<VulkanImage>(new VulkanImage(m_device));
-	result->format = spec.format;
-	result->extent = {spec.extent.width, spec.extent.height};
-	result->layers = spec.arrayLayers;
-	result->mipLevels = spec.mipLevels;
-	result->usage = spec.usage;
-	VkExternalMemoryImageCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
-	external.handleTypes = s_memoryHandle;
-	VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, &external};
-	info.flags = spec.flags;
-	info.imageType = spec.imageType;
-	info.format = spec.format;
-	info.extent = spec.extent;
-	info.mipLevels = spec.mipLevels;
-	info.arrayLayers = spec.arrayLayers;
-	info.samples = spec.samples;
-	info.tiling = spec.tiling;
-	info.usage = spec.usage;
-	info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	VkImage image = VK_NULL_HANDLE;
-	CheckVulkan(vkCreateImage(m_device->binding.device, &info, nullptr, &image), "Create external two-eye image");
-	result->image = image;
-	return result;
 }
 
 std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::CreateExportable(const VulkanExternalImageSpec& spec,
@@ -729,163 +768,10 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateExportableS
 	return CreateSemaphore(false);
 }
 
-std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateSemaphore(bool timeline) const
-{
-	RequireLive(*m_device);
-	if (timeline && !m_counter)
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Timeline feature was not enabled on this device");
-	const auto properties = timeline ? QueryTimeline(m_device->binding.physicalDevice, m_instanceApiVersion).semaphore
-									 : SemaphoreCapabilities(m_device->binding.physicalDevice);
-	if (!(properties.compatibleHandleTypes & s_semaphoreHandle) ||
-		!(properties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT))
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Semaphore native-handle export unsupported");
-	auto result = std::shared_ptr<VulkanExternalSemaphore>(
-		new VulkanExternalSemaphore(m_device, m_identity, m_getSemaphoreHandle, true));
-	VkExportSemaphoreCreateInfo external{VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO};
-	external.handleTypes = s_semaphoreHandle;
-	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-	external.pNext = timeline ? &type : nullptr;
-	VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &external};
-	VkSemaphore semaphore = VK_NULL_HANDLE;
-	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &info, nullptr, &semaphore), "Create exportable semaphore");
-	result->m_semaphore = semaphore;
-	return result;
-}
-
 std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(const VulkanExternalIdentity& identity,
 																			   VulkanExternalHandle& handle) const
 {
 	return ImportSemaphore(identity, handle, false);
-}
-
-std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(const VulkanExternalIdentity& identity,
-																			   VulkanExternalHandle& handle,
-																			   bool timeline) const
-{
-	RequireLive(*m_device);
-	if (!handle || identity != m_identity)
-		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "External semaphore identity mismatch");
-	if (timeline && !m_counter)
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Timeline feature was not enabled on this device");
-	const auto properties = timeline ? QueryTimeline(m_device->binding.physicalDevice, m_instanceApiVersion).semaphore
-									 : SemaphoreCapabilities(m_device->binding.physicalDevice);
-	if (!(properties.compatibleHandleTypes & s_semaphoreHandle) ||
-		!(properties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT))
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Semaphore native-handle import unsupported");
-	auto result =
-		std::shared_ptr<VulkanExternalSemaphore>(new VulkanExternalSemaphore(m_device, m_identity, nullptr, false));
-	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-	VkSemaphoreCreateInfo create{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, timeline ? &type : nullptr};
-	VkSemaphore semaphore = VK_NULL_HANDLE;
-	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &create, nullptr, &semaphore), "Create imported semaphore");
-	result->m_semaphore = semaphore;
-	auto imported = handle.Duplicate();
-#ifdef _WIN32
-	VkImportSemaphoreWin32HandleInfoKHR info{VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR};
-#else
-	VkImportSemaphoreFdInfoKHR info{VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR};
-#endif
-	info.semaphore = result->m_semaphore;
-	info.handleType = s_semaphoreHandle;
-#ifdef _WIN32
-	info.handle = imported.Get();
-#else
-	info.fd = imported.Get();
-#endif
-	CheckVulkan(m_importSemaphoreHandle(m_device->binding.device, &info), "Import semaphore native handle");
-#ifndef _WIN32
-	imported.Release(); // Successful FD import transfers ownership to Vulkan.
-#endif
-	handle.Reset();
-	return result;
-}
-
-VulkanExternalCapabilities VulkanExternalDevice::QueryTimeline(VkPhysicalDevice physical, std::uint32_t api)
-{
-	VulkanExternalCapabilities result;
-	if (!physical || api < VK_API_VERSION_1_1)
-		return result;
-	VkPhysicalDeviceProperties properties;
-	vkGetPhysicalDeviceProperties(physical, &properties);
-	if (properties.apiVersion < VK_API_VERSION_1_1)
-	{
-		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
-		return result;
-	}
-	constexpr std::array names{VulkanExternalSemaphoreExtension, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
-	const bool coreTimeline = api >= VK_API_VERSION_1_2 && properties.apiVersion >= VK_API_VERSION_1_2;
-	result.result = PhysicalExtensions(physical, std::span(names).first(coreTimeline ? 1 : names.size()));
-	if (result.result != VK_SUCCESS)
-		return result;
-	VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
-	VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
-	vkGetPhysicalDeviceFeatures2(physical, &features);
-	if (!timeline.timelineSemaphore)
-	{
-		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
-		return result;
-	}
-	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-	VkPhysicalDeviceExternalSemaphoreInfo info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO, &type};
-	info.handleType = s_semaphoreHandle;
-	vkGetPhysicalDeviceExternalSemaphoreProperties(physical, &info, &result.semaphore);
-	return result;
-}
-
-bool VulkanExternalDevice::TimelineCommandsEnabled() const noexcept
-{
-	return m_counter != nullptr;
-}
-
-std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::CreateExportableTimeline() const
-{
-	return std::shared_ptr<VulkanExternalTimeline>(new VulkanExternalTimeline(CreateSemaphore(true), m_counter));
-}
-
-std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::ImportTimeline(const VulkanExternalIdentity& identity,
-																			 VulkanExternalHandle& handle) const
-{
-	// Allocate the wrapper before consuming caller ownership.
-	auto duplicate = handle.Duplicate();
-	auto result = std::shared_ptr<VulkanExternalTimeline>(
-		new VulkanExternalTimeline(ImportSemaphore(identity, duplicate, true), m_counter));
-	handle.Reset();
-	return result;
-}
-
-VulkanExternalTimeline::VulkanExternalTimeline(std::shared_ptr<VulkanExternalSemaphore> semaphore,
-											   PFN_vkGetSemaphoreCounterValueKHR counter)
-	: m_semaphore(std::move(semaphore)), m_counter(counter)
-{}
-
-VkSemaphore VulkanExternalTimeline::Get() const noexcept
-{
-	return m_semaphore->Get();
-}
-
-VulkanExternalHandle VulkanExternalTimeline::ExportOnce()
-{
-	return m_semaphore->ExportOnce();
-}
-
-CompletionStatus VulkanExternalTimeline::PollCompletion() const noexcept
-{
-	auto status = m_status.load();
-	if (status != CompletionStatus::Pending)
-		return status;
-	const auto device = m_semaphore->Device();
-	std::uint64_t value = 0;
-	const auto result = device->lost.load() ? VK_ERROR_DEVICE_LOST : m_counter(device->binding.device, Get(), &value);
-	if (result == VK_SUCCESS && value == 0)
-		return m_status.load();
-	if (result == VK_ERROR_DEVICE_LOST)
-		device->lost.store(true);
-	const auto observed = result == VK_SUCCESS && value == 1 ? CompletionStatus::Complete : CompletionStatus::Failed;
-	m_status.compare_exchange_strong(status, observed);
-	return m_status.load();
 }
 
 bool VulkanExternalDevice::FenceCommandsEnabled() const noexcept
@@ -947,6 +833,120 @@ std::shared_ptr<VulkanExternalFence> VulkanExternalDevice::ImportFence(const Vul
 #endif
 	handle.Reset();
 	return result;
+}
+
+std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateSemaphore(bool timeline) const
+{
+	RequireLive(*m_device);
+	if (timeline && !m_counter)
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Timeline feature was not enabled on this device");
+	const auto properties = timeline ? QueryTimeline(m_device->binding.physicalDevice, m_instanceApiVersion).semaphore
+									 : SemaphoreCapabilities(m_device->binding.physicalDevice);
+	if (!(properties.compatibleHandleTypes & s_semaphoreHandle) ||
+		!(properties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT))
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Semaphore native-handle export unsupported");
+	auto result = std::shared_ptr<VulkanExternalSemaphore>(
+		new VulkanExternalSemaphore(m_device, m_identity, m_getSemaphoreHandle, true));
+	VkExportSemaphoreCreateInfo external{VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO};
+	external.handleTypes = s_semaphoreHandle;
+	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	external.pNext = timeline ? &type : nullptr;
+	VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &external};
+	VkSemaphore semaphore = VK_NULL_HANDLE;
+	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &info, nullptr, &semaphore), "Create exportable semaphore");
+	result->m_semaphore = semaphore;
+	return result;
+}
+
+std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(const VulkanExternalIdentity& identity,
+																			   VulkanExternalHandle& handle,
+																			   bool timeline) const
+{
+	RequireLive(*m_device);
+	if (!handle || identity != m_identity)
+		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "External semaphore identity mismatch");
+	if (timeline && !m_counter)
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Timeline feature was not enabled on this device");
+	const auto properties = timeline ? QueryTimeline(m_device->binding.physicalDevice, m_instanceApiVersion).semaphore
+									 : SemaphoreCapabilities(m_device->binding.physicalDevice);
+	if (!(properties.compatibleHandleTypes & s_semaphoreHandle) ||
+		!(properties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT))
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Semaphore native-handle import unsupported");
+	auto result =
+		std::shared_ptr<VulkanExternalSemaphore>(new VulkanExternalSemaphore(m_device, m_identity, nullptr, false));
+	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	VkSemaphoreCreateInfo create{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, timeline ? &type : nullptr};
+	VkSemaphore semaphore = VK_NULL_HANDLE;
+	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &create, nullptr, &semaphore), "Create imported semaphore");
+	result->m_semaphore = semaphore;
+	auto imported = handle.Duplicate();
+#ifdef _WIN32
+	VkImportSemaphoreWin32HandleInfoKHR info{VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR};
+#else
+	VkImportSemaphoreFdInfoKHR info{VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR};
+#endif
+	info.semaphore = result->m_semaphore;
+	info.handleType = s_semaphoreHandle;
+#ifdef _WIN32
+	info.handle = imported.Get();
+#else
+	info.fd = imported.Get();
+#endif
+	CheckVulkan(m_importSemaphoreHandle(m_device->binding.device, &info), "Import semaphore native handle");
+#ifndef _WIN32
+	imported.Release(); // Successful FD import transfers ownership to Vulkan.
+#endif
+	handle.Reset();
+	return result;
+}
+
+std::shared_ptr<VulkanImage> VulkanExternalDevice::CreateImage(const VulkanExternalImageSpec& spec) const
+{
+	auto result = std::shared_ptr<VulkanImage>(new VulkanImage(m_device));
+	result->format = spec.format;
+	result->extent = {spec.extent.width, spec.extent.height};
+	result->layers = spec.arrayLayers;
+	result->mipLevels = spec.mipLevels;
+	result->usage = spec.usage;
+	VkExternalMemoryImageCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
+	external.handleTypes = s_memoryHandle;
+	VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, &external};
+	info.flags = spec.flags;
+	info.imageType = spec.imageType;
+	info.format = spec.format;
+	info.extent = spec.extent;
+	info.mipLevels = spec.mipLevels;
+	info.arrayLayers = spec.arrayLayers;
+	info.samples = spec.samples;
+	info.tiling = spec.tiling;
+	info.usage = spec.usage;
+	info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	VkImage image = VK_NULL_HANDLE;
+	CheckVulkan(vkCreateImage(m_device->binding.device, &info, nullptr, &image), "Create external two-eye image");
+	result->image = image;
+	return result;
+}
+
+VulkanExternalCapabilities VulkanExternalDevice::ImageCapabilities(const VulkanExternalImageSpec& image) const
+{
+	{
+		std::lock_guard lock(m_imageQueryMutex);
+		for (const auto& query : m_imageQueries)
+			if (query.capabilities.result == VK_SUCCESS && query.image == image)
+				return query.capabilities;
+	}
+	const auto capabilities = Query(m_device->binding.physicalDevice, image, m_instanceApiVersion);
+	// Keep only successful, device-local queries. Transient failures remain retryable.
+	if (capabilities.result == VK_SUCCESS)
+	{
+		std::lock_guard lock(m_imageQueryMutex);
+		m_imageQueries[m_nextImageQuery] = {image, capabilities};
+		m_nextImageQuery = (m_nextImageQuery + 1) % m_imageQueries.size();
+	}
+	return capabilities;
 }
 
 } // namespace simxr

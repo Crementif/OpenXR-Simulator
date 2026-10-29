@@ -8,6 +8,7 @@
 namespace simxr::app::mcp
 {
 using Json = nlohmann::json;
+
 using namespace std::chrono_literals;
 
 ArtifactCalls::ArtifactCalls(McpApplication& app, McpDebug& debug, std::string connection,
@@ -52,31 +53,6 @@ void ArtifactCalls::Check() const
 		throw std::runtime_error(m_operation + " timed out; reconnect if the debugger connection was interrupted");
 }
 
-std::shared_ptr<McpCancellation> ArtifactCalls::Begin()
-{
-	Check();
-	auto active = std::make_shared<McpCancellation>();
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_terminated || m_cancellation->Requested() || std::chrono::steady_clock::now() >= m_deadline)
-			active->Cancel();
-		else
-			m_active = active;
-	}
-	return active;
-}
-
-void ArtifactCalls::End() noexcept
-{
-	std::lock_guard lock(m_mutex);
-	m_active.reset();
-}
-
-void ArtifactCalls::Disconnect() noexcept
-{
-	m_debug.Disconnect(m_connection);
-}
-
 control::Message ArtifactCalls::Request(control::OpCode opcode, std::vector<control::Field> fields,
 										std::optional<std::string_view> program)
 {
@@ -116,5 +92,30 @@ Json ArtifactCalls::Sequence(control::OpCode opcode, std::vector<control::Field>
 		Disconnect();
 		throw;
 	}
+}
+
+std::shared_ptr<McpCancellation> ArtifactCalls::Begin()
+{
+	Check();
+	auto active = std::make_shared<McpCancellation>();
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_terminated || m_cancellation->Requested() || std::chrono::steady_clock::now() >= m_deadline)
+			active->Cancel();
+		else
+			m_active = active;
+	}
+	return active;
+}
+
+void ArtifactCalls::End() noexcept
+{
+	std::lock_guard lock(m_mutex);
+	m_active.reset();
+}
+
+void ArtifactCalls::Disconnect() noexcept
+{
+	m_debug.Disconnect(m_connection);
 }
 }

@@ -174,9 +174,6 @@ static ImageDeviceIdentity DeviceIdentity(const Message& message)
 	return identity;
 }
 
-ConnectionImages::ConnectionImages() = default;
-ConnectionImages::~ConnectionImages() = default;
-
 ConnectionImages::Publication::Publication(ConnectionImages& owner, RetiredResource& retired)
 	: m_owner(owner), m_retired(retired)
 {}
@@ -187,30 +184,19 @@ ConnectionImages::Publication::~Publication()
 		m_retired.m_value = m_owner.Release(*m_kind, m_id);
 }
 
+void ConnectionImages::Publication::Commit() noexcept
+{
+	m_committed = true;
+}
+
 void ConnectionImages::Publication::Track(ResourceKind kind, std::uint64_t id) noexcept
 {
 	m_kind = kind;
 	m_id = id;
 }
 
-void ConnectionImages::Publication::Commit() noexcept
-{
-	m_committed = true;
-}
-
-std::shared_ptr<const void> ConnectionImages::Release(ResourceKind kind, std::uint64_t id) noexcept
-{
-	switch (kind)
-	{
-	case ResourceKind::Reader:
-		return m_images.Release(id);
-	case ResourceKind::Delivery:
-		return m_deliveries.Release(id);
-	case ResourceKind::Export:
-		return m_exports.Release(id);
-	}
-	return {};
-}
+ConnectionImages::ConnectionImages() = default;
+ConnectionImages::~ConnectionImages() = default;
 
 void ConnectionImages::Retain(Message& response, ImageSource source, std::shared_ptr<const FrameOutput> output,
 							  const ImageInspectionProvider& provider, bool nativeHandles, Publication& publication,
@@ -412,4 +398,19 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 	}
 	return response;
 }
+
+std::shared_ptr<const void> ConnectionImages::Release(ResourceKind kind, std::uint64_t id) noexcept
+{
+	switch (kind)
+	{
+	case ResourceKind::Reader:
+		return m_images.Release(id);
+	case ResourceKind::Delivery:
+		return m_deliveries.Release(id);
+	case ResourceKind::Export:
+		return m_exports.Release(id);
+	}
+	return {};
+}
+
 } // namespace simxr::control

@@ -32,14 +32,6 @@ void RecordingPanel::SetTarget(RecordingTarget target)
 	m_startRequested = m_stopRequested = false;
 }
 
-RecordingCaptureSnapshot RecordingPanel::Snapshot() const
-{
-	auto state = m_capture.Snapshot();
-	if (!m_error.empty())
-		state.error = m_error;
-	return state;
-}
-
 void RecordingPanel::Poll(bool supported)
 {
 	if (std::exchange(m_stopRequested, false))
@@ -81,6 +73,14 @@ void RecordingPanel::Poll(bool supported)
 		if (state.phase == RecordingCapturePhase::Complete && !m_retired)
 			m_saved = PathText(state.directory);
 	}
+}
+
+RecordingCaptureSnapshot RecordingPanel::Snapshot() const
+{
+	auto state = m_capture.Snapshot();
+	if (!m_error.empty())
+		state.error = m_error;
+	return state;
 }
 
 void RecordingPanel::DrawPopovers(bool supported)

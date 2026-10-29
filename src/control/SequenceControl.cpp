@@ -58,6 +58,31 @@ static AdmissionDescription DescribeAdmission(SnapshotAdmission value)
 	throw std::invalid_argument("Unknown sequence capture admission");
 }
 
+InspectionValue SequenceControl::Dispatch(const Message& request, const ControlSession& binding, CommandSource source,
+										  Message& response, std::vector<SnapshotRecord>& held)
+{
+	switch (static_cast<OpCode>(request.opcode))
+	{
+	case OpCode::UploadSequence:
+		return Upload(request, binding);
+	case OpCode::StartSequence:
+		return Start(request, binding, source, response);
+	case OpCode::ReadSequence:
+		return Read(request, binding, source, held);
+	case OpCode::StopSequence:
+	{
+		const auto status = binding.session->Commands().PoseSequenceStatusFor(source);
+		if (!status || status->id != RequireRequestU64(request, tag::SequenceId))
+			throw ControlRequestError{ErrorCode::Conflict,
+									  "Sequence stop does not identify the current owned execution"};
+		binding.session->StopPoseSequence(source);
+		return Status(*binding.session->Commands().PoseSequenceStatusFor(source));
+	}
+	default:
+		throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported sequence operation"};
+	}
+}
+
 InspectionValue SequenceControl::Upload(const Message& request, const ControlSession& binding)
 {
 	const auto id = RequireRequestU64(request, tag::ProgramId);
@@ -255,28 +280,4 @@ InspectionValue SequenceControl::Read(const Message& request, const ControlSessi
 									{"captures", InspectionValue::Array(std::move(captures))}});
 }
 
-InspectionValue SequenceControl::Dispatch(const Message& request, const ControlSession& binding, CommandSource source,
-										  Message& response, std::vector<SnapshotRecord>& held)
-{
-	switch (static_cast<OpCode>(request.opcode))
-	{
-	case OpCode::UploadSequence:
-		return Upload(request, binding);
-	case OpCode::StartSequence:
-		return Start(request, binding, source, response);
-	case OpCode::ReadSequence:
-		return Read(request, binding, source, held);
-	case OpCode::StopSequence:
-	{
-		const auto status = binding.session->Commands().PoseSequenceStatusFor(source);
-		if (!status || status->id != RequireRequestU64(request, tag::SequenceId))
-			throw ControlRequestError{ErrorCode::Conflict,
-									  "Sequence stop does not identify the current owned execution"};
-		binding.session->StopPoseSequence(source);
-		return Status(*binding.session->Commands().PoseSequenceStatusFor(source));
-	}
-	default:
-		throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported sequence operation"};
-	}
-}
 } // namespace simxr::control

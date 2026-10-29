@@ -12,11 +12,13 @@ class CommandRecorder
 {
 public:
 	explicit CommandRecorder(std::size_t capacity = 1024);
+
 	void Start(const CommandRecordingOrigin& origin, bool drain = false);
 	// Retire the exclusive prefix only after the consumer has persisted it.
 	void Acknowledge(std::size_t through);
 	void Stop();
 	void Fail();
+
 	CommandRecording Snapshot(std::optional<std::size_t> offset = {}, std::size_t count = 128) const;
 	// Records normalized acknowledged outcomes, including rejected/cancelled work.
 	// Full history stops recording explicitly; no overwrite or silent drop.

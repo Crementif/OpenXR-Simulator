@@ -134,141 +134,6 @@ PreviewHistory::~PreviewHistory()
 #endif
 }
 
-void PreviewHistory::Retire()
-{
-	if (m_resources)
-	{
-		m_resources->next = std::move(m_retired);
-		m_retired = std::move(m_resources);
-	}
-}
-
-void PreviewHistory::CollectRetired()
-{
-#if defined(__linux__) || defined(_WIN32)
-	if (!m_retired)
-		return;
-	const auto completed = m_renderer.CompletedFrames();
-	for (auto* link = &m_retired; *link;)
-	{
-		if ((*link)->lastUse <= completed)
-		{
-			auto retired = std::move(*link);
-			*link = std::move(retired->next);
-		}
-		else
-			link = &(*link)->next;
-	}
-#endif
-}
-
-bool PreviewHistory::Prepare(const control::ImageDescription& description)
-{
-#if defined(__linux__) || defined(_WIN32)
-	if (!description.width || !description.height || description.width > INT32_MAX || description.height > INT32_MAX)
-		throw std::invalid_argument("Preview history dimensions are invalid");
-	const auto width = std::min(Width, description.width);
-	const VkExtent2D extent{width, static_cast<std::uint32_t>(std::max<std::uint64_t>(
-									   1, std::uint64_t(width) * description.height / description.width))};
-	const auto format = static_cast<VkFormat>(description.format);
-	if (m_resources && m_resources->format == format && m_resources->extent.width == extent.width &&
-		m_resources->extent.height == extent.height)
-		return true;
-	// ImGui may already have borrowed this ring's descriptors for the current
-	// frame. Finish that submission before replacing its resources or copy plan.
-	if (m_display || !m_sampled.empty())
-	{
-		m_pendingDescription = description;
-		return false;
-	}
-	Retire();
-	CollectRetired();
-	m_shots.clear();
-	m_lastUse.clear();
-	m_sampled.clear();
-	m_next = 0;
-	m_lastFrame = {};
-	m_lastEpoch = 0;
-	m_display = m_displayed = std::nullopt;
-	const auto access = m_renderer.DeviceAccess();
-	VkFormatProperties properties;
-	vkGetPhysicalDeviceFormatProperties(access.physical, format, &properties);
-	constexpr VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
-											VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-											VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-	if ((properties.optimalTilingFeatures & needed) != needed)
-	{
-		m_error = "Preview history needs a blittable, filterable preview format";
-		return false;
-	}
-	std::uint64_t preserved = std::min(m_budget, PreviewTexture::PreservedBytes());
-	preserved += std::min(Bytes(), m_budget - preserved);
-	{
-		auto& rings = Resources::PreservedRings();
-		std::lock_guard lock(rings.mutex);
-		preserved += std::min(rings.bytes, m_budget - preserved);
-	}
-	const auto available = m_budget > preserved ? m_budget - preserved : 0;
-	auto resources = std::make_unique<Resources>();
-	resources->device = std::make_shared<VulkanDevice>(
-		VulkanBinding{access.instance, access.physical, access.device, access.queueFamily, 0}, access.owner);
-	resources->format = format;
-	resources->extent = extent;
-	resources->budget = available;
-	resources->display = VulkanImage::Create(resources->device, format, extent, 1,
-											 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 1,
-											 VK_SAMPLE_COUNT_1_BIT, available);
-	// Include format width and driver padding, not just the pixel count.
-	const auto slot = resources->display->allocationSize;
-	const auto capacity = (available - slot) / slot;
-	if (!capacity)
-	{
-		m_error = "Preview history budget cannot hold a preview";
-		return false;
-	}
-	resources->capacity = static_cast<std::size_t>(std::min<std::uint64_t>(capacity, 16384));
-	VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-	view.image = resources->display->image;
-	view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	view.format = format;
-	view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-	CheckVulkan(vkCreateImageView(access.device, &view, nullptr, &resources->view), "create preview history view");
-	VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-	sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
-	sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	CheckVulkan(vkCreateSampler(access.device, &sampler, nullptr, &resources->sampler),
-				"create preview history sampler");
-	resources->descriptor = ImGui_ImplVulkan_AddTexture(resources->sampler, resources->view, VK_IMAGE_LAYOUT_GENERAL);
-	if (!resources->descriptor)
-		throw std::runtime_error("Preview history descriptor allocation failed");
-	// A dedicated pool bounds the ring's descriptors without exhausting the UI pool.
-	VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
-										 nullptr};
-	VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-	layout.bindingCount = 1;
-	layout.pBindings = &binding;
-	CheckVulkan(vkCreateDescriptorSetLayout(access.device, &layout, nullptr, &resources->thumbnailLayout),
-				"create thumbnail layout");
-	VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-								  static_cast<std::uint32_t>(resources->capacity)};
-	VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-	pool.maxSets = poolSize.descriptorCount;
-	pool.poolSizeCount = 1;
-	pool.pPoolSizes = &poolSize;
-	CheckVulkan(vkCreateDescriptorPool(access.device, &pool, nullptr, &resources->thumbnailPool),
-				"create thumbnail pool");
-	resources->thumbnails.resize(resources->capacity);
-	m_sampled.reserve(resources->capacity);
-	m_shots.resize(resources->capacity);
-	m_lastUse.resize(resources->capacity);
-	m_resources = std::move(resources);
-	return true;
-#else
-	(void)description;
-	return false;
-#endif
-}
-
 void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch)
 {
 #if defined(__linux__) || defined(_WIN32)
@@ -391,9 +256,34 @@ void PreviewHistory::UnavailableThumbnail(FrameIdentity frame, std::uint64_t epo
 	m_unavailable.push_back({0, frame, epoch});
 }
 
-float PreviewHistory::Aspect() const noexcept
+void PreviewHistory::BeginFrame()
 {
-	return m_aspect;
+	CollectRetired();
+	m_sampled.clear();
+	// Work offered for a frame that was never submitted is dropped with it.
+	if (m_copy)
+		m_shots[m_copy->slot] = m_copy->previous;
+	m_copy.reset();
+	m_display.reset();
+	m_recorded = false;
+	if (m_pendingDescription)
+	{
+		const auto description = *m_pendingDescription;
+		m_pendingDescription.reset();
+		try
+		{
+			Prepare(description);
+		}
+		catch (const std::exception& error)
+		{
+			m_error = error.what();
+		}
+	}
+}
+
+void PreviewHistory::Poll()
+{
+	CollectRetired();
 }
 
 void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
@@ -555,11 +445,6 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 #endif
 }
 
-void PreviewHistory::Poll()
-{
-	CollectRetired();
-}
-
 void PreviewHistory::BeginRetirement()
 {
 	if (m_copy)
@@ -597,29 +482,9 @@ void PreviewHistory::PreserveRetired() noexcept
 #endif
 }
 
-void PreviewHistory::BeginFrame()
+float PreviewHistory::Aspect() const noexcept
 {
-	CollectRetired();
-	m_sampled.clear();
-	// Work offered for a frame that was never submitted is dropped with it.
-	if (m_copy)
-		m_shots[m_copy->slot] = m_copy->previous;
-	m_copy.reset();
-	m_display.reset();
-	m_recorded = false;
-	if (m_pendingDescription)
-	{
-		const auto description = *m_pendingDescription;
-		m_pendingDescription.reset();
-		try
-		{
-			Prepare(description);
-		}
-		catch (const std::exception& error)
-		{
-			m_error = error.what();
-		}
-	}
+	return m_aspect;
 }
 
 std::uint64_t PreviewHistory::Bytes() const noexcept
@@ -633,5 +498,140 @@ std::uint64_t PreviewHistory::Bytes() const noexcept
 		bytes += charge;
 	}
 	return bytes;
+}
+
+bool PreviewHistory::Prepare(const control::ImageDescription& description)
+{
+#if defined(__linux__) || defined(_WIN32)
+	if (!description.width || !description.height || description.width > INT32_MAX || description.height > INT32_MAX)
+		throw std::invalid_argument("Preview history dimensions are invalid");
+	const auto width = std::min(Width, description.width);
+	const VkExtent2D extent{width, static_cast<std::uint32_t>(std::max<std::uint64_t>(
+									   1, std::uint64_t(width) * description.height / description.width))};
+	const auto format = static_cast<VkFormat>(description.format);
+	if (m_resources && m_resources->format == format && m_resources->extent.width == extent.width &&
+		m_resources->extent.height == extent.height)
+		return true;
+	// ImGui may already have borrowed this ring's descriptors for the current
+	// frame. Finish that submission before replacing its resources or copy plan.
+	if (m_display || !m_sampled.empty())
+	{
+		m_pendingDescription = description;
+		return false;
+	}
+	Retire();
+	CollectRetired();
+	m_shots.clear();
+	m_lastUse.clear();
+	m_sampled.clear();
+	m_next = 0;
+	m_lastFrame = {};
+	m_lastEpoch = 0;
+	m_display = m_displayed = std::nullopt;
+	const auto access = m_renderer.DeviceAccess();
+	VkFormatProperties properties;
+	vkGetPhysicalDeviceFormatProperties(access.physical, format, &properties);
+	constexpr VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+											VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+											VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+	if ((properties.optimalTilingFeatures & needed) != needed)
+	{
+		m_error = "Preview history needs a blittable, filterable preview format";
+		return false;
+	}
+	std::uint64_t preserved = std::min(m_budget, PreviewTexture::PreservedBytes());
+	preserved += std::min(Bytes(), m_budget - preserved);
+	{
+		auto& rings = Resources::PreservedRings();
+		std::lock_guard lock(rings.mutex);
+		preserved += std::min(rings.bytes, m_budget - preserved);
+	}
+	const auto available = m_budget > preserved ? m_budget - preserved : 0;
+	auto resources = std::make_unique<Resources>();
+	resources->device = std::make_shared<VulkanDevice>(
+		VulkanBinding{access.instance, access.physical, access.device, access.queueFamily, 0}, access.owner);
+	resources->format = format;
+	resources->extent = extent;
+	resources->budget = available;
+	resources->display = VulkanImage::Create(resources->device, format, extent, 1,
+											 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 1,
+											 VK_SAMPLE_COUNT_1_BIT, available);
+	// Include format width and driver padding, not just the pixel count.
+	const auto slot = resources->display->allocationSize;
+	const auto capacity = (available - slot) / slot;
+	if (!capacity)
+	{
+		m_error = "Preview history budget cannot hold a preview";
+		return false;
+	}
+	resources->capacity = static_cast<std::size_t>(std::min<std::uint64_t>(capacity, 16384));
+	VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+	view.image = resources->display->image;
+	view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	view.format = format;
+	view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+	CheckVulkan(vkCreateImageView(access.device, &view, nullptr, &resources->view), "create preview history view");
+	VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+	sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
+	sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	CheckVulkan(vkCreateSampler(access.device, &sampler, nullptr, &resources->sampler),
+				"create preview history sampler");
+	resources->descriptor = ImGui_ImplVulkan_AddTexture(resources->sampler, resources->view, VK_IMAGE_LAYOUT_GENERAL);
+	if (!resources->descriptor)
+		throw std::runtime_error("Preview history descriptor allocation failed");
+	// A dedicated pool bounds the ring's descriptors without exhausting the UI pool.
+	VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+										 nullptr};
+	VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+	layout.bindingCount = 1;
+	layout.pBindings = &binding;
+	CheckVulkan(vkCreateDescriptorSetLayout(access.device, &layout, nullptr, &resources->thumbnailLayout),
+				"create thumbnail layout");
+	VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								  static_cast<std::uint32_t>(resources->capacity)};
+	VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+	pool.maxSets = poolSize.descriptorCount;
+	pool.poolSizeCount = 1;
+	pool.pPoolSizes = &poolSize;
+	CheckVulkan(vkCreateDescriptorPool(access.device, &pool, nullptr, &resources->thumbnailPool),
+				"create thumbnail pool");
+	resources->thumbnails.resize(resources->capacity);
+	m_sampled.reserve(resources->capacity);
+	m_shots.resize(resources->capacity);
+	m_lastUse.resize(resources->capacity);
+	m_resources = std::move(resources);
+	return true;
+#else
+	(void)description;
+	return false;
+#endif
+}
+
+void PreviewHistory::Retire()
+{
+	if (m_resources)
+	{
+		m_resources->next = std::move(m_retired);
+		m_retired = std::move(m_resources);
+	}
+}
+
+void PreviewHistory::CollectRetired()
+{
+#if defined(__linux__) || defined(_WIN32)
+	if (!m_retired)
+		return;
+	const auto completed = m_renderer.CompletedFrames();
+	for (auto* link = &m_retired; *link;)
+	{
+		if ((*link)->lastUse <= completed)
+		{
+			auto retired = std::move(*link);
+			*link = std::move(retired->next);
+		}
+		else
+			link = &(*link)->next;
+	}
+#endif
 }
 } // namespace simxr::app

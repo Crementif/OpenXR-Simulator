@@ -668,30 +668,6 @@ void CommandScheduler::Close()
 	m_recordingOwner.reset();
 }
 
-CommandResult CommandScheduler::SubmitLiveInput(CommandSource source, const LiveInputSample& sample,
-												LiveInputClock::time_point now)
-{
-	std::lock_guard lock(m_mutex);
-	if (m_closed)
-		return CommandResult::Closed;
-	if (const auto owner = m_liveInput.Status().owner;
-		owner && !LiveInputSlot::HasChannels(m_state.OwnedChannels(*owner)))
-		m_liveInput.Reset();
-	return m_liveInput.Write(source, sample, m_state.OwnedChannels(source), now);
-}
-
-void CommandScheduler::AcknowledgeLiveInput()
-{
-	std::lock_guard lock(m_mutex);
-	m_liveInput.AcknowledgeControls();
-}
-
-LiveInputStatus CommandScheduler::LiveInputState() const
-{
-	std::lock_guard lock(m_mutex);
-	return m_liveInput.Status();
-}
-
 CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 {
 	CommandOutcome outcome{std::move(transaction), CommandResult::Queued};
@@ -800,6 +776,84 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 	return returned;
 }
 
+CommandResult CommandScheduler::SubmitLiveInput(CommandSource source, const LiveInputSample& sample,
+												LiveInputClock::time_point now)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_closed)
+		return CommandResult::Closed;
+	if (const auto owner = m_liveInput.Status().owner;
+		owner && !LiveInputSlot::HasChannels(m_state.OwnedChannels(*owner)))
+		m_liveInput.Reset();
+	return m_liveInput.Write(source, sample, m_state.OwnedChannels(source), now);
+}
+
+LiveInputStatus CommandScheduler::LiveInputState() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_liveInput.Status();
+}
+
+void CommandScheduler::AcknowledgeLiveInput()
+{
+	std::lock_guard lock(m_mutex);
+	m_liveInput.AcknowledgeControls();
+}
+
+std::array<bool, ControlChannelCount> CommandScheduler::ExpireLiveInput(LiveInputClock::time_point now)
+{
+	std::shared_ptr<const PoseSequence> retired;
+	std::lock_guard lock(m_mutex);
+	if (m_sequence)
+		retired = m_sequence->Program();
+	const auto owner = m_liveInput.Status().owner;
+	return owner && m_liveInput.Expired(now) ? ReleaseSourceCommandsLocked(*owner, false)
+											 : std::array<bool, ControlChannelCount>{};
+}
+
+std::optional<PoseSequenceStatus> CommandScheduler::StartPoseSequence(CommandSource owner,
+																	  std::shared_ptr<const PoseSequence> program)
+{
+	if (!ValidSource(owner) || !program)
+		throw std::invalid_argument("Invalid sequence source or program");
+	std::optional<PoseSequenceExecution> retired;
+	std::lock_guard lock(m_mutex);
+	if (m_closed)
+		return {};
+	if (m_sequence && m_sequence->CanPrepare() && m_sequence->Status().owner != owner)
+		return {};
+	if (m_nextSequence == std::numeric_limits<std::uint64_t>::max())
+		throw std::overflow_error("Sequence identities exhausted");
+	const auto previous = m_applied.empty() ? 0 : m_applied.back()->frame.value;
+	if (previous == std::numeric_limits<std::uint64_t>::max() ||
+		(program->Size() &&
+		 program->Steps().back().frame.value > std::numeric_limits<std::uint64_t>::max() - previous - 1))
+		throw std::overflow_error("Pose sequence extends beyond the frame counter");
+	const auto previousSource = m_replacedSequence.value_or(m_sequence ? m_sequence->Source() : CommandSource{});
+	PoseSequenceExecution prepared(m_nextSequence, owner, std::move(program), m_state.OwnedChannels(previousSource));
+	if (m_sequence && m_sequence->Status().origin.value)
+		m_replacedSequence = m_sequence->Source();
+	retired.swap(m_sequence);
+	m_sequence.emplace(std::move(prepared));
+	++m_nextSequence;
+	return m_sequence->Status();
+}
+
+std::optional<PoseSequenceStatus> CommandScheduler::PoseSequenceStatusFor(CommandSource owner) const
+{
+	std::lock_guard lock(m_mutex);
+	return m_sequence && m_sequence->Status().owner == owner ? std::optional{m_sequence->Status()} : std::nullopt;
+}
+
+std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequence(CommandSource owner)
+{
+	std::shared_ptr<const PoseSequence> retired;
+	std::lock_guard lock(m_mutex);
+	if (m_sequence)
+		retired = m_sequence->Program();
+	return StopPoseSequenceLocked(owner);
+}
+
 std::optional<CommandOutcome> CommandScheduler::Read(CommandSource source, std::uint64_t id) const
 {
 	std::lock_guard lock(m_mutex);
@@ -857,158 +911,52 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 	return ReleaseSourceCommandsLocked(source, retire);
 }
 
-std::array<bool, ControlChannelCount> CommandScheduler::ExpireLiveInput(LiveInputClock::time_point now)
+std::shared_ptr<const AppliedCommandSnapshot>
+CommandScheduler::Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeTime,
+						const CommandConfiguration& baseline,
+						const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve,
+						LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
 {
-	std::shared_ptr<const PoseSequence> retired;
+	// Retire replaced state after releasing admission, including reservation failure.
+	std::optional<PreparedCommandBoundary> prepared;
 	std::lock_guard lock(m_mutex);
-	if (m_sequence)
-		retired = m_sequence->Program();
-	const auto owner = m_liveInput.Status().owner;
-	return owner && m_liveInput.Expired(now) ? ReleaseSourceCommandsLocked(*owner, false)
-											 : std::array<bool, ControlChannelCount>{};
+	if (m_closed || !frame.value || runtimeTime.value.count() <= 0 || time.value.count() < 0)
+		throw std::invalid_argument("Invalid command boundary");
+	if (!m_applied.empty() && frame <= m_applied.back()->frame)
+	{
+		for (const auto& snapshot : m_applied)
+			if (snapshot->frame == frame)
+				return snapshot;
+		throw std::invalid_argument("Command boundary moved backward");
+	}
+	if (!m_applied.empty() && time < m_applied.back()->time)
+		throw std::invalid_argument("Simulation time moved backward");
+	prepared.emplace(*this, frame, time, runtimeTime, baseline, now, clockRevision);
+	const auto reserveAndCommit = [&](bool recorded) {
+		// The external reservation is the last throwing operation. Both the
+		// recorder and scheduler retain their previous state if it fails.
+		prepared->MarkRecordingOverrun(!recorded);
+		if (reserve)
+			reserve(prepared->Snapshot());
+		prepared->Commit(*this);
+	};
+	m_recorder.ObservePrepared(prepared->Outcomes(), reserveAndCommit);
+	return prepared->Snapshot();
 }
 
-std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceCommandsLocked(CommandSource source, bool retire)
-{
-	try
-	{
-		auto pending = m_pending;
-		auto outcomes = m_outcomes;
-		std::vector<CommandOutcome> cancelled;
-		for (auto it = pending.begin(); it != pending.end();)
-			if (it->transaction.source == source)
-			{
-				it->result = CommandResult::Cancelled;
-				if (!m_applied.empty())
-				{
-					it->appliedFrame = m_applied.back()->frame;
-					it->appliedTime = m_applied.back()->time;
-				}
-				cancelled.push_back(*it);
-				outcomes.push_back(*it);
-				if (outcomes.size() > m_historyCapacity)
-					outcomes.pop_front();
-				it = pending.erase(it);
-			}
-			else
-				++it;
-		const bool recorded = m_recorder.Observe(cancelled);
-		const auto retained = std::min(cancelled.size(), m_historyCapacity);
-		for (auto index = outcomes.size() - retained; index < outcomes.size(); ++index)
-			outcomes[index].recordingOverrun = !recorded;
-		m_pending.swap(pending);
-		m_outcomes.swap(outcomes);
-	}
-	catch (const std::bad_alloc&)
-	{
-		for (auto& command : m_pending)
-			if (command.transaction.source == source)
-			{
-				command.result = CommandResult::Cancelled;
-				command.recordingOverrun = true;
-			}
-		m_recorder.Fail();
-	}
-	auto released = ReleaseSourceLocked(source);
-	const auto sequenceReleased = StopPoseSequenceLocked(source);
-	for (std::size_t index = 0; index < released.size(); ++index)
-		released[index] = released[index] || sequenceReleased[index];
-	if (m_recordingOwner == source)
-	{
-		m_recorder.Stop();
-		m_recordingOwner.reset();
-	}
-	if (retire)
-		std::erase_if(m_sources, [&](const auto& value) { return value.source == source; });
-	return released;
-}
-
-std::optional<PoseSequenceStatus> CommandScheduler::StartPoseSequence(CommandSource owner,
-																	  std::shared_ptr<const PoseSequence> program)
-{
-	if (!ValidSource(owner) || !program)
-		throw std::invalid_argument("Invalid sequence source or program");
-	std::optional<PoseSequenceExecution> retired;
-	std::lock_guard lock(m_mutex);
-	if (m_closed)
-		return {};
-	if (m_sequence && m_sequence->CanPrepare() && m_sequence->Status().owner != owner)
-		return {};
-	if (m_nextSequence == std::numeric_limits<std::uint64_t>::max())
-		throw std::overflow_error("Sequence identities exhausted");
-	const auto previous = m_applied.empty() ? 0 : m_applied.back()->frame.value;
-	if (previous == std::numeric_limits<std::uint64_t>::max() ||
-		(program->Size() &&
-		 program->Steps().back().frame.value > std::numeric_limits<std::uint64_t>::max() - previous - 1))
-		throw std::overflow_error("Pose sequence extends beyond the frame counter");
-	const auto previousSource = m_replacedSequence.value_or(m_sequence ? m_sequence->Source() : CommandSource{});
-	PoseSequenceExecution prepared(m_nextSequence, owner, std::move(program), m_state.OwnedChannels(previousSource));
-	if (m_sequence && m_sequence->Status().origin.value)
-		m_replacedSequence = m_sequence->Source();
-	retired.swap(m_sequence);
-	m_sequence.emplace(std::move(prepared));
-	++m_nextSequence;
-	return m_sequence->Status();
-}
-
-std::optional<PoseSequenceStatus> CommandScheduler::PoseSequenceStatusFor(CommandSource owner) const
+CommandConfiguration CommandScheduler::Merge(const CommandConfiguration& baseline) const
 {
 	std::lock_guard lock(m_mutex);
-	return m_sequence && m_sequence->Status().owner == owner ? std::optional{m_sequence->Status()} : std::nullopt;
+	return m_state.Merge(baseline);
 }
 
-std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceLocked(CommandSource source) noexcept
+std::shared_ptr<const AppliedCommandSnapshot> CommandScheduler::At(FrameId frame) const
 {
-	const auto channels = m_state.ReleaseSource(source);
-	if (m_liveInput.Status().owner == source)
-		m_liveInput.Reset();
-	try
-	{
-		const auto latest = m_applied.empty() ? nullptr : m_applied.back();
-		if (auto outcome = ReleaseOutcome(source, channels, latest ? latest->frame : FrameId{},
-										  latest ? latest->time : SimulationTime{}, true))
-		{
-			if (m_baseline)
-			{
-				const auto runtimeTime = latest ? latest->runtimeTime : RuntimeTime{Duration{1}};
-				outcome->appliedRuntimeTime = runtimeTime;
-				outcome->releaseState =
-					ReleaseState(m_state, *m_baseline, outcome->appliedFrame, outcome->appliedTime, runtimeTime);
-			}
-			m_recorder.Observe(*outcome);
-		}
-	}
-	catch (...)
-	{
-		m_recorder.Fail();
-	}
-	return channels;
-}
-
-std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequenceLocked(CommandSource owner) noexcept
-{
-	std::array<bool, ControlChannelCount> released{};
-	if (!m_sequence || m_sequence->Status().owner != owner)
-		return released;
-	released = ReleaseSourceLocked(m_sequence->Source());
-	if (m_replacedSequence)
-	{
-		const auto previous = ReleaseSourceLocked(*m_replacedSequence);
-		for (std::size_t index = 0; index < released.size(); ++index)
-			released[index] = released[index] || previous[index];
-		m_replacedSequence.reset();
-	}
-	m_sequence->Cancel();
-	return released;
-}
-
-std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequence(CommandSource owner)
-{
-	std::shared_ptr<const PoseSequence> retired;
 	std::lock_guard lock(m_mutex);
-	if (m_sequence)
-		retired = m_sequence->Program();
-	return StopPoseSequenceLocked(owner);
+	for (const auto& value : m_applied)
+		if (value->frame == frame)
+			return value;
+	return {};
 }
 
 RecordingResult CommandScheduler::StartRecording(const CommandConfiguration& baseline,
@@ -1072,56 +1020,109 @@ RecordingResult CommandScheduler::AcknowledgeRecording(CommandSource owner, std:
 	return RecordingResult::Ok;
 }
 
-CommandConfiguration CommandScheduler::Merge(const CommandConfiguration& baseline) const
-{
-	std::lock_guard lock(m_mutex);
-	return m_state.Merge(baseline);
-}
-
-std::shared_ptr<const AppliedCommandSnapshot> CommandScheduler::At(FrameId frame) const
-{
-	std::lock_guard lock(m_mutex);
-	for (const auto& value : m_applied)
-		if (value->frame == frame)
-			return value;
-	return {};
-}
-
 CommandRecorder& CommandScheduler::Recorder()
 {
 	return m_recorder;
 }
 
-std::shared_ptr<const AppliedCommandSnapshot>
-CommandScheduler::Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeTime,
-						const CommandConfiguration& baseline,
-						const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve,
-						LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
+std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceCommandsLocked(CommandSource source, bool retire)
 {
-	// Retire replaced state after releasing admission, including reservation failure.
-	std::optional<PreparedCommandBoundary> prepared;
-	std::lock_guard lock(m_mutex);
-	if (m_closed || !frame.value || runtimeTime.value.count() <= 0 || time.value.count() < 0)
-		throw std::invalid_argument("Invalid command boundary");
-	if (!m_applied.empty() && frame <= m_applied.back()->frame)
+	try
 	{
-		for (const auto& snapshot : m_applied)
-			if (snapshot->frame == frame)
-				return snapshot;
-		throw std::invalid_argument("Command boundary moved backward");
+		auto pending = m_pending;
+		auto outcomes = m_outcomes;
+		std::vector<CommandOutcome> cancelled;
+		for (auto it = pending.begin(); it != pending.end();)
+			if (it->transaction.source == source)
+			{
+				it->result = CommandResult::Cancelled;
+				if (!m_applied.empty())
+				{
+					it->appliedFrame = m_applied.back()->frame;
+					it->appliedTime = m_applied.back()->time;
+				}
+				cancelled.push_back(*it);
+				outcomes.push_back(*it);
+				if (outcomes.size() > m_historyCapacity)
+					outcomes.pop_front();
+				it = pending.erase(it);
+			}
+			else
+				++it;
+		const bool recorded = m_recorder.Observe(cancelled);
+		const auto retained = std::min(cancelled.size(), m_historyCapacity);
+		for (auto index = outcomes.size() - retained; index < outcomes.size(); ++index)
+			outcomes[index].recordingOverrun = !recorded;
+		m_pending.swap(pending);
+		m_outcomes.swap(outcomes);
 	}
-	if (!m_applied.empty() && time < m_applied.back()->time)
-		throw std::invalid_argument("Simulation time moved backward");
-	prepared.emplace(*this, frame, time, runtimeTime, baseline, now, clockRevision);
-	const auto reserveAndCommit = [&](bool recorded) {
-		// The external reservation is the last throwing operation. Both the
-		// recorder and scheduler retain their previous state if it fails.
-		prepared->MarkRecordingOverrun(!recorded);
-		if (reserve)
-			reserve(prepared->Snapshot());
-		prepared->Commit(*this);
-	};
-	m_recorder.ObservePrepared(prepared->Outcomes(), reserveAndCommit);
-	return prepared->Snapshot();
+	catch (const std::bad_alloc&)
+	{
+		for (auto& command : m_pending)
+			if (command.transaction.source == source)
+			{
+				command.result = CommandResult::Cancelled;
+				command.recordingOverrun = true;
+			}
+		m_recorder.Fail();
+	}
+	auto released = ReleaseSourceLocked(source);
+	const auto sequenceReleased = StopPoseSequenceLocked(source);
+	for (std::size_t index = 0; index < released.size(); ++index)
+		released[index] = released[index] || sequenceReleased[index];
+	if (m_recordingOwner == source)
+	{
+		m_recorder.Stop();
+		m_recordingOwner.reset();
+	}
+	if (retire)
+		std::erase_if(m_sources, [&](const auto& value) { return value.source == source; });
+	return released;
 }
+
+std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceLocked(CommandSource source) noexcept
+{
+	const auto channels = m_state.ReleaseSource(source);
+	if (m_liveInput.Status().owner == source)
+		m_liveInput.Reset();
+	try
+	{
+		const auto latest = m_applied.empty() ? nullptr : m_applied.back();
+		if (auto outcome = ReleaseOutcome(source, channels, latest ? latest->frame : FrameId{},
+										  latest ? latest->time : SimulationTime{}, true))
+		{
+			if (m_baseline)
+			{
+				const auto runtimeTime = latest ? latest->runtimeTime : RuntimeTime{Duration{1}};
+				outcome->appliedRuntimeTime = runtimeTime;
+				outcome->releaseState =
+					ReleaseState(m_state, *m_baseline, outcome->appliedFrame, outcome->appliedTime, runtimeTime);
+			}
+			m_recorder.Observe(*outcome);
+		}
+	}
+	catch (...)
+	{
+		m_recorder.Fail();
+	}
+	return channels;
+}
+
+std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequenceLocked(CommandSource owner) noexcept
+{
+	std::array<bool, ControlChannelCount> released{};
+	if (!m_sequence || m_sequence->Status().owner != owner)
+		return released;
+	released = ReleaseSourceLocked(m_sequence->Source());
+	if (m_replacedSequence)
+	{
+		const auto previous = ReleaseSourceLocked(*m_replacedSequence);
+		for (std::size_t index = 0; index < released.size(); ++index)
+			released[index] = released[index] || previous[index];
+		m_replacedSequence.reset();
+	}
+	m_sequence->Cancel();
+	return released;
+}
+
 } // namespace simxr

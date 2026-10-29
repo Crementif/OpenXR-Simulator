@@ -10,11 +10,14 @@
 
 namespace simxr::app
 {
-void UiRenderer::CheckResult(VkResult result)
+UiRenderer::UiRenderer(Window& window, bool validation, std::shared_ptr<ValidationLog> log, bool screenshots,
+					   bool proofConsumer)
+	: m_resources(std::make_shared<Resources>())
 {
-	if (result != VK_SUCCESS)
-		throw std::runtime_error("Companion Vulkan operation failed: " + std::to_string(result));
+	Initialize(window, validation, std::move(log), screenshots, proofConsumer);
 }
+
+UiRenderer::~UiRenderer() = default;
 
 void UiRenderer::ProcessEvent(const SDL_Event& event)
 {
@@ -159,37 +162,6 @@ bool UiRenderer::Render(std::span<const VkSemaphore> readyWaits, const std::func
 	return true;
 }
 
-UiRenderer::UiRenderer(Window& window, bool validation, std::shared_ptr<ValidationLog> log, bool screenshots,
-					   bool proofConsumer)
-	: m_resources(std::make_shared<Resources>())
-{
-	Initialize(window, validation, std::move(log), screenshots, proofConsumer);
-}
-
-UiRenderer::~UiRenderer() = default;
-
-VulkanDeviceAccess UiRenderer::DeviceAccess() const
-{
-	auto& gpu = *m_resources;
-	return {gpu.instance,		gpu.physical,	   gpu.device,	gpu.family,			 gpu.ioQueue,
-			gpu.externalImages, gpu.externalFence, m_resources, gpu.externalTimeline};
-}
-
-std::uint64_t UiRenderer::CompletedFrames()
-{
-	auto& gpu = *m_resources;
-	for (const auto& frame : gpu.frames)
-		if (frame.serial > m_completed)
-		{
-			const auto result = vkGetFenceStatus(gpu.device, frame.fence);
-			if (result == VK_SUCCESS)
-				m_completed = std::max(m_completed, frame.serial);
-			else if (result != VK_NOT_READY)
-				CheckResult(result);
-		}
-	return m_completed;
-}
-
 void UiRenderer::WaitIdle()
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -211,9 +183,31 @@ void UiRenderer::RequestScreenshot(std::filesystem::path path)
 	m_screenshotPath = std::move(path);
 }
 
+VulkanDeviceAccess UiRenderer::DeviceAccess() const
+{
+	auto& gpu = *m_resources;
+	return {gpu.instance,		gpu.physical,	   gpu.device,	gpu.family,			 gpu.ioQueue,
+			gpu.externalImages, gpu.externalFence, m_resources, gpu.externalTimeline};
+}
+
 std::string UiRenderer::DeviceName() const
 {
 	return m_adapter;
+}
+
+std::uint64_t UiRenderer::CompletedFrames()
+{
+	auto& gpu = *m_resources;
+	for (const auto& frame : gpu.frames)
+		if (frame.serial > m_completed)
+		{
+			const auto result = vkGetFenceStatus(gpu.device, frame.fence);
+			if (result == VK_SUCCESS)
+				m_completed = std::max(m_completed, frame.serial);
+			else if (result != VK_NOT_READY)
+				CheckResult(result);
+		}
+	return m_completed;
 }
 
 std::uint64_t UiRenderer::SubmittedFrames() const
@@ -224,5 +218,11 @@ std::uint64_t UiRenderer::SubmittedFrames() const
 std::uint32_t UiRenderer::RebuildCount() const
 {
 	return m_creations;
+}
+
+void UiRenderer::CheckResult(VkResult result)
+{
+	if (result != VK_SUCCESS)
+		throw std::runtime_error("Companion Vulkan operation failed: " + std::to_string(result));
 }
 } // namespace simxr::app

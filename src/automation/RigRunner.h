@@ -16,6 +16,7 @@ class RigRunner
 public:
 	explicit RigRunner(RigExchange exchange, std::function<void()> releaseTransport = {});
 	~RigRunner();
+
 	// Start and Join belong to the owning controller thread; progress controls
 	// and Snapshot may be used concurrently while the worker runs.
 	void Start(RigOptions options);
@@ -24,6 +25,7 @@ public:
 	void Step();
 	void Cancel();
 	void Join();
+
 	RigPhase Phase() const;
 	RigSnapshot Snapshot() const;
 	std::string JsonReport() const;
@@ -31,6 +33,7 @@ public:
 
 private:
 	void Run();
+
 	RigOptions m_options;
 	RigProgress m_progress;
 	RigRuntime m_runtime;

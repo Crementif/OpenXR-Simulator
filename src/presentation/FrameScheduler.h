@@ -63,9 +63,11 @@ class FrameScheduler
 public:
 	explicit FrameScheduler(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
 	~FrameScheduler();
+
 	void Start(const FrameSchedulerConfig& config, SessionGeneration generation = {});
 	void ObserveCompletion(FrameKey key, const FramePrediction& prediction, RuntimeTime observed);
 	void Stop();
+
 	// Low-level admission controls. The caller owns command idempotence and must
 	// reserve capture capacity before granting permits. Pause preserves admitted
 	// work; neither pause nor resume is an XR session stop.
@@ -86,7 +88,9 @@ public:
 					   std::unique_lock<std::mutex>* publication = nullptr);
 	XrResult BeginFrame();
 	XrResult EndFrame(FramePrediction& prediction);
+
 	FramePipelineState Snapshot() const;
+
 	// Predictions are already mapped to this clock revision. One attachment owns
 	// the latest-value slot; no transport or physical-runtime call runs here.
 	// commitDisplay runs under this mutex, must not reenter the scheduler, and

@@ -346,91 +346,37 @@ bool McpCancellation::TryAdmit() noexcept
 	return true;
 }
 
+McpApplication::McpApplication(bool windowless) : m_instanceId(NewMcpIdentifier()), m_windowless(windowless) {}
+
 McpApplication::~McpApplication()
 {
 	Close();
 }
 
-McpApplication::McpApplication(bool windowless) : m_instanceId(NewMcpIdentifier()), m_windowless(windowless) {}
-
-bool McpApplication::Windowless() const noexcept
+void McpApplication::Close() noexcept
 {
-	return m_windowless;
-}
-
-std::optional<Json> McpApplication::Call(std::string name, Json arguments,
-										 const std::shared_ptr<McpCancellation>& cancellation,
-										 std::shared_ptr<AutomationOwner> owner)
-{
-	try
-	{
-		if (name == "simulator_application_status")
-		{
-			CheckKeys(arguments, {"application_id"});
-			const auto snapshot = Lookup(Text(arguments, "application_id", true), cancellation);
-			return snapshot ? std::optional{ToolResult(ApplicationDocument(*snapshot))} : std::nullopt;
-		}
-		auto request = std::make_shared<Request>();
-		request->name = std::move(name);
-		request->arguments = std::move(arguments);
-		request->cancellation = cancellation;
-		request->owner = std::move(owner);
-		if (!Wait(request))
-			return {};
-		return std::move(request->result);
-	}
-	catch (const std::exception& error)
-	{
-		return Error(error.what());
-	}
-}
-
-std::optional<ApplicationSnapshot> McpApplication::Lookup(const std::string& application,
-														  const std::shared_ptr<McpCancellation>& cancellation)
-{
-	auto request = std::make_shared<Request>();
-	request->application = Identifier(application, m_instanceId);
-	request->cancellation = cancellation;
-	if (!Wait(request))
-		return {};
-	return std::move(request->snapshot);
-}
-
-Json McpApplication::ApplicationDocument(const ApplicationSnapshot& application) const
-{
-	return Application(application, m_instanceId);
-}
-
-bool McpApplication::Wait(const std::shared_ptr<Request>& request)
-{
+	std::deque<std::shared_ptr<Request>> pending;
 	{
 		std::lock_guard lock(m_mutex);
-		if (m_closed)
+		m_closed = true;
+		pending.swap(m_pending);
+	}
+	for (const auto& request : pending)
+	{
+		std::lock_guard lock(request->cancellation->m_mutex);
+		if (request->cancellation->m_state == McpCancellation::State::Cancelled)
+			continue;
+		try
+		{
 			throw std::runtime_error("OpenXR Simulator is shutting down");
-		if (m_pending.size() >= 32)
-			throw std::runtime_error("OpenXR Simulator request queue is full");
-		m_pending.push_back(request);
+		}
+		catch (...)
+		{
+			request->error = std::current_exception();
+		}
+		request->cancellation->m_state = McpCancellation::State::Complete;
+		request->cancellation->m_changed.notify_one();
 	}
-	const auto& cancellation = request->cancellation;
-	std::unique_lock lock(cancellation->m_mutex);
-	if (cancellation->m_changed.wait_for(lock, std::chrono::seconds(5), [&] {
-			return cancellation->m_state == McpCancellation::State::Complete ||
-				   cancellation->m_state == McpCancellation::State::Cancelled;
-		}))
-	{
-		if (cancellation->m_state == McpCancellation::State::Cancelled)
-			return false;
-		if (request->error)
-			std::rethrow_exception(request->error);
-		return true;
-	}
-	if (cancellation->m_state == McpCancellation::State::Queued)
-	{
-		cancellation->m_state = McpCancellation::State::Cancelled;
-		throw std::runtime_error("The application did not admit the request before its deadline");
-	}
-	throw std::runtime_error(
-		"The request timed out after admission; its outcome is unknown. Inspect applications before retrying.");
 }
 
 void McpApplication::Poll(ApplicationCatalog& tabs)
@@ -477,29 +423,83 @@ void McpApplication::Poll(ApplicationCatalog& tabs)
 	}
 }
 
-void McpApplication::Close() noexcept
+std::optional<Json> McpApplication::Call(std::string name, Json arguments,
+										 const std::shared_ptr<McpCancellation>& cancellation,
+										 std::shared_ptr<AutomationOwner> owner)
 {
-	std::deque<std::shared_ptr<Request>> pending;
+	try
+	{
+		if (name == "simulator_application_status")
+		{
+			CheckKeys(arguments, {"application_id"});
+			const auto snapshot = Lookup(Text(arguments, "application_id", true), cancellation);
+			return snapshot ? std::optional{ToolResult(ApplicationDocument(*snapshot))} : std::nullopt;
+		}
+		auto request = std::make_shared<Request>();
+		request->name = std::move(name);
+		request->arguments = std::move(arguments);
+		request->cancellation = cancellation;
+		request->owner = std::move(owner);
+		if (!Wait(request))
+			return {};
+		return std::move(request->result);
+	}
+	catch (const std::exception& error)
+	{
+		return Error(error.what());
+	}
+}
+
+std::optional<ApplicationSnapshot> McpApplication::Lookup(const std::string& application,
+														  const std::shared_ptr<McpCancellation>& cancellation)
+{
+	auto request = std::make_shared<Request>();
+	request->application = Identifier(application, m_instanceId);
+	request->cancellation = cancellation;
+	if (!Wait(request))
+		return {};
+	return std::move(request->snapshot);
+}
+
+Json McpApplication::ApplicationDocument(const ApplicationSnapshot& application) const
+{
+	return Application(application, m_instanceId);
+}
+
+bool McpApplication::Windowless() const noexcept
+{
+	return m_windowless;
+}
+
+bool McpApplication::Wait(const std::shared_ptr<Request>& request)
+{
 	{
 		std::lock_guard lock(m_mutex);
-		m_closed = true;
-		pending.swap(m_pending);
-	}
-	for (const auto& request : pending)
-	{
-		std::lock_guard lock(request->cancellation->m_mutex);
-		if (request->cancellation->m_state == McpCancellation::State::Cancelled)
-			continue;
-		try
-		{
+		if (m_closed)
 			throw std::runtime_error("OpenXR Simulator is shutting down");
-		}
-		catch (...)
-		{
-			request->error = std::current_exception();
-		}
-		request->cancellation->m_state = McpCancellation::State::Complete;
-		request->cancellation->m_changed.notify_one();
+		if (m_pending.size() >= 32)
+			throw std::runtime_error("OpenXR Simulator request queue is full");
+		m_pending.push_back(request);
 	}
+	const auto& cancellation = request->cancellation;
+	std::unique_lock lock(cancellation->m_mutex);
+	if (cancellation->m_changed.wait_for(lock, std::chrono::seconds(5), [&] {
+			return cancellation->m_state == McpCancellation::State::Complete ||
+				   cancellation->m_state == McpCancellation::State::Cancelled;
+		}))
+	{
+		if (cancellation->m_state == McpCancellation::State::Cancelled)
+			return false;
+		if (request->error)
+			std::rethrow_exception(request->error);
+		return true;
+	}
+	if (cancellation->m_state == McpCancellation::State::Queued)
+	{
+		cancellation->m_state = McpCancellation::State::Cancelled;
+		throw std::runtime_error("The application did not admit the request before its deadline");
+	}
+	throw std::runtime_error(
+		"The request timed out after admission; its outcome is unknown. Inspect applications before retrying.");
 }
 } // namespace simxr::app

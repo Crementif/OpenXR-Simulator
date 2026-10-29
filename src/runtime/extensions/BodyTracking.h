@@ -33,20 +33,25 @@ class BodyTracking
 public:
 	BodyTracking(XrSession owner, const TrackingSystem& tracking, const SpaceSystem& spaces,
 				 const EnabledExtensions& enabled, const BodyTrackingCapabilities& capabilities = {});
+
 	XrResult CreateFB(const XrBodyTrackerCreateInfoFB* info, XrBodyTrackerFB* output);
 	XrResult CreateBD(const XrBodyTrackerCreateInfoBD* info, XrBodyTrackerBD* output);
 	XrResult DestroyFB(XrBodyTrackerFB tracker);
 	XrResult DestroyBD(XrBodyTrackerBD tracker);
+
 	XrResult LocateFB(XrBodyTrackerFB tracker, const XrBodyJointsLocateInfoFB* info, XrBodyJointLocationsFB* locations);
 	XrResult LocateBD(XrBodyTrackerBD tracker, const XrBodyJointsLocateInfoBD* info, XrBodyJointLocationsBD* locations);
 	XrResult SkeletonFB(XrBodyTrackerFB tracker, XrBodySkeletonFB* skeleton) const;
+
 	XrResult SuggestCalibrationFB(XrBodyTrackerFB tracker, const XrBodyTrackingCalibrationInfoMETA* info);
 	XrResult ResetCalibrationFB(XrBodyTrackerFB tracker);
 	XrResult RequestFidelityFB(XrBodyTrackerFB tracker, XrBodyTrackingFidelityMETA fidelity);
+
 	bool OwnsFB(XrBodyTrackerFB tracker) const;
 	bool OwnsBD(XrBodyTrackerBD tracker) const;
 	std::optional<BodyTrackerState> SnapshotFB(XrBodyTrackerFB tracker) const;
 	BodyTrackingCapabilities Capabilities() const;
+
 	void Clear();
 
 private:

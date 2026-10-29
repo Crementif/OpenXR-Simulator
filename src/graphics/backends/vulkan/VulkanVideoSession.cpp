@@ -24,46 +24,97 @@ VulkanVideoSession::~VulkanVideoSession()
 	Destroy();
 }
 
-void VulkanVideoSession::Destroy() noexcept
+VulkanH264Picture VulkanVideoSession::Encode(VkSemaphore inputReady)
+{
+	Begin(true);
+	StdVideoEncodeH264SliceHeader slice{};
+	slice.slice_type = STD_VIDEO_H264_SLICE_TYPE_I;
+	slice.disable_deblocking_filter_idc = STD_VIDEO_H264_DISABLE_DEBLOCKING_FILTER_IDC_DISABLED;
+	VkVideoEncodeH264NaluSliceInfoKHR nalu{VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_NALU_SLICE_INFO_KHR};
+	nalu.constantQp = std::clamp(22, m_h264Caps.minQp, m_h264Caps.maxQp);
+	nalu.pStdSliceHeader = &slice;
+	StdVideoEncodeH264PictureInfo info{};
+	info.flags.IdrPicFlag = info.flags.is_reference = 1;
+	info.primary_pic_type = STD_VIDEO_H264_PICTURE_TYPE_IDR;
+	VkVideoEncodeH264PictureInfoKHR h264{VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PICTURE_INFO_KHR};
+	h264.naluSliceEntryCount = 1;
+	h264.pNaluSliceEntries = &nalu;
+	h264.pStdPictureInfo = &info;
+	StdVideoEncodeH264ReferenceInfo reference{};
+	reference.primary_pic_type = STD_VIDEO_H264_PICTURE_TYPE_IDR;
+	VkVideoEncodeH264DpbSlotInfoKHR h264Slot{VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_DPB_SLOT_INFO_KHR};
+	h264Slot.pStdReferenceInfo = &reference;
+	VkVideoPictureResourceInfoKHR reconstructed{VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR};
+	reconstructed.codedExtent = m_extent;
+	reconstructed.imageViewBinding = m_dpbView;
+	VkVideoReferenceSlotInfoKHR slot{VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR, &h264Slot};
+	slot.slotIndex = 0;
+	slot.pPictureResource = &reconstructed;
+	VkVideoEncodeInfoKHR encode{VK_STRUCTURE_TYPE_VIDEO_ENCODE_INFO_KHR, &h264};
+	encode.dstBuffer = m_bitstream;
+	encode.dstBufferRange = m_bitstreamSize;
+	encode.srcPictureResource = {VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR};
+	encode.srcPictureResource.codedExtent = m_extent;
+	encode.srcPictureResource.imageViewBinding = m_inputView;
+	encode.pSetupReferenceSlot = &slot;
+	vkCmdBeginQuery(m_encodeCommand, m_query, 0, 0);
+	m_encodeVideo(m_encodeCommand, &encode);
+	vkCmdEndQuery(m_encodeCommand, m_query, 0);
+	Finish(true, inputReady, VK_NULL_HANDLE);
+	std::array<std::uint32_t, 3> feedback{};
+	CheckVulkan(vkGetQueryPoolResults(m_device->binding.device, m_query, 0, 1, sizeof(feedback), feedback.data(),
+									  sizeof(feedback), VK_QUERY_RESULT_WITH_STATUS_BIT_KHR),
+				"Read H.264 encoding result");
+	if (feedback[2] != VK_QUERY_RESULT_STATUS_COMPLETE_KHR || !feedback[1] || feedback[0] > m_bitstreamSize ||
+		feedback[1] > m_bitstreamSize - feedback[0])
+		throw std::runtime_error("H.264 encoder did not produce a complete picture");
+	VulkanH264Picture picture;
+	picture.bytes = m_headers;
+	picture.sliceOffset = static_cast<std::uint32_t>(picture.bytes.size());
+	const auto start = static_cast<const std::uint8_t*>(m_mapped) + feedback[0];
+	picture.bytes.insert(picture.bytes.end(), start, start + feedback[1]);
+	return picture;
+}
+
+void VulkanVideoSession::Decode(const VulkanH264Picture& picture, VkSemaphore outputReady)
 {
 	if (m_uncertain)
-	{
-		m_failedOwner->preservation.Preserve(std::move(m_failedOwner));
-		return;
-	}
-	const auto device = m_device->binding.device;
-	if (m_encodePool)
-		vkDestroyCommandPool(device, m_encodePool, nullptr);
-	if (m_decodePool)
-		vkDestroyCommandPool(device, m_decodePool, nullptr);
-	if (m_fence)
-		vkDestroyFence(device, m_fence, nullptr);
-	if (m_query)
-		vkDestroyQueryPool(device, m_query, nullptr);
-	if (m_decodeQuery)
-		vkDestroyQueryPool(device, m_decodeQuery, nullptr);
-	if (m_encodeParameters)
-		m_destroyParameters(device, m_encodeParameters, nullptr);
-	if (m_decodeParameters)
-		m_destroyParameters(device, m_decodeParameters, nullptr);
-	if (m_encode)
-		m_destroySession(device, m_encode, nullptr);
-	if (m_decode)
-		m_destroySession(device, m_decode, nullptr);
-	for (auto view : {m_inputView, m_dpbView, m_outputView})
-		if (view)
-			vkDestroyImageView(device, view, nullptr);
-	for (auto image : {m_input, m_dpb, m_output})
-		if (image)
-			vkDestroyImage(device, image, nullptr);
-	for (auto memory : m_memory)
-		vkFreeMemory(device, memory, nullptr);
-	if (m_mapped)
-		vkUnmapMemory(device, m_bitstreamMemory);
-	if (m_bitstream)
-		vkDestroyBuffer(device, m_bitstream, nullptr);
-	if (m_bitstreamMemory)
-		vkFreeMemory(device, m_bitstreamMemory, nullptr);
+		throw std::runtime_error("Video completion unknown; bitstream cannot be reused");
+	if (picture.bytes.empty() || picture.bytes.size() > m_bitstreamSize || picture.sliceOffset >= picture.bytes.size())
+		throw std::invalid_argument("Invalid H.264 history picture");
+	std::memcpy(m_mapped, picture.bytes.data(), picture.bytes.size());
+	Begin(false);
+	StdVideoDecodeH264PictureInfo info{};
+	info.flags.is_intra = info.flags.IdrPicFlag = info.flags.is_reference = 1;
+	VkVideoDecodeH264PictureInfoKHR h264{VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PICTURE_INFO_KHR};
+	h264.pStdPictureInfo = &info;
+	h264.sliceCount = 1;
+	h264.pSliceOffsets = &picture.sliceOffset;
+	StdVideoDecodeH264ReferenceInfo reference{};
+	VkVideoDecodeH264DpbSlotInfoKHR h264Slot{VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_DPB_SLOT_INFO_KHR};
+	h264Slot.pStdReferenceInfo = &reference;
+	VkVideoPictureResourceInfoKHR output{VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR};
+	output.codedExtent = m_extent;
+	output.imageViewBinding = m_outputView;
+	VkVideoReferenceSlotInfoKHR slot{VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR, &h264Slot};
+	slot.slotIndex = 0;
+	slot.pPictureResource = &output;
+	VkVideoDecodeInfoKHR decode{VK_STRUCTURE_TYPE_VIDEO_DECODE_INFO_KHR, &h264};
+	decode.srcBuffer = m_bitstream;
+	const auto alignment = m_decodeCaps.minBitstreamBufferSizeAlignment;
+	decode.srcBufferRange = (picture.bytes.size() + alignment - 1) / alignment * alignment;
+	decode.dstPictureResource = output;
+	decode.pSetupReferenceSlot = &slot;
+	vkCmdBeginQuery(m_decodeCommand, m_decodeQuery, 0, 0);
+	m_decodeVideo(m_decodeCommand, &decode);
+	vkCmdEndQuery(m_decodeCommand, m_decodeQuery, 0);
+	Finish(false, VK_NULL_HANDLE, outputReady);
+	VkQueryResultStatusKHR status = VK_QUERY_RESULT_STATUS_NOT_READY_KHR;
+	CheckVulkan(vkGetQueryPoolResults(m_device->binding.device, m_decodeQuery, 0, 1, sizeof(status), &status,
+									  sizeof(status), VK_QUERY_RESULT_WITH_STATUS_BIT_KHR),
+				"Read H.264 decode status");
+	if (status != VK_QUERY_RESULT_STATUS_COMPLETE_KHR)
+		throw std::runtime_error("H.264 decoder did not produce a complete picture");
 }
 
 void VulkanVideoSession::Initialize()
@@ -209,6 +260,48 @@ void VulkanVideoSession::Initialize()
 		CheckVulkan(vkAllocateCommandBuffers(device, &command, encode ? &m_encodeCommand : &m_decodeCommand),
 					"Allocate video command");
 	}
+}
+
+void VulkanVideoSession::Destroy() noexcept
+{
+	if (m_uncertain)
+	{
+		m_failedOwner->preservation.Preserve(std::move(m_failedOwner));
+		return;
+	}
+	const auto device = m_device->binding.device;
+	if (m_encodePool)
+		vkDestroyCommandPool(device, m_encodePool, nullptr);
+	if (m_decodePool)
+		vkDestroyCommandPool(device, m_decodePool, nullptr);
+	if (m_fence)
+		vkDestroyFence(device, m_fence, nullptr);
+	if (m_query)
+		vkDestroyQueryPool(device, m_query, nullptr);
+	if (m_decodeQuery)
+		vkDestroyQueryPool(device, m_decodeQuery, nullptr);
+	if (m_encodeParameters)
+		m_destroyParameters(device, m_encodeParameters, nullptr);
+	if (m_decodeParameters)
+		m_destroyParameters(device, m_decodeParameters, nullptr);
+	if (m_encode)
+		m_destroySession(device, m_encode, nullptr);
+	if (m_decode)
+		m_destroySession(device, m_decode, nullptr);
+	for (auto view : {m_inputView, m_dpbView, m_outputView})
+		if (view)
+			vkDestroyImageView(device, view, nullptr);
+	for (auto image : {m_input, m_dpb, m_output})
+		if (image)
+			vkDestroyImage(device, image, nullptr);
+	for (auto memory : m_memory)
+		vkFreeMemory(device, memory, nullptr);
+	if (m_mapped)
+		vkUnmapMemory(device, m_bitstreamMemory);
+	if (m_bitstream)
+		vkDestroyBuffer(device, m_bitstream, nullptr);
+	if (m_bitstreamMemory)
+		vkFreeMemory(device, m_bitstreamMemory, nullptr);
 }
 
 void VulkanVideoSession::CreateSession(bool encode)
@@ -429,98 +522,5 @@ void VulkanVideoSession::Finish(bool encode, VkSemaphore wait, VkSemaphore signa
 	CheckVulkan(vkWaitForFences(device, 1, &m_fence, VK_TRUE, 5000000000ULL), "Wait for video completion");
 	m_uncertain = false;
 	(encode ? m_encodeInitialized : m_decodeInitialized) = true;
-}
-
-VulkanH264Picture VulkanVideoSession::Encode(VkSemaphore inputReady)
-{
-	Begin(true);
-	StdVideoEncodeH264SliceHeader slice{};
-	slice.slice_type = STD_VIDEO_H264_SLICE_TYPE_I;
-	slice.disable_deblocking_filter_idc = STD_VIDEO_H264_DISABLE_DEBLOCKING_FILTER_IDC_DISABLED;
-	VkVideoEncodeH264NaluSliceInfoKHR nalu{VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_NALU_SLICE_INFO_KHR};
-	nalu.constantQp = std::clamp(22, m_h264Caps.minQp, m_h264Caps.maxQp);
-	nalu.pStdSliceHeader = &slice;
-	StdVideoEncodeH264PictureInfo info{};
-	info.flags.IdrPicFlag = info.flags.is_reference = 1;
-	info.primary_pic_type = STD_VIDEO_H264_PICTURE_TYPE_IDR;
-	VkVideoEncodeH264PictureInfoKHR h264{VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PICTURE_INFO_KHR};
-	h264.naluSliceEntryCount = 1;
-	h264.pNaluSliceEntries = &nalu;
-	h264.pStdPictureInfo = &info;
-	StdVideoEncodeH264ReferenceInfo reference{};
-	reference.primary_pic_type = STD_VIDEO_H264_PICTURE_TYPE_IDR;
-	VkVideoEncodeH264DpbSlotInfoKHR h264Slot{VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_DPB_SLOT_INFO_KHR};
-	h264Slot.pStdReferenceInfo = &reference;
-	VkVideoPictureResourceInfoKHR reconstructed{VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR};
-	reconstructed.codedExtent = m_extent;
-	reconstructed.imageViewBinding = m_dpbView;
-	VkVideoReferenceSlotInfoKHR slot{VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR, &h264Slot};
-	slot.slotIndex = 0;
-	slot.pPictureResource = &reconstructed;
-	VkVideoEncodeInfoKHR encode{VK_STRUCTURE_TYPE_VIDEO_ENCODE_INFO_KHR, &h264};
-	encode.dstBuffer = m_bitstream;
-	encode.dstBufferRange = m_bitstreamSize;
-	encode.srcPictureResource = {VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR};
-	encode.srcPictureResource.codedExtent = m_extent;
-	encode.srcPictureResource.imageViewBinding = m_inputView;
-	encode.pSetupReferenceSlot = &slot;
-	vkCmdBeginQuery(m_encodeCommand, m_query, 0, 0);
-	m_encodeVideo(m_encodeCommand, &encode);
-	vkCmdEndQuery(m_encodeCommand, m_query, 0);
-	Finish(true, inputReady, VK_NULL_HANDLE);
-	std::array<std::uint32_t, 3> feedback{};
-	CheckVulkan(vkGetQueryPoolResults(m_device->binding.device, m_query, 0, 1, sizeof(feedback), feedback.data(),
-									  sizeof(feedback), VK_QUERY_RESULT_WITH_STATUS_BIT_KHR),
-				"Read H.264 encoding result");
-	if (feedback[2] != VK_QUERY_RESULT_STATUS_COMPLETE_KHR || !feedback[1] || feedback[0] > m_bitstreamSize ||
-		feedback[1] > m_bitstreamSize - feedback[0])
-		throw std::runtime_error("H.264 encoder did not produce a complete picture");
-	VulkanH264Picture picture;
-	picture.bytes = m_headers;
-	picture.sliceOffset = static_cast<std::uint32_t>(picture.bytes.size());
-	const auto start = static_cast<const std::uint8_t*>(m_mapped) + feedback[0];
-	picture.bytes.insert(picture.bytes.end(), start, start + feedback[1]);
-	return picture;
-}
-
-void VulkanVideoSession::Decode(const VulkanH264Picture& picture, VkSemaphore outputReady)
-{
-	if (m_uncertain)
-		throw std::runtime_error("Video completion unknown; bitstream cannot be reused");
-	if (picture.bytes.empty() || picture.bytes.size() > m_bitstreamSize || picture.sliceOffset >= picture.bytes.size())
-		throw std::invalid_argument("Invalid H.264 history picture");
-	std::memcpy(m_mapped, picture.bytes.data(), picture.bytes.size());
-	Begin(false);
-	StdVideoDecodeH264PictureInfo info{};
-	info.flags.is_intra = info.flags.IdrPicFlag = info.flags.is_reference = 1;
-	VkVideoDecodeH264PictureInfoKHR h264{VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PICTURE_INFO_KHR};
-	h264.pStdPictureInfo = &info;
-	h264.sliceCount = 1;
-	h264.pSliceOffsets = &picture.sliceOffset;
-	StdVideoDecodeH264ReferenceInfo reference{};
-	VkVideoDecodeH264DpbSlotInfoKHR h264Slot{VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_DPB_SLOT_INFO_KHR};
-	h264Slot.pStdReferenceInfo = &reference;
-	VkVideoPictureResourceInfoKHR output{VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR};
-	output.codedExtent = m_extent;
-	output.imageViewBinding = m_outputView;
-	VkVideoReferenceSlotInfoKHR slot{VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR, &h264Slot};
-	slot.slotIndex = 0;
-	slot.pPictureResource = &output;
-	VkVideoDecodeInfoKHR decode{VK_STRUCTURE_TYPE_VIDEO_DECODE_INFO_KHR, &h264};
-	decode.srcBuffer = m_bitstream;
-	const auto alignment = m_decodeCaps.minBitstreamBufferSizeAlignment;
-	decode.srcBufferRange = (picture.bytes.size() + alignment - 1) / alignment * alignment;
-	decode.dstPictureResource = output;
-	decode.pSetupReferenceSlot = &slot;
-	vkCmdBeginQuery(m_decodeCommand, m_decodeQuery, 0, 0);
-	m_decodeVideo(m_decodeCommand, &decode);
-	vkCmdEndQuery(m_decodeCommand, m_decodeQuery, 0);
-	Finish(false, VK_NULL_HANDLE, outputReady);
-	VkQueryResultStatusKHR status = VK_QUERY_RESULT_STATUS_NOT_READY_KHR;
-	CheckVulkan(vkGetQueryPoolResults(m_device->binding.device, m_decodeQuery, 0, 1, sizeof(status), &status,
-									  sizeof(status), VK_QUERY_RESULT_WITH_STATUS_BIT_KHR),
-				"Read H.264 decode status");
-	if (status != VK_QUERY_RESULT_STATUS_COMPLETE_KHR)
-		throw std::runtime_error("H.264 decoder did not produce a complete picture");
 }
 } // namespace simxr

@@ -66,6 +66,7 @@ public:
 private:
 	friend class VulkanInspectionFrame;
 	VulkanImageReadback(std::shared_ptr<VulkanInspectionQueue> queue, std::shared_ptr<VulkanInspectionWork> work);
+
 	std::shared_ptr<VulkanInspectionQueue> m_queue;
 	std::shared_ptr<VulkanInspectionWork> m_work;
 	std::mutex m_mutex;
@@ -86,11 +87,13 @@ class VulkanImageDelivery final : public GpuCompletion
 {
 public:
 	~VulkanImageDelivery() override;
+
 	SharedImageKey Key() const noexcept;
 	ImageCompletionKind CompletionKind() const noexcept;
 	const VulkanExternalImageDescriptor& Descriptor() const noexcept;
 	CompletionStatus PollCompletion() const noexcept override;
 	CompletionStatus PollConsumerCompletion() const noexcept;
+
 	// Requires an unsignaled, compatible opaque native completion. Failure preserves the handle.
 	void RegisterConsumer(const VulkanExternalIdentity& identity, VulkanExternalHandle& fd);
 	// Registration precedes exposure. Ready is a binary GPU semaphore; it must
@@ -102,6 +105,7 @@ private:
 	friend class VulkanInspectionFrame;
 	struct Resources;
 	explicit VulkanImageDelivery(std::shared_ptr<Resources> resources);
+
 	std::shared_ptr<Resources> m_resources;
 };
 
@@ -109,8 +113,7 @@ class VulkanInspectionFrame final : public FrameOutput
 {
 public:
 	~VulkanInspectionFrame() override;
-	bool CanArchive() const noexcept override;
-	std::shared_ptr<const ArchivedFrame> Archive() const override;
+
 	// The caller must establish completion and GENERAL layout before publication.
 	static std::shared_ptr<VulkanInspectionFrame> FromImage(std::shared_ptr<VulkanImage> image,
 															std::span<const FrameView> views, bool timeline);
@@ -119,9 +122,16 @@ public:
 	// empty; failed input, invalid bindings or exhausted capacity throw.
 	static std::shared_ptr<VulkanInspectionFrame>
 	Compose(const CompositionPlan& plan, std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources);
+
+	bool CanArchive() const noexcept override;
+	std::shared_ptr<const ArchivedFrame> Archive() const override;
 	CompletionStatus PollCompletion() const noexcept override;
+
 	const VulkanImage& Image() const;
 	VkImageView View(std::uint32_t eye) const;
+	ImageCompletionKind CompletionKind() const noexcept;
+	bool CanShare() const noexcept;
+
 	// CPU budget transfer only; never collects, submits, waits, or changes pixels.
 	bool PromoteCaptureBudget(const FramePool& captures, std::shared_ptr<FrameReservation> reservation = {}) const;
 	// This submits on the owned inspection queue. No host XR call is required,
@@ -131,8 +141,6 @@ public:
 												std::optional<ImageRegion> region = {}) const;
 	// Weak queue callback: collection keeps no queue alive and submits no work.
 	std::function<void()> Collector() const;
-	ImageCompletionKind CompletionKind() const noexcept;
-	bool CanShare() const noexcept;
 	// A private GPU copy on the owned queue, independent of host calls/device
 	// lifetime. Delivery has its own bounded budget, separate from captures.
 	std::shared_ptr<VulkanImageDelivery> Share() const;
@@ -142,6 +150,7 @@ private:
 	friend class VulkanInspectionTransfer;
 	class Resources;
 	explicit VulkanInspectionFrame(std::shared_ptr<Resources> resources, std::span<const FrameView> views);
+
 	std::shared_ptr<Resources> m_resources;
 };
 
@@ -151,6 +160,7 @@ class VulkanInspectionTransfer
 {
 public:
 	~VulkanInspectionTransfer();
+
 	void Commit() noexcept;
 	std::shared_ptr<VulkanInspectionFrame> Output() const;
 
@@ -158,6 +168,7 @@ private:
 	friend class VulkanInspection;
 	class State;
 	explicit VulkanInspectionTransfer(std::shared_ptr<State> state);
+
 	std::shared_ptr<State> m_state;
 };
 
@@ -169,14 +180,17 @@ public:
 	~VulkanInspection();
 	VulkanInspection(const VulkanInspection&) = delete;
 	VulkanInspection& operator=(const VulkanInspection&) = delete;
+
 	// Observers are installed before worker publication and never retain source images.
 	std::unique_ptr<VulkanInspectionTransfer> Prepare(const std::shared_ptr<VulkanFrame>& source,
 													  std::function<void(CompletionStatus)> completed = {},
 													  std::function<void()> retired = {},
 													  VulkanInspectionKind kind = VulkanInspectionKind::Required,
 													  std::function<void(SharedImageKey)> deliveryRetired = {});
+
 	VkResult Drain(std::uint64_t timeout = 5000000000ULL);
 	VkResult Close(std::uint64_t timeout = 5000000000ULL);
+
 	ImageCompletionKind CompletionKind() const noexcept;
 	bool CanShare() const noexcept;
 

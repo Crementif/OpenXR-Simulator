@@ -67,6 +67,12 @@ class HistoryStore
 public:
 	explicit HistoryStore(std::size_t capacity = 162000);
 
+	void Clear() noexcept;
+	void Append(const HistoryFrame& frame);
+	// Coverage changes preserve the original frame/time identity.
+	void SetCoverage(std::size_t index, std::uint64_t capture, std::uint32_t flags);
+	void SetFlags(std::size_t index, std::uint32_t mask, bool enabled);
+
 	std::size_t Size() const noexcept
 	{
 		return m_size;
@@ -86,12 +92,7 @@ public:
 		return m_identityRevision;
 	}
 
-	void Clear() noexcept;
-	void Append(const HistoryFrame& frame);
 	const HistoryFrame& At(std::size_t index) const;
-	// Coverage changes preserve the original frame/time identity.
-	void SetCoverage(std::size_t index, std::uint64_t capture, std::uint32_t flags);
-	void SetFlags(std::size_t index, std::uint32_t mask, bool enabled);
 	std::optional<std::size_t> Find(FrameIdentity identity, std::uint64_t epoch) const;
 	std::optional<std::size_t> Latest(FrameIdentity scope, std::uint64_t epoch) const;
 	// Inclusive frame-id bounds across every retained segment of this scope.
@@ -112,13 +113,14 @@ private:
 		std::uint64_t begin = 0, end = 0;
 	};
 
+	std::size_t Physical(std::size_t index) const noexcept;
+	void Update(std::size_t physical) noexcept;
+	HistoryBucket PhysicalQuery(std::size_t first, std::size_t end) const noexcept;
+
 	std::vector<Segment> m_segments;
 	std::uint64_t m_appended = 0, m_identityRevision = 0;
 	std::vector<HistoryFrame> m_frames;
 	std::vector<HistoryBucket> m_buckets;
 	std::size_t m_start = 0, m_size = 0, m_leaves = 1;
-	std::size_t Physical(std::size_t index) const noexcept;
-	void Update(std::size_t physical) noexcept;
-	HistoryBucket PhysicalQuery(std::size_t first, std::size_t end) const noexcept;
 };
 } // namespace simxr::app

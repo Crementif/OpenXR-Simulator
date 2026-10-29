@@ -42,18 +42,6 @@ struct VulkanInspectionWork::Native
 	}
 };
 
-VulkanInspectionWork::VulkanInspectionWork(std::shared_ptr<VulkanDevice> device,
-										   std::shared_ptr<FrameReservation> admission)
-	: m_native(std::make_unique<Native>())
-{
-	m_native->device = std::move(device);
-	m_native->slot = std::move(admission);
-	m_native->commands = m_native->device->AcquireCommands();
-	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	CheckVulkan(vkBeginCommandBuffer(m_native->commands->command, &begin), "Begin inspection commands");
-}
-
 VulkanInspectionWork::~VulkanInspectionWork()
 {
 	if (!NativeIdle())
@@ -61,21 +49,6 @@ VulkanInspectionWork::~VulkanInspectionWork()
 		std::fputs("SimXR: inspection completion unknown; preserving native owners\n", stderr);
 		m_native->preservation.Preserve(std::move(m_native));
 	}
-}
-
-bool VulkanInspectionWork::Submitted() const noexcept
-{
-	return m_submitted.load();
-}
-
-bool VulkanInspectionWork::NativeIdle() const noexcept
-{
-	if (!m_submitted.load())
-		return true;
-	if (!m_ready.load())
-		return false;
-	return m_native->device->lost.load() ||
-		   vkGetFenceStatus(m_native->device->binding.device, m_native->commands->fence) == VK_SUCCESS;
 }
 
 CompletionStatus VulkanInspectionWork::PollCompletion() const noexcept
@@ -92,6 +65,21 @@ CompletionStatus VulkanInspectionWork::PollCompletion() const noexcept
 										 result == VK_SUCCESS ? CompletionStatus::Complete : CompletionStatus::Failed);
 	}
 	return m_status.load();
+}
+
+bool VulkanInspectionWork::NativeIdle() const noexcept
+{
+	if (!m_submitted.load())
+		return true;
+	if (!m_ready.load())
+		return false;
+	return m_native->device->lost.load() ||
+		   vkGetFenceStatus(m_native->device->binding.device, m_native->commands->fence) == VK_SUCCESS;
+}
+
+bool VulkanInspectionWork::Submitted() const noexcept
+{
+	return m_submitted.load();
 }
 
 VkResult VulkanInspectionWork::Wait(std::uint64_t timeout) const noexcept
@@ -142,6 +130,42 @@ void VulkanInspectionWork::ReleaseSources()
 	}
 }
 
+std::shared_ptr<const VulkanImagePixels> VulkanInspectionWork::ReadPixels() const
+{
+	if (!m_native->buffer || PollCompletion() != CompletionStatus::Complete)
+		return {};
+	auto pixels = std::make_shared<VulkanImagePixels>();
+	pixels->format = m_native->pixelFormat;
+	pixels->width = m_native->pixelExtent.width;
+	pixels->height = m_native->pixelExtent.height;
+	pixels->layers = m_native->layers;
+	pixels->rgba.resize(static_cast<std::size_t>(m_native->bytes));
+	void* mapped = nullptr;
+	const auto device = m_native->device->binding.device;
+	CheckVulkan(vkMapMemory(device, m_native->memory, 0, VK_WHOLE_SIZE, 0, &mapped), "Map explicit inspection export");
+
+	struct Mapping
+	{
+		VkDevice device;
+		VkDeviceMemory memory;
+
+		~Mapping()
+		{
+			vkUnmapMemory(device, memory);
+		}
+	} mapping{device, m_native->memory};
+
+	if (!m_native->coherent)
+	{
+		VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
+		range.memory = m_native->memory;
+		range.size = VK_WHOLE_SIZE;
+		CheckVulkan(vkInvalidateMappedMemoryRanges(device, 1, &range), "Invalidate explicit inspection export");
+	}
+	std::memcpy(pixels->rgba.data(), mapped, pixels->rgba.size());
+	return pixels;
+}
+
 CompletionStatus VulkanInspectionWork::ProducerCompletion() const noexcept
 {
 	return m_native->producer ? m_native->producer->PollCompletion() : CompletionStatus::Failed;
@@ -178,72 +202,16 @@ const std::shared_ptr<VulkanExternalSemaphore>& VulkanInspectionWork::Signal() c
 	return m_native->signal;
 }
 
-VkResult VulkanInspectionWork::Submit() noexcept
+VulkanInspectionWork::VulkanInspectionWork(std::shared_ptr<VulkanDevice> device,
+										   std::shared_ptr<FrameReservation> admission)
+	: m_native(std::make_unique<Native>())
 {
-	if (m_native->device->lost.load())
-	{
-		m_status.store(CompletionStatus::Failed);
-		return VK_ERROR_DEVICE_LOST;
-	}
-	m_submitted.store(true);
-	const auto ready = m_native->ready ? m_native->ready->Get() : VK_NULL_HANDLE;
-	const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-	submit.waitSemaphoreCount = ready ? 1 : 0;
-	submit.pWaitSemaphores = &ready;
-	submit.pWaitDstStageMask = &stage;
-	submit.commandBufferCount = 1;
-	submit.pCommandBuffers = &m_native->commands->command;
-	const auto signal = m_native->signal ? m_native->signal->Get() : VK_NULL_HANDLE;
-	submit.signalSemaphoreCount = signal ? 1 : 0;
-	submit.pSignalSemaphores = &signal;
-	const auto result = vkQueueSubmit(m_native->device->queue, 1, &submit, m_native->commands->fence);
-	if (result != VK_SUCCESS)
-	{
-		if (result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
-			m_submitted.store(false);
-		if (result == VK_ERROR_DEVICE_LOST)
-			m_native->device->lost.store(true);
-		m_status.store(CompletionStatus::Failed);
-	}
-	m_ready.store(true);
-	return result;
-}
-
-std::shared_ptr<const VulkanImagePixels> VulkanInspectionWork::ReadPixels() const
-{
-	if (!m_native->buffer || PollCompletion() != CompletionStatus::Complete)
-		return {};
-	auto pixels = std::make_shared<VulkanImagePixels>();
-	pixels->format = m_native->pixelFormat;
-	pixels->width = m_native->pixelExtent.width;
-	pixels->height = m_native->pixelExtent.height;
-	pixels->layers = m_native->layers;
-	pixels->rgba.resize(static_cast<std::size_t>(m_native->bytes));
-	void* mapped = nullptr;
-	const auto device = m_native->device->binding.device;
-	CheckVulkan(vkMapMemory(device, m_native->memory, 0, VK_WHOLE_SIZE, 0, &mapped), "Map explicit inspection export");
-
-	struct Mapping
-	{
-		VkDevice device;
-		VkDeviceMemory memory;
-
-		~Mapping()
-		{
-			vkUnmapMemory(device, memory);
-		}
-	} mapping{device, m_native->memory};
-
-	if (!m_native->coherent)
-	{
-		VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
-		range.memory = m_native->memory;
-		range.size = VK_WHOLE_SIZE;
-		CheckVulkan(vkInvalidateMappedMemoryRanges(device, 1, &range), "Invalidate explicit inspection export");
-	}
-	std::memcpy(pixels->rgba.data(), mapped, pixels->rgba.size());
-	return pixels;
+	m_native->device = std::move(device);
+	m_native->slot = std::move(admission);
+	m_native->commands = m_native->device->AcquireCommands();
+	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	CheckVulkan(vkBeginCommandBuffer(m_native->commands->command, &begin), "Begin inspection commands");
 }
 
 std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(const std::shared_ptr<VulkanDevice>& device,
@@ -427,4 +395,37 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Delivery(const std::
 	CheckVulkan(vkEndCommandBuffer(work->m_native->commands->command), "Record shared image delivery");
 	return work;
 }
+
+VkResult VulkanInspectionWork::Submit() noexcept
+{
+	if (m_native->device->lost.load())
+	{
+		m_status.store(CompletionStatus::Failed);
+		return VK_ERROR_DEVICE_LOST;
+	}
+	m_submitted.store(true);
+	const auto ready = m_native->ready ? m_native->ready->Get() : VK_NULL_HANDLE;
+	const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+	submit.waitSemaphoreCount = ready ? 1 : 0;
+	submit.pWaitSemaphores = &ready;
+	submit.pWaitDstStageMask = &stage;
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &m_native->commands->command;
+	const auto signal = m_native->signal ? m_native->signal->Get() : VK_NULL_HANDLE;
+	submit.signalSemaphoreCount = signal ? 1 : 0;
+	submit.pSignalSemaphores = &signal;
+	const auto result = vkQueueSubmit(m_native->device->queue, 1, &submit, m_native->commands->fence);
+	if (result != VK_SUCCESS)
+	{
+		if (result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+			m_submitted.store(false);
+		if (result == VK_ERROR_DEVICE_LOST)
+			m_native->device->lost.store(true);
+		m_status.store(CompletionStatus::Failed);
+	}
+	m_ready.store(true);
+	return result;
+}
+
 } // namespace simxr

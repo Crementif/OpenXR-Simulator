@@ -130,26 +130,6 @@ std::vector<std::byte> TokenSid(HANDLE process)
 	return copy;
 }
 
-Handle VerifyPeer(HANDLE pipe, bool server, const std::vector<std::byte>& expected, bool* nativeHandles)
-{
-	ULONG processId = 0;
-	if (!(server ? GetNamedPipeClientProcessId(pipe, &processId) : GetNamedPipeServerProcessId(pipe, &processId)) ||
-		!processId)
-		throw Error("Query control pipe peer process failed");
-	Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_DUP_HANDLE | SYNCHRONIZE, FALSE, processId));
-	const bool transferable = process.value != nullptr;
-	if (!transferable)
-		process = Handle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId));
-	if (!process.value)
-		throw Error("Open control pipe peer process failed");
-	auto sid = TokenSid(process.value);
-	if (!EqualSid(sid.data(), const_cast<std::byte*>(expected.data())))
-		throw std::runtime_error("Control pipe peer belongs to another Windows user");
-	if (nativeHandles)
-		*nativeHandles = transferable;
-	return process;
-}
-
 Security::Security() : sid(TokenSid(GetCurrentProcess()))
 {
 	LPWSTR text = nullptr;
@@ -175,6 +155,26 @@ Security::~Security()
 {
 	if (descriptor)
 		LocalFree(descriptor);
+}
+
+Handle VerifyPeer(HANDLE pipe, bool server, const std::vector<std::byte>& expected, bool* nativeHandles)
+{
+	ULONG processId = 0;
+	if (!(server ? GetNamedPipeClientProcessId(pipe, &processId) : GetNamedPipeServerProcessId(pipe, &processId)) ||
+		!processId)
+		throw Error("Query control pipe peer process failed");
+	Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_DUP_HANDLE | SYNCHRONIZE, FALSE, processId));
+	const bool transferable = process.value != nullptr;
+	if (!transferable)
+		process = Handle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId));
+	if (!process.value)
+		throw Error("Open control pipe peer process failed");
+	auto sid = TokenSid(process.value);
+	if (!EqualSid(sid.data(), const_cast<std::byte*>(expected.data())))
+		throw std::runtime_error("Control pipe peer belongs to another Windows user");
+	if (nativeHandles)
+		*nativeHandles = transferable;
+	return process;
 }
 
 enum class Channel::Kind
@@ -203,54 +203,6 @@ struct Channel::Native
 		operation.hEvent = event.value;
 	}
 };
-
-DWORD Channel::Finish(Clock::time_point deadline, HANDLE stop)
-{
-	while (true)
-	{
-		if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0)
-			throw Interrupted{};
-		const auto now = Clock::now();
-		if (now >= deadline)
-			throw Timeout{};
-		DWORD milliseconds = 50;
-		if (deadline != Clock::time_point::max())
-			milliseconds = static_cast<DWORD>(
-				std::min<std::int64_t>(50, std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count()));
-		const HANDLE events[]{m_native->event.value, stop};
-		const auto result = stop ? WaitForMultipleObjects(2, events, FALSE, milliseconds)
-								 : WaitForSingleObject(events[0], milliseconds);
-		if (result == WAIT_TIMEOUT)
-			continue;
-		if (result == WAIT_OBJECT_0 + 1)
-			throw Interrupted{};
-		if (result != WAIT_OBJECT_0)
-			throw Error("Wait for control pipe operation failed");
-		DWORD count = 0;
-		if (!GetOverlappedResult(m_native->pipe.value, &m_native->operation, &count, FALSE))
-		{
-			const auto error = GetLastError();
-			if (error == ERROR_IO_INCOMPLETE)
-				continue;
-			m_native->kind = Kind::None;
-			throw Error("Control pipe operation failed", error);
-		}
-		m_native->kind = Kind::None;
-		return count;
-	}
-}
-
-void Channel::Prepare(Kind kind, DWORD goal)
-{
-	if (!m_native)
-		throw std::runtime_error("Control pipe is closed");
-	m_native->operation = {};
-	m_native->operation.hEvent = m_native->event.value;
-	if (!ResetEvent(m_native->event.value))
-		throw Error("Reset control pipe operation event failed");
-	m_native->goal = goal;
-	m_native->kind = kind;
-}
 
 Channel::Channel(Handle pipe)
 {
@@ -435,5 +387,53 @@ void Channel::Close() noexcept
 	if (m_charged)
 		s_nativeChannels.fetch_sub(1);
 	m_charged = false;
+}
+
+DWORD Channel::Finish(Clock::time_point deadline, HANDLE stop)
+{
+	while (true)
+	{
+		if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0)
+			throw Interrupted{};
+		const auto now = Clock::now();
+		if (now >= deadline)
+			throw Timeout{};
+		DWORD milliseconds = 50;
+		if (deadline != Clock::time_point::max())
+			milliseconds = static_cast<DWORD>(
+				std::min<std::int64_t>(50, std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count()));
+		const HANDLE events[]{m_native->event.value, stop};
+		const auto result = stop ? WaitForMultipleObjects(2, events, FALSE, milliseconds)
+								 : WaitForSingleObject(events[0], milliseconds);
+		if (result == WAIT_TIMEOUT)
+			continue;
+		if (result == WAIT_OBJECT_0 + 1)
+			throw Interrupted{};
+		if (result != WAIT_OBJECT_0)
+			throw Error("Wait for control pipe operation failed");
+		DWORD count = 0;
+		if (!GetOverlappedResult(m_native->pipe.value, &m_native->operation, &count, FALSE))
+		{
+			const auto error = GetLastError();
+			if (error == ERROR_IO_INCOMPLETE)
+				continue;
+			m_native->kind = Kind::None;
+			throw Error("Control pipe operation failed", error);
+		}
+		m_native->kind = Kind::None;
+		return count;
+	}
+}
+
+void Channel::Prepare(Kind kind, DWORD goal)
+{
+	if (!m_native)
+		throw std::runtime_error("Control pipe is closed");
+	m_native->operation = {};
+	m_native->operation.hEvent = m_native->event.value;
+	if (!ResetEvent(m_native->event.value))
+		throw Error("Reset control pipe operation event failed");
+	m_native->goal = goal;
+	m_native->kind = kind;
 }
 } // namespace simxr::control::windows

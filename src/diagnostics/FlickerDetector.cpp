@@ -23,27 +23,6 @@ Diagnostics::~Diagnostics()
 	Close();
 }
 
-template<typename Observation>
-void Diagnostics::ApplyObservation(Observation&& observation) noexcept
-{
-	try
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_closed)
-			return;
-		observation();
-		m_wake.notify_one();
-	}
-	catch (const std::exception& error)
-	{
-		RecordError(error.what(), ErrorKind::Observation);
-	}
-	catch (...)
-	{
-		RecordError("Unexpected diagnostic observation failure", ErrorKind::Observation);
-	}
-}
-
 void Diagnostics::ObserveSubmission(uint64_t frame, uint32_t projectionLayers, uint32_t totalLayers) noexcept
 {
 	ApplyObservation([&] {
@@ -83,6 +62,45 @@ void Diagnostics::ObserveUi(const uint8_t* bgra, uint32_t width, uint32_t height
 	});
 }
 
+DiagnosticsStatus Diagnostics::Status() const
+{
+	std::lock_guard lock(m_mutex);
+	return Snapshot();
+}
+
+void Diagnostics::Close()
+{
+	std::lock_guard closeLock(m_closeMutex);
+	{
+		std::lock_guard lock(m_mutex);
+		m_closed = true;
+	}
+	m_wake.notify_all();
+	if (m_worker.joinable())
+		m_worker.join();
+}
+
+template<typename Observation>
+void Diagnostics::ApplyObservation(Observation&& observation) noexcept
+{
+	try
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_closed)
+			return;
+		observation();
+		m_wake.notify_one();
+	}
+	catch (const std::exception& error)
+	{
+		RecordError(error.what(), ErrorKind::Observation);
+	}
+	catch (...)
+	{
+		RecordError("Unexpected diagnostic observation failure", ErrorKind::Observation);
+	}
+}
+
 DiagnosticsStatus Diagnostics::Snapshot() const
 {
 	DiagnosticsStatus status;
@@ -99,27 +117,6 @@ DiagnosticsStatus Diagnostics::Snapshot() const
 	status.preview = m_preview.Snapshot();
 	status.ui = m_ui.Snapshot();
 	return status;
-}
-
-DiagnosticsStatus Diagnostics::Status() const
-{
-	std::lock_guard lock(m_mutex);
-	return Snapshot();
-}
-
-void Diagnostics::RecordError(const char* message, ErrorKind kind) noexcept
-{
-	std::lock_guard lock(m_mutex);
-	if (kind == ErrorKind::Observation)
-		++m_observationErrors;
-	else
-		++m_fileErrors;
-	try
-	{
-		m_lastError.assign(message, std::min<size_t>(std::char_traits<char>::length(message), 2048));
-	}
-	catch (...)
-	{}
 }
 
 void Diagnostics::Run() noexcept
@@ -241,15 +238,19 @@ void Diagnostics::FlushStatus(const DiagnosticsStatus& status)
 	}
 }
 
-void Diagnostics::Close()
+void Diagnostics::RecordError(const char* message, ErrorKind kind) noexcept
 {
-	std::lock_guard closeLock(m_closeMutex);
+	std::lock_guard lock(m_mutex);
+	if (kind == ErrorKind::Observation)
+		++m_observationErrors;
+	else
+		++m_fileErrors;
+	try
 	{
-		std::lock_guard lock(m_mutex);
-		m_closed = true;
+		m_lastError.assign(message, std::min<size_t>(std::char_traits<char>::length(message), 2048));
 	}
-	m_wake.notify_all();
-	if (m_worker.joinable())
-		m_worker.join();
+	catch (...)
+	{}
 }
+
 } // namespace flicker

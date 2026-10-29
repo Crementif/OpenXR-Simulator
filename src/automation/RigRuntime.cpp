@@ -66,11 +66,6 @@ static control::Field EncodeTarget(ScriptCaptureTarget target)
 	return control::Field::Bytes(tag::Target, control::EncodeFields(fields));
 }
 
-void RigRuntime::PollAgain()
-{
-	m_progress.WaitUntil(std::chrono::steady_clock::now() + std::chrono::milliseconds{2});
-}
-
 class RigRuntime::RemoteResource
 {
 public:
@@ -118,41 +113,56 @@ void RigRuntime::Configure(control::ControlSessionId session, std::uint64_t gene
 	m_captures.clear();
 }
 
+std::string RigRuntime::Cleanup()
+{
+	std::string error;
+	const auto attempt = [&](const char* resource, auto release) {
+		try
+		{
+			release();
+		}
+		catch (const std::exception& failure)
+		{
+			if (error.empty())
+				error = std::string{resource} + ": " + failure.what();
+		}
+		catch (...)
+		{
+			if (error.empty())
+				error = std::string{resource} + ": unknown cleanup failure";
+		}
+	};
+	if (m_imageWindow)
+	{
+		attempt("Image window release failed", [&] {
+			CleanupCall(control::OpCode::ReleaseImageWindow, {control::Field::U64(tag::ImageWindowId, m_imageWindow)});
+		});
+		m_imageWindow = 0;
+	}
+	for (const auto inspection : m_inspections)
+		attempt("Inspection release failed", [&] {
+			CleanupCall(control::OpCode::ReleaseInspection, {control::Field::U64(tag::InspectionId, inspection)});
+		});
+	m_inspections.clear();
+	// Source retirement stops native commands, sequences and input recording together.
+	attempt("Input release failed", [&] { CleanupCall(control::OpCode::ReleaseControl, Source()); });
+	if (m_lease)
+	{
+		// Relinquishing retires all lease-owned captures and image recording.
+		attempt("Debugger lease release failed", [&] {
+			auto fields = Session();
+			fields.push_back(control::Field::U64(tag::Lease, m_lease));
+			CleanupCall(control::OpCode::Relinquish, std::move(fields));
+		});
+	}
+	m_captures.clear();
+	m_lease = 0;
+	return error;
+}
+
 void RigRuntime::ObserveCompatibility()
 {
 	m_progress.SetCompatibility(control::DecodeCompatibilityDeviations(Call(control::OpCode::Status, Session())));
-}
-
-RigRuntime::Fields RigRuntime::Session() const
-{
-	return {control::Field::U64(tag::Session, m_session.value, true),
-			control::Field::U64(tag::Generation, m_generation, true)};
-}
-
-RigRuntime::Fields RigRuntime::Source() const
-{
-	auto fields = Session();
-	fields.push_back(control::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Rig)));
-	return fields;
-}
-
-control::Message RigRuntime::Call(control::OpCode opcode, Fields fields)
-{
-	m_progress.Check();
-	RenewLease();
-	return Exchange(opcode, std::move(fields));
-}
-
-void RigRuntime::RenewLease()
-{
-	const auto now = std::chrono::steady_clock::now();
-	if (m_lease && now >= m_nextRenew)
-	{
-		auto renewal = Session();
-		renewal.push_back(control::Field::U64(tag::Lease, m_lease, true));
-		Exchange(control::OpCode::Renew, std::move(renewal));
-		m_nextRenew = now + std::chrono::seconds{1};
-	}
 }
 
 void RigRuntime::Wait(std::chrono::milliseconds duration)
@@ -167,47 +177,6 @@ void RigRuntime::Wait(std::chrono::milliseconds duration)
 		if (std::chrono::steady_clock::now() >= target)
 			return;
 		m_progress.WaitUntil(m_lease ? std::min(target, m_nextRenew) : target);
-	}
-}
-
-control::Message RigRuntime::Exchange(control::OpCode opcode, Fields fields)
-{
-	auto response = m_exchange(opcode, std::move(fields));
-	const auto* error = response.Find(tag::Error);
-	if (!error || !error->AsU32() || *error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
-		throw std::runtime_error("Runtime control: " + Text(response, tag::Detail));
-	return response;
-}
-
-control::Message RigRuntime::Debug(control::CommandKind kind, Fields extra)
-{
-	if (!m_lease)
-		m_lease = Number(Call(control::OpCode::Acquire, Session()), tag::Lease);
-	const auto command = Next(m_nextCommand);
-	auto fields = Session();
-	fields.push_back(control::Field::U64(tag::Lease, m_lease, true));
-	fields.push_back(control::Field::U64(tag::CommandId, command, true));
-	fields.push_back(control::Field::U32(tag::CommandKind, static_cast<std::uint32_t>(kind), true));
-	fields.insert(fields.end(), std::make_move_iterator(extra.begin()), std::make_move_iterator(extra.end()));
-	const auto submitted = Call(control::OpCode::Submit, std::move(fields));
-	const auto operation = Number(submitted, tag::OperationId);
-	while (true)
-	{
-		auto query = Session();
-		query.push_back(control::Field::U64(tag::OperationId, operation, true));
-		auto response = Call(control::OpCode::Operation, std::move(query));
-		const auto phase = Text(response, tag::Phase);
-		if (phase == "complete")
-		{
-			auto acknowledged = Session();
-			acknowledged.push_back(control::Field::U64(tag::Lease, m_lease));
-			acknowledged.push_back(control::Field::U64(tag::CommandId, command));
-			Call(control::OpCode::Acknowledge, std::move(acknowledged));
-			return response;
-		}
-		if (phase != "queued" && phase != "pending")
-			throw std::runtime_error("Debug operation " + phase + ": " + Text(response, tag::Progress));
-		PollAgain();
 	}
 }
 
@@ -265,26 +234,30 @@ ScriptStep RigRuntime::StepApplication(ScriptCaptureTarget target)
 	return CaptureStep(control::CommandKind::Step, {EncodeTarget(target), control::Field::U32(tag::Lookahead, 1)});
 }
 
-std::vector<std::byte> RigRuntime::StartInputRecording()
+ScriptStep RigRuntime::StepDisplay()
 {
-	const auto response = Call(control::OpCode::StartRecording, Source());
-	return Document(response);
+	return CaptureStep(control::CommandKind::DisplayStep);
 }
 
-std::vector<std::byte> RigRuntime::StopInputRecording()
+void RigRuntime::AdvanceToFrame(FrameId target)
 {
-	const auto response = Call(control::OpCode::StopRecording, Source());
-	return Document(response);
-}
-
-std::vector<std::byte> RigRuntime::ReadInputRecording(std::uint64_t offset, std::uint64_t count)
-{
-	if (offset > 1024 || count > 16)
-		throw std::invalid_argument("Input recording pages require offset <= 1024 and count <= 16");
-	auto fields = Session();
-	fields.push_back(control::Field::U64(tag::Offset, offset));
-	fields.push_back(control::Field::U64(tag::Length, count));
-	return Document(Call(control::OpCode::ReadRecording, std::move(fields)));
+	auto current = CurrentFrame();
+	while (current < target)
+	{
+		m_progress.Check(true);
+		if (const auto step = StepApplication({}); step.capture)
+			ReleaseCapture(*step.capture);
+		current = CurrentFrame();
+		while (true)
+		{
+			const auto displayed = StepDisplay();
+			if (displayed.capture)
+				ReleaseCapture(*displayed.capture);
+			if (displayed.frame && *displayed.frame >= current)
+				break;
+			m_progress.Check();
+		}
+	}
 }
 
 void RigRuntime::StartImageRecording(ScriptCaptureTarget target, std::uint32_t capacity, std::uint64_t frames)
@@ -340,64 +313,40 @@ ScriptCapture RigRuntime::Capture(std::uint64_t capture)
 	return result;
 }
 
-void RigRuntime::AdvanceToFrame(FrameId target)
+std::vector<std::byte> RigRuntime::StartInputRecording()
 {
-	auto current = CurrentFrame();
-	while (current < target)
-	{
-		m_progress.Check(true);
-		if (const auto step = StepApplication({}); step.capture)
-			ReleaseCapture(*step.capture);
-		current = CurrentFrame();
-		while (true)
-		{
-			const auto displayed = StepDisplay();
-			if (displayed.capture)
-				ReleaseCapture(*displayed.capture);
-			if (displayed.frame && *displayed.frame >= current)
-				break;
-			m_progress.Check();
-		}
-	}
+	const auto response = Call(control::OpCode::StartRecording, Source());
+	return Document(response);
 }
 
-ScriptStep RigRuntime::StepDisplay()
+std::vector<std::byte> RigRuntime::StopInputRecording()
 {
-	return CaptureStep(control::CommandKind::DisplayStep);
+	const auto response = Call(control::OpCode::StopRecording, Source());
+	return Document(response);
 }
 
-ScriptStep RigRuntime::CaptureStep(control::CommandKind kind, Fields fields)
+std::vector<std::byte> RigRuntime::ReadInputRecording(std::uint64_t offset, std::uint64_t count)
 {
-	if (m_captures.size() == m_captures.capacity())
-		m_captures.reserve(std::max<std::size_t>(8, m_captures.capacity() * 2));
-	const auto response = Debug(kind, std::move(fields));
-	ScriptStep step;
-	step.progress = Text(response, tag::Progress);
-	if (const auto frame = response.Find(tag::Frame))
-	{
-		control::Message identity;
-		auto decoded = control::DecodeFields(frame->value);
-		if (decoded.error != control::DecodeError::None)
-			throw std::runtime_error("Step returned an invalid frame identity");
-		identity.fields = std::move(decoded.fields);
-		step.frame = FrameId{Number(identity, tag::FrameId)};
-	}
-	if (const auto capture = response.Find(tag::CaptureId))
-		step.capture = capture->AsU64();
-	if (const auto* captures = response.Find(tag::Captures))
-	{
-		const auto entries = control::DecodeFields(captures->value);
-		if (entries.error == control::DecodeError::None && !entries.fields.empty() && entries.fields[0].AsU64())
-		{
-			step.capture = *entries.fields[0].AsU64();
-		}
-	}
-	if (step.capture && std::find(m_captures.begin(), m_captures.end(), *step.capture) == m_captures.end())
-	{
-		m_captures.push_back(*step.capture);
-		m_progress.CaptureRetained();
-	}
-	return step;
+	if (offset > 1024 || count > 16)
+		throw std::invalid_argument("Input recording pages require offset <= 1024 and count <= 16");
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Offset, offset));
+	fields.push_back(control::Field::U64(tag::Length, count));
+	return Document(Call(control::OpCode::ReadRecording, std::move(fields)));
+}
+
+ScriptInspection RigRuntime::Inspect(std::uint64_t capture)
+{
+	// Reserve ownership bookkeeping before acquiring a remote reader.
+	if (m_inspections.size() == m_inspections.capacity())
+		m_inspections.reserve(m_inspections.size() + 1);
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
+	const auto response = Call(control::OpCode::InspectFrame, std::move(fields));
+	const auto identity = Number(response, tag::InspectionId);
+	if (std::find(m_inspections.begin(), m_inspections.end(), identity) == m_inspections.end())
+		m_inspections.push_back(identity);
+	return {Document(response), identity};
 }
 
 std::vector<std::byte> RigRuntime::ProjectionHistory(std::uint32_t count)
@@ -467,29 +416,6 @@ control::IncidentSample RigRuntime::SampleWindowImage(std::uint64_t window, std:
 	return SampleImage(image, rectangles);
 }
 
-control::IncidentSample RigRuntime::SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles)
-{
-	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
-	const auto info = Call(control::OpCode::ImageInfo, {control::Field::U64(tag::ImageReaderId, image, true)});
-	const auto* descriptor = info.Find(tag::ImageDescriptor);
-	if (!descriptor)
-		throw std::runtime_error("Runtime omitted the incident image description");
-	const auto description = control::DecodeImageDescription(*descriptor);
-	if (!rectangles)
-	{
-		if (description.width > INT32_MAX || description.height > INT32_MAX)
-			throw std::runtime_error("Incident image exceeds native coordinates");
-		const XrRect2Di full{{0, 0}, {static_cast<int>(description.width), static_cast<int>(description.height)}};
-		rectangles = std::array{full, full};
-	}
-	return control::ReadIncidentSample(
-		[&](auto opcode, auto fields) {
-			return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields))
-															: Call(opcode, std::move(fields));
-		},
-		[&] { PollAgain(); }, image, description, *rectangles);
-}
-
 std::optional<control::IncidentSample>
 RigRuntime::SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
 							   std::optional<std::array<XrRect2Di, 2>> rectangles)
@@ -513,20 +439,6 @@ void RigRuntime::ReleaseImageWindow(std::uint64_t window)
 	Call(control::OpCode::ReleaseImageWindow, {control::Field::U64(tag::ImageWindowId, window, true)});
 	if (m_imageWindow == window)
 		m_imageWindow = 0;
-}
-
-ScriptInspection RigRuntime::Inspect(std::uint64_t capture)
-{
-	// Reserve ownership bookkeeping before acquiring a remote reader.
-	if (m_inspections.size() == m_inspections.capacity())
-		m_inspections.reserve(m_inspections.size() + 1);
-	auto fields = Session();
-	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
-	const auto response = Call(control::OpCode::InspectFrame, std::move(fields));
-	const auto identity = Number(response, tag::InspectionId);
-	if (std::find(m_inspections.begin(), m_inspections.end(), identity) == m_inspections.end())
-		m_inspections.push_back(identity);
-	return {Document(response), identity};
 }
 
 std::vector<std::byte> RigRuntime::Revision(std::uint64_t revision)
@@ -592,34 +504,6 @@ void RigRuntime::Export(std::uint64_t capture, const std::string& path, std::opt
 	ExportImage(image, path, arraySlice);
 }
 
-void RigRuntime::ExportImage(std::uint64_t image, const std::string& path, std::optional<std::uint32_t> arraySlice)
-{
-	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
-	Fields exportFields{control::Field::U64(tag::ImageReaderId, image, true)};
-	if (arraySlice)
-		exportFields.push_back(control::Field::U32(tag::Layer, *arraySlice));
-	control::ExportReader exported(
-		[&](auto opcode, auto fields) {
-			return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields))
-															: Call(opcode, std::move(fields));
-		},
-		std::move(exportFields), [&] { PollAgain(); });
-	const std::u8string utf8Path{path.begin(), path.end()};
-	std::ofstream output(std::filesystem::path{utf8Path}, std::ios::binary | std::ios::trunc);
-	if (!output)
-		throw std::runtime_error("Cannot open explicit export path");
-	exported.Read([&](std::span<const std::byte> bytes) {
-		output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-		if (!output)
-			throw std::runtime_error("Explicit export write failed");
-	});
-	output.close();
-	if (!output)
-		throw std::runtime_error("Explicit export close failed");
-	exported.Release();
-	reader.Release();
-}
-
 void RigRuntime::ReleaseCapture(std::uint64_t capture)
 {
 	Debug(control::CommandKind::Release, {control::Field::U64(tag::CaptureId, capture, true)});
@@ -661,14 +545,167 @@ std::vector<std::byte> RigRuntime::GameState()
 	return Document(Call(control::OpCode::GameStatus, Session()));
 }
 
-void RigRuntime::ReleaseUnchecked(control::OpCode opcode, std::uint16_t field, std::uint64_t id) noexcept
+RigRuntime::Fields RigRuntime::Session() const
 {
-	try
+	return {control::Field::U64(tag::Session, m_session.value, true),
+			control::Field::U64(tag::Generation, m_generation, true)};
+}
+
+RigRuntime::Fields RigRuntime::Source() const
+{
+	auto fields = Session();
+	fields.push_back(control::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Rig)));
+	return fields;
+}
+
+control::Message RigRuntime::Call(control::OpCode opcode, Fields fields)
+{
+	m_progress.Check();
+	RenewLease();
+	return Exchange(opcode, std::move(fields));
+}
+
+control::Message RigRuntime::Exchange(control::OpCode opcode, Fields fields)
+{
+	auto response = m_exchange(opcode, std::move(fields));
+	const auto* error = response.Find(tag::Error);
+	if (!error || !error->AsU32() || *error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
+		throw std::runtime_error("Runtime control: " + Text(response, tag::Detail));
+	return response;
+}
+
+control::Message RigRuntime::Debug(control::CommandKind kind, Fields extra)
+{
+	if (!m_lease)
+		m_lease = Number(Call(control::OpCode::Acquire, Session()), tag::Lease);
+	const auto command = Next(m_nextCommand);
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Lease, m_lease, true));
+	fields.push_back(control::Field::U64(tag::CommandId, command, true));
+	fields.push_back(control::Field::U32(tag::CommandKind, static_cast<std::uint32_t>(kind), true));
+	fields.insert(fields.end(), std::make_move_iterator(extra.begin()), std::make_move_iterator(extra.end()));
+	const auto submitted = Call(control::OpCode::Submit, std::move(fields));
+	const auto operation = Number(submitted, tag::OperationId);
+	while (true)
 	{
-		m_exchange(opcode, {control::Field::U64(field, id)});
+		auto query = Session();
+		query.push_back(control::Field::U64(tag::OperationId, operation, true));
+		auto response = Call(control::OpCode::Operation, std::move(query));
+		const auto phase = Text(response, tag::Phase);
+		if (phase == "complete")
+		{
+			auto acknowledged = Session();
+			acknowledged.push_back(control::Field::U64(tag::Lease, m_lease));
+			acknowledged.push_back(control::Field::U64(tag::CommandId, command));
+			Call(control::OpCode::Acknowledge, std::move(acknowledged));
+			return response;
+		}
+		if (phase != "queued" && phase != "pending")
+			throw std::runtime_error("Debug operation " + phase + ": " + Text(response, tag::Progress));
+		PollAgain();
 	}
-	catch (...)
-	{}
+}
+
+ScriptStep RigRuntime::CaptureStep(control::CommandKind kind, Fields fields)
+{
+	if (m_captures.size() == m_captures.capacity())
+		m_captures.reserve(std::max<std::size_t>(8, m_captures.capacity() * 2));
+	const auto response = Debug(kind, std::move(fields));
+	ScriptStep step;
+	step.progress = Text(response, tag::Progress);
+	if (const auto frame = response.Find(tag::Frame))
+	{
+		control::Message identity;
+		auto decoded = control::DecodeFields(frame->value);
+		if (decoded.error != control::DecodeError::None)
+			throw std::runtime_error("Step returned an invalid frame identity");
+		identity.fields = std::move(decoded.fields);
+		step.frame = FrameId{Number(identity, tag::FrameId)};
+	}
+	if (const auto capture = response.Find(tag::CaptureId))
+		step.capture = capture->AsU64();
+	if (const auto* captures = response.Find(tag::Captures))
+	{
+		const auto entries = control::DecodeFields(captures->value);
+		if (entries.error == control::DecodeError::None && !entries.fields.empty() && entries.fields[0].AsU64())
+		{
+			step.capture = *entries.fields[0].AsU64();
+		}
+	}
+	if (step.capture && std::find(m_captures.begin(), m_captures.end(), *step.capture) == m_captures.end())
+	{
+		m_captures.push_back(*step.capture);
+		m_progress.CaptureRetained();
+	}
+	return step;
+}
+
+control::IncidentSample RigRuntime::SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles)
+{
+	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
+	const auto info = Call(control::OpCode::ImageInfo, {control::Field::U64(tag::ImageReaderId, image, true)});
+	const auto* descriptor = info.Find(tag::ImageDescriptor);
+	if (!descriptor)
+		throw std::runtime_error("Runtime omitted the incident image description");
+	const auto description = control::DecodeImageDescription(*descriptor);
+	if (!rectangles)
+	{
+		if (description.width > INT32_MAX || description.height > INT32_MAX)
+			throw std::runtime_error("Incident image exceeds native coordinates");
+		const XrRect2Di full{{0, 0}, {static_cast<int>(description.width), static_cast<int>(description.height)}};
+		rectangles = std::array{full, full};
+	}
+	return control::ReadIncidentSample(
+		[&](auto opcode, auto fields) {
+			return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields))
+															: Call(opcode, std::move(fields));
+		},
+		[&] { PollAgain(); }, image, description, *rectangles);
+}
+
+void RigRuntime::ExportImage(std::uint64_t image, const std::string& path, std::optional<std::uint32_t> arraySlice)
+{
+	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
+	Fields exportFields{control::Field::U64(tag::ImageReaderId, image, true)};
+	if (arraySlice)
+		exportFields.push_back(control::Field::U32(tag::Layer, *arraySlice));
+	control::ExportReader exported(
+		[&](auto opcode, auto fields) {
+			return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields))
+															: Call(opcode, std::move(fields));
+		},
+		std::move(exportFields), [&] { PollAgain(); });
+	const std::u8string utf8Path{path.begin(), path.end()};
+	std::ofstream output(std::filesystem::path{utf8Path}, std::ios::binary | std::ios::trunc);
+	if (!output)
+		throw std::runtime_error("Cannot open explicit export path");
+	exported.Read([&](std::span<const std::byte> bytes) {
+		output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+		if (!output)
+			throw std::runtime_error("Explicit export write failed");
+	});
+	output.close();
+	if (!output)
+		throw std::runtime_error("Explicit export close failed");
+	exported.Release();
+	reader.Release();
+}
+
+void RigRuntime::RenewLease()
+{
+	const auto now = std::chrono::steady_clock::now();
+	if (m_lease && now >= m_nextRenew)
+	{
+		auto renewal = Session();
+		renewal.push_back(control::Field::U64(tag::Lease, m_lease, true));
+		Exchange(control::OpCode::Renew, std::move(renewal));
+		m_nextRenew = now + std::chrono::seconds{1};
+	}
+}
+
+void RigRuntime::PollAgain()
+{
+	m_progress.WaitUntil(std::chrono::steady_clock::now() + std::chrono::milliseconds{2});
 }
 
 void RigRuntime::CleanupCall(control::OpCode opcode, Fields fields)
@@ -683,50 +720,14 @@ void RigRuntime::CleanupCall(control::OpCode opcode, Fields fields)
 		throw std::runtime_error(Text(response, tag::Detail));
 }
 
-std::string RigRuntime::Cleanup()
+void RigRuntime::ReleaseUnchecked(control::OpCode opcode, std::uint16_t field, std::uint64_t id) noexcept
 {
-	std::string error;
-	const auto attempt = [&](const char* resource, auto release) {
-		try
-		{
-			release();
-		}
-		catch (const std::exception& failure)
-		{
-			if (error.empty())
-				error = std::string{resource} + ": " + failure.what();
-		}
-		catch (...)
-		{
-			if (error.empty())
-				error = std::string{resource} + ": unknown cleanup failure";
-		}
-	};
-	if (m_imageWindow)
+	try
 	{
-		attempt("Image window release failed", [&] {
-			CleanupCall(control::OpCode::ReleaseImageWindow, {control::Field::U64(tag::ImageWindowId, m_imageWindow)});
-		});
-		m_imageWindow = 0;
+		m_exchange(opcode, {control::Field::U64(field, id)});
 	}
-	for (const auto inspection : m_inspections)
-		attempt("Inspection release failed", [&] {
-			CleanupCall(control::OpCode::ReleaseInspection, {control::Field::U64(tag::InspectionId, inspection)});
-		});
-	m_inspections.clear();
-	// Source retirement stops native commands, sequences and input recording together.
-	attempt("Input release failed", [&] { CleanupCall(control::OpCode::ReleaseControl, Source()); });
-	if (m_lease)
-	{
-		// Relinquishing retires all lease-owned captures and image recording.
-		attempt("Debugger lease release failed", [&] {
-			auto fields = Session();
-			fields.push_back(control::Field::U64(tag::Lease, m_lease));
-			CleanupCall(control::OpCode::Relinquish, std::move(fields));
-		});
-	}
-	m_captures.clear();
-	m_lease = 0;
-	return error;
+	catch (...)
+	{}
 }
+
 } // namespace simxr::automation

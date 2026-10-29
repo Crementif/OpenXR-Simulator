@@ -23,6 +23,7 @@ public:
 						   std::unique_ptr<Direct3DSwapchain>& output);
 	static XrResult Create(ID3D12Device* device, const XrSwapchainCreateInfo& description,
 						   std::unique_ptr<Direct3DSwapchain>& output);
+
 	Direct3DSwapchain(const Direct3DSwapchain&) = delete;
 	Direct3DSwapchain& operator=(const Direct3DSwapchain&) = delete;
 
@@ -39,6 +40,7 @@ private:
 	Direct3DSwapchain(DXGI_FORMAT format, const wchar_t* runtimeLibrary);
 	XrResult Allocate(ID3D11Device* device, const XrSwapchainCreateInfo& description);
 	XrResult Allocate(ID3D12Device* device, const XrSwapchainCreateInfo& description);
+
 	const WindowsLibrary m_dxgiLibrary{L"dxgi.dll"};
 	const WindowsLibrary m_runtimeLibrary;
 	const DXGI_FORMAT m_format;

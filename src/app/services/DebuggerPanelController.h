@@ -29,16 +29,21 @@ class DebuggerPanelController
 {
 public:
 	explicit DebuggerPanelController(RuntimePanelRequests& transport);
+
 	void ResetEpoch();
 	void ChooseSession(PanelSession session);
 	void Command(control::CommandKind kind, std::uint64_t capture = 0, bool raw = false, std::uint32_t layer = 0,
 				 std::uint32_t view = 0);
 	void CancelPending();
+	// Gives the session's control to another client (a replay script).
+	void Relinquish();
+
 	void Poll();
 	bool Handle(const PanelTask& task, const control::Message& message);
 	void Failed(const PanelTask& task, control::ErrorCode error, const std::string& errorDetail);
 	std::vector<DebuggerCaptureEvent> TakeCaptures();
 	std::string TakeError();
+
 	const PanelSession& Selected() const noexcept;
 	std::span<const PanelSession> Sessions() const noexcept;
 	std::span<const DebuggerOperation> Operations() const noexcept;
@@ -47,8 +52,6 @@ public:
 	PanelScope Scope() const noexcept;
 	bool Manual() const noexcept;
 	bool HasLease() const noexcept;
-	// Gives the session's control to another client (a replay script).
-	void Relinquish();
 	bool Relinquishing() const;
 	bool Pending() const;
 
@@ -63,6 +66,7 @@ private:
 	};
 
 	void InterruptSession();
+
 	RuntimePanelRequests& m_requests;
 	std::vector<PanelSession> m_sessions;
 	PanelSession m_selected;

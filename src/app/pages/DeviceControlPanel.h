@@ -22,17 +22,16 @@ class DeviceControlPanel
 {
 public:
 	explicit DeviceControlPanel(PlayerRig& rig);
+
 	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr,
 									   const std::function<void()>& placement = {});
-	void ClearHeldInputs();
-	bool Active() const;
-	void CancelEditing();
-	std::optional<SimulationEdit> EndInputFrame();
+	std::optional<SimulationEdit> DrawAdvanced();
+	std::optional<SimulationEdit> DrawSessionMenu();
+	std::optional<SimulationEdit> DrawHeader(const Selection& selection, bool showState = true);
 
-	int SelectedTracker() const
-	{
-		return m_selectedTracker;
-	}
+	void ObserveState(const control::Message& state);
+	void ResetObservations();
+	void ObserveDelivery(bool pending, const std::string& error);
 
 	void SetRigPiloting(bool piloting)
 	{
@@ -44,34 +43,44 @@ public:
 		m_manualSource = source;
 	}
 
-	void ObserveState(const control::Message& state);
-	void ResetObservations();
-	void ObserveDelivery(bool pending, const std::string& error);
-	std::optional<SimulationEdit> DrawAdvanced();
-	std::optional<SimulationEdit> DrawSessionMenu();
-	std::optional<SimulationEdit> DrawHeader(const Selection& selection, bool showState = true);
+	bool Active() const;
+	void CancelEditing();
+	void ClearHeldInputs();
+	std::optional<SimulationEdit> EndInputFrame();
+
+	int SelectedTracker() const
+	{
+		return m_selectedTracker;
+	}
 
 private:
+	struct PadInputs
+	{
+		bool trigger = false, grip = false, primary = false, secondary = false, menu = false, stick = false;
+	};
+
 	void SelectDevice(const DeviceSel& device);
 	bool CanControl(ControlChannel channel) const;
 	bool CanReset(DevicePage page) const;
+	bool ScenarioActive(ControlChannel channel) const;
 	ManualTransaction PlayerEdit(bool includeWorld = false) const;
 	void Apply(std::vector<SimulationCommand> commands, std::string label = {});
 	void ApplyOwned(ControlChannel channel, SimulationCommand command);
-	void DrawOwnership();
+	void ApplyRig(std::vector<SimulationCommand> extra = {}, std::string label = {});
 	void LoadObservedSettings();
-	void DrawOwner(ControlChannel channel, bool takeover = true);
-	bool ScenarioActive(ControlChannel channel) const;
-	void DrawTracking(DevicePage page);
 	void ReloadRecoveredChannel(ControlChannel channel);
+	void ResetPage(DevicePage page);
+	bool Field(const char* key, bool changed, bool continuous = false, const FieldValue& value = {});
+	bool InputField(const char* key, bool changed);
+	void DrawOwnership();
+	void DrawOwner(ControlChannel channel, bool takeover = true);
+	void DrawTracking(DevicePage page);
 	void DrawPlayer();
 	void DrawAnchor(std::size_t hand);
 	void DrawHead();
 	void DrawExactPose(int device);
 	void DrawHandPresets(std::size_t hand);
 	void DrawBodyPoses();
-	void ResetPage(DevicePage page);
-	void ApplyRig(std::vector<SimulationCommand> extra = {}, std::string label = {});
 	void DrawController(std::uint32_t hand, const std::function<void()>& placement);
 	void DrawInputPad(std::uint32_t hand);
 	void DrawBody();
@@ -89,8 +98,7 @@ private:
 	std::set<std::string> m_pendingFields, m_rejectedFields;
 	std::string m_deliveryError, m_fieldScope;
 	double m_rejectedUntil = 0;
-	bool Field(const char* key, bool changed, bool continuous = false, const FieldValue& value = {});
-	bool InputField(const char* key, bool changed);
+
 	bool m_replaceOwner = false, m_exactAnchor = false;
 	std::array<bool, MaxTrackerDevices + 3> m_quaternionView{};
 	bool m_configurationLoaded = false;
@@ -103,12 +111,6 @@ private:
 	int m_selectedTracker = 0;
 	TrackingState m_authoredTracking;
 	std::array<ControllerControls, 2> m_authoredControls;
-
-	struct PadInputs
-	{
-		bool trigger = false, grip = false, primary = false, secondary = false, menu = false, stick = false;
-	};
-
 	std::array<PadInputs, 2> m_latches{}, m_heldInputs{};
 	std::array<int, 2> m_padFrames{-1, -1};
 	std::array<unsigned, 2> m_padActiveIds{};

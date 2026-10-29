@@ -11,15 +11,6 @@ VulkanSubmission::Resources::~Resources()
 	device->RecycleCommands(std::move(commands));
 }
 
-VulkanSubmission::VulkanSubmission(std::shared_ptr<VulkanDevice> device)
-	: m_resources(std::make_unique<Resources>(std::move(device)))
-{
-	m_resources->commands = m_resources->device->AcquireCommands();
-	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	CheckVulkan(vkBeginCommandBuffer(m_resources->commands->command, &begin), "Begin Vulkan submission commands");
-}
-
 VulkanSubmission::~VulkanSubmission()
 {
 	if (!NativeIdle())
@@ -29,6 +20,107 @@ VulkanSubmission::~VulkanSubmission()
 			stderr);
 		m_resources->preservation.Preserve(std::move(m_resources));
 	}
+}
+
+CompletionStatus VulkanSubmission::PollCompletion() const noexcept
+{
+	const auto cached = m_status.load();
+	if (cached != CompletionStatus::Pending || !m_ready.load())
+	{
+		if (cached == CompletionStatus::Complete)
+			ObserveTiming();
+		return cached;
+	}
+	if (m_resources->completion)
+	{
+		const auto completion = m_resources->completion->PollCompletion();
+		if (completion != CompletionStatus::Pending)
+		{
+			auto expected = CompletionStatus::Pending;
+			m_status.compare_exchange_strong(expected, completion);
+		}
+		if (m_status.load() == CompletionStatus::Complete)
+			ObserveTiming();
+		return m_status.load();
+	}
+	const auto result = vkGetFenceStatus(m_resources->device->binding.device, m_resources->commands->fence);
+	if (result == VK_SUCCESS)
+	{
+		auto expected = CompletionStatus::Pending;
+		m_status.compare_exchange_strong(expected, CompletionStatus::Complete);
+	}
+	else if (result != VK_NOT_READY)
+	{
+		if (result == VK_ERROR_DEVICE_LOST)
+			m_resources->device->lost.store(true);
+		auto expected = CompletionStatus::Pending;
+		m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
+	}
+	if (m_status.load() == CompletionStatus::Complete)
+		ObserveTiming();
+	return m_status.load();
+}
+
+VkResult VulkanSubmission::Wait(std::uint64_t timeout) const noexcept
+{
+	if (!m_ready.load())
+		return VK_NOT_READY;
+	const auto submitted = m_submitResult.load();
+	if (submitted == VK_ERROR_OUT_OF_HOST_MEMORY || submitted == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+		return submitted;
+	if (m_resources->completion)
+		return m_resources->completion->Wait(timeout);
+	const auto result =
+		vkWaitForFences(m_resources->device->binding.device, 1, &m_resources->commands->fence, VK_TRUE, timeout);
+	if (result == VK_SUCCESS)
+	{
+		auto expected = CompletionStatus::Pending;
+		m_status.compare_exchange_strong(expected, CompletionStatus::Complete);
+	}
+	else if (result == VK_ERROR_DEVICE_LOST)
+	{
+		m_resources->device->lost.store(true);
+		auto expected = CompletionStatus::Pending;
+		m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
+	}
+	return result;
+}
+
+bool VulkanSubmission::NativeIdle() const noexcept
+{
+	if (!m_attempted.load())
+		return true;
+	if (!m_ready.load())
+		return false;
+	if (m_resources->device->lost.load())
+		return true;
+	const auto result = m_submitResult.load();
+	if (result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+		return true;
+	if (m_resources->completion)
+		return m_resources->completion->NativeIdle();
+	return vkGetFenceStatus(m_resources->device->binding.device, m_resources->commands->fence) == VK_SUCCESS;
+}
+
+VulkanSubmission::VulkanSubmission(std::shared_ptr<VulkanDevice> device)
+	: m_resources(std::make_unique<Resources>(std::move(device)))
+{
+	m_resources->commands = m_resources->device->AcquireCommands();
+	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	CheckVulkan(vkBeginCommandBuffer(m_resources->commands->command, &begin), "Begin Vulkan submission commands");
+}
+
+void VulkanSubmission::ReleaseSources()
+{
+	if (!NativeIdle())
+		return;
+	m_resources->sources.clear();
+	m_resources->sourceBudgets.clear();
+#ifdef _WIN32
+	m_resources->nativeSource.reset();
+	m_resources->nativeReady = VK_NULL_HANDLE;
+#endif
 }
 
 void VulkanSubmission::BeginTiming()
@@ -74,120 +166,19 @@ void VulkanSubmission::ObserveTiming() const noexcept
 		resources.timing->compositorNanoseconds.store(static_cast<std::int64_t>(ns));
 }
 
-CompletionStatus VulkanSubmission::PollCompletion() const noexcept
-{
-	const auto cached = m_status.load();
-	if (cached != CompletionStatus::Pending || !m_ready.load())
-	{
-		if (cached == CompletionStatus::Complete)
-			ObserveTiming();
-		return cached;
-	}
-	if (m_resources->completion)
-	{
-		const auto completion = m_resources->completion->PollCompletion();
-		if (completion != CompletionStatus::Pending)
-		{
-			auto expected = CompletionStatus::Pending;
-			m_status.compare_exchange_strong(expected, completion);
-		}
-		if (m_status.load() == CompletionStatus::Complete)
-			ObserveTiming();
-		return m_status.load();
-	}
-	const auto result = vkGetFenceStatus(m_resources->device->binding.device, m_resources->commands->fence);
-	if (result == VK_SUCCESS)
-	{
-		auto expected = CompletionStatus::Pending;
-		m_status.compare_exchange_strong(expected, CompletionStatus::Complete);
-	}
-	else if (result != VK_NOT_READY)
-	{
-		if (result == VK_ERROR_DEVICE_LOST)
-			m_resources->device->lost.store(true);
-		auto expected = CompletionStatus::Pending;
-		m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
-	}
-	if (m_status.load() == CompletionStatus::Complete)
-		ObserveTiming();
-	return m_status.load();
-}
-
-bool VulkanSubmission::NativeIdle() const noexcept
-{
-	if (!m_attempted.load())
-		return true;
-	if (!m_ready.load())
-		return false;
-	if (m_resources->device->lost.load())
-		return true;
-	const auto result = m_submitResult.load();
-	if (result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
-		return true;
-	if (m_resources->completion)
-		return m_resources->completion->NativeIdle();
-	return vkGetFenceStatus(m_resources->device->binding.device, m_resources->commands->fence) == VK_SUCCESS;
-}
-
-VkResult VulkanSubmission::Wait(std::uint64_t timeout) const noexcept
-{
-	if (!m_ready.load())
-		return VK_NOT_READY;
-	const auto submitted = m_submitResult.load();
-	if (submitted == VK_ERROR_OUT_OF_HOST_MEMORY || submitted == VK_ERROR_OUT_OF_DEVICE_MEMORY)
-		return submitted;
-	if (m_resources->completion)
-		return m_resources->completion->Wait(timeout);
-	const auto result =
-		vkWaitForFences(m_resources->device->binding.device, 1, &m_resources->commands->fence, VK_TRUE, timeout);
-	if (result == VK_SUCCESS)
-	{
-		auto expected = CompletionStatus::Pending;
-		m_status.compare_exchange_strong(expected, CompletionStatus::Complete);
-	}
-	else if (result == VK_ERROR_DEVICE_LOST)
-	{
-		m_resources->device->lost.store(true);
-		auto expected = CompletionStatus::Pending;
-		m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
-	}
-	return result;
-}
-
-void VulkanSubmission::ReleaseSources()
-{
-	if (!NativeIdle())
-		return;
-	m_resources->sources.clear();
-	m_resources->sourceBudgets.clear();
-#ifdef _WIN32
-	m_resources->nativeSource.reset();
-	m_resources->nativeReady = VK_NULL_HANDLE;
-#endif
-}
-
-std::shared_ptr<VulkanImage> VulkanFrame::RetainImage() const
-{
-	return {m_submission, m_submission->m_resources->output.get()};
-}
-
-VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views)
-	: FrameOutput(views), m_submission(std::move(submission))
-{}
-
 CompletionStatus VulkanFrame::PollCompletion() const noexcept
 {
 	return m_submission->PollCompletion();
 }
 
-std::shared_ptr<const FrameGpuTiming> VulkanFrame::Timing() const noexcept
-{
-	return m_submission->m_resources->timing;
-}
-
 const VulkanImage& VulkanFrame::Image() const
 {
 	return *m_submission->m_resources->output;
+}
+
+std::shared_ptr<VulkanImage> VulkanFrame::RetainImage() const
+{
+	return {m_submission, m_submission->m_resources->output.get()};
 }
 
 VkImageView VulkanFrame::View(std::uint32_t eye) const
@@ -202,24 +193,43 @@ std::shared_ptr<const GpuCompletion> VulkanFrame::Completion() const
 	return m_submission;
 }
 
-VkResult VulkanFrame::Wait(std::uint64_t timeout) const noexcept
-{
-	return m_submission->Wait(timeout);
-}
-
 std::shared_ptr<VulkanExternalImage> VulkanFrame::ExternalImage() const
 {
 	return m_submission->m_resources->external;
 }
 
-std::shared_ptr<VulkanImage> VulkanFrame::ImportImage(const VulkanExternalDevice& consumer) const
+std::shared_ptr<FrameReservation> VulkanFrame::Reservation() const
 {
-	return m_submission->m_resources->imageLease->Import(consumer);
+	return m_submission->m_resources->reservation;
+}
+
+bool VulkanFrame::Submitted() const noexcept
+{
+	return m_submission->m_attempted.load();
+}
+
+std::shared_ptr<const FrameGpuTiming> VulkanFrame::Timing() const noexcept
+{
+	return m_submission->m_resources->timing;
+}
+
+VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views)
+	: FrameOutput(views), m_submission(std::move(submission))
+{}
+
+VkResult VulkanFrame::Wait(std::uint64_t timeout) const noexcept
+{
+	return m_submission->Wait(timeout);
 }
 
 std::shared_ptr<VulkanFrameSync> VulkanFrame::InspectionSync() const
 {
 	return m_submission->m_resources->sync;
+}
+
+std::shared_ptr<VulkanImage> VulkanFrame::ImportImage(const VulkanExternalDevice& consumer) const
+{
+	return m_submission->m_resources->imageLease->Import(consumer);
 }
 
 bool VulkanFrame::ClaimInspection()
@@ -245,13 +255,4 @@ void VulkanFrame::CommitInspection() noexcept
 		m_inspection = InspectionClaim::Committed;
 }
 
-std::shared_ptr<FrameReservation> VulkanFrame::Reservation() const
-{
-	return m_submission->m_resources->reservation;
-}
-
-bool VulkanFrame::Submitted() const noexcept
-{
-	return m_submission->m_attempted.load();
-}
 } // namespace simxr

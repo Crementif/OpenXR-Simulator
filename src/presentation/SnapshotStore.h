@@ -133,8 +133,10 @@ public:
 	// History outlives the store and retains no image or reservation readers.
 	explicit SnapshotStore(std::size_t capacity = 0, FrameHistory* history = nullptr);
 	~SnapshotStore();
+
 	void Start(SessionGeneration generation);
 	void Stop() noexcept;
+
 	CaptureReservation Reserve(CaptureTarget target = {}, std::shared_ptr<FrameReservation> producer = {},
 							   std::shared_ptr<FrameReservation> composedProducer = {});
 	CaptureReservation Pin(const std::shared_ptr<const FrameRecord>& metadata,
@@ -154,6 +156,7 @@ public:
 	bool SetProducer(FrameKey frame, const std::shared_ptr<FrameReservation>& producer,
 					 CaptureTarget target = {}) noexcept;
 	void AbandonProducer(FrameKey frame, CaptureTarget target = {}) noexcept;
+
 	std::vector<CaptureTarget> RequestedTargets(FrameKey frame) const;
 	void Fail(FrameKey frame, XrResult result, const std::shared_ptr<const FrameOutput>& output = {}) noexcept;
 	std::optional<SnapshotRecord> Read(CaptureId id) const;
@@ -161,6 +164,7 @@ public:
 	std::vector<CaptureId> FindAll(FrameKey frame) const;
 	SnapshotStoreState Snapshot() const;
 	std::size_t Capacity() const;
+
 	bool Release(CaptureId id) noexcept;
 	bool SetPinned(CaptureId id, bool pinned) noexcept;
 	// Call outside caller locks: eviction releases native owners through normal retirement.
@@ -187,6 +191,7 @@ private:
 	std::optional<Entry> ReleaseLocked(std::vector<Entry>::iterator entry) noexcept;
 	void CancelPendingLocked() noexcept;
 	void TraceTerminal(Entry& entry) noexcept;
+
 	FrameHistory* const m_history;
 	FramePool m_slots;
 	mutable std::mutex m_mutex;

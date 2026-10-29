@@ -96,6 +96,24 @@ class FrameHistory
 {
 public:
 	explicit FrameHistory(std::size_t capacity = 128, std::size_t diagnosticCapacity = 1024);
+
+	SessionGeneration StartGeneration(RuntimeTime origin = {});
+	// Reserve copied diagnostic ownership before committing issue. The callback
+	// must not reenter history. Failure rolls back insertion and eviction.
+	void Issue(
+		const FramePrediction& prediction,
+		const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>& reserve = {},
+		std::optional<SequenceCaptureRecord> sequenceCapture = {});
+	void Begin(FrameId frame, std::optional<FrameId> discarded = {});
+	// Allocates the immutable record before admission. The callback may submit
+	// native work at the permitted API boundary, but must not reenter this history.
+	XrResult Submit(FrameId frame, FrameSubmissionState state, const std::function<XrResult()>& beforeCommit = {});
+	void CancelPending() noexcept;
+
+	std::shared_ptr<const FrameRecord> Find(FrameKey key) const;
+	std::shared_ptr<const FrameRecord> CancellationRecord(FrameKey key) const;
+	FrameHistorySnapshot Snapshot() const;
+
 	// Allocation-free observation, including during teardown. Native/GPU callers
 	// report only milestones they actually observe; no queue access or waits.
 	FrameDiagnostic Trace(FrameTraceKind kind, FrameKey frame, RuntimeTime time, XrResult result = XR_SUCCESS,
@@ -110,22 +128,6 @@ public:
 		return m_diagnostics;
 	}
 
-	SessionGeneration StartGeneration(RuntimeTime origin = {});
-	// Reserve copied diagnostic ownership before committing issue. The callback
-	// must not reenter history. Failure rolls back insertion and eviction.
-	void Issue(
-		const FramePrediction& prediction,
-		const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>& reserve = {},
-		std::optional<SequenceCaptureRecord> sequenceCapture = {});
-	void Begin(FrameId frame, std::optional<FrameId> discarded = {});
-	// Allocates the immutable record before admission. The callback may submit
-	// native work at the permitted API boundary, but must not reenter this history.
-	XrResult Submit(FrameId frame, FrameSubmissionState state, const std::function<XrResult()>& beforeCommit = {});
-	void CancelPending() noexcept;
-	std::shared_ptr<const FrameRecord> Find(FrameKey key) const;
-	std::shared_ptr<const FrameRecord> CancellationRecord(FrameKey key) const;
-	FrameHistorySnapshot Snapshot() const;
-
 private:
 	struct Entry
 	{
@@ -134,8 +136,10 @@ private:
 	};
 
 	using Records = std::deque<Entry>;
+
 	Records::iterator Current(FrameId frame);
 	void CancelPendingLocked() noexcept;
+
 	const std::size_t m_capacity;
 	mutable std::mutex m_mutex;
 	SessionGeneration m_generation;

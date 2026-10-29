@@ -45,14 +45,17 @@ class LiveInputSlot
 public:
 	using Channels = std::array<bool, ControlChannelCount>;
 	static bool HasChannels(const Channels& owned);
+
 	CommandResult Write(CommandSource source, const LiveInputSample& sample, const Channels& owned,
 						LiveInputClock::time_point now);
 	std::optional<CommandOutcome> Prepare(FrameId frame, SimulationTime time, const Channels& owned,
 										  LiveInputClock::time_point now,
 										  std::optional<std::uint64_t> clockRevision = {});
+
 	LiveInputStatus Status() const;
-	void AcknowledgeControls();
 	bool Expired(LiveInputClock::time_point now) const;
+
+	void AcknowledgeControls();
 	void Reset();
 
 private:

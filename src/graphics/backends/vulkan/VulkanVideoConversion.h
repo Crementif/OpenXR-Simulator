@@ -9,6 +9,7 @@ class VulkanVideoConversion
 public:
 	VulkanVideoConversion(std::shared_ptr<VulkanDevice> device, VkExtent2D extent);
 	~VulkanVideoConversion();
+
 	// A null source encodes a black frame at the configured extent.
 	VulkanH264Picture Encode(std::shared_ptr<const VulkanInspectionFrame> source);
 	std::shared_ptr<VulkanImage> Decode(const VulkanH264Picture& picture, VkExtent2D extent, std::uint32_t layers,
@@ -38,6 +39,7 @@ private:
 	void Wait();
 	void Bind(bool encode, VkExtent2D extent, std::uint32_t layers, bool srgb);
 	void UpdateView(VkImage image, VkFormat format, std::uint32_t layers, bool encode);
+
 	std::shared_ptr<VulkanDevice> m_device;
 	std::shared_ptr<VulkanVideoSession> m_session;
 	std::unique_ptr<FailedOwner> m_failedOwner;

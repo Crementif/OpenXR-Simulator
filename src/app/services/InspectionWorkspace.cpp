@@ -27,13 +27,6 @@ void InspectionWorkspace::SetCapacity(std::size_t capacity) noexcept
 	m_capacity = capacity;
 }
 
-InspectionCapture* InspectionWorkspace::Find(std::uint64_t id)
-{
-	const auto found = std::find_if(m_captures.begin(), m_captures.end(),
-									[&](const auto& capture) { return capture.id == id && capture.scope == m_scope; });
-	return found == m_captures.end() ? nullptr : &*found;
-}
-
 bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 {
 	if (!id)
@@ -143,14 +136,6 @@ std::vector<std::uint64_t> InspectionWorkspace::CaptureIds() const
 	return result;
 }
 
-void InspectionWorkspace::ReleaseInspection(InspectionCapture& capture)
-{
-	if (capture.inspection && capture.scope.epoch == m_scope.epoch)
-		m_requests.Release(wire::OpCode::ReleaseInspection, tag::InspectionId, capture.inspection);
-	capture.inspection = 0;
-	capture.document = {};
-}
-
 void InspectionWorkspace::ReleaseSelected()
 {
 	for (auto& capture : m_captures)
@@ -250,4 +235,20 @@ std::string InspectionWorkspace::TakeError()
 {
 	return std::exchange(m_error, {});
 }
+
+InspectionCapture* InspectionWorkspace::Find(std::uint64_t id)
+{
+	const auto found = std::find_if(m_captures.begin(), m_captures.end(),
+									[&](const auto& capture) { return capture.id == id && capture.scope == m_scope; });
+	return found == m_captures.end() ? nullptr : &*found;
+}
+
+void InspectionWorkspace::ReleaseInspection(InspectionCapture& capture)
+{
+	if (capture.inspection && capture.scope.epoch == m_scope.epoch)
+		m_requests.Release(wire::OpCode::ReleaseInspection, tag::InspectionId, capture.inspection);
+	capture.inspection = 0;
+	capture.document = {};
+}
+
 } // namespace simxr::app

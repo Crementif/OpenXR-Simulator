@@ -28,6 +28,7 @@ public:
 	static std::shared_ptr<VulkanReadbackBatch> Prepare(std::shared_ptr<VulkanDevice> device,
 														std::span<const VulkanReadbackRegion> regions);
 	~VulkanReadbackBatch() override;
+
 	VkResult Submit() noexcept;
 	CompletionStatus PollCompletion() const noexcept override;
 	bool NativeIdle() const noexcept;
@@ -46,6 +47,7 @@ private:
 	struct Native;
 	explicit VulkanReadbackBatch(std::shared_ptr<VulkanDevice> device);
 	void Record(std::span<const VulkanReadbackRegion> regions);
+
 	std::unique_ptr<Native> m_native;
 	std::atomic<Phase> m_phase{Phase::Prepared};
 	std::atomic<VkResult> m_submitResult{VK_NOT_READY};

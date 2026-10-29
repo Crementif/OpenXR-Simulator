@@ -157,6 +157,14 @@ static std::string_view GamePhase(const control::Message& message)
 	return *phase->AsText();
 }
 
+static void CloseInput(std::ifstream& input)
+{
+	input.clear();
+	input.close();
+	if (!input)
+		throw std::runtime_error("Cannot close recording archive reader");
+}
+
 RecordingArchiveWriter::RecordingArchiveWriter(const std::filesystem::path& directory, const control::Message& start,
 											   const std::optional<control::Message>& gameOrigin)
 	: m_state(Initial(start))
@@ -177,26 +185,6 @@ RecordingArchiveWriter::RecordingArchiveWriter(const std::filesystem::path& dire
 	Write(start);
 	if (gameOrigin)
 		AppendGame(*gameOrigin, "begin");
-}
-
-void RecordingArchiveWriter::Write(const control::Message& message)
-{
-	if (m_failed || !m_output.is_open())
-		throw std::runtime_error("Recording archive writer is closed or failed");
-	auto normalized = message;
-	normalized.requestId = control::RequestId{1};
-	const auto bytes = control::Encode(normalized);
-	std::array<char, 8> header;
-	Put(std::span<char, 8>(header).first<4>(), static_cast<std::uint32_t>(bytes.size()));
-	Put(std::span<char, 8>(header).last<4>(), Checksum(bytes));
-	m_output.write(header.data(), header.size());
-	m_output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-	m_output.flush();
-	if (!m_output)
-	{
-		m_failed = true;
-		throw std::runtime_error("Cannot write and flush recording archive page");
-	}
 }
 
 std::uint64_t RecordingArchiveWriter::Append(const control::Message& message)
@@ -234,6 +222,26 @@ void RecordingArchiveWriter::Finish(const control::Message& stopped)
 	m_state = std::move(next);
 }
 
+void RecordingArchiveWriter::Write(const control::Message& message)
+{
+	if (m_failed || !m_output.is_open())
+		throw std::runtime_error("Recording archive writer is closed or failed");
+	auto normalized = message;
+	normalized.requestId = control::RequestId{1};
+	const auto bytes = control::Encode(normalized);
+	std::array<char, 8> header;
+	Put(std::span<char, 8>(header).first<4>(), static_cast<std::uint32_t>(bytes.size()));
+	Put(std::span<char, 8>(header).last<4>(), Checksum(bytes));
+	m_output.write(header.data(), header.size());
+	m_output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+	m_output.flush();
+	if (!m_output)
+	{
+		m_failed = true;
+		throw std::runtime_error("Cannot write and flush recording archive page");
+	}
+}
+
 RecordingArchiveReader::RecordingArchiveReader(const std::filesystem::path& directory)
 	: m_input(directory / "input.simxr", std::ios::binary)
 {
@@ -255,49 +263,6 @@ RecordingArchiveReader::RecordingArchiveReader(const std::filesystem::path& dire
 			throw std::runtime_error("SDK origin does not belong to the input capture");
 		m_state.game = AdvanceGame({}, page, "begin");
 	}
-}
-
-static void CloseInput(std::ifstream& input)
-{
-	input.clear();
-	input.close();
-	if (!input)
-		throw std::runtime_error("Cannot close recording archive reader");
-}
-
-std::optional<control::Message> RecordingArchiveReader::Read()
-{
-	std::array<char, 8> header;
-	m_input.read(header.data(), header.size());
-	const auto count = m_input.gcount();
-	if (m_input.bad() || (!m_input && !m_input.eof()))
-		throw std::runtime_error("Cannot read recording archive header");
-	if (count != static_cast<std::streamsize>(header.size()))
-	{
-		CloseInput(m_input);
-		m_state.truncated = count != 0;
-		m_end = true;
-		return {};
-	}
-	const auto length = Get(std::span<const char, 8>(header).first<4>());
-	if (length < control::HeaderSize || length > control::MaxPayload + control::HeaderSize)
-		throw std::runtime_error("Recording archive page exceeds its bound");
-	std::vector<std::byte> bytes(length);
-	m_input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-	if (!m_input)
-	{
-		if (m_input.bad() || !m_input.eof())
-			throw std::runtime_error("Cannot read recording archive page");
-		CloseInput(m_input);
-		m_state.truncated = m_end = true;
-		return {};
-	}
-	if (Checksum(bytes) != Get(std::span<const char, 8>(header).last<4>()))
-		throw std::runtime_error("Recording archive checksum mismatch");
-	auto decoded = control::Decode(bytes);
-	if (!decoded.message)
-		throw std::runtime_error("Malformed recording archive page");
-	return std::move(decoded.message);
 }
 
 std::optional<RecordingPage> RecordingArchiveReader::Next(std::stop_token stop)
@@ -342,4 +307,40 @@ std::optional<RecordingArchiveEvent> RecordingArchiveReader::NextEvent()
 	m_state = std::move(next);
 	return finish ? std::nullopt : std::optional<RecordingArchiveEvent>{std::move(page)};
 }
+
+std::optional<control::Message> RecordingArchiveReader::Read()
+{
+	std::array<char, 8> header;
+	m_input.read(header.data(), header.size());
+	const auto count = m_input.gcount();
+	if (m_input.bad() || (!m_input && !m_input.eof()))
+		throw std::runtime_error("Cannot read recording archive header");
+	if (count != static_cast<std::streamsize>(header.size()))
+	{
+		CloseInput(m_input);
+		m_state.truncated = count != 0;
+		m_end = true;
+		return {};
+	}
+	const auto length = Get(std::span<const char, 8>(header).first<4>());
+	if (length < control::HeaderSize || length > control::MaxPayload + control::HeaderSize)
+		throw std::runtime_error("Recording archive page exceeds its bound");
+	std::vector<std::byte> bytes(length);
+	m_input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+	if (!m_input)
+	{
+		if (m_input.bad() || !m_input.eof())
+			throw std::runtime_error("Cannot read recording archive page");
+		CloseInput(m_input);
+		m_state.truncated = m_end = true;
+		return {};
+	}
+	if (Checksum(bytes) != Get(std::span<const char, 8>(header).last<4>()))
+		throw std::runtime_error("Recording archive checksum mismatch");
+	auto decoded = control::Decode(bytes);
+	if (!decoded.message)
+		throw std::runtime_error("Malformed recording archive page");
+	return std::move(decoded.message);
+}
+
 } // namespace simxr::automation

@@ -18,13 +18,16 @@ public:
 	~HeadsetGraphics();
 	HeadsetGraphics(const HeadsetGraphics&) = delete;
 	HeadsetGraphics& operator=(const HeadsetGraphics&) = delete;
+
 	// The runtime outlives this device and any session using it.
 	void Open(OpenXrRuntime& runtime, bool validation = false);
 	bool Close();
-	std::uint32_t ValidationErrors() const;
 	bool Drain();
 	void PreserveNativeResources();
 	bool ResourcesPreserved() const;
+
+	std::uint32_t ValidationErrors() const;
+
 	VkInstance Instance() const;
 	VkPhysicalDevice PhysicalDevice() const;
 	VkDevice Device() const;
@@ -43,6 +46,7 @@ private:
 	static VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 													 VkDebugUtilsMessageTypeFlagsEXT types,
 													 const VkDebugUtilsMessengerCallbackDataEXT* message, void* owner);
+
 	VkInstance m_instance = VK_NULL_HANDLE;
 	OpenXrRuntime* m_runtime = nullptr;
 	VkDebugUtilsMessengerEXT m_messenger = VK_NULL_HANDLE;

@@ -469,29 +469,23 @@ WindowsSessionGraphics::WindowsSessionGraphics(HDC device, HGLRC context, std::s
 	m_native = std::make_unique<OpenGLBackend>(device, context, m_device->Device(), m_device->EnabledExtensions());
 }
 
-void WindowsSessionGraphics::Configure(const VulkanExternalIdentity& identity)
-{
-	m_device = std::make_unique<VulkanInspectionDevice>(identity, nullptr, true);
-	if (!m_device->ConsumerTimelineEnabled())
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Direct3D sharing requires Vulkan timeline semaphores");
-	m_delivery = std::make_unique<VulkanBackend>(m_device->Device(), 8, m_device->EnabledExtensions(), true);
-	m_inspection = std::make_unique<VulkanInspection>(identity, 8);
-	const auto configured = m_session->ConfigureCapturePool(
-		m_delivery->Reservations(), true,
-		[](const std::shared_ptr<const FrameOutput>& output, const FramePool& pool,
-		   std::shared_ptr<FrameReservation> reservation) {
-			const auto image = std::dynamic_pointer_cast<const VulkanInspectionFrame>(output);
-			if (!image)
-				return SnapshotAdmission::Unsupported;
-			return image->PromoteCaptureBudget(pool, std::move(reservation)) ? SnapshotAdmission::Accepted
-																			 : SnapshotAdmission::Capacity;
-		},
-		true, true);
-	if (XR_FAILED(configured) || XR_FAILED(m_session->EnableImageHistory()))
-		throw std::runtime_error("Cannot configure Direct3D frame retention");
-}
-
 WindowsSessionGraphics::~WindowsSessionGraphics() = default;
+
+XrResult WindowsSessionGraphics::Close()
+{
+	std::lock_guard close(m_closeMutex);
+	{
+		std::lock_guard submission(m_submissionMutex);
+		m_closing = true;
+	}
+	const auto drained = m_delivery->Drain(5000000000ULL);
+	if (drained != VK_SUCCESS && drained != VK_ERROR_DEVICE_LOST)
+		return VulkanGraphicsFailure(drained);
+	const auto inspected = m_inspection->Close();
+	if (inspected != VK_SUCCESS && inspected != VK_ERROR_DEVICE_LOST)
+		return VulkanGraphicsFailure(inspected);
+	return m_delivery->Close();
+}
 
 control::ImageCapabilities WindowsSessionGraphics::Capabilities() const noexcept
 {
@@ -514,19 +508,25 @@ XrResult WindowsSessionGraphics::EndFrame(const XrFrameEndInfo& info, const Swap
 		m_native);
 }
 
-XrResult WindowsSessionGraphics::Close()
+void WindowsSessionGraphics::Configure(const VulkanExternalIdentity& identity)
 {
-	std::lock_guard close(m_closeMutex);
-	{
-		std::lock_guard submission(m_submissionMutex);
-		m_closing = true;
-	}
-	const auto drained = m_delivery->Drain(5000000000ULL);
-	if (drained != VK_SUCCESS && drained != VK_ERROR_DEVICE_LOST)
-		return VulkanGraphicsFailure(drained);
-	const auto inspected = m_inspection->Close();
-	if (inspected != VK_SUCCESS && inspected != VK_ERROR_DEVICE_LOST)
-		return VulkanGraphicsFailure(inspected);
-	return m_delivery->Close();
+	m_device = std::make_unique<VulkanInspectionDevice>(identity, nullptr, true);
+	if (!m_device->ConsumerTimelineEnabled())
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Direct3D sharing requires Vulkan timeline semaphores");
+	m_delivery = std::make_unique<VulkanBackend>(m_device->Device(), 8, m_device->EnabledExtensions(), true);
+	m_inspection = std::make_unique<VulkanInspection>(identity, 8);
+	const auto configured = m_session->ConfigureCapturePool(
+		m_delivery->Reservations(), true,
+		[](const std::shared_ptr<const FrameOutput>& output, const FramePool& pool,
+		   std::shared_ptr<FrameReservation> reservation) {
+			const auto image = std::dynamic_pointer_cast<const VulkanInspectionFrame>(output);
+			if (!image)
+				return SnapshotAdmission::Unsupported;
+			return image->PromoteCaptureBudget(pool, std::move(reservation)) ? SnapshotAdmission::Accepted
+																			 : SnapshotAdmission::Capacity;
+		},
+		true, true);
+	if (XR_FAILED(configured) || XR_FAILED(m_session->EnableImageHistory()))
+		throw std::runtime_error("Cannot configure Direct3D frame retention");
 }
 } // namespace simxr

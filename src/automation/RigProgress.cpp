@@ -144,18 +144,6 @@ void RigProgress::Print(std::string line)
 	m_result.output.push_back(std::move(line));
 }
 
-void RigProgress::BeginObservation()
-{
-	if (m_background && m_deadline == std::chrono::steady_clock::time_point::max())
-		m_deadline = std::chrono::steady_clock::now() + m_observationTimeout;
-}
-
-void RigProgress::EndObservation()
-{
-	if (m_background)
-		m_deadline = std::chrono::steady_clock::time_point::max();
-}
-
 void RigProgress::ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed, std::uint64_t skipped,
 								std::uint64_t pairs, std::uint64_t gaps)
 {
@@ -173,6 +161,18 @@ void RigProgress::MissedCadences(std::uint64_t count)
 	std::lock_guard lock(m_mutex);
 	m_coverage.report.missedCadences += count;
 	m_result.monitor.missedCadences = m_coverage.report.missedCadences;
+}
+
+void RigProgress::BeginObservation()
+{
+	if (m_background && m_deadline == std::chrono::steady_clock::time_point::max())
+		m_deadline = std::chrono::steady_clock::now() + m_observationTimeout;
+}
+
+void RigProgress::EndObservation()
+{
+	if (m_background)
+		m_deadline = std::chrono::steady_clock::time_point::max();
 }
 
 RigPhase RigProgress::Phase() const

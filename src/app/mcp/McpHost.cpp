@@ -79,39 +79,6 @@ void McpHost::Retry()
 	m_error.clear();
 }
 
-void McpHost::Start()
-{
-	auto running = std::make_unique<Running>();
-	const bool initial = std::exchange(m_initialPending, false);
-	if (m_startupRegistration)
-		running->registration = std::move(m_startupRegistration);
-	else if (initial && m_bootstrapDescriptor != -2)
-		running->registration = std::make_unique<McpInstanceRegistration>(m_bootstrapDescriptor);
-	else if (!initial)
-		running->registration = std::make_unique<McpInstanceRegistration>(-1);
-	const auto port = initial ? *m_initialPort : std::uint16_t{0};
-	running->token = initial ? std::move(m_initialToken) : NewMcpIdentifier();
-	running->application = std::make_unique<McpApplication>(m_windowless);
-	running->server = std::make_unique<McpServer>(*running->application, port, running->token);
-	if (running->registration)
-		running->registration->Publish({running->server->Port(), running->token});
-	running->httpConfiguration = Json({{"url", "http://127.0.0.1:" + std::to_string(running->server->Port()) + "/mcp"},
-									   {"headers", {{"Authorization", "Bearer " + running->token}}}})
-									 .dump(2);
-	std::printf("MCP listening on 127.0.0.1:%u\n", running->server->Port());
-	std::fflush(stdout);
-	m_running = std::move(running);
-}
-
-void McpHost::Retire()
-{
-	m_stopped.store(false);
-	m_stopper = std::thread([this, running = std::move(m_running)]() mutable {
-		running.reset();
-		m_stopped.store(true);
-	});
-}
-
 void McpHost::Update()
 {
 	if (m_stopper.joinable() && m_stopped.load())
@@ -156,5 +123,38 @@ McpUiState McpHost::State() const
 		state.httpConfiguration = m_running->httpConfiguration;
 	}
 	return state;
+}
+
+void McpHost::Start()
+{
+	auto running = std::make_unique<Running>();
+	const bool initial = std::exchange(m_initialPending, false);
+	if (m_startupRegistration)
+		running->registration = std::move(m_startupRegistration);
+	else if (initial && m_bootstrapDescriptor != -2)
+		running->registration = std::make_unique<McpInstanceRegistration>(m_bootstrapDescriptor);
+	else if (!initial)
+		running->registration = std::make_unique<McpInstanceRegistration>(-1);
+	const auto port = initial ? *m_initialPort : std::uint16_t{0};
+	running->token = initial ? std::move(m_initialToken) : NewMcpIdentifier();
+	running->application = std::make_unique<McpApplication>(m_windowless);
+	running->server = std::make_unique<McpServer>(*running->application, port, running->token);
+	if (running->registration)
+		running->registration->Publish({running->server->Port(), running->token});
+	running->httpConfiguration = Json({{"url", "http://127.0.0.1:" + std::to_string(running->server->Port()) + "/mcp"},
+									   {"headers", {{"Authorization", "Bearer " + running->token}}}})
+									 .dump(2);
+	std::printf("MCP listening on 127.0.0.1:%u\n", running->server->Port());
+	std::fflush(stdout);
+	m_running = std::move(running);
+}
+
+void McpHost::Retire()
+{
+	m_stopped.store(false);
+	m_stopper = std::thread([this, running = std::move(m_running)]() mutable {
+		running.reset();
+		m_stopped.store(true);
+	});
 }
 } // namespace simxr::app

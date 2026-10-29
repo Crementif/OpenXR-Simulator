@@ -57,30 +57,32 @@ class InputHistory
 {
 public:
 	explicit InputHistory(std::size_t capacity = 32768, std::size_t byteBudget = 64 * 1024 * 1024);
+
+	const InputSample* Find(std::uint64_t sequence) const noexcept;
 	// Owned record storage, counting shared blocks once and including allocation allowances.
 	std::size_t RetainedBytes() const noexcept;
 	std::size_t ByteBudget() const noexcept;
+
 	// Body and tracker values equal to the previous sample's reuse its block.
 	std::uint64_t Append(InputSample sample);
-	const InputSample* Find(std::uint64_t sequence) const noexcept;
 	void Clear() noexcept;
 
 private:
-	std::vector<InputSample> m_samples;
-	std::uint64_t m_next = 1;
-	std::size_t m_size = 0;
-
 	struct Block
 	{
 		std::size_t bytes = 0, references = 0;
 	};
 
-	std::map<const void*, Block> m_blocks;
-	std::size_t m_bytes = 0, m_byteBudget = 0;
 	void Retain(const void* identity, std::size_t bytes);
 	void Release(const void* identity) noexcept;
 	void ReleaseSample(const InputSample& sample) noexcept;
 	void Evict() noexcept;
+
+	std::vector<InputSample> m_samples;
+	std::uint64_t m_next = 1;
+	std::size_t m_size = 0;
+	std::map<const void*, Block> m_blocks;
+	std::size_t m_bytes = 0, m_byteBudget = 0;
 };
 
 // A take with the same structure the runtime recorder exports: the first sample

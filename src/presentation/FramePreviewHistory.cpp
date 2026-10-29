@@ -39,6 +39,14 @@ void FramePreviewHistory::Configure(std::uint64_t bytes)
 	m_changed.notify_all();
 }
 
+void FramePreviewHistory::ConfigureRam(std::uint64_t bytes)
+{
+	if (bytes < (std::uint64_t{MinMiB} << 20) || bytes > (std::uint64_t{MaxMiB} << 20) || bytes % SlotBytes)
+		throw std::invalid_argument("RAM history budget must be 64–16384 MiB in multiples of 4 MiB");
+	m_ramLimit.store(bytes);
+	TrimRam();
+}
+
 void FramePreviewHistory::CloseAdmission()
 {
 	{
@@ -49,36 +57,11 @@ void FramePreviewHistory::CloseAdmission()
 	m_changed.notify_all();
 }
 
-void FramePreviewHistory::ConfigureRam(std::uint64_t bytes)
-{
-	if (bytes < (std::uint64_t{MinMiB} << 20) || bytes > (std::uint64_t{MaxMiB} << 20) || bytes % SlotBytes)
-		throw std::invalid_argument("RAM history budget must be 64–16384 MiB in multiples of 4 MiB");
-	m_ramLimit.store(bytes);
-	TrimRam();
-}
-
 std::string FramePreviewHistory::Error() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_error.empty() && m_gpuOnly ? "Vulkan H.264 encode/decode unavailable; retaining GPU history only"
 										: m_error;
-}
-
-std::shared_ptr<FramePreviewHistory::Entry> FramePreviewHistory::EvictRaw()
-{
-	std::lock_guard lock(m_mutex);
-	for (auto it = m_recent.begin(); it != m_recent.end(); ++it)
-	{
-		const auto& output = (*it)->preview.output;
-		if (output && !output->CanArchive())
-		{
-			auto retired = std::move(*it);
-			m_recent.erase(it);
-			m_frames.erase(retired->preview.key);
-			return retired;
-		}
-	}
-	return {};
 }
 
 std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key, bool waitForSpace)
@@ -192,6 +175,98 @@ void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput
 	m_changed.notify_one();
 }
 
+FramePreview FramePreviewHistory::Find(FrameKey key)
+{
+	std::lock_guard lock(m_mutex);
+	const auto found = m_frames.find(key);
+	if (found == m_frames.end() || !found->second->preview.submitted)
+		return {};
+	const auto& entry = found->second;
+	auto result = entry->preview;
+	if (!result.output && !result.clear)
+	{
+		if (m_decoded.key == key && m_decoded.output)
+			result = m_decoded;
+		else if (entry->archive)
+		{
+			m_requested = key;
+			m_changed.notify_one();
+			result.pending = true;
+		}
+		else
+			return {};
+	}
+	// A reader pins the same charged entry as the image's CPU state. Never store
+	// this alias inside Entry itself, which would create an ownership cycle.
+	if (entry->hasTracking)
+		result.tracking = {entry, &entry->tracking};
+	return result;
+}
+
+std::vector<PreviewClipFrame> FramePreviewHistory::RetainRange(FrameKey first, FrameKey last) const
+{
+	if (first.generation != last.generation || !first.frame.value || last.frame.value < first.frame.value ||
+		last.frame.value - first.frame.value >= 1000000)
+		throw std::invalid_argument("Choose a valid clip range of at most one million frames.");
+	std::vector<PreviewClipFrame> frames;
+	frames.reserve(static_cast<std::size_t>(last.frame.value - first.frame.value + 1));
+	std::lock_guard lock(m_mutex);
+	for (auto id = first.frame.value;; ++id)
+	{
+		const auto found = m_frames.find({first.generation, {id}});
+		if (found == m_frames.end() || !found->second->preview.submitted)
+			throw std::runtime_error("Some frames in this clip are no longer saved.");
+		const auto& entry = found->second;
+		frames.push_back({entry->preview.key, entry->time, entry->period, entry->preview.output, entry->archive, entry,
+						  entry->preview.clear});
+		if (id == last.frame.value)
+			break;
+	}
+	return frames;
+}
+
+std::shared_ptr<const TrackingSnapshot> FramePreviewHistory::Tracking(FrameKey key) const
+{
+	std::lock_guard lock(m_mutex);
+	const auto found = m_frames.find(key);
+	if (found == m_frames.end() || !found->second->hasTracking)
+		return {};
+	return {found->second, &found->second->tracking};
+}
+
+std::vector<FrameKey> FramePreviewHistory::Frames(SessionGeneration generation, std::size_t limit) const
+{
+	std::vector<FrameKey> frames;
+	std::lock_guard lock(m_mutex);
+	frames.reserve(std::min(m_frames.size(), limit));
+	for (auto it = m_frames.rbegin(); it != m_frames.rend() && frames.size() < limit; ++it)
+	{
+		const auto& entry = it->second;
+		if (entry->preview.submitted && entry->preview.key.generation == generation &&
+			(entry->preview.output || entry->archive || entry->preview.clear))
+			frames.push_back(entry->preview.key);
+	}
+	std::reverse(frames.begin(), frames.end());
+	return frames;
+}
+
+std::shared_ptr<FramePreviewHistory::Entry> FramePreviewHistory::EvictRaw()
+{
+	std::lock_guard lock(m_mutex);
+	for (auto it = m_recent.begin(); it != m_recent.end(); ++it)
+	{
+		const auto& output = (*it)->preview.output;
+		if (output && !output->CanArchive())
+		{
+			auto retired = std::move(*it);
+			m_recent.erase(it);
+			m_frames.erase(retired->preview.key);
+			return retired;
+		}
+	}
+	return {};
+}
+
 void FramePreviewHistory::TrimRam()
 {
 	{
@@ -224,81 +299,6 @@ void FramePreviewHistory::TrimRam()
 				decoded = std::exchange(m_decoded, {});
 		}
 	}
-}
-
-std::vector<FrameKey> FramePreviewHistory::Frames(SessionGeneration generation, std::size_t limit) const
-{
-	std::vector<FrameKey> frames;
-	std::lock_guard lock(m_mutex);
-	frames.reserve(std::min(m_frames.size(), limit));
-	for (auto it = m_frames.rbegin(); it != m_frames.rend() && frames.size() < limit; ++it)
-	{
-		const auto& entry = it->second;
-		if (entry->preview.submitted && entry->preview.key.generation == generation &&
-			(entry->preview.output || entry->archive || entry->preview.clear))
-			frames.push_back(entry->preview.key);
-	}
-	std::reverse(frames.begin(), frames.end());
-	return frames;
-}
-
-std::shared_ptr<const TrackingSnapshot> FramePreviewHistory::Tracking(FrameKey key) const
-{
-	std::lock_guard lock(m_mutex);
-	const auto found = m_frames.find(key);
-	if (found == m_frames.end() || !found->second->hasTracking)
-		return {};
-	return {found->second, &found->second->tracking};
-}
-
-std::vector<PreviewClipFrame> FramePreviewHistory::RetainRange(FrameKey first, FrameKey last) const
-{
-	if (first.generation != last.generation || !first.frame.value || last.frame.value < first.frame.value ||
-		last.frame.value - first.frame.value >= 1000000)
-		throw std::invalid_argument("Choose a valid clip range of at most one million frames.");
-	std::vector<PreviewClipFrame> frames;
-	frames.reserve(static_cast<std::size_t>(last.frame.value - first.frame.value + 1));
-	std::lock_guard lock(m_mutex);
-	for (auto id = first.frame.value;; ++id)
-	{
-		const auto found = m_frames.find({first.generation, {id}});
-		if (found == m_frames.end() || !found->second->preview.submitted)
-			throw std::runtime_error("Some frames in this clip are no longer saved.");
-		const auto& entry = found->second;
-		frames.push_back({entry->preview.key, entry->time, entry->period, entry->preview.output, entry->archive, entry,
-						  entry->preview.clear});
-		if (id == last.frame.value)
-			break;
-	}
-	return frames;
-}
-
-FramePreview FramePreviewHistory::Find(FrameKey key)
-{
-	std::lock_guard lock(m_mutex);
-	const auto found = m_frames.find(key);
-	if (found == m_frames.end() || !found->second->preview.submitted)
-		return {};
-	const auto& entry = found->second;
-	auto result = entry->preview;
-	if (!result.output && !result.clear)
-	{
-		if (m_decoded.key == key && m_decoded.output)
-			result = m_decoded;
-		else if (entry->archive)
-		{
-			m_requested = key;
-			m_changed.notify_one();
-			result.pending = true;
-		}
-		else
-			return {};
-	}
-	// A reader pins the same charged entry as the image's CPU state. Never store
-	// this alias inside Entry itself, which would create an ownership cycle.
-	if (entry->hasTracking)
-		result.tracking = {entry, &entry->tracking};
-	return result;
 }
 
 void FramePreviewHistory::Run() noexcept

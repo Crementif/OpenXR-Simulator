@@ -36,27 +36,6 @@ HeadsetTrackers::~HeadsetTrackers()
 	Close();
 }
 
-void HeadsetTrackers::Close()
-{
-	if (m_runtime.ResourcesPreserved())
-		return;
-	for (const auto& role : m_roles)
-		if (role.space)
-			xrDestroySpace(role.space);
-	for (const auto& device : m_devices)
-		if (device.space)
-			xrDestroySpace(device.space);
-	m_devices.clear();
-	m_roles.clear();
-	m_enumerate = nullptr;
-	m_session = XR_NULL_HANDLE;
-}
-
-bool HeadsetTrackers::Available() const
-{
-	return m_enumerate != nullptr;
-}
-
 void HeadsetTrackers::Open(XrSession session, XrActionSet actionSet)
 {
 	if (m_session)
@@ -123,30 +102,25 @@ void HeadsetTrackers::Open(XrSession session, XrActionSet actionSet)
 			"Suggest physical tracker bindings");
 }
 
-std::string HeadsetTrackers::PathString(XrPath path) const
+void HeadsetTrackers::Close()
 {
-	if (!path)
-		return {};
-	std::array<char, XR_MAX_PATH_LENGTH> text{};
-	std::uint32_t length = 0;
-	CheckXr(xrPathToString(m_runtime.Instance(), path, text.size(), &length, text.data()),
-			"Read physical tracker path");
-	if (length < 2 || length > text.size() || text[length - 1] != '\0' || std::strlen(text.data()) != length - 1)
-		throw std::runtime_error("Physical runtime returned an invalid tracker path");
-	return {text.data(), length - 1};
+	if (m_runtime.ResourcesPreserved())
+		return;
+	for (const auto& role : m_roles)
+		if (role.space)
+			xrDestroySpace(role.space);
+	for (const auto& device : m_devices)
+		if (device.space)
+			xrDestroySpace(device.space);
+	m_devices.clear();
+	m_roles.clear();
+	m_enumerate = nullptr;
+	m_session = XR_NULL_HANDLE;
 }
 
-std::vector<XrViveTrackerPathsHTCX> HeadsetTrackers::Enumerate() const
+bool HeadsetTrackers::Available() const
 {
-	std::array<XrViveTrackerPathsHTCX, MaxTrackerDevices> paths;
-	for (auto& path : paths)
-		path = {XR_TYPE_VIVE_TRACKER_PATHS_HTCX};
-	std::uint32_t count = 0;
-	const auto result = m_enumerate(m_runtime.Instance(), paths.size(), &count, paths.data());
-	if (result == XR_ERROR_SIZE_INSUFFICIENT || count > paths.size())
-		throw std::runtime_error("Physical tracker inventory exceeds the 64-device limit");
-	CheckXr(result, "Enumerate physical trackers");
-	return {paths.begin(), paths.begin() + count};
+	return m_enumerate != nullptr;
 }
 
 std::vector<PhysicalTrackerSample> HeadsetTrackers::Sample(XrTime time, XrSpace baseSpace, bool locate)
@@ -196,5 +170,31 @@ std::vector<PhysicalTrackerSample> HeadsetTrackers::Sample(XrTime time, XrSpace 
 	std::sort(samples.begin(), samples.end(),
 			  [](const auto& left, const auto& right) { return left.persistentPath < right.persistentPath; });
 	return samples;
+}
+
+std::string HeadsetTrackers::PathString(XrPath path) const
+{
+	if (!path)
+		return {};
+	std::array<char, XR_MAX_PATH_LENGTH> text{};
+	std::uint32_t length = 0;
+	CheckXr(xrPathToString(m_runtime.Instance(), path, text.size(), &length, text.data()),
+			"Read physical tracker path");
+	if (length < 2 || length > text.size() || text[length - 1] != '\0' || std::strlen(text.data()) != length - 1)
+		throw std::runtime_error("Physical runtime returned an invalid tracker path");
+	return {text.data(), length - 1};
+}
+
+std::vector<XrViveTrackerPathsHTCX> HeadsetTrackers::Enumerate() const
+{
+	std::array<XrViveTrackerPathsHTCX, MaxTrackerDevices> paths;
+	for (auto& path : paths)
+		path = {XR_TYPE_VIVE_TRACKER_PATHS_HTCX};
+	std::uint32_t count = 0;
+	const auto result = m_enumerate(m_runtime.Instance(), paths.size(), &count, paths.data());
+	if (result == XR_ERROR_SIZE_INSUFFICIENT || count > paths.size())
+		throw std::runtime_error("Physical tracker inventory exceeds the 64-device limit");
+	CheckXr(result, "Enumerate physical trackers");
+	return {paths.begin(), paths.begin() + count};
 }
 } // namespace simxr::headset

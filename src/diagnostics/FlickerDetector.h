@@ -30,6 +30,7 @@ public:
 	void ObservePaint(uint64_t generation, bool paintedPreview) noexcept;
 	void ObserveUi(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t generation,
 				   uint64_t frame, const UiFrameInfo& info) noexcept;
+
 	DiagnosticsStatus Status() const;
 	void Close();
 
@@ -39,6 +40,7 @@ private:
 		File,
 		Observation
 	};
+
 	template<typename Observation>
 	void ApplyObservation(Observation&& observation) noexcept;
 	DiagnosticsStatus Snapshot() const;

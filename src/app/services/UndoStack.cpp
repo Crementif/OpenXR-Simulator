@@ -3,12 +3,6 @@
 
 namespace simxr::app
 {
-void UndoStack::Observe(const ObservedSetup& observed)
-{
-	if (!m_open)
-		m_authored = State{observed.values.tracking, observed.values.proportions};
-}
-
 void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edit)
 {
 	const bool pose = std::any_of(edit.commands.begin(), edit.commands.end(), [](const SimulationCommand& command) {
@@ -86,93 +80,10 @@ void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edi
 	m_open = edit.continuous;
 }
 
-void UndoStack::Clear()
+void UndoStack::Observe(const ObservedSetup& observed)
 {
-	m_entries.clear();
-	m_authored.reset();
-	m_open = false;
-}
-
-std::vector<UndoStack::Change> UndoStack::Changes() const
-{
-	std::vector<Change> result;
-	for (const auto& entry : m_entries)
-		result.push_back({entry.label.empty() ? entry.description : entry.label, entry.time});
-	return result;
-}
-
-std::string UndoStack::Describe(const State& before, const State& after)
-{
-	const auto moved = [](const XrPosef& a, const XrPosef& b) {
-		const float distance =
-			std::hypot(a.position.x - b.position.x, a.position.y - b.position.y, a.position.z - b.position.z);
-		const float dot = a.orientation.x * b.orientation.x + a.orientation.y * b.orientation.y +
-						  a.orientation.z * b.orientation.z + a.orientation.w * b.orientation.w;
-		return distance > .0005f || std::abs(dot) < .99999f;
-	};
-	const auto movedOptional = [&](const std::optional<XrPosef>& a, const std::optional<XrPosef>& b) {
-		return a.has_value() != b.has_value() || (a && moved(*a, *b));
-	};
-	const auto& from = before.tracking;
-	const auto& to = after.tracking;
-	// Moving the player moves everything that follows it; name the cause. The first rig edit only
-	// starts sending a root pose, which moves nothing.
-	if (from.body.rootPose && to.body.rootPose && moved(*from.body.rootPose, *to.body.rootPose))
-		return "Player moved";
-	if (from.body.preset != to.body.preset)
-		return "Body pose changed";
-	char text[64];
-	const auto measure = [&](const char* name, float a, float b) {
-		std::snprintf(text, sizeof(text), "%s %.2f \u2192 %.2f m", name, a, b);
-		return std::string(text);
-	};
-	if (before.proportions.height != after.proportions.height)
-		return measure("Height", before.proportions.height, after.proportions.height);
-	if (before.proportions.shoulderWidth != after.proportions.shoulderWidth)
-		return measure("Shoulder width", before.proportions.shoulderWidth, after.proportions.shoulderWidth);
-	if (before.proportions.hipWidth != after.proportions.hipWidth)
-		return measure("Hip width", before.proportions.hipWidth, after.proportions.hipWidth);
-	std::vector<std::string> names;
-	bool posed = false;
-	const auto note = [&](std::string name, bool pose) {
-		names.push_back(std::move(name));
-		posed |= pose;
-	};
-	if (moved(from.head.pose, to.head.pose))
-		note("Head", true);
-	for (std::size_t hand = 0; hand < 2; ++hand)
-	{
-		const auto& a = from.controllers[hand];
-		const auto& b = to.controllers[hand];
-		const bool pose = moved(a.pose.pose, b.pose.pose);
-		if (pose || a.connected != b.connected)
-			note(hand ? "Right hand" : "Left hand", pose);
-	}
-	if (from.trackers.size() != to.trackers.size())
-		note("Tracker inventory", false);
-	for (std::size_t slot = 0; slot < std::min(from.trackers.size(), to.trackers.size()); ++slot)
-	{
-		const auto& a = from.trackers[slot];
-		const auto& b = to.trackers[slot];
-		const bool pose = a.anchor != b.anchor || movedOptional(a.poseOverride, b.poseOverride) ||
-						  movedOptional(a.jointOffset, b.jointOffset);
-		if (pose || a.poseFlags != b.poseFlags || a.identity != b.identity || a.sourcePath != b.sourcePath ||
-			a.connected != b.connected || a.tracked != b.tracked || a.role != b.role)
-			note("Tracker " + std::to_string(slot + 1), pose);
-	}
-	if (from.gaze.yaw != to.gaze.yaw || from.gaze.pitch != to.gaze.pitch || from.gaze.available != to.gaze.available ||
-		from.gaze.tracked != to.gaze.tracked)
-		note("Eye gaze", false);
-	if (from.body.active != to.body.active || from.body.confidence != to.body.confidence)
-		note("Body", false);
-	const char* verb = posed ? " moved" : " changed";
-	if (names.empty())
-		return "No change";
-	if (names.size() == 1)
-		return names.front() + verb;
-	if (names.size() == 2)
-		return names[0] + " and " + names[1] + verb;
-	return std::to_string(names.size()) + " devices" + verb;
+	if (!m_open)
+		m_authored = State{observed.values.tracking, observed.values.proportions};
 }
 
 std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, std::optional<CommandSource> source,
@@ -265,5 +176,94 @@ std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, s
 	m_authored = std::move(restored);
 	m_open = false;
 	return result;
+}
+
+void UndoStack::Clear()
+{
+	m_entries.clear();
+	m_authored.reset();
+	m_open = false;
+}
+
+std::vector<UndoStack::Change> UndoStack::Changes() const
+{
+	std::vector<Change> result;
+	for (const auto& entry : m_entries)
+		result.push_back({entry.label.empty() ? entry.description : entry.label, entry.time});
+	return result;
+}
+
+std::string UndoStack::Describe(const State& before, const State& after)
+{
+	const auto moved = [](const XrPosef& a, const XrPosef& b) {
+		const float distance =
+			std::hypot(a.position.x - b.position.x, a.position.y - b.position.y, a.position.z - b.position.z);
+		const float dot = a.orientation.x * b.orientation.x + a.orientation.y * b.orientation.y +
+						  a.orientation.z * b.orientation.z + a.orientation.w * b.orientation.w;
+		return distance > .0005f || std::abs(dot) < .99999f;
+	};
+	const auto movedOptional = [&](const std::optional<XrPosef>& a, const std::optional<XrPosef>& b) {
+		return a.has_value() != b.has_value() || (a && moved(*a, *b));
+	};
+	const auto& from = before.tracking;
+	const auto& to = after.tracking;
+	// Moving the player moves everything that follows it; name the cause. The first rig edit only
+	// starts sending a root pose, which moves nothing.
+	if (from.body.rootPose && to.body.rootPose && moved(*from.body.rootPose, *to.body.rootPose))
+		return "Player moved";
+	if (from.body.preset != to.body.preset)
+		return "Body pose changed";
+	char text[64];
+	const auto measure = [&](const char* name, float a, float b) {
+		std::snprintf(text, sizeof(text), "%s %.2f \u2192 %.2f m", name, a, b);
+		return std::string(text);
+	};
+	if (before.proportions.height != after.proportions.height)
+		return measure("Height", before.proportions.height, after.proportions.height);
+	if (before.proportions.shoulderWidth != after.proportions.shoulderWidth)
+		return measure("Shoulder width", before.proportions.shoulderWidth, after.proportions.shoulderWidth);
+	if (before.proportions.hipWidth != after.proportions.hipWidth)
+		return measure("Hip width", before.proportions.hipWidth, after.proportions.hipWidth);
+	std::vector<std::string> names;
+	bool posed = false;
+	const auto note = [&](std::string name, bool pose) {
+		names.push_back(std::move(name));
+		posed |= pose;
+	};
+	if (moved(from.head.pose, to.head.pose))
+		note("Head", true);
+	for (std::size_t hand = 0; hand < 2; ++hand)
+	{
+		const auto& a = from.controllers[hand];
+		const auto& b = to.controllers[hand];
+		const bool pose = moved(a.pose.pose, b.pose.pose);
+		if (pose || a.connected != b.connected)
+			note(hand ? "Right hand" : "Left hand", pose);
+	}
+	if (from.trackers.size() != to.trackers.size())
+		note("Tracker inventory", false);
+	for (std::size_t slot = 0; slot < std::min(from.trackers.size(), to.trackers.size()); ++slot)
+	{
+		const auto& a = from.trackers[slot];
+		const auto& b = to.trackers[slot];
+		const bool pose = a.anchor != b.anchor || movedOptional(a.poseOverride, b.poseOverride) ||
+						  movedOptional(a.jointOffset, b.jointOffset);
+		if (pose || a.poseFlags != b.poseFlags || a.identity != b.identity || a.sourcePath != b.sourcePath ||
+			a.connected != b.connected || a.tracked != b.tracked || a.role != b.role)
+			note("Tracker " + std::to_string(slot + 1), pose);
+	}
+	if (from.gaze.yaw != to.gaze.yaw || from.gaze.pitch != to.gaze.pitch || from.gaze.available != to.gaze.available ||
+		from.gaze.tracked != to.gaze.tracked)
+		note("Eye gaze", false);
+	if (from.body.active != to.body.active || from.body.confidence != to.body.confidence)
+		note("Body", false);
+	const char* verb = posed ? " moved" : " changed";
+	if (names.empty())
+		return "No change";
+	if (names.size() == 1)
+		return names.front() + verb;
+	if (names.size() == 2)
+		return names[0] + " and " + names[1] + verb;
+	return std::to_string(names.size()) + " devices" + verb;
 }
 } // namespace simxr::app

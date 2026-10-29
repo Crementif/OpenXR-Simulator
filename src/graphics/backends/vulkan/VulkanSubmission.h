@@ -67,6 +67,7 @@ private:
 	void BeginTiming();
 	void EndTiming();
 	void ObserveTiming() const noexcept;
+
 	std::unique_ptr<Resources> m_resources;
 	std::atomic<bool> m_attempted{false};
 	std::atomic<bool> m_ready{false};
@@ -93,6 +94,13 @@ private:
 	friend class VulkanInspection;
 	friend class VulkanInspectionTransfer;
 	friend class VulkanInspectionWork;
+	enum class InspectionClaim
+	{
+		Available,
+		Prepared,
+		Committed
+	};
+
 	explicit VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views = {});
 	VkResult Wait(std::uint64_t timeout) const noexcept;
 	std::shared_ptr<VulkanFrameSync> InspectionSync() const;
@@ -100,14 +108,9 @@ private:
 	bool ClaimInspection();
 	void CancelInspection() noexcept;
 	void CommitInspection() noexcept;
+
 	std::shared_ptr<VulkanSubmission> m_submission;
 	std::mutex m_inspectionMutex;
-	enum class InspectionClaim
-	{
-		Available,
-		Prepared,
-		Committed
-	};
 	InspectionClaim m_inspection = InspectionClaim::Available;
 };
 } // namespace simxr

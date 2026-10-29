@@ -29,6 +29,7 @@ public:
 	~LinuxInstance();
 	LinuxInstance(const LinuxInstance&) = delete;
 	LinuxInstance& operator=(const LinuxInstance&) = delete;
+
 	const LegacyInput& Input() const noexcept;
 	void Log(const std::string& message);
 	void Close();
@@ -39,6 +40,7 @@ public:
 
 private:
 	friend class LinuxRuntime;
+
 	LegacyInput m_input;
 	const std::shared_ptr<const PoseSequence> m_startupSequence;
 	RuntimeLog m_log;
@@ -68,22 +70,27 @@ public:
 	~LinuxRuntime();
 	LinuxRuntime(const LinuxRuntime&) = delete;
 	LinuxRuntime& operator=(const LinuxRuntime&) = delete;
+
 	static const ExtensionRegistry& Extensions();
+	static RuntimeTime SessionTime(const SessionBinding& session);
+
 	Runtime& Core() noexcept;
 	std::recursive_mutex& Mutex() noexcept;
+
 	InstanceRef FindInstance(XrInstance handle) const;
 	SessionRef FindSession(XrSession handle) const;
 	InstanceRef CurrentInstance() const;
 	SessionRef CurrentSession() const;
+
 	XrResult CreateInstance(const XrInstanceCreateInfo* info, XrInstance* output);
 	XrResult DestroyInstance(XrInstance handle);
 	XrResult CreateSession(XrInstance owner, const XrSessionCreateInfo* info, XrSession* output);
-	XrResult DestroySession(XrSession handle);
 	XrResult BeginSession(XrSession handle, const XrSessionBeginInfo* info);
 	XrResult EndSession(XrSession handle);
+	XrResult DestroySession(XrSession handle);
+
 	void StartControlEndpoint();
 	bool Shutdown();
-	static RuntimeTime SessionTime(const SessionBinding& session);
 
 private:
 	void CloseControlEndpoint() noexcept;

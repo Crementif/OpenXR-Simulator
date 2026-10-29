@@ -94,94 +94,6 @@ bool AppPicker::DiscoveryStopped() const noexcept
 	return m_workerExited.load();
 }
 
-std::string AppPicker::Refresh()
-{
-	try
-	{
-		if (m_workerFailed.exchange(false) && m_worker.joinable())
-			m_worker.join();
-		if (!m_worker.joinable())
-		{
-			m_workerExited.store(false);
-			try
-			{
-				m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
-			}
-			catch (...)
-			{
-				m_workerExited.store(true);
-				throw;
-			}
-		}
-		{
-			std::lock_guard lock(m_mutex);
-			++m_requested;
-		}
-		m_loading = true;
-		m_discoveryFailed = false;
-		m_running.clear();
-		m_changed.notify_all();
-		return {};
-	}
-	catch (const std::exception& error)
-	{
-		m_loading = false;
-		m_discoveryFailed = true;
-		return error.what();
-	}
-}
-
-void AppPicker::Run(std::stop_token stop) noexcept
-{
-	struct ExitSignal
-	{
-		std::atomic<bool>& exited;
-
-		~ExitSignal()
-		{
-			exited.store(true);
-		}
-	} exitSignal{m_workerExited};
-
-	try
-	{
-		std::uint64_t observed = 0;
-		while (!stop.stop_requested())
-		{
-			std::uint64_t request = 0;
-			{
-				std::unique_lock lock(m_mutex);
-				m_changed.wait(lock, stop, [&] { return m_requested != observed; });
-				if (stop.stop_requested())
-					return;
-				request = observed = m_requested;
-			}
-			DiscoveryResult result;
-			try
-			{
-				result.apps = DiscoverRunningApps(std::chrono::milliseconds(150), stop);
-			}
-			catch (const std::exception& error)
-			{
-				result.error = error.what();
-			}
-			catch (...)
-			{
-				result.error = "Application discovery failed";
-			}
-			if (stop.stop_requested())
-				return;
-			std::lock_guard lock(m_mutex);
-			if (request == m_requested)
-				m_result = std::move(result);
-		}
-	}
-	catch (...)
-	{
-		m_workerFailed.store(true);
-	}
-}
-
 AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
 								ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session,
 								float maximumWidth, bool compact)
@@ -346,5 +258,93 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		choice.disconnect = true;
 	ImGui::EndPopup();
 	return choice;
+}
+
+std::string AppPicker::Refresh()
+{
+	try
+	{
+		if (m_workerFailed.exchange(false) && m_worker.joinable())
+			m_worker.join();
+		if (!m_worker.joinable())
+		{
+			m_workerExited.store(false);
+			try
+			{
+				m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
+			}
+			catch (...)
+			{
+				m_workerExited.store(true);
+				throw;
+			}
+		}
+		{
+			std::lock_guard lock(m_mutex);
+			++m_requested;
+		}
+		m_loading = true;
+		m_discoveryFailed = false;
+		m_running.clear();
+		m_changed.notify_all();
+		return {};
+	}
+	catch (const std::exception& error)
+	{
+		m_loading = false;
+		m_discoveryFailed = true;
+		return error.what();
+	}
+}
+
+void AppPicker::Run(std::stop_token stop) noexcept
+{
+	struct ExitSignal
+	{
+		std::atomic<bool>& exited;
+
+		~ExitSignal()
+		{
+			exited.store(true);
+		}
+	} exitSignal{m_workerExited};
+
+	try
+	{
+		std::uint64_t observed = 0;
+		while (!stop.stop_requested())
+		{
+			std::uint64_t request = 0;
+			{
+				std::unique_lock lock(m_mutex);
+				m_changed.wait(lock, stop, [&] { return m_requested != observed; });
+				if (stop.stop_requested())
+					return;
+				request = observed = m_requested;
+			}
+			DiscoveryResult result;
+			try
+			{
+				result.apps = DiscoverRunningApps(std::chrono::milliseconds(150), stop);
+			}
+			catch (const std::exception& error)
+			{
+				result.error = error.what();
+			}
+			catch (...)
+			{
+				result.error = "Application discovery failed";
+			}
+			if (stop.stop_requested())
+				return;
+			std::lock_guard lock(m_mutex);
+			if (request == m_requested)
+				m_result = std::move(result);
+		}
+	}
+	catch (...)
+	{
+		m_workerFailed.store(true);
+	}
 }
 } // namespace simxr::app

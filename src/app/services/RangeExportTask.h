@@ -22,8 +22,10 @@ class RangeExportTask
 {
 public:
 	explicit RangeExportTask(RuntimeSession& session);
+
 	bool Start(FrameIdentity first, FrameIdentity last, std::uint64_t epoch, const std::string& path);
 	void Poll();
+
 	bool Busy() const;
 
 	const std::string& Metadata() const noexcept
@@ -50,6 +52,7 @@ private:
 	};
 
 	void Finish(std::string result);
+
 	RuntimeSession& m_session;
 	std::future<void> m_csv;
 	std::vector<std::pair<std::uint64_t, std::string>> m_queue;

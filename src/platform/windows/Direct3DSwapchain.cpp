@@ -70,10 +70,6 @@ static DXGI_FORMAT Typeless(DXGI_FORMAT format) noexcept
 	}
 }
 
-Direct3DSwapchain::Direct3DSwapchain(DXGI_FORMAT format, const wchar_t* runtimeLibrary)
-	: m_runtimeLibrary(runtimeLibrary), m_format(format)
-{}
-
 XrResult Direct3DSwapchain::Create(ID3D11Device* device, const XrSwapchainCreateInfo& description,
 								   std::unique_ptr<Direct3DSwapchain>& output)
 {
@@ -111,6 +107,67 @@ XrResult Direct3DSwapchain::Create(ID3D12Device* device, const XrSwapchainCreate
 	output.swap(prepared);
 	return XR_SUCCESS;
 }
+
+XrResult Direct3DSwapchain::EnumerateImages(std::uint32_t capacity, std::uint32_t* count,
+											XrSwapchainImageBaseHeader* images) const noexcept
+{
+	if (!count || (capacity && !images))
+		return XR_ERROR_VALIDATION_FAILURE;
+	const auto size = ImageCount();
+	*count = size;
+	if (!capacity)
+		return XR_SUCCESS;
+	if (capacity < size)
+		return XR_ERROR_SIZE_INSUFFICIENT;
+	if (!m_images12.empty())
+	{
+		auto* output = reinterpret_cast<XrSwapchainImageD3D12KHR*>(images);
+		for (std::uint32_t index = 0; index < size; ++index)
+			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR)
+				return XR_ERROR_VALIDATION_FAILURE;
+		for (std::uint32_t index = 0; index < size; ++index)
+			output[index].texture = m_images12[index].Get();
+	}
+	else
+	{
+		auto* output = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
+		for (std::uint32_t index = 0; index < size; ++index)
+			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR)
+				return XR_ERROR_VALIDATION_FAILURE;
+		for (std::uint32_t index = 0; index < size; ++index)
+			output[index].texture = m_images11[index].Get();
+	}
+	return XR_SUCCESS;
+}
+
+std::uint32_t Direct3DSwapchain::ImageCount() const noexcept
+{
+	return static_cast<std::uint32_t>(m_images11.size() + m_images12.size());
+}
+
+DXGI_FORMAT Direct3DSwapchain::Format() const noexcept
+{
+	return m_format;
+}
+
+ID3D11Texture2D* Direct3DSwapchain::Image11(std::uint32_t index) const noexcept
+{
+	return index < m_images11.size() ? m_images11[index].Get() : nullptr;
+}
+
+ID3D12Resource* Direct3DSwapchain::Image12(std::uint32_t index) const noexcept
+{
+	return index < m_images12.size() ? m_images12[index].Get() : nullptr;
+}
+
+D3D12_RESOURCE_STATES Direct3DSwapchain::ReleaseState12() const noexcept
+{
+	return m_releaseState12;
+}
+
+Direct3DSwapchain::Direct3DSwapchain(DXGI_FORMAT format, const wchar_t* runtimeLibrary)
+	: m_runtimeLibrary(runtimeLibrary), m_format(format)
+{}
 
 XrResult Direct3DSwapchain::Allocate(ID3D11Device* device, const XrSwapchainCreateInfo& description)
 {
@@ -195,62 +252,5 @@ XrResult Direct3DSwapchain::Allocate(ID3D12Device* device, const XrSwapchainCrea
 												   IID_PPV_ARGS(image.GetAddressOf()))))
 			return XR_ERROR_RUNTIME_FAILURE;
 	return XR_SUCCESS;
-}
-
-XrResult Direct3DSwapchain::EnumerateImages(std::uint32_t capacity, std::uint32_t* count,
-											XrSwapchainImageBaseHeader* images) const noexcept
-{
-	if (!count || (capacity && !images))
-		return XR_ERROR_VALIDATION_FAILURE;
-	const auto size = ImageCount();
-	*count = size;
-	if (!capacity)
-		return XR_SUCCESS;
-	if (capacity < size)
-		return XR_ERROR_SIZE_INSUFFICIENT;
-	if (!m_images12.empty())
-	{
-		auto* output = reinterpret_cast<XrSwapchainImageD3D12KHR*>(images);
-		for (std::uint32_t index = 0; index < size; ++index)
-			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR)
-				return XR_ERROR_VALIDATION_FAILURE;
-		for (std::uint32_t index = 0; index < size; ++index)
-			output[index].texture = m_images12[index].Get();
-	}
-	else
-	{
-		auto* output = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
-		for (std::uint32_t index = 0; index < size; ++index)
-			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR)
-				return XR_ERROR_VALIDATION_FAILURE;
-		for (std::uint32_t index = 0; index < size; ++index)
-			output[index].texture = m_images11[index].Get();
-	}
-	return XR_SUCCESS;
-}
-
-std::uint32_t Direct3DSwapchain::ImageCount() const noexcept
-{
-	return static_cast<std::uint32_t>(m_images11.size() + m_images12.size());
-}
-
-DXGI_FORMAT Direct3DSwapchain::Format() const noexcept
-{
-	return m_format;
-}
-
-ID3D11Texture2D* Direct3DSwapchain::Image11(std::uint32_t index) const noexcept
-{
-	return index < m_images11.size() ? m_images11[index].Get() : nullptr;
-}
-
-ID3D12Resource* Direct3DSwapchain::Image12(std::uint32_t index) const noexcept
-{
-	return index < m_images12.size() ? m_images12[index].Get() : nullptr;
-}
-
-D3D12_RESOURCE_STATES Direct3DSwapchain::ReleaseState12() const noexcept
-{
-	return m_releaseState12;
 }
 } // namespace simxr::windows

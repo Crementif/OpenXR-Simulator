@@ -39,11 +39,16 @@ public:
 	~McpDebug();
 	McpDebug(const McpDebug&) = delete;
 	McpDebug& operator=(const McpDebug&) = delete;
+
 	static nlohmann::json Definitions();
 	static bool Handles(const std::string& name);
 	static nlohmann::json Document(const control::Message& message, bool metadataOnly = false);
+
 	std::optional<McpConnection> Connect(McpApplication& application, const std::string& target,
 										 const std::shared_ptr<McpCancellation>& cancellation, bool gameOnly = false);
+	void Disconnect(const std::string& connection) noexcept;
+	void Close() noexcept;
+
 	std::optional<nlohmann::json> Call(McpApplication& application, const std::string& name,
 									   const nlohmann::json& arguments,
 									   const std::shared_ptr<McpCancellation>& cancellation);
@@ -54,18 +59,18 @@ public:
 	mcp::ImageRenderResult Render(McpApplication& application, const std::string& connection,
 								  const mcp::ImageRenderRequest& render,
 								  const std::shared_ptr<McpCancellation>& cancellation);
-	void Disconnect(const std::string& connection) noexcept;
 	std::vector<std::byte> ReadArtifact(McpApplication& application, const std::string& connection,
 										std::uint64_t ticket, std::uint64_t offset, std::uint64_t length,
 										const std::shared_ptr<McpCancellation>& cancellation = {});
-	void Close() noexcept;
 
 private:
 	struct Entry;
+
 	std::shared_ptr<Entry> FindConnection(const std::string& connection);
 	std::unique_lock<std::timed_mutex> LockConnection(McpApplication& application, const std::string& connection,
 													  const std::shared_ptr<Entry>& entry,
 													  const std::shared_ptr<McpCancellation>& cancellation);
+
 	std::mutex m_mutex;
 	std::unordered_map<std::string, std::shared_ptr<Entry>> m_entries;
 	bool m_closed = false;

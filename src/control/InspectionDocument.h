@@ -73,6 +73,7 @@ class InspectionStore
 {
 public:
 	explicit InspectionStore(std::size_t frames = 32, std::size_t revisions = 64, std::size_t bytes = 8 * 1024 * 1024);
+
 	std::shared_ptr<const InspectionRecord> Find(ControlSessionId session, FrameKey frame) const;
 	std::shared_ptr<const InspectionRecord> Read(std::uint64_t id) const;
 	std::shared_ptr<const FeatureRevision> ReadRevision(std::uint64_t id) const;

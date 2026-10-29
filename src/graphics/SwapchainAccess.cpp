@@ -53,6 +53,50 @@ XrResult SwapchainAccess::Wait(XrDuration timeout)
 	return WaitForImage(index, timeout);
 }
 
+XrResult SwapchainAccess::Release()
+{
+	std::lock_guard lock(m_mutex);
+	if (m_closed)
+		return XR_ERROR_SESSION_LOST;
+	if (m_waiting)
+		return XR_ERROR_CALL_ORDER_INVALID;
+	std::uint32_t index;
+	return m_state.Release(index);
+}
+
+std::optional<std::uint32_t> SwapchainAccess::ReleasedImage() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_closed ? std::nullopt : m_state.ReleasedImage();
+}
+
+void SwapchainAccess::MarkUsed(std::uint32_t index, const std::shared_ptr<const GpuCompletion>& completion)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_closed && completion && index < m_lastUse.size())
+	{
+		m_lastUse[index] = completion;
+		m_changed.notify_all();
+	}
+}
+
+void SwapchainAccess::MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion)
+{
+	std::lock_guard lock(m_mutex);
+	if (const auto index = m_state.ReleasedImage(); !m_closed && completion && index)
+	{
+		m_lastUse[*index] = completion;
+		m_changed.notify_all();
+	}
+}
+
+void SwapchainAccess::Close()
+{
+	std::lock_guard lock(m_mutex);
+	m_closed = true;
+	m_changed.notify_all();
+}
+
 XrResult SwapchainAccess::WaitForImage(std::uint32_t index, XrDuration timeout)
 {
 	const auto started = std::chrono::steady_clock::now();
@@ -99,50 +143,6 @@ void SwapchainAccess::FinishWait()
 {
 	std::lock_guard lock(m_mutex);
 	m_waiting = false;
-	m_changed.notify_all();
-}
-
-XrResult SwapchainAccess::Release()
-{
-	std::lock_guard lock(m_mutex);
-	if (m_closed)
-		return XR_ERROR_SESSION_LOST;
-	if (m_waiting)
-		return XR_ERROR_CALL_ORDER_INVALID;
-	std::uint32_t index;
-	return m_state.Release(index);
-}
-
-std::optional<std::uint32_t> SwapchainAccess::ReleasedImage() const
-{
-	std::lock_guard lock(m_mutex);
-	return m_closed ? std::nullopt : m_state.ReleasedImage();
-}
-
-void SwapchainAccess::MarkUsed(std::uint32_t index, const std::shared_ptr<const GpuCompletion>& completion)
-{
-	std::lock_guard lock(m_mutex);
-	if (!m_closed && completion && index < m_lastUse.size())
-	{
-		m_lastUse[index] = completion;
-		m_changed.notify_all();
-	}
-}
-
-void SwapchainAccess::MarkReleasedUsed(const std::shared_ptr<const GpuCompletion>& completion)
-{
-	std::lock_guard lock(m_mutex);
-	if (const auto index = m_state.ReleasedImage(); !m_closed && completion && index)
-	{
-		m_lastUse[*index] = completion;
-		m_changed.notify_all();
-	}
-}
-
-void SwapchainAccess::Close()
-{
-	std::lock_guard lock(m_mutex);
-	m_closed = true;
 	m_changed.notify_all();
 }
 

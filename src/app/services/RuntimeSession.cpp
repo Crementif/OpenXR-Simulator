@@ -6,10 +6,15 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 namespace tag = wire::tag;
+
 using panel::Boolean;
+
 using panel::U32;
+
 using panel::U64;
+
 using Work = PanelWork;
 
 RuntimeSession::RuntimeSession(UiRenderer& renderer, const std::string& endpoint)
@@ -24,76 +29,6 @@ RuntimeSession::RuntimeSession(UiRenderer& renderer, const std::string& endpoint
 RuntimeSession::~RuntimeSession()
 {
 	m_requests.Close();
-}
-
-bool RuntimeSession::Connected() const
-{
-	return m_requests.Snapshot().state == RuntimeConnectionState::Connected;
-}
-
-bool RuntimeSession::Supports(wire::Capability capability) const
-{
-	return U64(m_debugger.Status(), tag::Capabilities) & static_cast<std::uint64_t>(capability);
-}
-
-bool RuntimeSession::SupportsEdits() const
-{
-	return m_debugger.Selected().id && Supports(wire::Capability::SimulationCommands);
-}
-
-void RuntimeSession::Notify(std::string title, std::string detail)
-{
-	m_notices.push_back({std::move(title), std::move(detail)});
-}
-
-void RuntimeSession::Notify(Notice notice)
-{
-	m_notices.push_back(std::move(notice));
-}
-
-std::vector<Notice> RuntimeSession::TakeNotices()
-{
-	return std::exchange(m_notices, {});
-}
-
-bool RuntimeSession::TakeScopeChanged()
-{
-	return std::exchange(m_scopeChanged, false);
-}
-
-bool RuntimeSession::TakeObservation()
-{
-	return std::exchange(m_observationChanged, false);
-}
-
-void RuntimeSession::ScopeChanged()
-{
-	// A new session or run goes live and keeps nothing of the old input state.
-	m_scopeChanged = true;
-	m_manualInput.SetTarget({});
-	m_observation = 0;
-	m_haptics.Reset();
-	m_hapticFailure.clear();
-	m_historyNotice.clear();
-	m_nextHaptics = {};
-	m_setup.reset();
-	m_input = {};
-	m_followOnResume = m_stepRequested = false;
-	m_stepped.reset();
-	m_time = {};
-	m_unavailablePreview = 0;
-	m_pastState = {};
-	m_manualInput.Refresh();
-	m_workspace.SetScope(m_debugger.Scope());
-	m_preview.SetScope(m_debugger.Scope());
-	m_preview.ClearSelection();
-	m_preview.ShowLive(true);
-}
-
-void RuntimeSession::ChooseSession(PanelSession session)
-{
-	m_debugger.ChooseSession(session);
-	ScopeChanged();
 }
 
 void RuntimeSession::Poll(bool piloting, bool foreground)
@@ -282,6 +217,26 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 			Notify("Runtime request failed", std::move(error));
 }
 
+bool RuntimeSession::TakeScopeChanged()
+{
+	return std::exchange(m_scopeChanged, false);
+}
+
+std::vector<Notice> RuntimeSession::TakeNotices()
+{
+	return std::exchange(m_notices, {});
+}
+
+void RuntimeSession::Notify(std::string title, std::string detail)
+{
+	m_notices.push_back({std::move(title), std::move(detail)});
+}
+
+void RuntimeSession::Notify(Notice notice)
+{
+	m_notices.push_back(std::move(notice));
+}
+
 void RuntimeSession::ConnectEndpoint(std::string endpoint, std::optional<std::uint64_t> expectedProcess)
 {
 	m_endpoint = endpoint;
@@ -311,36 +266,10 @@ std::string RuntimeSession::Endpoint() const
 	return m_endpoint;
 }
 
-bool RuntimeSession::SubmitEdit(const SimulationEdit& edit)
+void RuntimeSession::ChooseSession(PanelSession session)
 {
-	const auto selected = m_debugger.Selected();
-	if (!selected.id || !selected.running)
-	{
-		Notify("No running session", "Connect to a running session before editing simulated devices");
-		return false;
-	}
-	if (!m_manualInput.Submit(edit))
-	{
-		Notify("Input rejected", "Release inputs and try again");
-		return false;
-	}
-	return true;
-}
-
-void RuntimeSession::ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB)
-{
-	if (!Connected() || !Supports(wire::Capability::ConfigurablePreviews) ||
-		(U64(m_debugger.Status(), tag::PreviewBudget) == (std::uint64_t{budgetMiB} << 20) &&
-		 (!m_debugger.Status().Find(tag::PreviewRamBudget) ||
-		  U64(m_debugger.Status(), tag::PreviewRamBudget) == (std::uint64_t{ramMiB} << 20))) ||
-		m_requests.Has(Work::ConfigurePreviews) || Clock::now() < m_nextPreviewBudget)
-		return;
-	auto fields = m_debugger.SessionFields();
-	fields.push_back(wire::Field::U64(tag::PreviewBudget, std::uint64_t{budgetMiB} << 20, true));
-	if (m_debugger.Status().Find(tag::PreviewRamBudget))
-		fields.push_back(wire::Field::U64(tag::PreviewRamBudget, std::uint64_t{ramMiB} << 20, true));
-	m_requests.Send(wire::OpCode::ConfigurePreviews, Work::ConfigurePreviews, std::move(fields));
-	m_nextPreviewBudget = Clock::now() + std::chrono::seconds(1);
+	m_debugger.ChooseSession(session);
+	ScopeChanged();
 }
 
 void RuntimeSession::ConfigureSnapshots(std::uint32_t budgetMiB)
@@ -361,5 +290,81 @@ void RuntimeSession::ConfigureSnapshots(std::uint32_t budgetMiB)
 	m_budgetScope = scope;
 	m_budgetMiB = budgetMiB;
 	m_nextBudget = now + std::chrono::seconds(1);
+}
+
+void RuntimeSession::ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB)
+{
+	if (!Connected() || !Supports(wire::Capability::ConfigurablePreviews) ||
+		(U64(m_debugger.Status(), tag::PreviewBudget) == (std::uint64_t{budgetMiB} << 20) &&
+		 (!m_debugger.Status().Find(tag::PreviewRamBudget) ||
+		  U64(m_debugger.Status(), tag::PreviewRamBudget) == (std::uint64_t{ramMiB} << 20))) ||
+		m_requests.Has(Work::ConfigurePreviews) || Clock::now() < m_nextPreviewBudget)
+		return;
+	auto fields = m_debugger.SessionFields();
+	fields.push_back(wire::Field::U64(tag::PreviewBudget, std::uint64_t{budgetMiB} << 20, true));
+	if (m_debugger.Status().Find(tag::PreviewRamBudget))
+		fields.push_back(wire::Field::U64(tag::PreviewRamBudget, std::uint64_t{ramMiB} << 20, true));
+	m_requests.Send(wire::OpCode::ConfigurePreviews, Work::ConfigurePreviews, std::move(fields));
+	m_nextPreviewBudget = Clock::now() + std::chrono::seconds(1);
+}
+
+bool RuntimeSession::SubmitEdit(const SimulationEdit& edit)
+{
+	const auto selected = m_debugger.Selected();
+	if (!selected.id || !selected.running)
+	{
+		Notify("No running session", "Connect to a running session before editing simulated devices");
+		return false;
+	}
+	if (!m_manualInput.Submit(edit))
+	{
+		Notify("Input rejected", "Release inputs and try again");
+		return false;
+	}
+	return true;
+}
+
+bool RuntimeSession::Connected() const
+{
+	return m_requests.Snapshot().state == RuntimeConnectionState::Connected;
+}
+
+bool RuntimeSession::SupportsEdits() const
+{
+	return m_debugger.Selected().id && Supports(wire::Capability::SimulationCommands);
+}
+
+bool RuntimeSession::Supports(wire::Capability capability) const
+{
+	return U64(m_debugger.Status(), tag::Capabilities) & static_cast<std::uint64_t>(capability);
+}
+
+bool RuntimeSession::TakeObservation()
+{
+	return std::exchange(m_observationChanged, false);
+}
+
+void RuntimeSession::ScopeChanged()
+{
+	// A new session or run goes live and keeps nothing of the old input state.
+	m_scopeChanged = true;
+	m_manualInput.SetTarget({});
+	m_observation = 0;
+	m_haptics.Reset();
+	m_hapticFailure.clear();
+	m_historyNotice.clear();
+	m_nextHaptics = {};
+	m_setup.reset();
+	m_input = {};
+	m_followOnResume = m_stepRequested = false;
+	m_stepped.reset();
+	m_time = {};
+	m_unavailablePreview = 0;
+	m_pastState = {};
+	m_manualInput.Refresh();
+	m_workspace.SetScope(m_debugger.Scope());
+	m_preview.SetScope(m_debugger.Scope());
+	m_preview.ClearSelection();
+	m_preview.ShowLive(true);
 }
 } // namespace simxr::app

@@ -24,6 +24,7 @@ public:
 	~ConnectionLeases();
 	ConnectionLeases(const ConnectionLeases&) = delete;
 	ConnectionLeases& operator=(const ConnectionLeases&) = delete;
+
 	DebugLease Acquire(ControlSessionId id, std::shared_ptr<DebugController> controller, Session& session,
 					   SessionGeneration generation, Retired& retired);
 	void Renew(ControlSessionId sessionId, DebugLeaseId lease, Session& session, SessionGeneration generation);
@@ -32,6 +33,7 @@ public:
 	DebugSubmission Submit(ControlSessionId sessionId, DebugLeaseId lease, const DebugRequest& request);
 	void Acknowledge(ControlSessionId sessionId, DebugLeaseId lease, DebugCommandId command, Session& session,
 					 SessionGeneration generation, Retired& retired);
+
 	void Prune(std::span<const ControlSessionId> sessions, Retired& retired);
 	void Close() noexcept;
 
@@ -44,6 +46,7 @@ private:
 	};
 
 	const Lease& Own(ControlSessionId session, DebugLeaseId lease) const;
+
 	std::vector<Lease> m_leases;
 	bool m_closed = false;
 };

@@ -34,6 +34,7 @@ public:
 	~WindowsPendingDelivery();
 	WindowsPendingDelivery(const WindowsPendingDelivery&) = delete;
 	WindowsPendingDelivery& operator=(const WindowsPendingDelivery&) = delete;
+
 	// Called before teardown of the first session, then during its replacement.
 	void Hold();
 	void VerifyPending();
@@ -41,11 +42,14 @@ public:
 	void CheckWatchdog() const;
 
 private:
+	void Command(std::uint8_t command) const;
+	void StartWatchdog();
+	void StopWatchdog();
+
 	static constexpr std::size_t DeliveryCount = 8;
 	const bool m_gated;
 	const std::uint32_t m_runtimeProcess;
 	control::windows::Handle m_pipe, m_process;
-	void Command(std::uint8_t command) const;
 	std::shared_ptr<VulkanDevice> m_device;
 	std::vector<const char*> m_extensions;
 	std::array<std::unique_ptr<control::VulkanImageConsumer>, DeliveryCount> m_consumers;
@@ -61,8 +65,6 @@ private:
 	std::atomic<bool> m_watchdogExpired{false};
 	bool m_stopWatchdog = false;
 	std::thread m_watchdog;
-	void StartWatchdog();
-	void StopWatchdog();
 };
 } // namespace probe
 } // namespace simxr

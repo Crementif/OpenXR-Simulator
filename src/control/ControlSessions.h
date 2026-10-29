@@ -50,12 +50,14 @@ public:
 			Collecting,
 			Ready
 		};
+
 		Phase m_phase = Phase::Empty;
 		std::vector<ControlSession> m_sessions;
 		std::array<ControlSessionId, Capacity> m_ids;
 	};
 
 	explicit ControlSessions(Runtime& runtime);
+
 	void Discover(Snapshot& snapshot);
 
 private:

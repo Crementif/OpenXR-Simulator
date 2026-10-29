@@ -61,11 +61,14 @@ class HeadsetInputBridge
 public:
 	explicit HeadsetInputBridge(HeadsetInputTarget target);
 	~HeadsetInputBridge();
+
+	void Stop();
+
+	HeadsetInputStatus Status() const;
+
 	bool Publish(const HeadsetInputSample& input, NativeClockDomain domain, std::int64_t observed,
 				 std::int64_t predicted, std::optional<std::int64_t> bodyReturned = {});
-	HeadsetInputStatus Status() const;
 	std::array<std::optional<HeadsetVibration>, 2> ConsumeHaptics(bool enabled);
-	void Stop();
 
 private:
 	struct Observation
@@ -79,6 +82,7 @@ private:
 
 	void Run(std::stop_token stop) noexcept;
 	void Fail(const char* error) noexcept;
+
 	HeadsetInputTarget m_target;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;

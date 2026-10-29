@@ -18,6 +18,83 @@ ScriptEngine::ScriptEngine(RigRuntime& runtime, RigProgress& progress, const Rig
 	: m_runtime(runtime), m_progress(progress), m_options(options)
 {}
 
+void ScriptEngine::Execute()
+{
+	std::unique_ptr<lua_State, decltype(&lua_close)> vm{lua_newstate(Allocate, this), lua_close};
+	auto* state = vm.get();
+	if (!state)
+		throw std::bad_alloc();
+	lua_callbacks(state)->userdata = this;
+	lua_callbacks(state)->interrupt = Interrupt;
+	luaL_openlibs(state);
+	lua_pushcfunction(state, Binding<&ScriptEngine::Print>, "print");
+	lua_setglobal(state, "print");
+	lua_newtable(state);
+	const auto bind = [&](const char* name, lua_CFunction function) {
+		lua_pushcfunction(state, function, name);
+		lua_setfield(state, -2, name);
+	};
+	bind("wait", Binding<&ScriptEngine::Wait>);
+	bind("monotonic_time", Binding<&ScriptEngine::MonotonicTime>);
+	bind("monitor_cadence", Binding<&ScriptEngine::MonitorCadence>);
+	bind("frame_add", Binding<&ScriptEngine::FrameAdd>);
+	bind("frame_before", Binding<&ScriptEngine::FrameBefore>);
+	bind("step_display", Binding<&ScriptEngine::StepDisplay>);
+	bind("advance_to_frame", Binding<&ScriptEngine::AdvanceToFrame>);
+	bind("schedule", Binding<&ScriptEngine::Schedule>);
+	bind("await_transaction", Binding<&ScriptEngine::AwaitTransaction>);
+	bind("pause", Binding<&ScriptEngine::Pause>);
+	bind("resume", Binding<&ScriptEngine::Resume>);
+	bind("step", Binding<&ScriptEngine::Step>);
+	bind("start_input_recording", Binding<&ScriptEngine::StartInputRecording>);
+	bind("stop_input_recording", Binding<&ScriptEngine::StopInputRecording>);
+	bind("read_input_recording", Binding<&ScriptEngine::ReadInputRecording>);
+	bind("start_image_recording", Binding<&ScriptEngine::StartImageRecording>);
+	bind("stop_image_recording", Binding<&ScriptEngine::StopImageRecording>);
+	bind("image_recording", Binding<&ScriptEngine::ImageRecording>);
+	bind("capture", Binding<&ScriptEngine::Capture>);
+	bind("inspect", Binding<&ScriptEngine::Inspect>);
+	bind("projection_history", Binding<&ScriptEngine::ProjectionHistory>);
+	bind("image_history", Binding<&ScriptEngine::ImageHistory>);
+	bind("export_history", Binding<&ScriptEngine::ExportHistory>);
+	bind("begin_image_window", Binding<&ScriptEngine::BeginImageWindow>);
+	bind("image_window", Binding<&ScriptEngine::ImageWindow>);
+	bind("analyze_image_window", Binding<&ScriptEngine::AnalyzeImageWindow>);
+	bind("analyze_image_history", Binding<&ScriptEngine::AnalyzeImageHistory>);
+	bind("export_window_image", Binding<&ScriptEngine::ExportWindowImage>);
+	bind("release_image_window", Binding<&ScriptEngine::ReleaseImageWindow>);
+	bind("revision", Binding<&ScriptEngine::Revision>);
+	bind("release_inspection", Binding<&ScriptEngine::ReleaseInspection>);
+	bind("checkpoint", Binding<&ScriptEngine::Checkpoint>);
+	bind("state", Binding<&ScriptEngine::State>);
+	bind("release_inputs", Binding<&ScriptEngine::ReleaseInputs>);
+	bind("export", Binding<&ScriptEngine::Export>);
+	bind("release_capture", Binding<&ScriptEngine::ReleaseCapture>);
+	bind("game_command", Binding<&ScriptEngine::GameCommand>);
+	bind("await_game", Binding<&ScriptEngine::AwaitGame>);
+	bind("game_state", Binding<&ScriptEngine::GameState>);
+	PushInteger(state, m_options.seed);
+	lua_setfield(state, -2, "seed");
+	lua_setglobal(state, "simxr");
+	lua_getglobal(state, "math");
+	lua_getfield(state, -1, "randomseed");
+	lua_pushnumber(state, static_cast<double>(m_options.seed & 0xffffffffULL));
+	if (lua_pcall(state, 1, 0, 0) != LUA_OK)
+		throw std::runtime_error("Cannot seed rig random generator");
+	lua_pop(state, 1);
+	luaL_sandbox(state);
+	std::size_t bytecodeSize = 0;
+	std::unique_ptr<char, decltype(&std::free)> bytecode{
+		luau_compile(m_options.source.data(), m_options.source.size(), nullptr, &bytecodeSize), std::free};
+	if (!bytecode)
+		throw std::bad_alloc();
+	const auto loaded = luau_load(state, m_options.name.c_str(), bytecode.get(), bytecodeSize, 0);
+	bytecode.reset();
+	if (loaded != LUA_OK || lua_pcall(state, 0, 0, 0) != LUA_OK)
+		throw std::runtime_error(lua_tostring(state, -1) ? lua_tostring(state, -1) : "Luau execution failed");
+	m_progress.Check();
+}
+
 ScriptEngine& ScriptEngine::Self(lua_State* state)
 {
 	return *static_cast<ScriptEngine*>(lua_callbacks(state)->userdata);
@@ -86,6 +163,18 @@ int ScriptEngine::Wait(lua_State* state)
 		throw std::invalid_argument("Rig wait must be between zero and 3600000 milliseconds");
 	m_runtime.Wait(std::chrono::milliseconds{milliseconds});
 	return 0;
+}
+
+int ScriptEngine::MonitorCadence(lua_State* state)
+{
+	m_progress.MissedCadences(Integer(state, 1));
+	return 0;
+}
+
+int ScriptEngine::MonotonicTime(lua_State* state)
+{
+	lua_pushnumber(state, std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+	return 1;
 }
 
 int ScriptEngine::FrameAdd(lua_State* state)
@@ -338,12 +427,6 @@ int ScriptEngine::ReleaseInspection(lua_State* state)
 	return 0;
 }
 
-int ScriptEngine::AdvanceToFrame(lua_State* state)
-{
-	m_runtime.AdvanceToFrame(FrameId{Integer(state, 1)});
-	return 0;
-}
-
 int ScriptEngine::StepDisplay(lua_State* state)
 {
 	const auto step = m_runtime.StepDisplay();
@@ -357,6 +440,12 @@ int ScriptEngine::StepDisplay(lua_State* state)
 	else
 		lua_pushnil(state);
 	return 3;
+}
+
+int ScriptEngine::AdvanceToFrame(lua_State* state)
+{
+	m_runtime.AdvanceToFrame(FrameId{Integer(state, 1)});
+	return 0;
 }
 
 int ScriptEngine::State(lua_State* state)
@@ -456,92 +545,4 @@ int ScriptEngine::GameState(lua_State* state)
 	return 1;
 }
 
-int ScriptEngine::MonitorCadence(lua_State* state)
-{
-	m_progress.MissedCadences(Integer(state, 1));
-	return 0;
-}
-
-int ScriptEngine::MonotonicTime(lua_State* state)
-{
-	lua_pushnumber(state, std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
-	return 1;
-}
-
-void ScriptEngine::Execute()
-{
-	std::unique_ptr<lua_State, decltype(&lua_close)> vm{lua_newstate(Allocate, this), lua_close};
-	auto* state = vm.get();
-	if (!state)
-		throw std::bad_alloc();
-	lua_callbacks(state)->userdata = this;
-	lua_callbacks(state)->interrupt = Interrupt;
-	luaL_openlibs(state);
-	lua_pushcfunction(state, Binding<&ScriptEngine::Print>, "print");
-	lua_setglobal(state, "print");
-	lua_newtable(state);
-	const auto bind = [&](const char* name, lua_CFunction function) {
-		lua_pushcfunction(state, function, name);
-		lua_setfield(state, -2, name);
-	};
-	bind("wait", Binding<&ScriptEngine::Wait>);
-	bind("monotonic_time", Binding<&ScriptEngine::MonotonicTime>);
-	bind("monitor_cadence", Binding<&ScriptEngine::MonitorCadence>);
-	bind("frame_add", Binding<&ScriptEngine::FrameAdd>);
-	bind("frame_before", Binding<&ScriptEngine::FrameBefore>);
-	bind("step_display", Binding<&ScriptEngine::StepDisplay>);
-	bind("advance_to_frame", Binding<&ScriptEngine::AdvanceToFrame>);
-	bind("schedule", Binding<&ScriptEngine::Schedule>);
-	bind("await_transaction", Binding<&ScriptEngine::AwaitTransaction>);
-	bind("pause", Binding<&ScriptEngine::Pause>);
-	bind("resume", Binding<&ScriptEngine::Resume>);
-	bind("step", Binding<&ScriptEngine::Step>);
-	bind("start_input_recording", Binding<&ScriptEngine::StartInputRecording>);
-	bind("stop_input_recording", Binding<&ScriptEngine::StopInputRecording>);
-	bind("read_input_recording", Binding<&ScriptEngine::ReadInputRecording>);
-	bind("start_image_recording", Binding<&ScriptEngine::StartImageRecording>);
-	bind("stop_image_recording", Binding<&ScriptEngine::StopImageRecording>);
-	bind("image_recording", Binding<&ScriptEngine::ImageRecording>);
-	bind("capture", Binding<&ScriptEngine::Capture>);
-	bind("inspect", Binding<&ScriptEngine::Inspect>);
-	bind("projection_history", Binding<&ScriptEngine::ProjectionHistory>);
-	bind("image_history", Binding<&ScriptEngine::ImageHistory>);
-	bind("export_history", Binding<&ScriptEngine::ExportHistory>);
-	bind("begin_image_window", Binding<&ScriptEngine::BeginImageWindow>);
-	bind("image_window", Binding<&ScriptEngine::ImageWindow>);
-	bind("analyze_image_window", Binding<&ScriptEngine::AnalyzeImageWindow>);
-	bind("analyze_image_history", Binding<&ScriptEngine::AnalyzeImageHistory>);
-	bind("export_window_image", Binding<&ScriptEngine::ExportWindowImage>);
-	bind("release_image_window", Binding<&ScriptEngine::ReleaseImageWindow>);
-	bind("revision", Binding<&ScriptEngine::Revision>);
-	bind("release_inspection", Binding<&ScriptEngine::ReleaseInspection>);
-	bind("checkpoint", Binding<&ScriptEngine::Checkpoint>);
-	bind("state", Binding<&ScriptEngine::State>);
-	bind("release_inputs", Binding<&ScriptEngine::ReleaseInputs>);
-	bind("export", Binding<&ScriptEngine::Export>);
-	bind("release_capture", Binding<&ScriptEngine::ReleaseCapture>);
-	bind("game_command", Binding<&ScriptEngine::GameCommand>);
-	bind("await_game", Binding<&ScriptEngine::AwaitGame>);
-	bind("game_state", Binding<&ScriptEngine::GameState>);
-	PushInteger(state, m_options.seed);
-	lua_setfield(state, -2, "seed");
-	lua_setglobal(state, "simxr");
-	lua_getglobal(state, "math");
-	lua_getfield(state, -1, "randomseed");
-	lua_pushnumber(state, static_cast<double>(m_options.seed & 0xffffffffULL));
-	if (lua_pcall(state, 1, 0, 0) != LUA_OK)
-		throw std::runtime_error("Cannot seed rig random generator");
-	lua_pop(state, 1);
-	luaL_sandbox(state);
-	std::size_t bytecodeSize = 0;
-	std::unique_ptr<char, decltype(&std::free)> bytecode{
-		luau_compile(m_options.source.data(), m_options.source.size(), nullptr, &bytecodeSize), std::free};
-	if (!bytecode)
-		throw std::bad_alloc();
-	const auto loaded = luau_load(state, m_options.name.c_str(), bytecode.get(), bytecodeSize, 0);
-	bytecode.reset();
-	if (loaded != LUA_OK || lua_pcall(state, 0, 0, 0) != LUA_OK)
-		throw std::runtime_error(lua_tostring(state, -1) ? lua_tostring(state, -1) : "Luau execution failed");
-	m_progress.Check();
-}
 } // namespace simxr::automation

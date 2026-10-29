@@ -32,6 +32,7 @@ class IncidentCapture
 {
 public:
 	explicit IncidentCapture(std::filesystem::path sessionDirectory);
+
 	IncidentUpdate Begin(std::string_view reason, uint64_t frame, const std::deque<Sample>& history);
 	std::optional<SampleArtifact> Continue(const Sample& sample);
 	const IncidentStatistics& Statistics() const;
@@ -51,9 +52,11 @@ class PreviewMonitor
 {
 public:
 	explicit PreviewMonitor(std::filesystem::path sessionDirectory);
+
 	IncidentUpdate Submission(uint64_t frame, uint32_t projectionLayers, uint32_t totalLayers);
 	IncidentUpdate Preview(Sample sample, uint64_t generation);
 	IncidentUpdate Paint(uint64_t generation, bool paintedPreview);
+
 	PreviewStatistics Snapshot() const;
 	bool AcceptsGeneration(uint64_t generation) const;
 	uint64_t Frame() const;
@@ -74,9 +77,11 @@ class UiMonitor
 {
 public:
 	explicit UiMonitor(std::filesystem::path sessionDirectory);
+
 	IncidentUpdate Observe(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t pitchBytes,
 						   uint64_t generation, uint64_t frame, const UiFrameInfo& info,
 						   PixelOrder order = PixelOrder::Bgra);
+
 	UiStatistics Snapshot() const;
 	bool TakeDirty();
 

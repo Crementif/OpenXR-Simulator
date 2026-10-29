@@ -15,17 +15,6 @@ ConnectionLeases::~ConnectionLeases()
 	Close();
 }
 
-const ConnectionLeases::Lease& ConnectionLeases::Own(ControlSessionId session, DebugLeaseId lease) const
-{
-	if (m_closed)
-		throw ControlRequestError{ErrorCode::Closed, "Connection leases are closed"};
-	const auto found = std::find_if(m_leases.begin(), m_leases.end(),
-									[&](const auto& entry) { return entry.session == session && entry.id == lease; });
-	if (found == m_leases.end())
-		throw ControlRequestError{ErrorCode::LeaseRequired, "Lease belongs to another connection or has expired"};
-	return *found;
-}
-
 DebugLease ConnectionLeases::Acquire(ControlSessionId id, std::shared_ptr<DebugController> controller, Session& session,
 									 SessionGeneration generation, Retired& retired)
 {
@@ -122,4 +111,16 @@ void ConnectionLeases::Close() noexcept
 		{}
 	}
 }
+
+const ConnectionLeases::Lease& ConnectionLeases::Own(ControlSessionId session, DebugLeaseId lease) const
+{
+	if (m_closed)
+		throw ControlRequestError{ErrorCode::Closed, "Connection leases are closed"};
+	const auto found = std::find_if(m_leases.begin(), m_leases.end(),
+									[&](const auto& entry) { return entry.session == session && entry.id == lease; });
+	if (found == m_leases.end())
+		throw ControlRequestError{ErrorCode::LeaseRequired, "Lease belongs to another connection or has expired"};
+	return *found;
+}
+
 } // namespace simxr::control

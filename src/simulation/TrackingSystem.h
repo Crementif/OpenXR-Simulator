@@ -13,11 +13,14 @@ class TrackingSystem
 {
 public:
 	explicit TrackingSystem(std::size_t historyCapacity = 128);
+
+	static TrackingSnapshot Evaluate(RuntimeTime time, const TrackingState& state, const BodyModel& body);
+
 	TrackingSnapshot Publish(RuntimeTime time, const TrackingState& state, bool replaceCurrent = false);
 	std::optional<TrackingSnapshot> Sample(RuntimeTime time) const;
+
 	void SetBodyProportions(const BodyProportions& proportions);
 	void Reset();
-	static TrackingSnapshot Evaluate(RuntimeTime time, const TrackingState& state, const BodyModel& body);
 
 private:
 	mutable std::mutex m_mutex;

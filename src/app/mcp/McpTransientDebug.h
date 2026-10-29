@@ -28,6 +28,7 @@ public:
 	TransientDebug(McpApplication& application, std::shared_ptr<McpCancellation> cancellation, double seconds,
 				   std::string operation);
 	~TransientDebug();
+
 	void Check();
 	void Wait();
 	McpConnection Connect(const std::string& application);
@@ -39,6 +40,7 @@ private:
 	std::shared_ptr<McpCancellation> Begin();
 	void End() noexcept;
 	void CheckResponse(const control::Message& response);
+
 	McpApplication& m_application;
 	std::shared_ptr<McpCancellation> m_cancellation;
 	std::chrono::steady_clock::time_point m_deadline;

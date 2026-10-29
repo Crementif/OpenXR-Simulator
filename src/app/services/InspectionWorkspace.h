@@ -23,8 +23,10 @@ class InspectionWorkspace
 {
 public:
 	explicit InspectionWorkspace(RuntimePanelRequests& requests);
+
 	void SetScope(PanelScope scope, bool clearSelection = true);
 	void SetCapacity(std::size_t capacity) noexcept;
+
 	bool Add(std::uint64_t capture, std::uint64_t frame);
 	// Remote eviction stops new reads but preserves already-retained CPU data.
 	void MarkUnavailable(std::uint64_t capture);
@@ -32,14 +34,17 @@ public:
 	bool Select(std::uint64_t capture);
 	void SelectLocal(std::uint64_t local);
 	void SelectImage(PanelScope scope, std::uint64_t capture);
+
 	std::uint64_t SelectedId() const noexcept;
 	const InspectionCapture* Selected() const;
 	std::span<const InspectionCapture> Captures() const noexcept;
 	std::vector<std::uint64_t> CaptureIds() const;
+
 	// Current capture release waits for the debugger acknowledgement; an
 	// historical selection retires locally without targeting another session.
 	void ReleaseSelected();
 	void InspectSelected();
+
 	bool Handle(const PanelTask& task, const control::Message& message);
 	void RequestRevision(std::uint64_t id, std::uint64_t documentEpoch);
 	const control::Message* Revision(std::uint64_t id, std::uint64_t documentEpoch) const;
@@ -48,6 +53,7 @@ public:
 private:
 	InspectionCapture* Find(std::uint64_t capture);
 	void ReleaseInspection(InspectionCapture& capture);
+
 	RuntimePanelRequests& m_requests;
 	PanelScope m_scope;
 	std::optional<std::size_t> m_capacity;

@@ -29,8 +29,10 @@ class MonitorController
 public:
 	MonitorController();
 	~MonitorController();
+
 	void Start(const ApplicationSnapshot& application, MonitorOptions options);
 	void Stop();
+
 	bool Active() const;
 	bool Matches(const ApplicationSnapshot& application) const;
 	MonitorStatus Status() const;

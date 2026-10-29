@@ -30,6 +30,7 @@ public:
 	~CompanionFrameReceiver();
 	CompanionFrameReceiver(const CompanionFrameReceiver&) = delete;
 	CompanionFrameReceiver& operator=(const CompanionFrameReceiver&) = delete;
+
 	void Poll();
 	std::vector<CompanionProofFrame> ReadyFrames() const;
 	bool AllCopied() const;
@@ -63,6 +64,7 @@ private:
 	VkCommandBuffer Begin();
 	void SubmitCopy(std::uint32_t index);
 	void Verify();
+
 	VulkanDeviceAccess m_access;
 	int m_channel;
 	probe::FileDescriptor m_ownedChannel;

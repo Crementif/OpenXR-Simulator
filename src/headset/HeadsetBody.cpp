@@ -13,20 +13,6 @@ HeadsetBody::~HeadsetBody()
 	Close();
 }
 
-void HeadsetBody::Close()
-{
-	if (m_runtime.ResourcesPreserved())
-		return;
-	if (m_fb)
-		m_destroyFB(m_fb);
-	if (m_bd)
-		m_destroyBD(m_bd);
-	m_fb = XR_NULL_HANDLE;
-	m_bd = XR_NULL_HANDLE;
-	m_skeleton.reset();
-	m_skeletonRevision.reset();
-}
-
 void HeadsetBody::Open(XrSession session, BodyJointSet jointSet)
 {
 	if (m_fb || m_bd || m_runtime.ResourcesPreserved())
@@ -65,6 +51,20 @@ void HeadsetBody::Open(XrSession session, BodyJointSet jointSet)
 	m_jointSet = jointSet;
 }
 
+void HeadsetBody::Close()
+{
+	if (m_runtime.ResourcesPreserved())
+		return;
+	if (m_fb)
+		m_destroyFB(m_fb);
+	if (m_bd)
+		m_destroyBD(m_bd);
+	m_fb = XR_NULL_HANDLE;
+	m_bd = XR_NULL_HANDLE;
+	m_skeleton.reset();
+	m_skeletonRevision.reset();
+}
+
 static PhysicalBodyJoint ReadJoint(XrPosef pose, XrSpaceLocationFlags flags)
 {
 	PhysicalBodyJoint result;
@@ -81,44 +81,6 @@ static PhysicalBodyJoint ReadJoint(XrPosef pose, XrSpaceLocationFlags flags)
 	if (!normalized)
 		throw std::runtime_error("Physical runtime returned an unusable body joint");
 	result.pose = *normalized;
-	return result;
-}
-
-PhysicalBodySkeleton HeadsetBody::ReadSkeleton() const
-{
-	const auto map = BodyModel::JointMap(m_jointSet);
-	std::array<XrBodySkeletonJointFB, BodyJointCount> joints{};
-	XrBodySkeletonFB skeleton{XR_TYPE_BODY_SKELETON_FB};
-	skeleton.jointCount = static_cast<std::uint32_t>(map.size());
-	skeleton.joints = joints.data();
-	CheckXr(m_skeletonFB(m_fb, &skeleton), "Read physical body skeleton");
-	if (skeleton.jointCount != map.size() || skeleton.joints != joints.data())
-		throw std::runtime_error("Physical runtime changed the body skeleton buffer");
-	PhysicalBodySkeleton result;
-	for (std::size_t index = 0; index < map.size(); ++index)
-	{
-		const auto& value = joints[index];
-		if (value.joint < 0 || static_cast<std::size_t>(value.joint) >= map.size() || value.parentJoint < -1 ||
-			(value.parentJoint >= 0 && static_cast<std::size_t>(value.parentJoint) >= map.size()))
-			throw std::runtime_error("Physical body skeleton contains an unknown joint");
-		const auto joint = map[value.joint];
-		auto& output = result[static_cast<std::size_t>(joint)];
-		const auto pose = NormalizedPose(value.pose);
-		if (output || !pose)
-			throw std::runtime_error("Physical body skeleton contains a duplicate or invalid joint");
-		output =
-			SkeletonJoint{joint, value.parentJoint == -1 ? std::nullopt : std::optional{map[value.parentJoint]}, *pose};
-	}
-	for (const auto joint : map)
-	{
-		auto parent = result[static_cast<std::size_t>(joint)]->parent;
-		for (std::size_t depth = 0; parent; ++depth)
-		{
-			if (depth >= map.size())
-				throw std::runtime_error("Physical body skeleton contains a parent cycle");
-			parent = result[static_cast<std::size_t>(*parent)]->parent;
-		}
-	}
 	return result;
 }
 
@@ -185,6 +147,44 @@ PhysicalBodySample HeadsetBody::Sample(XrTime time, XrSpace baseSpace, bool loca
 				ReadJoint(joints[index].pose, joints[index].locationFlags);
 	}
 	result.located = true;
+	return result;
+}
+
+PhysicalBodySkeleton HeadsetBody::ReadSkeleton() const
+{
+	const auto map = BodyModel::JointMap(m_jointSet);
+	std::array<XrBodySkeletonJointFB, BodyJointCount> joints{};
+	XrBodySkeletonFB skeleton{XR_TYPE_BODY_SKELETON_FB};
+	skeleton.jointCount = static_cast<std::uint32_t>(map.size());
+	skeleton.joints = joints.data();
+	CheckXr(m_skeletonFB(m_fb, &skeleton), "Read physical body skeleton");
+	if (skeleton.jointCount != map.size() || skeleton.joints != joints.data())
+		throw std::runtime_error("Physical runtime changed the body skeleton buffer");
+	PhysicalBodySkeleton result;
+	for (std::size_t index = 0; index < map.size(); ++index)
+	{
+		const auto& value = joints[index];
+		if (value.joint < 0 || static_cast<std::size_t>(value.joint) >= map.size() || value.parentJoint < -1 ||
+			(value.parentJoint >= 0 && static_cast<std::size_t>(value.parentJoint) >= map.size()))
+			throw std::runtime_error("Physical body skeleton contains an unknown joint");
+		const auto joint = map[value.joint];
+		auto& output = result[static_cast<std::size_t>(joint)];
+		const auto pose = NormalizedPose(value.pose);
+		if (output || !pose)
+			throw std::runtime_error("Physical body skeleton contains a duplicate or invalid joint");
+		output =
+			SkeletonJoint{joint, value.parentJoint == -1 ? std::nullopt : std::optional{map[value.parentJoint]}, *pose};
+	}
+	for (const auto joint : map)
+	{
+		auto parent = result[static_cast<std::size_t>(joint)]->parent;
+		for (std::size_t depth = 0; parent; ++depth)
+		{
+			if (depth >= map.size())
+				throw std::runtime_error("Physical body skeleton contains a parent cycle");
+			parent = result[static_cast<std::size_t>(*parent)]->parent;
+		}
+	}
 	return result;
 }
 } // namespace simxr::headset

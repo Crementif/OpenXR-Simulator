@@ -18,19 +18,6 @@ MonitorController::~MonitorController()
 	Stop();
 }
 
-bool MonitorController::Active() const
-{
-	const auto phase = m_runner.Phase();
-	return phase == automation::RigPhase::Running || phase == automation::RigPhase::Paused;
-}
-
-bool MonitorController::Matches(const ApplicationSnapshot& application) const
-{
-	return application.running && application.connected && m_status.process == application.runtimeProcess &&
-		   m_status.epoch == application.runtimeEpoch && m_status.session == application.session &&
-		   m_status.generation == application.generation;
-}
-
 void MonitorController::Start(const ApplicationSnapshot& application, MonitorOptions options)
 {
 	if (options.id.empty() || options.id.size() > 128 || options.id.find('\0') != std::string::npos ||
@@ -75,6 +62,19 @@ void MonitorController::Stop()
 	m_runner.Cancel();
 	m_runner.Join();
 	m_transport.reset();
+}
+
+bool MonitorController::Active() const
+{
+	const auto phase = m_runner.Phase();
+	return phase == automation::RigPhase::Running || phase == automation::RigPhase::Paused;
+}
+
+bool MonitorController::Matches(const ApplicationSnapshot& application) const
+{
+	return application.running && application.connected && m_status.process == application.runtimeProcess &&
+		   m_status.epoch == application.runtimeEpoch && m_status.session == application.session &&
+		   m_status.generation == application.generation;
 }
 
 MonitorStatus MonitorController::Status() const

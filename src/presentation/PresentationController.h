@@ -103,6 +103,7 @@ public:
 	using CompletionObserver = std::function<void(FrameKey, const FramePrediction&, RuntimeTime)>;
 	explicit PresentationController(std::size_t capacity = 8, FrameHistory* history = nullptr,
 									CompletionObserver completed = {});
+
 	void Start(SessionGeneration generation, const DisplayTimeline& timeline);
 	// Reserve queue storage before committing frame state. The callback may throw
 	// but must not reenter this controller. It runs before publication to readers.
@@ -123,6 +124,7 @@ public:
 													const ImageTransform& transform = {},
 													const std::function<bool()>& current = {});
 	void Stop() noexcept;
+
 	std::size_t PollRetired();
 	PresentationSnapshot Snapshot() const;
 	std::vector<PresentationSubmission> Retain() const;

@@ -32,11 +32,13 @@ class HeadsetImages
 public:
 	HeadsetImages(HeadsetGraphics& graphics, HeadsetImageSource source, std::shared_ptr<VulkanDevice> device = {});
 	~HeadsetImages();
+
 	void Tick();
+	bool Close();
+
 	std::shared_ptr<const HeadsetImageFrame> Current() const;
 	bool Fresh(std::chrono::nanoseconds period) const;
 	std::optional<std::chrono::nanoseconds> Age(std::chrono::steady_clock::time_point now) const;
-	bool Close();
 
 	HeadsetImageTiming Timing() const
 	{
@@ -47,6 +49,7 @@ public:
 
 private:
 	void RetireUnused();
+
 	HeadsetGraphics& m_graphics;
 	std::shared_ptr<VulkanDevice> m_device;
 	HeadsetImageBridge m_bridge;

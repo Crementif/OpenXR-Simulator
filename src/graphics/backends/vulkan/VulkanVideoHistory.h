@@ -19,6 +19,7 @@ public:
 
 private:
 	void Configure(VkExtent2D extent, std::uint32_t layers);
+
 	std::shared_ptr<VulkanDevice> m_device;
 	bool m_timeline;
 	std::mutex m_mutex;

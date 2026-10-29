@@ -26,6 +26,7 @@ private:
 	};
 
 	static bool Less(const Entry& left, const Entry& right);
+
 	std::vector<Entry> m_previous, m_next;
 	const HistoryStore* m_store = nullptr;
 	std::uint64_t m_identityRevision = 0;

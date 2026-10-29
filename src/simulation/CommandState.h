@@ -15,14 +15,18 @@ class CommandState
 {
 public:
 	using ChannelMask = std::array<bool, ControlChannelCount>;
-	static ControlChannel ScenarioChannel(FailureScenario scenario);
+
 	CommandState() = default;
 	explicit CommandState(std::optional<CommandConfiguration> initial);
+
+	static ControlChannel ScenarioChannel(FailureScenario scenario);
+
 	void BeginBoundary(const ReferenceSpaceState& spaces);
 	CommandResult Apply(CommandTransaction& transaction, const CommandConfiguration& baseline, RuntimeTime time);
 	CommandConfiguration Merge(const CommandConfiguration& baseline) const;
 	CommandRecordingOrigin RecordingOrigin(const CommandConfiguration& baseline, RuntimeTime time) const;
 	void Capture(AppliedCommandSnapshot& snapshot, const CommandConfiguration& baseline, RuntimeTime time) const;
+
 	ChannelMask OwnedChannels(CommandSource source) const noexcept;
 	ChannelMask ReleaseSource(CommandSource source) noexcept;
 	void ClearOwnership() noexcept;
@@ -32,10 +36,6 @@ private:
 	class Mutation;
 	using ChannelOwners = std::array<std::optional<CommandSource>, ControlChannelCount>;
 	using ScenarioMask = ScenarioState;
-	CommandConfiguration m_values;
-	ChannelMask m_overrides{};
-	ChannelOwners m_owners{};
-	ScenarioMask m_scenarios{};
 
 	static ControlChannel ChannelFor(const SetHeadPose& command);
 	static ControlChannel ChannelFor(const SetControllerPose& command);
@@ -50,6 +50,7 @@ private:
 	static ControlChannel ChannelFor(const SetControllerProfile& command);
 	static ControlChannel ChannelFor(const SetScenario& command);
 	static ControlChannel ChannelFor(const SetReferenceSpaces& command);
+
 	static std::size_t CheckedChannel(ControlChannel channel);
 	static void Normalize(CommandConfiguration& configuration, RuntimeTime time);
 	static void NormalizeAcknowledged(SimulationCommand& command, const CommandConfiguration& configuration);
@@ -57,6 +58,7 @@ private:
 											   const ChannelMask& overrides);
 	void ApplyScenarios(CommandConfiguration& configuration) const;
 	void ClearChannel(ControlChannel channel) noexcept;
+
 	void Set(const SetHeadPose& command);
 	void Set(const SetControllerPose& command);
 	void Set(const SetControllerControls& command);
@@ -70,5 +72,10 @@ private:
 	void Set(const SetControllerProfile& command);
 	void Set(const SetScenario& command);
 	void Set(const SetReferenceSpaces& command);
+
+	CommandConfiguration m_values;
+	ChannelMask m_overrides{};
+	ChannelOwners m_owners{};
+	ScenarioMask m_scenarios{};
 };
 } // namespace simxr

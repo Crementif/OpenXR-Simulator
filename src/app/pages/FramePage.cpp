@@ -126,44 +126,6 @@ void FramePage::Prepare(const Selection& selection, const RuntimeView& view)
 	}
 }
 
-void FramePage::DrawRig(ImVec2 size)
-{
-	if (m_rigView.drawnFrame != ImGui::GetFrameCount() - 1)
-		m_rigView.orbiting = m_rigView.panning = false;
-	if (m_scene)
-	{
-		auto scene = *m_scene;
-		RigView("Recorded rig", m_rigView, scene, m_device, {}, size);
-	}
-	else
-	{
-		m_rigView.points = {};
-		m_rigView.minimum = m_rigView.size = {};
-		ImGui::TextDisabled("%s", m_invalidPose ? "Invalid recorded pose" : "Pose not recorded for this frame");
-	}
-}
-
-void FramePage::DrawExpanded(ImVec2 size)
-{
-	const float scale = ImGui::GetFontSize() / 16;
-	DrawRig({size.x / scale, size.y / scale});
-	if (!m_scene && ImGui::Button("Back to image##Recorded rig unavailable"))
-		m_rigView.expanded = false;
-}
-
-ShellRect FramePage::RigViewRect() const
-{
-	return {m_rigView.minimum.x, m_rigView.minimum.y, m_rigView.size.x, m_rigView.size.y};
-}
-
-std::array<ShellRect, MaxTrackerDevices + 3> FramePage::RigDevicePoints() const
-{
-	std::array<ShellRect, MaxTrackerDevices + 3> result{};
-	for (std::size_t device = 0; device < result.size(); ++device)
-		result[device] = {m_rigView.points[device].x, m_rigView.points[device].y, 0, 0};
-	return result;
-}
-
 void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 {
 	Prepare(shell.selection, view);
@@ -412,5 +374,43 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		m_documents.Draw("Raw", bytes);
 	}
 	ImGui::EndChild();
+}
+
+void FramePage::DrawExpanded(ImVec2 size)
+{
+	const float scale = ImGui::GetFontSize() / 16;
+	DrawRig({size.x / scale, size.y / scale});
+	if (!m_scene && ImGui::Button("Back to image##Recorded rig unavailable"))
+		m_rigView.expanded = false;
+}
+
+ShellRect FramePage::RigViewRect() const
+{
+	return {m_rigView.minimum.x, m_rigView.minimum.y, m_rigView.size.x, m_rigView.size.y};
+}
+
+std::array<ShellRect, MaxTrackerDevices + 3> FramePage::RigDevicePoints() const
+{
+	std::array<ShellRect, MaxTrackerDevices + 3> result{};
+	for (std::size_t device = 0; device < result.size(); ++device)
+		result[device] = {m_rigView.points[device].x, m_rigView.points[device].y, 0, 0};
+	return result;
+}
+
+void FramePage::DrawRig(ImVec2 size)
+{
+	if (m_rigView.drawnFrame != ImGui::GetFrameCount() - 1)
+		m_rigView.orbiting = m_rigView.panning = false;
+	if (m_scene)
+	{
+		auto scene = *m_scene;
+		RigView("Recorded rig", m_rigView, scene, m_device, {}, size);
+	}
+	else
+	{
+		m_rigView.points = {};
+		m_rigView.minimum = m_rigView.size = {};
+		ImGui::TextDisabled("%s", m_invalidPose ? "Invalid recorded pose" : "Pose not recorded for this frame");
+	}
 }
 } // namespace simxr::app

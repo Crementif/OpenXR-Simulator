@@ -53,137 +53,6 @@ void PilotController::Configure(const PilotBindings& keys, const GamepadBindings
 				m_resolved[action] = static_cast<ImGuiKey>(key);
 }
 
-bool PilotController::Down(PilotAction action) const
-{
-	const auto index = static_cast<std::size_t>(action);
-	return m_resolved[index] != ImGuiKey_None && (Modifiers() & m_keys[index].modifiers) == m_keys[index].modifiers &&
-		   ImGui::IsKeyDown(m_resolved[index]);
-}
-
-bool PilotController::Pressed(PilotAction action) const
-{
-	const auto index = static_cast<std::size_t>(action);
-	return Down(action) && ImGui::IsKeyPressed(m_resolved[index], false);
-}
-
-void PilotController::Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons)
-{
-	const bool wasActive =
-		forceButtons || Active() || m_gamepadActive || AnyHeld(m_controls[0]) || AnyHeld(m_controls[1]);
-	if (window)
-		window->CapturePointer(false);
-	m_captured = m_starting = m_locked = m_gamepadActive = false;
-	if (discard)
-	{
-		input.DiscardUnsentPose();
-		m_poseEngaged = false;
-		m_handEdits = 0;
-	}
-	if (wasActive)
-	{
-		try
-		{
-			const auto state = input.Snapshot();
-			const auto observed = ReadObservedSetup(state.state);
-			for (unsigned hand = 0; hand < 2; ++hand)
-			{
-				const auto& owner = observed.owners[static_cast<std::size_t>(hand ? ControlChannel::RightControls
-																				  : ControlChannel::LeftControls)];
-				m_engaged[hand] |=
-					(owner && state.source && *owner == *state.source) || (forceButtons && state.editPending);
-			}
-			Submit(input, observed, false, {}, true);
-		}
-		catch (const std::exception&)
-		{
-			input.Submit(ReleaseManualInputs{});
-		}
-	}
-	m_controls = {};
-	m_engaged = {};
-	m_dpad = {};
-	m_handEdits = 0;
-	m_poseEngaged = false;
-}
-
-void PilotController::Submit(ManualInputController& input, const ObservedSetup& observed, bool poseChanged,
-							 const std::array<ControllerControls, 2>& controls, bool final)
-{
-	const auto state = input.Snapshot();
-	const auto source = state.source;
-	bool controlsChanged = false;
-	for (unsigned hand = 0; hand < 2; ++hand)
-	{
-		if (ControlsDiffer(controls[hand], m_controls[hand]))
-		{
-			m_engaged[hand] = true;
-			controlsChanged = true;
-		}
-		const auto& owner =
-			observed
-				.owners[static_cast<std::size_t>(hand ? ControlChannel::RightControls : ControlChannel::LeftControls)];
-		if (m_engaged[hand] && !state.editPending && (!owner || (source && *owner == *source)) &&
-			ControlsDiffer(controls[hand], observed.values.input.controllers[hand]))
-			controlsChanged = true;
-	}
-	if (!poseChanged && !controlsChanged && !final)
-		return;
-	ManualTransaction edit;
-	edit.continuous = true;
-	m_poseEngaged |= poseChanged;
-	if (m_poseEngaged)
-		edit = m_rig.Transaction(observed, source);
-	for (unsigned hand = 0; hand < 2; ++hand)
-	{
-		if (!(m_handEdits & (1u << hand)) || m_rig.HandAnchor(hand) != Anchor::World)
-			continue;
-		const auto channel = hand ? ControlChannel::RightPose : ControlChannel::LeftPose;
-		const auto& owner = observed.owners[static_cast<std::size_t>(channel)];
-		if (owner && (!source || *owner != *source))
-			continue;
-		edit.commands.emplace_back(TakeControl{channel, false});
-		auto controller = observed.values.tracking.controllers[hand];
-		controller.pose.pose = m_rig.Hand(hand);
-		edit.commands.emplace_back(SetControllerPose{hand, controller});
-	}
-	for (unsigned hand = 0; hand < 2; ++hand)
-	{
-		if (!m_engaged[hand])
-			continue;
-		const auto channel = hand ? ControlChannel::RightControls : ControlChannel::LeftControls;
-		const auto& owner = observed.owners[static_cast<std::size_t>(channel)];
-		if (owner && (!source || *owner != *source))
-			continue;
-		edit.commands.emplace_back(TakeControl{channel, false});
-		auto values = controls[hand];
-		values.connected = observed.values.tracking.controllers[hand].connected;
-		edit.commands.emplace_back(SetControllerControls{hand, values});
-		const auto& previous = m_controls[hand];
-		const auto& next = controls[hand];
-		if (ButtonsDiffer(previous, next))
-			edit.continuous = false;
-		edit.releaseEdge |= (previous.primary && !next.primary) || (previous.secondary && !next.secondary) ||
-							(previous.menu && !next.menu) || (previous.thumbClick && !next.thumbClick) ||
-							(previous.trigger && !next.trigger) || (previous.grip && !next.grip);
-		// Mouse trigger/grip are button-like edges, even though their wire values are analog.
-		if ((previous.trigger == 0 && next.trigger == 1) || (previous.trigger == 1 && next.trigger == 0) ||
-			(previous.grip != next.grip))
-			edit.continuous = false;
-	}
-	if (final)
-	{
-		edit.continuous = false;
-		edit.releaseEdge = true;
-	}
-	if (!edit.commands.empty())
-	{
-		if (!input.Submit(edit))
-			m_error = "Too many inputs. Release the controls and try again.";
-		m_lastInput = ImGui::GetTime();
-	}
-	m_controls = controls;
-}
-
 void PilotController::Update(Window& window, ManualInputController& input, bool available, bool hovered,
 							 bool automaticGamepad)
 {
@@ -354,5 +223,136 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 		hand.stick.y = std::clamp(hand.stick.y + axis(PilotAction::StickUp, PilotAction::StickDown), -1.0f, 1.0f);
 	}
 	Submit(input, observed, poseChanged, controls);
+}
+
+void PilotController::Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons)
+{
+	const bool wasActive =
+		forceButtons || Active() || m_gamepadActive || AnyHeld(m_controls[0]) || AnyHeld(m_controls[1]);
+	if (window)
+		window->CapturePointer(false);
+	m_captured = m_starting = m_locked = m_gamepadActive = false;
+	if (discard)
+	{
+		input.DiscardUnsentPose();
+		m_poseEngaged = false;
+		m_handEdits = 0;
+	}
+	if (wasActive)
+	{
+		try
+		{
+			const auto state = input.Snapshot();
+			const auto observed = ReadObservedSetup(state.state);
+			for (unsigned hand = 0; hand < 2; ++hand)
+			{
+				const auto& owner = observed.owners[static_cast<std::size_t>(hand ? ControlChannel::RightControls
+																				  : ControlChannel::LeftControls)];
+				m_engaged[hand] |=
+					(owner && state.source && *owner == *state.source) || (forceButtons && state.editPending);
+			}
+			Submit(input, observed, false, {}, true);
+		}
+		catch (const std::exception&)
+		{
+			input.Submit(ReleaseManualInputs{});
+		}
+	}
+	m_controls = {};
+	m_engaged = {};
+	m_dpad = {};
+	m_handEdits = 0;
+	m_poseEngaged = false;
+}
+
+bool PilotController::Down(PilotAction action) const
+{
+	const auto index = static_cast<std::size_t>(action);
+	return m_resolved[index] != ImGuiKey_None && (Modifiers() & m_keys[index].modifiers) == m_keys[index].modifiers &&
+		   ImGui::IsKeyDown(m_resolved[index]);
+}
+
+bool PilotController::Pressed(PilotAction action) const
+{
+	const auto index = static_cast<std::size_t>(action);
+	return Down(action) && ImGui::IsKeyPressed(m_resolved[index], false);
+}
+
+void PilotController::Submit(ManualInputController& input, const ObservedSetup& observed, bool poseChanged,
+							 const std::array<ControllerControls, 2>& controls, bool final)
+{
+	const auto state = input.Snapshot();
+	const auto source = state.source;
+	bool controlsChanged = false;
+	for (unsigned hand = 0; hand < 2; ++hand)
+	{
+		if (ControlsDiffer(controls[hand], m_controls[hand]))
+		{
+			m_engaged[hand] = true;
+			controlsChanged = true;
+		}
+		const auto& owner =
+			observed
+				.owners[static_cast<std::size_t>(hand ? ControlChannel::RightControls : ControlChannel::LeftControls)];
+		if (m_engaged[hand] && !state.editPending && (!owner || (source && *owner == *source)) &&
+			ControlsDiffer(controls[hand], observed.values.input.controllers[hand]))
+			controlsChanged = true;
+	}
+	if (!poseChanged && !controlsChanged && !final)
+		return;
+	ManualTransaction edit;
+	edit.continuous = true;
+	m_poseEngaged |= poseChanged;
+	if (m_poseEngaged)
+		edit = m_rig.Transaction(observed, source);
+	for (unsigned hand = 0; hand < 2; ++hand)
+	{
+		if (!(m_handEdits & (1u << hand)) || m_rig.HandAnchor(hand) != Anchor::World)
+			continue;
+		const auto channel = hand ? ControlChannel::RightPose : ControlChannel::LeftPose;
+		const auto& owner = observed.owners[static_cast<std::size_t>(channel)];
+		if (owner && (!source || *owner != *source))
+			continue;
+		edit.commands.emplace_back(TakeControl{channel, false});
+		auto controller = observed.values.tracking.controllers[hand];
+		controller.pose.pose = m_rig.Hand(hand);
+		edit.commands.emplace_back(SetControllerPose{hand, controller});
+	}
+	for (unsigned hand = 0; hand < 2; ++hand)
+	{
+		if (!m_engaged[hand])
+			continue;
+		const auto channel = hand ? ControlChannel::RightControls : ControlChannel::LeftControls;
+		const auto& owner = observed.owners[static_cast<std::size_t>(channel)];
+		if (owner && (!source || *owner != *source))
+			continue;
+		edit.commands.emplace_back(TakeControl{channel, false});
+		auto values = controls[hand];
+		values.connected = observed.values.tracking.controllers[hand].connected;
+		edit.commands.emplace_back(SetControllerControls{hand, values});
+		const auto& previous = m_controls[hand];
+		const auto& next = controls[hand];
+		if (ButtonsDiffer(previous, next))
+			edit.continuous = false;
+		edit.releaseEdge |= (previous.primary && !next.primary) || (previous.secondary && !next.secondary) ||
+							(previous.menu && !next.menu) || (previous.thumbClick && !next.thumbClick) ||
+							(previous.trigger && !next.trigger) || (previous.grip && !next.grip);
+		// Mouse trigger/grip are button-like edges, even though their wire values are analog.
+		if ((previous.trigger == 0 && next.trigger == 1) || (previous.trigger == 1 && next.trigger == 0) ||
+			(previous.grip != next.grip))
+			edit.continuous = false;
+	}
+	if (final)
+	{
+		edit.continuous = false;
+		edit.releaseEdge = true;
+	}
+	if (!edit.commands.empty())
+	{
+		if (!input.Submit(edit))
+			m_error = "Too many inputs. Release the controls and try again.";
+		m_lastInput = ImGui::GetTime();
+	}
+	m_controls = controls;
 }
 } // namespace simxr::app

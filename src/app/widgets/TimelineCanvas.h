@@ -32,6 +32,7 @@ class TimelineCanvas
 {
 public:
 	void Begin(float headerWidth, float liveWidth, bool laneNames = true);
+
 	TimelineGesture Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following,
 						 std::optional<double> cursor = {}, std::optional<std::pair<double, double>> selection = {});
 	void DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop);
@@ -39,6 +40,10 @@ public:
 	ClipHit DrawClip(const char* id, double first, double last, const char* label, bool replay, bool playable = false,
 					 bool stoppable = false);
 	void DrawPause(double first, double last);
+	// Inclusive source and replay endpoints. Frame-id offsets preserve gaps while
+	// the recorded input is drawn over frames still owned by the replay.
+	void DrawGhost(const HistoryStore& history, std::size_t sourceFirst, std::size_t sourceLast,
+				   std::size_t targetFirst, std::size_t targetLast);
 
 	void SetInputDetail(std::string detail)
 	{
@@ -54,11 +59,6 @@ public:
 	{
 		m_tint = tint;
 	}
-
-	// Inclusive source and replay endpoints. Frame-id offsets preserve gaps while
-	// the recorded input is drawn over frames still owned by the replay.
-	void DrawGhost(const HistoryStore& history, std::size_t sourceFirst, std::size_t sourceLast,
-				   std::size_t targetFirst, std::size_t targetLast);
 
 	void Fit() noexcept
 	{
@@ -101,6 +101,30 @@ private:
 		LaneCount
 	};
 
+	enum class FrameTarget
+	{
+		Frame,
+		Snapshot,
+		Marker
+	};
+
+	struct FramePress
+	{
+		FrameIdentity frame;
+		std::uint64_t epoch;
+		double seconds;
+		ImVec2 position;
+		FrameTarget target = FrameTarget::Frame;
+		bool range = false;
+	};
+
+	struct ClipPress
+	{
+		ImGuiID id;
+		ClipHit action;
+		int drawnFrame;
+	};
+
 	float LaneY(Lane lane) const noexcept
 	{
 		return m_laneY[lane];
@@ -121,34 +145,9 @@ private:
 	bool m_fit = false, m_compact = false, m_tint = false;
 	std::string m_inputDetail;
 	std::vector<std::pair<float, std::string>> m_runLabels;
-	enum class FrameTarget
-	{
-		Frame,
-		Snapshot,
-		Marker
-	};
-
-	struct FramePress
-	{
-		FrameIdentity frame;
-		std::uint64_t epoch;
-		double seconds;
-		ImVec2 position;
-		FrameTarget target = FrameTarget::Frame;
-		bool range = false;
-	};
-
 	std::optional<FramePress> m_framePress;
 	int m_drawnFrame = -1;
 	bool m_hovered = false;
-
-	struct ClipPress
-	{
-		ImGuiID id;
-		ClipHit action;
-		int drawnFrame;
-	};
-
 	std::optional<ClipPress> m_clipPress;
 };
 } // namespace simxr::app

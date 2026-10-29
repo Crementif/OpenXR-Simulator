@@ -47,13 +47,16 @@ class LibraryCatalog
 public:
 	explicit LibraryCatalog(std::filesystem::path root);
 	~LibraryCatalog();
+
 	void Refresh();
 	bool Rename(std::string path, std::string name);
 	bool Delete(std::string path);
 	bool ExportRange(std::string path, std::string name, std::uint64_t first, std::uint64_t last);
 	bool ReadEvidence(std::string path, std::uint64_t cursor = 0);
+
 	bool Busy() const;
 	std::optional<LibraryResult> TakeResult();
+
 	static bool ValidName(const std::string& name);
 
 private:
@@ -68,6 +71,7 @@ private:
 	void StartWorker();
 	void Run(std::stop_token stop);
 	void Scan(LibraryResult& result, std::stop_token stop);
+
 	std::filesystem::path m_root;
 	std::vector<LibraryEntry> m_archiveCache;
 	mutable std::mutex m_mutex;

@@ -26,6 +26,7 @@ class D3D11Frame final : public FrameOutput
 {
 public:
 	~D3D11Frame() override;
+
 	CompletionStatus PollCompletion() const noexcept override;
 
 	bool SourcesUsed() const noexcept
@@ -43,8 +44,10 @@ public:
 
 private:
 	friend class D3D11Backend;
+
 	D3D11Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
 			   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views);
+
 	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;
 	const std::shared_ptr<const windows::WindowsLibrary> m_runtimeLibrary;
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> m_texture;
@@ -66,6 +69,7 @@ public:
 	using Frame = D3D11Frame;
 	using Source = D3D11CompositionSource;
 	explicit D3D11Backend(ID3D11Device* device);
+
 	// Produces an immutable, GPU-shared frame. Completion observation never touches
 	// the application context. Readers retain the frame until GPU use completes.
 	HRESULT Prepare(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,

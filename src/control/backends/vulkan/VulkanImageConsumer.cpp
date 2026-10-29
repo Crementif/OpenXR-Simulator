@@ -333,13 +333,6 @@ void VulkanImageConsumer::Submit()
 	m_state->Marker();
 }
 
-void VulkanImageConsumer::AbandonUnsent()
-{
-	if (m_state->submitted)
-		throw std::logic_error("Submitted consumer work cannot be abandoned as unsent");
-	m_state->offered.reset();
-}
-
 CompletionStatus VulkanImageConsumer::Poll()
 {
 	return m_state->Poll();
@@ -364,6 +357,13 @@ void VulkanImageConsumer::CancelUnused()
 	m_state->Marker();
 }
 
+void VulkanImageConsumer::AbandonUnsent()
+{
+	if (m_state->submitted)
+		throw std::logic_error("Submitted consumer work cannot be abandoned as unsent");
+	m_state->offered.reset();
+}
+
 VkSemaphore VulkanImageConsumer::SampleReady() const
 {
 	return m_state->sampleReady;
@@ -384,6 +384,13 @@ const ImageDescription& VulkanImageConsumer::Description() const
 	return m_state->description;
 }
 
+const VulkanImage& VulkanImageConsumer::Image() const
+{
+	if (!m_state->image)
+		throw std::logic_error("Native consumer has no imported private image");
+	return *m_state->image;
+}
+
 std::uint64_t VulkanImageConsumer::AllocatedBytes() const noexcept
 {
 	const auto owned = m_state->image ? m_state->image->allocationSize : 0;
@@ -392,10 +399,4 @@ std::uint64_t VulkanImageConsumer::AllocatedBytes() const noexcept
 																		: owned + imported;
 }
 
-const VulkanImage& VulkanImageConsumer::Image() const
-{
-	if (!m_state->image)
-		throw std::logic_error("Native consumer has no imported private image");
-	return *m_state->image;
-}
 } // namespace simxr::control

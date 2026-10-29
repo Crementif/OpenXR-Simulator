@@ -71,45 +71,7 @@ WorkspacePanels::WorkspacePanels(ProcessSupervisor& processes, WorkspacePanels& 
 			m_profiles.Edit(m_settings, static_cast<int>(index));
 }
 
-WorkspacePanels::WorkspacePanels(ProcessSupervisor& processes, std::shared_ptr<SharedWorkspaceSettings> shared)
-	: m_shared(std::move(shared)), m_enabled(m_shared->enabled), m_dirty(m_shared->dirty), m_path(m_shared->path),
-	  m_layoutPath(m_shared->layoutPath), m_settings(m_shared->settings), m_launcher(processes),
-	  m_appliedScale(m_shared->appliedScale), m_originalStyle(m_shared->originalStyle),
-	  m_styleCaptured(m_shared->styleCaptured)
-{}
-
 WorkspacePanels::~WorkspacePanels() = default;
-
-void WorkspacePanels::Save()
-{
-	if (!m_enabled)
-		return;
-	m_dirty = true;
-	try
-	{
-		if (!m_shared->savedSettings)
-			throw std::runtime_error("Settings could not be loaded. Reopen this window after resolving the error.");
-		m_shared->savedSettings = SaveSettingsIfUnchanged(m_path, *m_shared->savedSettings, m_settings);
-		m_dirty = false;
-	}
-	catch (const std::exception& failure)
-	{
-		m_notices.Push({"Settings not saved", failure.what()});
-	}
-}
-
-void WorkspacePanels::SaveLayout()
-{
-	if (m_layoutPath.empty())
-	{
-		if (m_path.empty())
-			m_path = CompanionSettingsPath();
-		m_layoutPath = m_path.parent_path() / "companion-v2.ini";
-	}
-	std::size_t size = 0;
-	const char* layout = ImGui::SaveIniSettingsToMemory(&size);
-	SaveWindowLayout(m_layoutPath, {layout, size});
-}
 
 void WorkspacePanels::BeginFrame(RuntimePanels&)
 {
@@ -149,337 +111,6 @@ void WorkspacePanels::BeginFrame(RuntimePanels&)
 		m_appliedScale = m_settings.scale;
 	}
 }
-
-static std::int64_t Now()
-{
-	return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-		.count();
-}
-
-void WorkspacePanels::Remember(LaunchProfile launch)
-{
-	try
-	{
-		RememberRecentApp(m_settings, std::move(launch), Now());
-		Save();
-	}
-	catch (const std::exception& failure)
-	{
-		m_notices.Push({"Recent app not saved", failure.what()});
-	}
-}
-
-void WorkspacePanels::Launch(const LaunchProfile& profile)
-{
-	if (m_openLaunch && m_openLaunch(profile))
-		return;
-	try
-	{
-		const auto resolved = ResolveProfile(profile);
-		auto pending = std::make_unique<LaunchAttachment>(m_launchDiscovery, resolved);
-#ifdef SIMXR_COMPANION_AUTOMATION
-		m_rigs.PrepareLaunch(profile);
-#else
-		if (!profile.rig.empty())
-			throw std::runtime_error("This build does not support launch rigs");
-#endif
-		if (m_launcher.Launch(resolved))
-		{
-			m_launchedProfile = profile;
-			m_workspaceProfile = profile.name;
-			m_launchName = profile.name.empty() ? PathText(Utf8Path(profile.executable).stem()) : profile.name;
-			m_attachment = std::move(pending);
-			m_launchError.clear();
-			Remember(profile);
-		}
-	}
-	catch (const std::exception& failure)
-	{
-		m_launchError = failure.what();
-#ifdef SIMXR_COMPANION_AUTOMATION
-		m_rigs.PrepareLaunch({});
-#endif
-	}
-}
-
-void WorkspacePanels::SetTabBar(std::function<void()> draw)
-{
-	m_tabBar = std::move(draw);
-}
-
-void WorkspacePanels::SetOpenHandlers(std::function<bool(const RunningApp&)> connect,
-									  std::function<bool(const LaunchProfile&)> launch)
-{
-	m_openRunning = std::move(connect);
-	m_openLaunch = std::move(launch);
-}
-
-void WorkspacePanels::SetEndpointAdmission(std::function<bool(const std::string&)> available)
-{
-	m_endpointAvailable = std::move(available);
-}
-
-void WorkspacePanels::OpenAppPicker()
-{
-	m_shell.openAppPicker = true;
-}
-
-void WorkspacePanels::LaunchApp(const LaunchProfile& profile)
-{
-	Launch(profile);
-}
-
-bool WorkspacePanels::RequestApplicationClose(const RuntimePanels& runtime)
-{
-	if (m_restart || (!runtime.Endpoint().empty() && runtime.Endpoint() != m_launchedEndpoint))
-		return false;
-	return m_launcher.RequestClose();
-}
-
-bool WorkspacePanels::RequestApplicationRestart(RuntimePanels& runtime, std::uint64_t expectedProcess)
-{
-	if (!m_launchedProfile)
-	{
-		m_launchError = "No simulator-launched profile is available for restart";
-		return false;
-	}
-	return Restart(runtime, {*m_launchedProfile, expectedProcess});
-}
-
-bool WorkspacePanels::ConnectionMatchesLaunch(const RuntimePanels& runtime) const
-{
-	return m_launchedEndpoint.empty() || runtime.Endpoint() != m_launchedEndpoint || !m_attachedProcess ||
-		   m_launcher.Snapshot().process == m_attachedProcess;
-}
-
-const std::string& WorkspacePanels::LaunchError() const noexcept
-{
-	return m_launchError;
-}
-
-LaunchSnapshot WorkspacePanels::Process() const
-{
-	auto process = m_launcher.Snapshot();
-	process.restartPending |= m_restart.has_value();
-	return process;
-}
-
-std::string WorkspacePanels::LaunchControlEndpoint() const
-{
-	const auto process = Process();
-	if (!m_launchedProfile || process.restartPending || process.state != LaunchState::Running || !process.process)
-		return {};
-	return LaunchRuntimeEndpoint(*m_launchedProfile, process.process);
-}
-
-std::string WorkspacePanels::LaunchDataDirectory() const
-{
-	if (!m_launchedProfile)
-		return {};
-	const auto path = LaunchRuntimeDataDirectory(*m_launchedProfile);
-	return path ? PathText(*path) : std::string{};
-}
-
-bool WorkspacePanels::McpEnabled() const
-{
-	return m_settings.mcpEnabled;
-}
-
-McpUiState& WorkspacePanels::McpState()
-{
-	return m_shared->mcp;
-}
-
-std::string WorkspacePanels::ApplicationName(const RuntimePanels& runtime) const
-{
-	const auto view = runtime.Snapshot();
-	if (runtime.Endpoint() == m_launchedEndpoint && !m_launchedName.empty())
-		return m_launchedName;
-	if (runtime.Endpoint() == m_connectedEndpoint && !m_connectedName.empty())
-		return m_connectedName;
-	if (!view.appName.empty())
-		return view.appName;
-	const auto process = m_launcher.Snapshot();
-	if (!process.profile.empty())
-		return process.profile;
-	return "Apps";
-}
-
-bool WorkspacePanels::HasActiveAutomation() const
-{
-#ifdef SIMXR_COMPANION_AUTOMATION
-	return m_replay.has_value() || m_rigs.IsActive();
-#else
-	return false;
-#endif
-}
-
-bool WorkspacePanels::HasPendingFiles() const
-{
-#ifdef SIMXR_COMPANION_AUTOMATION
-	return m_library.Busy() || m_rigs.ReportBusy();
-#else
-	return false;
-#endif
-}
-
-bool WorkspacePanels::ClosingWorkDone() const
-{
-	return m_picker.DiscoveryStopped() && !HasActiveAutomation() && !HasPendingFiles();
-}
-
-void WorkspacePanels::BeginClose()
-{
-	m_picker.StopDiscovery();
-	StopAutomation();
-}
-
-void WorkspacePanels::StopAutomation()
-{
-	CancelRestart();
-	m_attachment.reset();
-#ifdef SIMXR_COMPANION_AUTOMATION
-	m_replay.reset();
-	m_rigs.PrepareLaunch({});
-	m_rigs.Cancel();
-#endif
-}
-
-void WorkspacePanels::CancelRestart()
-{
-	m_launcher.CancelRestart();
-	if (!m_restart)
-		return;
-	m_restart.reset();
-	m_attachment.reset();
-#ifdef SIMXR_COMPANION_AUTOMATION
-	m_rigs.PrepareLaunch({});
-#endif
-}
-
-bool WorkspacePanels::Restart(RuntimePanels& runtime, LaunchRestartRequest request)
-{
-	try
-	{
-		const auto view = runtime.Snapshot();
-		const auto process = m_launcher.Snapshot();
-		if (m_restart || m_attachment || !view.connected || view.endpoint != m_launchedEndpoint ||
-			process.state != LaunchState::Running || !request.process || process.process != request.process)
-			throw std::runtime_error("The connected launched app changed. Review the restart again.");
-		ValidateLaunchProfile(request.profile);
-		m_restart = PendingRestart{std::move(request),
-								   {view.epoch, view.session, view.generation},
-								   view.endpoint,
-								   std::chrono::steady_clock::now() + std::chrono::seconds(10)};
-		runtime.DisconnectHeadset();
-		m_launchError.clear();
-		return true;
-	}
-	catch (const std::exception& failure)
-	{
-		m_launchError = failure.what();
-		return false;
-	}
-}
-
-void WorkspacePanels::PollLaunch(RuntimePanels& runtime)
-{
-	if (!m_attachment && !m_restart)
-		return;
-	try
-	{
-		if (m_restart)
-		{
-			const auto process = m_launcher.Snapshot();
-			if (!m_restart->queued)
-			{
-				const auto view = runtime.Snapshot();
-				if (!view.connected || view.endpoint != m_restart->endpoint ||
-					RuntimeFrameRun{view.epoch, view.session, view.generation} != m_restart->run ||
-					process.state != LaunchState::Running || process.process != m_restart->request.process)
-					throw std::runtime_error("Restart cancelled because the original application changed.");
-				const auto host = runtime.HeadsetStatus();
-				if (host.forcedStop || host.phase == HeadsetHostPhase::Failed)
-					throw std::runtime_error("Restart cancelled because the headset did not stop cleanly.");
-				if (host.phase != HeadsetHostPhase::Idle && host.phase != HeadsetHostPhase::Exited)
-				{
-					if (std::chrono::steady_clock::now() >= m_restart->deadline)
-						throw std::runtime_error("Restart cancelled while waiting for headset shutdown.");
-					return;
-				}
-				const auto profile = ResolveProfile(m_restart->request.profile);
-				auto pending = std::make_unique<LaunchAttachment>(m_launchDiscovery, profile, m_restart->endpoint);
-#ifdef SIMXR_COMPANION_AUTOMATION
-				m_rigs.PrepareLaunch(profile);
-#else
-				if (!profile.rig.empty())
-					throw std::runtime_error("This build does not support launch rigs");
-#endif
-				if (!m_launcher.Restart(m_restart->request.process, profile))
-					throw std::runtime_error("The application no longer accepts this restart request.");
-				m_attachment = std::move(pending);
-				m_launchName = profile.name;
-				m_workspaceProfile = profile.name;
-				m_restart->queued = true;
-				Remember(m_restart->request.profile);
-				return;
-			}
-			if (runtime.Endpoint() != m_restart->endpoint)
-				throw std::runtime_error("Restart cancelled because the selected endpoint changed.");
-			if (process.restartPending)
-			{
-				const auto view = runtime.Snapshot();
-				if (view.connected && (view.epoch != m_restart->run.epoch ||
-									   (view.sessionAvailable &&
-										RuntimeFrameRun{view.epoch, view.session, view.generation} != m_restart->run)))
-					throw std::runtime_error("Restart cancelled because the selected session changed.");
-				return;
-			}
-			if (process.state == LaunchState::Running && process.process == m_restart->request.process)
-				throw std::runtime_error("Application restart cancelled: " + process.detail);
-			m_launchedProfile = m_restart->request.profile;
-			m_restart.reset();
-		}
-		m_attachment->Observe(m_launcher.Snapshot());
-		if (auto session = m_attachment->Poll())
-		{
-			m_attachment.reset();
-			if (m_endpointAvailable && !m_endpointAvailable(session->endpoint))
-				throw std::runtime_error("The launched application's endpoint is already open in another tab");
-			runtime.ConnectEndpoint(session->endpoint, session->process);
-			m_launchedEndpoint = session->endpoint;
-			m_attachedProcess = session->process;
-			m_launchedName = m_launchName;
-#ifdef SIMXR_COMPANION_AUTOMATION
-			m_rigs.AttachLaunch(*session);
-#endif
-		}
-	}
-	catch (const std::exception& failure)
-	{
-		m_launchError = failure.what();
-		CancelRestart();
-		m_attachment.reset();
-#ifdef SIMXR_COMPANION_AUTOMATION
-		m_rigs.PrepareLaunch({});
-#endif
-	}
-}
-
-#ifdef SIMXR_COMPANION_AUTOMATION
-RuntimeFrameRun WorkspacePanels::ReplayTarget(const RuntimePanels& runtime) const
-{
-	const auto state = runtime.Snapshot();
-	return {state.epoch, state.session, state.generation};
-}
-
-void WorkspacePanels::QueueScript(RuntimePanels& runtime, ScriptRun run)
-{
-	runtime.PrepareReplay();
-	m_replay = PendingReplay{
-		{run.path}, run.options, std::chrono::steady_clock::now() + std::chrono::seconds(3), ReplayTarget(runtime)};
-}
-#endif
 
 void WorkspacePanels::Poll(RuntimePanels& runtime)
 {
@@ -661,42 +292,6 @@ void WorkspacePanels::Draw(RuntimePanels& runtime)
 	runtime.EndFrame();
 }
 
-std::string WorkspacePanels::InitialEndpoint() const
-{
-	return m_settings.endpoint;
-}
-
-const ShellState& WorkspacePanels::State() const
-{
-	return m_shell;
-}
-
-void WorkspacePanels::Select(Selection selection)
-{
-	m_shell.selection = std::move(selection);
-	ShowInspector();
-	m_wasOverlay = true;
-}
-
-void WorkspacePanels::ShowLibrary(bool open)
-{
-	if (m_shell.library != open)
-		ToggleLibrary();
-}
-
-void WorkspacePanels::SetPreviewExpanded(bool expanded)
-{
-	m_previewExpanded = expanded;
-}
-
-void WorkspacePanels::SetScale(float scale)
-{
-	if (!(scale >= 0.75f && scale <= 2.5f))
-		throw std::invalid_argument("UI scale must be between 0.75 and 2.5");
-	m_settings.scale = scale;
-	m_dirty = true;
-}
-
 void WorkspacePanels::Finish()
 {
 	if (!m_enabled)
@@ -729,5 +324,410 @@ void WorkspacePanels::Finish()
 	if (!failure.empty())
 		throw std::runtime_error(failure);
 }
+
+static std::int64_t Now()
+{
+	return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+		.count();
+}
+
+void WorkspacePanels::SetTabBar(std::function<void()> draw)
+{
+	m_tabBar = std::move(draw);
+}
+
+void WorkspacePanels::SetOpenHandlers(std::function<bool(const RunningApp&)> connect,
+									  std::function<bool(const LaunchProfile&)> launch)
+{
+	m_openRunning = std::move(connect);
+	m_openLaunch = std::move(launch);
+}
+
+void WorkspacePanels::SetEndpointAdmission(std::function<bool(const std::string&)> available)
+{
+	m_endpointAvailable = std::move(available);
+}
+
+void WorkspacePanels::SetScale(float scale)
+{
+	if (!(scale >= 0.75f && scale <= 2.5f))
+		throw std::invalid_argument("UI scale must be between 0.75 and 2.5");
+	m_settings.scale = scale;
+	m_dirty = true;
+}
+
+void WorkspacePanels::OpenAppPicker()
+{
+	m_shell.openAppPicker = true;
+}
+
+void WorkspacePanels::LaunchApp(const LaunchProfile& profile)
+{
+	Launch(profile);
+}
+
+bool WorkspacePanels::RequestApplicationClose(const RuntimePanels& runtime)
+{
+	if (m_restart || (!runtime.Endpoint().empty() && runtime.Endpoint() != m_launchedEndpoint))
+		return false;
+	return m_launcher.RequestClose();
+}
+
+bool WorkspacePanels::RequestApplicationRestart(RuntimePanels& runtime, std::uint64_t expectedProcess)
+{
+	if (!m_launchedProfile)
+	{
+		m_launchError = "No simulator-launched profile is available for restart";
+		return false;
+	}
+	return Restart(runtime, {*m_launchedProfile, expectedProcess});
+}
+
+bool WorkspacePanels::ConnectionMatchesLaunch(const RuntimePanels& runtime) const
+{
+	return m_launchedEndpoint.empty() || runtime.Endpoint() != m_launchedEndpoint || !m_attachedProcess ||
+		   m_launcher.Snapshot().process == m_attachedProcess;
+}
+
+std::string WorkspacePanels::InitialEndpoint() const
+{
+	return m_settings.endpoint;
+}
+
+const std::string& WorkspacePanels::LaunchError() const noexcept
+{
+	return m_launchError;
+}
+
+LaunchSnapshot WorkspacePanels::Process() const
+{
+	auto process = m_launcher.Snapshot();
+	process.restartPending |= m_restart.has_value();
+	return process;
+}
+
+std::string WorkspacePanels::LaunchControlEndpoint() const
+{
+	const auto process = Process();
+	if (!m_launchedProfile || process.restartPending || process.state != LaunchState::Running || !process.process)
+		return {};
+	return LaunchRuntimeEndpoint(*m_launchedProfile, process.process);
+}
+
+std::string WorkspacePanels::LaunchDataDirectory() const
+{
+	if (!m_launchedProfile)
+		return {};
+	const auto path = LaunchRuntimeDataDirectory(*m_launchedProfile);
+	return path ? PathText(*path) : std::string{};
+}
+
+std::string WorkspacePanels::ApplicationName(const RuntimePanels& runtime) const
+{
+	const auto view = runtime.Snapshot();
+	if (runtime.Endpoint() == m_launchedEndpoint && !m_launchedName.empty())
+		return m_launchedName;
+	if (runtime.Endpoint() == m_connectedEndpoint && !m_connectedName.empty())
+		return m_connectedName;
+	if (!view.appName.empty())
+		return view.appName;
+	const auto process = m_launcher.Snapshot();
+	if (!process.profile.empty())
+		return process.profile;
+	return "Apps";
+}
+
+bool WorkspacePanels::McpEnabled() const
+{
+	return m_settings.mcpEnabled;
+}
+
+McpUiState& WorkspacePanels::McpState()
+{
+	return m_shared->mcp;
+}
+
+const ShellState& WorkspacePanels::State() const
+{
+	return m_shell;
+}
+
+void WorkspacePanels::Select(Selection selection)
+{
+	m_shell.selection = std::move(selection);
+	ShowInspector();
+	m_wasOverlay = true;
+}
+
+void WorkspacePanels::SetPreviewExpanded(bool expanded)
+{
+	m_previewExpanded = expanded;
+}
+
+void WorkspacePanels::ShowLibrary(bool open)
+{
+	if (m_shell.library != open)
+		ToggleLibrary();
+}
+
+bool WorkspacePanels::HasActiveAutomation() const
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	return m_replay.has_value() || m_rigs.IsActive();
+#else
+	return false;
+#endif
+}
+
+bool WorkspacePanels::HasPendingFiles() const
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	return m_library.Busy() || m_rigs.ReportBusy();
+#else
+	return false;
+#endif
+}
+
+bool WorkspacePanels::ClosingWorkDone() const
+{
+	return m_picker.DiscoveryStopped() && !HasActiveAutomation() && !HasPendingFiles();
+}
+
+void WorkspacePanels::BeginClose()
+{
+	m_picker.StopDiscovery();
+	StopAutomation();
+}
+
+void WorkspacePanels::StopAutomation()
+{
+	CancelRestart();
+	m_attachment.reset();
+#ifdef SIMXR_COMPANION_AUTOMATION
+	m_replay.reset();
+	m_rigs.PrepareLaunch({});
+	m_rigs.Cancel();
+#endif
+}
+
+WorkspacePanels::WorkspacePanels(ProcessSupervisor& processes, std::shared_ptr<SharedWorkspaceSettings> shared)
+	: m_shared(std::move(shared)), m_enabled(m_shared->enabled), m_dirty(m_shared->dirty), m_path(m_shared->path),
+	  m_layoutPath(m_shared->layoutPath), m_settings(m_shared->settings), m_launcher(processes),
+	  m_appliedScale(m_shared->appliedScale), m_originalStyle(m_shared->originalStyle),
+	  m_styleCaptured(m_shared->styleCaptured)
+{}
+
+void WorkspacePanels::Save()
+{
+	if (!m_enabled)
+		return;
+	m_dirty = true;
+	try
+	{
+		if (!m_shared->savedSettings)
+			throw std::runtime_error("Settings could not be loaded. Reopen this window after resolving the error.");
+		m_shared->savedSettings = SaveSettingsIfUnchanged(m_path, *m_shared->savedSettings, m_settings);
+		m_dirty = false;
+	}
+	catch (const std::exception& failure)
+	{
+		m_notices.Push({"Settings not saved", failure.what()});
+	}
+}
+
+void WorkspacePanels::SaveLayout()
+{
+	if (m_layoutPath.empty())
+	{
+		if (m_path.empty())
+			m_path = CompanionSettingsPath();
+		m_layoutPath = m_path.parent_path() / "companion-v2.ini";
+	}
+	std::size_t size = 0;
+	const char* layout = ImGui::SaveIniSettingsToMemory(&size);
+	SaveWindowLayout(m_layoutPath, {layout, size});
+}
+
+void WorkspacePanels::Remember(LaunchProfile launch)
+{
+	try
+	{
+		RememberRecentApp(m_settings, std::move(launch), Now());
+		Save();
+	}
+	catch (const std::exception& failure)
+	{
+		m_notices.Push({"Recent app not saved", failure.what()});
+	}
+}
+
+void WorkspacePanels::Launch(const LaunchProfile& profile)
+{
+	if (m_openLaunch && m_openLaunch(profile))
+		return;
+	try
+	{
+		const auto resolved = ResolveProfile(profile);
+		auto pending = std::make_unique<LaunchAttachment>(m_launchDiscovery, resolved);
+#ifdef SIMXR_COMPANION_AUTOMATION
+		m_rigs.PrepareLaunch(profile);
+#else
+		if (!profile.rig.empty())
+			throw std::runtime_error("This build does not support launch rigs");
+#endif
+		if (m_launcher.Launch(resolved))
+		{
+			m_launchedProfile = profile;
+			m_workspaceProfile = profile.name;
+			m_launchName = profile.name.empty() ? PathText(Utf8Path(profile.executable).stem()) : profile.name;
+			m_attachment = std::move(pending);
+			m_launchError.clear();
+			Remember(profile);
+		}
+	}
+	catch (const std::exception& failure)
+	{
+		m_launchError = failure.what();
+#ifdef SIMXR_COMPANION_AUTOMATION
+		m_rigs.PrepareLaunch({});
+#endif
+	}
+}
+
+void WorkspacePanels::PollLaunch(RuntimePanels& runtime)
+{
+	if (!m_attachment && !m_restart)
+		return;
+	try
+	{
+		if (m_restart)
+		{
+			const auto process = m_launcher.Snapshot();
+			if (!m_restart->queued)
+			{
+				const auto view = runtime.Snapshot();
+				if (!view.connected || view.endpoint != m_restart->endpoint ||
+					RuntimeFrameRun{view.epoch, view.session, view.generation} != m_restart->run ||
+					process.state != LaunchState::Running || process.process != m_restart->request.process)
+					throw std::runtime_error("Restart cancelled because the original application changed.");
+				const auto host = runtime.HeadsetStatus();
+				if (host.forcedStop || host.phase == HeadsetHostPhase::Failed)
+					throw std::runtime_error("Restart cancelled because the headset did not stop cleanly.");
+				if (host.phase != HeadsetHostPhase::Idle && host.phase != HeadsetHostPhase::Exited)
+				{
+					if (std::chrono::steady_clock::now() >= m_restart->deadline)
+						throw std::runtime_error("Restart cancelled while waiting for headset shutdown.");
+					return;
+				}
+				const auto profile = ResolveProfile(m_restart->request.profile);
+				auto pending = std::make_unique<LaunchAttachment>(m_launchDiscovery, profile, m_restart->endpoint);
+#ifdef SIMXR_COMPANION_AUTOMATION
+				m_rigs.PrepareLaunch(profile);
+#else
+				if (!profile.rig.empty())
+					throw std::runtime_error("This build does not support launch rigs");
+#endif
+				if (!m_launcher.Restart(m_restart->request.process, profile))
+					throw std::runtime_error("The application no longer accepts this restart request.");
+				m_attachment = std::move(pending);
+				m_launchName = profile.name;
+				m_workspaceProfile = profile.name;
+				m_restart->queued = true;
+				Remember(m_restart->request.profile);
+				return;
+			}
+			if (runtime.Endpoint() != m_restart->endpoint)
+				throw std::runtime_error("Restart cancelled because the selected endpoint changed.");
+			if (process.restartPending)
+			{
+				const auto view = runtime.Snapshot();
+				if (view.connected && (view.epoch != m_restart->run.epoch ||
+									   (view.sessionAvailable &&
+										RuntimeFrameRun{view.epoch, view.session, view.generation} != m_restart->run)))
+					throw std::runtime_error("Restart cancelled because the selected session changed.");
+				return;
+			}
+			if (process.state == LaunchState::Running && process.process == m_restart->request.process)
+				throw std::runtime_error("Application restart cancelled: " + process.detail);
+			m_launchedProfile = m_restart->request.profile;
+			m_restart.reset();
+		}
+		m_attachment->Observe(m_launcher.Snapshot());
+		if (auto session = m_attachment->Poll())
+		{
+			m_attachment.reset();
+			if (m_endpointAvailable && !m_endpointAvailable(session->endpoint))
+				throw std::runtime_error("The launched application's endpoint is already open in another tab");
+			runtime.ConnectEndpoint(session->endpoint, session->process);
+			m_launchedEndpoint = session->endpoint;
+			m_attachedProcess = session->process;
+			m_launchedName = m_launchName;
+#ifdef SIMXR_COMPANION_AUTOMATION
+			m_rigs.AttachLaunch(*session);
+#endif
+		}
+	}
+	catch (const std::exception& failure)
+	{
+		m_launchError = failure.what();
+		CancelRestart();
+		m_attachment.reset();
+#ifdef SIMXR_COMPANION_AUTOMATION
+		m_rigs.PrepareLaunch({});
+#endif
+	}
+}
+
+bool WorkspacePanels::Restart(RuntimePanels& runtime, LaunchRestartRequest request)
+{
+	try
+	{
+		const auto view = runtime.Snapshot();
+		const auto process = m_launcher.Snapshot();
+		if (m_restart || m_attachment || !view.connected || view.endpoint != m_launchedEndpoint ||
+			process.state != LaunchState::Running || !request.process || process.process != request.process)
+			throw std::runtime_error("The connected launched app changed. Review the restart again.");
+		ValidateLaunchProfile(request.profile);
+		m_restart = PendingRestart{std::move(request),
+								   {view.epoch, view.session, view.generation},
+								   view.endpoint,
+								   std::chrono::steady_clock::now() + std::chrono::seconds(10)};
+		runtime.DisconnectHeadset();
+		m_launchError.clear();
+		return true;
+	}
+	catch (const std::exception& failure)
+	{
+		m_launchError = failure.what();
+		return false;
+	}
+}
+
+void WorkspacePanels::CancelRestart()
+{
+	m_launcher.CancelRestart();
+	if (!m_restart)
+		return;
+	m_restart.reset();
+	m_attachment.reset();
+#ifdef SIMXR_COMPANION_AUTOMATION
+	m_rigs.PrepareLaunch({});
+#endif
+}
+
+#ifdef SIMXR_COMPANION_AUTOMATION
+RuntimeFrameRun WorkspacePanels::ReplayTarget(const RuntimePanels& runtime) const
+{
+	const auto state = runtime.Snapshot();
+	return {state.epoch, state.session, state.generation};
+}
+
+void WorkspacePanels::QueueScript(RuntimePanels& runtime, ScriptRun run)
+{
+	runtime.PrepareReplay();
+	m_replay = PendingReplay{
+		{run.path}, run.options, std::chrono::steady_clock::now() + std::chrono::seconds(3), ReplayTarget(runtime)};
+}
+#endif
 
 } // namespace simxr::app

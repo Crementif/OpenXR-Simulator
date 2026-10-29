@@ -81,19 +81,23 @@ class ActionRegistry
 {
 public:
 	ActionRegistry(XrInstance owner, const EnabledExtensions& enabled);
+
 	XrResult StringToPath(std::string_view text, XrPath& path);
 	XrResult PathToString(XrPath path, std::uint32_t capacity, std::uint32_t* count, char* buffer) const;
 	std::optional<std::string> PathString(XrPath path) const;
+
 	XrResult CreateSet(const XrActionSetCreateInfo& info, XrActionSet& handle);
 	XrResult DestroySet(XrActionSet handle);
 	XrResult CreateAction(XrActionSet set, const XrActionCreateInfo& info, XrAction& handle);
 	XrResult DestroyAction(XrAction handle);
+
 	std::optional<ActionDefinition> Action(XrAction handle) const;
 	std::optional<ActionSetDefinition> Set(XrActionSet handle) const;
 	std::vector<ActionDefinition> Actions() const;
 	std::optional<ActionDefinition> ActionResource(XrAction handle) const;
 	std::optional<ActionSetDefinition> SetResource(XrActionSet handle) const;
 	std::vector<ActionDefinition> Resources() const;
+
 	XrResult BuildInspectionDictionary(std::span<const XrActionSet> sets, const ActionSyncSnapshot& snapshot,
 									   std::shared_ptr<const ActionInspectionDictionary>& dictionary) const;
 	XrResult SuggestBindings(const XrInteractionProfileSuggestedBinding& info);
@@ -176,22 +180,26 @@ class ActionSyncState
 {
 public:
 	explicit ActionSyncState(ActionRegistry& registry);
+
 	XrResult Attach(const XrSessionActionSetsAttachInfo& info, const InputSnapshot& input = {});
 	// Reports profile changes with the committed snapshot, without a fallible reader copy.
 	XrResult Sync(const XrActionsSyncInfo& info, const InputSnapshot& input, bool focused,
 				  bool* profilesChanged = nullptr);
+
 	XrResult GetBoolean(const XrActionStateGetInfo& info, XrActionStateBoolean& state) const;
 	XrResult GetFloat(const XrActionStateGetInfo& info, XrActionStateFloat& state) const;
 	XrResult GetVector(const XrActionStateGetInfo& info, XrActionStateVector2f& state) const;
 	XrResult GetPose(const XrActionStateGetInfo& info, XrActionStatePose& state) const;
 	XrResult OutputDevices(const XrHapticActionInfo& info, std::vector<std::size_t>& devices) const;
 	XrResult OutputTargets(const XrHapticActionInfo& info, std::vector<InputDeviceId>& devices) const;
+
 	XrResult PoseSources(XrAction action, XrPath subaction, std::vector<ResolvedActionSource>& sources) const;
 	XrResult SpaceSources(XrAction action, XrPath subaction, std::vector<ResolvedActionSource>& sources) const;
 	XrResult BoundSources(XrAction action, std::vector<XrPath>& paths) const;
 	XrResult CurrentProfile(XrPath userPath, XrPath& profile) const;
 	std::optional<std::array<std::string, 2>> ControllerProfiles() const;
 	XrResult LocalizedName(XrPath source, XrInputSourceLocalizedNameFlags flags, std::string& name) const;
+
 	ActionSyncSnapshot Snapshot() const;
 	void SetFocused(bool focused);
 	void Reset();
@@ -201,6 +209,7 @@ private:
 				   bool retained = false) const;
 	XrResult Sources(XrAction action, XrPath subaction, std::vector<ResolvedActionSource>& sources,
 					 bool retained) const;
+
 	ActionRegistry& m_registry;
 	mutable std::mutex m_mutex;
 	bool m_attached = false;

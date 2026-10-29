@@ -64,6 +64,527 @@ struct VulkanBackend::Pipeline
 	}
 };
 
+// This payload can move intact into pre-reserved storage when native completion is unknown.
+struct VulkanBackend::State
+{
+	VulkanNativePreservation<State, 64>::Reservation preservation{
+		"Sixty-four native Vulkan backend owners are retained"};
+
+	struct Pending
+	{
+		std::shared_ptr<VulkanSubmission> submission;
+		std::shared_ptr<VulkanFrame> frame;
+	};
+
+	struct Retirement
+	{
+		std::mutex mutex;
+		std::vector<Pending> pending;
+
+		void Poll()
+		{
+			std::array<Pending, 64> retired;
+			std::size_t count = 0;
+			{
+				std::lock_guard lock(mutex);
+				for (auto& entry : pending)
+					if (entry.submission->NativeIdle())
+						retired.at(count++) = std::move(entry);
+				std::erase_if(pending, [](const auto& entry) { return !entry.submission; });
+			}
+			for (std::size_t index = 0; index < count; ++index)
+				retired[index].submission->ReleaseSources();
+		}
+	};
+
+	std::shared_ptr<VulkanDevice> device;
+	std::shared_ptr<Pipeline> pipeline;
+	std::shared_ptr<Pipeline> depthMultisamplePipeline;
+	std::shared_ptr<VulkanExternalDevice> external;
+	std::shared_ptr<VulkanFrameSyncPool> syncPool;
+	std::shared_ptr<VulkanImagePool> imagePool;
+	std::array<std::shared_ptr<VulkanImage>, 8> localOutputs;
+	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
+
+	State(std::size_t capacity, std::size_t liveCapacity)
+		: reservations([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); },
+					   [weak = std::weak_ptr<Retirement>(retirement)] {
+						   if (const auto retained = weak.lock())
+							   retained->Poll();
+					   }),
+		  liveReservations(liveCapacity,
+						   [weak = std::weak_ptr<Retirement>(retirement)] {
+							   if (const auto retained = weak.lock())
+								   retained->Poll();
+						   }),
+		  historyReservations(6, [weak = std::weak_ptr<Retirement>(retirement)] {
+			  if (const auto retained = weak.lock())
+				  retained->Poll();
+		  })
+	{}
+
+	FramePool reservations;
+	FramePool liveReservations;
+	FramePool historyReservations;
+	FramePool reprojectionReservations{32};
+	bool closed = false;
+	bool failed = false;
+	std::vector<std::weak_ptr<VulkanSubmission>> submissions;
+	std::vector<std::weak_ptr<VulkanImage>> images;
+};
+
+VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapacity,
+							 std::span<const char* const> enabledExtensions, std::uint32_t instanceApiVersion,
+							 std::size_t liveCapacity)
+	: m_state(std::make_unique<State>(frameCapacity, liveCapacity))
+{
+	m_state->device = std::make_shared<VulkanDevice>(binding);
+	const auto enabled = [&](const char* name) {
+		return std::any_of(enabledExtensions.begin(), enabledExtensions.end(),
+						   [&](const auto* value) { return value && std::strcmp(value, name) == 0; });
+	};
+	if (enabled(VulkanExternalMemoryExtension) && enabled(VulkanExternalSemaphoreExtension))
+		m_state->external =
+			std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions, instanceApiVersion);
+	if (m_state->external)
+	{
+		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
+		m_state->imagePool = std::make_shared<VulkanImagePool>(m_state->external);
+	}
+	m_state->pipeline = CreatePipeline(m_state->device);
+}
+
+VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity,
+							 std::span<const char* const> enabledExtensions, bool timelineEnabled)
+	: m_state(std::make_unique<State>(frameCapacity, 1))
+{
+	if (!device || !device->HasNativeOwner() || !frameCapacity)
+		throw std::invalid_argument("Independent composition requires an owned native device and capacity");
+	m_state->device = std::move(device);
+	if (!enabledExtensions.empty())
+		m_state->external = std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions,
+																   VK_API_VERSION_1_1, timelineEnabled);
+	if (m_state->external)
+	{
+		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
+		m_state->imagePool = std::make_shared<VulkanImagePool>(m_state->external);
+	}
+	m_state->pipeline = CreatePipeline(m_state->device);
+}
+
+VulkanBackend::~VulkanBackend()
+{
+	if (m_state && XR_FAILED(Close()))
+	{
+		std::fputs("SimXR: Vulkan backend still has pending native work or retained readers; preserving owners\n",
+				   stderr);
+		m_state->preservation.Preserve(std::move(m_state));
+	}
+}
+
+XrResult VulkanBackend::Close()
+{
+	if (m_state->closed)
+		return XR_SUCCESS;
+	m_state->reservations.CloseAdmission();
+	m_state->liveReservations.CloseAdmission();
+	m_state->historyReservations.CloseAdmission();
+	m_state->reprojectionReservations.CloseAdmission();
+	const auto result = Drain(5000000000ULL);
+	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
+		return XR_ERROR_RUNTIME_FAILURE;
+	m_state->localOutputs = {};
+	RetireCompleted();
+	if (!m_state->submissions.empty() || !m_state->images.empty())
+		return XR_ERROR_LIMIT_REACHED;
+	if (m_state->syncPool)
+		m_state->syncPool->Close();
+	if (m_state->imagePool)
+		m_state->imagePool->Close();
+	m_state->device->ClearCommands();
+	m_state->closed = true;
+	m_state->pipeline.reset();
+	m_state->depthMultisamplePipeline.reset();
+	return XR_SUCCESS;
+}
+
+VkResult VulkanBackend::Drain(std::uint64_t timeout)
+{
+	const auto deadline =
+		std::chrono::steady_clock::now() + std::chrono::nanoseconds(std::min<std::uint64_t>(timeout, 5000000000ULL));
+	std::array<State::Pending, 64> pending;
+	std::size_t count = 0;
+	{
+		std::lock_guard lock(m_state->retirement->mutex);
+		for (const auto& entry : m_state->retirement->pending)
+			pending.at(count++) = entry;
+	}
+	for (std::size_t index = 0; index < count; ++index)
+	{
+		// A known rejected submission has no native work to wait for. Its
+		// public completion remains Failed; unknown failures still retain use.
+		if (pending[index].submission->PollCompletion() == CompletionStatus::Failed &&
+			pending[index].submission->NativeIdle())
+			continue;
+		const auto now = std::chrono::steady_clock::now();
+		const auto remaining =
+			now < deadline ? std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now).count() : 0;
+		const auto result = pending[index].submission->Wait(static_cast<std::uint64_t>(remaining));
+		if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
+			return result;
+	}
+	for (auto& entry : pending)
+		entry = {};
+	RetireCompleted();
+	return m_state->device->lost.load() ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
+}
+
+std::shared_ptr<VulkanDevice> VulkanBackend::Device() const
+{
+	return m_state->device;
+}
+
+bool VulkanBackend::Sharing() const
+{
+	return m_state->external != nullptr;
+}
+
+FramePool VulkanBackend::Reservations() const
+{
+	return m_state->reservations;
+}
+
+FramePool VulkanBackend::HistoryReservations() const
+{
+	return m_state->historyReservations;
+}
+
+FramePool VulkanBackend::LiveReservations() const
+{
+	return m_state->liveReservations;
+}
+
+FramePool VulkanBackend::ReprojectionReservations() const
+{
+	return m_state->reprojectionReservations;
+}
+
+std::shared_ptr<VulkanImage> VulkanBackend::CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
+														VkImageUsageFlags usage, std::uint32_t mipLevels,
+														VkSampleCountFlagBits samples, VkImageCreateFlags flags)
+{
+	if (m_state->closed || m_state->failed || m_state->device->lost.load())
+		throw std::logic_error("Vulkan backend closed");
+	auto image =
+		VulkanImage::Create(m_state->device, format, extent, layers, usage, mipLevels, samples, VK_WHOLE_SIZE, flags);
+	SnapshotBudget::ObserveImageBytes(image->allocationSize);
+	m_state->images.push_back(image);
+	return image;
+}
+
+std::shared_ptr<VulkanSubmission> VulkanBackend::InitializeImage(std::shared_ptr<VulkanImage> image)
+{
+	RetireCompleted();
+	if (m_state->closed || m_state->failed || m_state->device->lost.load() || m_state->submissions.size() >= 64)
+		throw std::runtime_error("Vulkan initialization submission capacity unavailable");
+	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
+	job->m_resources->sources.push_back(std::move(image));
+	const auto& source = *job->m_resources->sources.front();
+	VulkanImageBarrier(job->m_resources->commands->command, source, VK_IMAGE_LAYOUT_UNDEFINED,
+					   source.ApplicationLayout(), 0, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	CheckVulkan(vkEndCommandBuffer(job->m_resources->commands->command), "End initial Vulkan image transition");
+	m_state->submissions.push_back(job);
+	{
+		std::lock_guard lock(m_state->retirement->mutex);
+		m_state->retirement->pending.push_back({job, {}});
+		job->m_attempted.store(true);
+	}
+	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &job->m_resources->commands->command;
+	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, job->m_resources->commands->fence);
+	{
+		std::lock_guard lock(m_state->retirement->mutex);
+		job->m_submitResult.store(result);
+		if (result != VK_SUCCESS)
+		{
+			auto expected = CompletionStatus::Pending;
+			job->m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
+		}
+		job->m_ready.store(true);
+	}
+	if (result != VK_SUCCESS)
+	{
+		m_state->failed = true;
+		if (result == VK_ERROR_DEVICE_LOST)
+			m_state->device->lost.store(true);
+		throw VulkanError(result, "Submit initial Vulkan image transition");
+	}
+	return job;
+}
+
+XrResult VulkanBackend::Submit(const std::shared_ptr<VulkanFrame>& frame)
+{
+	return Submit(std::span<const std::shared_ptr<VulkanFrame>>(&frame, 1));
+}
+
+XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> frames)
+{
+	if (m_state->closed || m_state->failed || m_state->device->lost.load())
+		return XR_ERROR_SESSION_LOST;
+	if (frames.empty() || frames.size() > 64)
+		return XR_ERROR_VALIDATION_FAILURE;
+	std::array<VkCommandBuffer, 64> commands{};
+	std::array<VkSemaphore, 64> signals{};
+	std::size_t signalCount = 0;
+#ifdef _WIN32
+	std::array<VkSemaphore, 64> waits{};
+	std::array<std::uint64_t, 64> waitValues{};
+	std::array<std::uint64_t, 64> signalValues{};
+	std::array<VkPipelineStageFlags, 64> waitStages{};
+	std::size_t waitCount = 0;
+#endif
+	for (std::size_t index = 0; index < frames.size(); ++index)
+	{
+		const auto& frame = frames[index];
+		if (!frame || frame->m_submission->m_resources->device != m_state->device)
+			return XR_ERROR_SESSION_LOST;
+		if (frame->Submitted())
+			return XR_ERROR_CALL_ORDER_INVALID;
+		for (std::size_t previous = 0; previous < index; ++previous)
+			if (frames[previous] == frame)
+				return XR_ERROR_VALIDATION_FAILURE;
+		const auto& resources = *frame->m_submission->m_resources;
+		commands[index] = resources.commands->command;
+#ifdef _WIN32
+		if (resources.nativeReady)
+		{
+			waits[waitCount] = resources.nativeReady;
+			waitValues[waitCount] = resources.nativeReadyValue;
+			waitStages[waitCount++] = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+#endif
+		if (resources.sync)
+			signals[signalCount++] = resources.sync->Signal();
+	}
+	const auto leader = frames.front()->m_submission;
+	{
+		std::lock_guard lock(m_state->retirement->mutex);
+		if (m_state->retirement->pending.size() + frames.size() > 64)
+			return XR_ERROR_LIMIT_REACHED;
+		m_state->retirement->pending.reserve(m_state->retirement->pending.size() + frames.size());
+		for (const auto& frame : frames)
+		{
+			auto job = frame->m_submission;
+			if (job != leader)
+				job->m_resources->completion = leader;
+			m_state->retirement->pending.push_back({job, frame});
+			job->m_attempted.store(true);
+		}
+	}
+	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+#ifdef _WIN32
+	VkTimelineSemaphoreSubmitInfo nativeWait{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+	if (waitCount)
+	{
+		nativeWait.waitSemaphoreValueCount = static_cast<std::uint32_t>(waitCount);
+		nativeWait.pWaitSemaphoreValues = waitValues.data();
+		nativeWait.signalSemaphoreValueCount = static_cast<std::uint32_t>(signalCount);
+		nativeWait.pSignalSemaphoreValues = signalValues.data();
+		submit.pNext = &nativeWait;
+		submit.waitSemaphoreCount = static_cast<std::uint32_t>(waitCount);
+		submit.pWaitSemaphores = waits.data();
+		submit.pWaitDstStageMask = waitStages.data();
+	}
+#endif
+	submit.commandBufferCount = static_cast<std::uint32_t>(frames.size());
+	submit.pCommandBuffers = commands.data();
+	submit.signalSemaphoreCount = static_cast<std::uint32_t>(signalCount);
+	submit.pSignalSemaphores = signals.data();
+	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, leader->m_resources->commands->fence);
+	{
+		std::lock_guard lock(m_state->retirement->mutex);
+		for (const auto& frame : frames)
+		{
+			auto& job = *frame->m_submission;
+			job.m_submitResult.store(result);
+			if (result != VK_SUCCESS)
+			{
+				auto expected = CompletionStatus::Pending;
+				job.m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
+			}
+			job.m_ready.store(true);
+		}
+	}
+	if (result != VK_SUCCESS)
+	{
+		m_state->failed = true;
+		if (result == VK_ERROR_DEVICE_LOST)
+			m_state->device->lost.store(true);
+		return XR_ERROR_RUNTIME_FAILURE;
+	}
+	return XR_SUCCESS;
+}
+
+XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
+								std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
+								std::uint32_t outputLayers)
+{
+	if (!resolve)
+		return XR_ERROR_VALIDATION_FAILURE;
+	return PrepareComposition(plan, resolve, {}, output, std::move(reservation), outputLayers);
+}
+
+XrResult VulkanBackend::PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
+										std::shared_ptr<VulkanFrame>& output)
+{
+	if (sources.size() != plan.draws.size())
+		return XR_ERROR_VALIDATION_FAILURE;
+	return PrepareComposition(plan, {}, sources, output, {}, 2);
+}
+
+XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description, const VulkanImageResolver& resolve,
+									   std::shared_ptr<VulkanFrame>& output,
+									   std::shared_ptr<FrameReservation> reservation)
+{
+	return PrepareImageCopy(description, resolve, output, std::move(reservation), false);
+}
+
+XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, bool linear,
+											const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
+											std::shared_ptr<FrameReservation> reservation)
+{
+	if (!resolve)
+		return XR_ERROR_VALIDATION_FAILURE;
+	const auto image = resolve(depth.image.source);
+	if (!image || !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT))
+		return XR_ERROR_LAYER_INVALID;
+	if (image->format != VK_FORMAT_D32_SFLOAT && image->format != VK_FORMAT_D16_UNORM &&
+		image->format != VK_FORMAT_D24_UNORM_S8_UINT && image->format != VK_FORMAT_D32_SFLOAT_S8_UINT)
+		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
+	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT))
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	CompositionPlan plan;
+	const auto prepared = PrepareDepthComposition(
+		depth, linear,
+		{static_cast<std::int32_t>(image->extent.width), static_cast<std::int32_t>(image->extent.height)},
+		image->samples != VK_SAMPLE_COUNT_1_BIT, plan);
+	if (XR_FAILED(prepared))
+		return prepared;
+	return Prepare(plan, resolve, output, std::move(reservation), 1);
+}
+
+XrResult VulkanBackend::PrepareRetainedLayer(const LayerImageDescription& description,
+											 const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output)
+{
+	RetireCompleted();
+	auto reservation = m_state->reprojectionReservations.Reserve();
+	if (!reservation)
+		return XR_ERROR_LIMIT_REACHED;
+	return PrepareImageCopy(description, resolve, output, std::move(reservation), true);
+}
+
+#ifdef _WIN32
+XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready,
+										  std::uint64_t readyValue, std::shared_ptr<const void> owner,
+										  std::span<const FrameView> views, std::shared_ptr<VulkanFrame>& output,
+										  std::shared_ptr<FrameReservation> reservation)
+{
+	RetireCompleted();
+	if (m_state->closed || m_state->failed || m_state->device->lost.load())
+		return XR_ERROR_SESSION_LOST;
+	if (!m_state->external)
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	if (!source || source->device != m_state->device || !ready || !owner ||
+		(source->format != VK_FORMAT_R8G8B8A8_SRGB && source->format != VK_FORMAT_R8G8B8A8_UNORM &&
+		 source->format != VK_FORMAT_B8G8R8A8_SRGB && source->format != VK_FORMAT_B8G8R8A8_UNORM &&
+		 source->format != VK_FORMAT_R16G16B16A16_SFLOAT && source->format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
+		 source->format != VK_FORMAT_R32G32B32A32_SFLOAT) ||
+		!source->layers || source->layers > 2 || !source->mipLevels || source->samples != VK_SAMPLE_COUNT_1_BIT ||
+		!(source->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+		return XR_ERROR_VALIDATION_FAILURE;
+	if (m_state->submissions.size() >= 64)
+		return XR_ERROR_LIMIT_REACHED;
+	if (reservation &&
+		((!m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation) &&
+		  !m_state->historyReservations.Owns(reservation) && !m_state->reprojectionReservations.Owns(reservation)) ||
+		 reservation->Consumed()))
+		return XR_ERROR_VALIDATION_FAILURE;
+	if (!reservation)
+		reservation = m_state->reservations.Reserve();
+	if (!reservation)
+		return XR_ERROR_LIMIT_REACHED;
+	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
+	auto frame = std::shared_ptr<VulkanFrame>(new VulkanFrame(job, views));
+	m_state->submissions.push_back(job);
+	auto& resources = *job->m_resources;
+	resources.sources.push_back(source);
+	resources.nativeSource = std::move(owner);
+	resources.nativeReady = ready;
+	resources.nativeReadyValue = readyValue;
+	VulkanExternalImageSpec spec;
+	spec.format = source->format;
+	spec.arrayLayers = source->layers;
+	spec.mipLevels = source->mipLevels;
+	spec.extent = {source->extent.width, source->extent.height, 1};
+	resources.imageLease = m_state->imagePool->Acquire(spec);
+	resources.external = resources.imageLease->External();
+	resources.output = resources.external->Image();
+	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
+	m_state->images.push_back(resources.output);
+	resources.sync = m_state->syncPool->Acquire();
+	for (std::uint32_t eye = 0; eye < source->layers; ++eye)
+		resources.outputViews[eye] = resources.output->View(eye);
+	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+	acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	acquire.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+	acquire.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+	acquire.dstQueueFamilyIndex = m_state->device->binding.queueFamily;
+	acquire.image = source->image;
+	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
+	vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+						 0, 0, nullptr, 0, nullptr, 1, &acquire);
+	VulkanImageBarrier(resources.commands->command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED,
+					   VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	for (std::uint32_t mip = 0; mip < source->mipLevels; ++mip)
+	{
+		VkImageCopy copy{};
+		copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, source->layers};
+		copy.extent = {std::max(1u, spec.extent.width >> mip), std::max(1u, spec.extent.height >> mip), 1};
+		vkCmdCopyImage(resources.commands->command, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					   resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	}
+	// Imported frames are immutable and never returned to their producer for reuse.
+	VkImageMemoryBarrier release{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	release.oldLayout = release.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	release.srcQueueFamilyIndex = m_state->device->binding.queueFamily;
+	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+	release.image = resources.output->image;
+	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
+	vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+						 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
+	CheckVulkan(vkEndCommandBuffer(resources.commands->command), "End native compositor GPU copy");
+	if (!(m_state->reservations.Owns(reservation)				? m_state->reservations
+		  : m_state->historyReservations.Owns(reservation)		? m_state->historyReservations
+		  : m_state->reprojectionReservations.Owns(reservation) ? m_state->reprojectionReservations
+																: m_state->liveReservations)
+			 .Consume(reservation))
+		return XR_ERROR_CALL_ORDER_INVALID;
+	resources.reservation = std::move(reservation);
+	output = std::move(frame);
+	return XR_SUCCESS;
+}
+#endif
+
+void VulkanBackend::RetireCompleted()
+{
+	m_state->retirement->Poll();
+	std::erase_if(m_state->submissions, [](const auto& entry) { return entry.expired(); });
+	std::erase_if(m_state->images, [](const auto& entry) { return entry.expired(); });
+}
+
 std::shared_ptr<VulkanBackend::Pipeline> VulkanBackend::CreatePipeline(std::shared_ptr<VulkanDevice> device,
 																	   bool multisampledDepth)
 {
@@ -184,227 +705,6 @@ std::shared_ptr<VulkanBackend::Pipeline> VulkanBackend::CreatePipeline(std::shar
 	sampler.maxLod = 0;
 	CheckVulkan(vkCreateSampler(native, &sampler, nullptr, &result->nearestSampler), "Create depth preview sampler");
 	return result;
-}
-
-// This payload can move intact into pre-reserved storage when native completion is unknown.
-struct VulkanBackend::State
-{
-	VulkanNativePreservation<State, 64>::Reservation preservation{
-		"Sixty-four native Vulkan backend owners are retained"};
-
-	struct Pending
-	{
-		std::shared_ptr<VulkanSubmission> submission;
-		std::shared_ptr<VulkanFrame> frame;
-	};
-
-	struct Retirement
-	{
-		std::mutex mutex;
-		std::vector<Pending> pending;
-
-		void Poll()
-		{
-			std::array<Pending, 64> retired;
-			std::size_t count = 0;
-			{
-				std::lock_guard lock(mutex);
-				for (auto& entry : pending)
-					if (entry.submission->NativeIdle())
-						retired.at(count++) = std::move(entry);
-				std::erase_if(pending, [](const auto& entry) { return !entry.submission; });
-			}
-			for (std::size_t index = 0; index < count; ++index)
-				retired[index].submission->ReleaseSources();
-		}
-	};
-
-	std::shared_ptr<VulkanDevice> device;
-	std::shared_ptr<Pipeline> pipeline;
-	std::shared_ptr<Pipeline> depthMultisamplePipeline;
-	std::shared_ptr<VulkanExternalDevice> external;
-	std::shared_ptr<VulkanFrameSyncPool> syncPool;
-	std::shared_ptr<VulkanImagePool> imagePool;
-	std::array<std::shared_ptr<VulkanImage>, 8> localOutputs;
-	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
-
-	State(std::size_t capacity, std::size_t liveCapacity)
-		: reservations([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); },
-					   [weak = std::weak_ptr<Retirement>(retirement)] {
-						   if (const auto retained = weak.lock())
-							   retained->Poll();
-					   }),
-		  liveReservations(liveCapacity,
-						   [weak = std::weak_ptr<Retirement>(retirement)] {
-							   if (const auto retained = weak.lock())
-								   retained->Poll();
-						   }),
-		  historyReservations(6, [weak = std::weak_ptr<Retirement>(retirement)] {
-			  if (const auto retained = weak.lock())
-				  retained->Poll();
-		  })
-	{}
-
-	FramePool reservations;
-	FramePool liveReservations;
-	FramePool historyReservations;
-	FramePool reprojectionReservations{32};
-	bool closed = false;
-	bool failed = false;
-	std::vector<std::weak_ptr<VulkanSubmission>> submissions;
-	std::vector<std::weak_ptr<VulkanImage>> images;
-};
-
-VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapacity,
-							 std::span<const char* const> enabledExtensions, std::uint32_t instanceApiVersion,
-							 std::size_t liveCapacity)
-	: m_state(std::make_unique<State>(frameCapacity, liveCapacity))
-{
-	m_state->device = std::make_shared<VulkanDevice>(binding);
-	const auto enabled = [&](const char* name) {
-		return std::any_of(enabledExtensions.begin(), enabledExtensions.end(),
-						   [&](const auto* value) { return value && std::strcmp(value, name) == 0; });
-	};
-	if (enabled(VulkanExternalMemoryExtension) && enabled(VulkanExternalSemaphoreExtension))
-		m_state->external =
-			std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions, instanceApiVersion);
-	if (m_state->external)
-	{
-		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
-		m_state->imagePool = std::make_shared<VulkanImagePool>(m_state->external);
-	}
-	m_state->pipeline = CreatePipeline(m_state->device);
-}
-
-VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity,
-							 std::span<const char* const> enabledExtensions, bool timelineEnabled)
-	: m_state(std::make_unique<State>(frameCapacity, 1))
-{
-	if (!device || !device->HasNativeOwner() || !frameCapacity)
-		throw std::invalid_argument("Independent composition requires an owned native device and capacity");
-	m_state->device = std::move(device);
-	if (!enabledExtensions.empty())
-		m_state->external = std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions,
-																   VK_API_VERSION_1_1, timelineEnabled);
-	if (m_state->external)
-	{
-		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
-		m_state->imagePool = std::make_shared<VulkanImagePool>(m_state->external);
-	}
-	m_state->pipeline = CreatePipeline(m_state->device);
-}
-
-VulkanBackend::~VulkanBackend()
-{
-	if (m_state && XR_FAILED(Close()))
-	{
-		std::fputs("SimXR: Vulkan backend still has pending native work or retained readers; preserving owners\n",
-				   stderr);
-		m_state->preservation.Preserve(std::move(m_state));
-	}
-}
-
-std::shared_ptr<VulkanDevice> VulkanBackend::Device() const
-{
-	return m_state->device;
-}
-
-bool VulkanBackend::Sharing() const
-{
-	return m_state->external != nullptr;
-}
-
-std::shared_ptr<VulkanImage> VulkanBackend::CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
-														VkImageUsageFlags usage, std::uint32_t mipLevels,
-														VkSampleCountFlagBits samples, VkImageCreateFlags flags)
-{
-	if (m_state->closed || m_state->failed || m_state->device->lost.load())
-		throw std::logic_error("Vulkan backend closed");
-	auto image =
-		VulkanImage::Create(m_state->device, format, extent, layers, usage, mipLevels, samples, VK_WHOLE_SIZE, flags);
-	SnapshotBudget::ObserveImageBytes(image->allocationSize);
-	m_state->images.push_back(image);
-	return image;
-}
-
-FramePool VulkanBackend::Reservations() const
-{
-	return m_state->reservations;
-}
-
-FramePool VulkanBackend::HistoryReservations() const
-{
-	return m_state->historyReservations;
-}
-
-FramePool VulkanBackend::LiveReservations() const
-{
-	return m_state->liveReservations;
-}
-
-void VulkanBackend::RetireCompleted()
-{
-	m_state->retirement->Poll();
-	std::erase_if(m_state->submissions, [](const auto& entry) { return entry.expired(); });
-	std::erase_if(m_state->images, [](const auto& entry) { return entry.expired(); });
-}
-
-std::shared_ptr<VulkanSubmission> VulkanBackend::InitializeImage(std::shared_ptr<VulkanImage> image)
-{
-	RetireCompleted();
-	if (m_state->closed || m_state->failed || m_state->device->lost.load() || m_state->submissions.size() >= 64)
-		throw std::runtime_error("Vulkan initialization submission capacity unavailable");
-	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
-	job->m_resources->sources.push_back(std::move(image));
-	const auto& source = *job->m_resources->sources.front();
-	VulkanImageBarrier(job->m_resources->commands->command, source, VK_IMAGE_LAYOUT_UNDEFINED,
-					   source.ApplicationLayout(), 0, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-	CheckVulkan(vkEndCommandBuffer(job->m_resources->commands->command), "End initial Vulkan image transition");
-	m_state->submissions.push_back(job);
-	{
-		std::lock_guard lock(m_state->retirement->mutex);
-		m_state->retirement->pending.push_back({job, {}});
-		job->m_attempted.store(true);
-	}
-	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-	submit.commandBufferCount = 1;
-	submit.pCommandBuffers = &job->m_resources->commands->command;
-	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, job->m_resources->commands->fence);
-	{
-		std::lock_guard lock(m_state->retirement->mutex);
-		job->m_submitResult.store(result);
-		if (result != VK_SUCCESS)
-		{
-			auto expected = CompletionStatus::Pending;
-			job->m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
-		}
-		job->m_ready.store(true);
-	}
-	if (result != VK_SUCCESS)
-	{
-		m_state->failed = true;
-		if (result == VK_ERROR_DEVICE_LOST)
-			m_state->device->lost.store(true);
-		throw VulkanError(result, "Submit initial Vulkan image transition");
-	}
-	return job;
-}
-
-XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
-								std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
-								std::uint32_t outputLayers)
-{
-	if (!resolve)
-		return XR_ERROR_VALIDATION_FAILURE;
-	return PrepareComposition(plan, resolve, {}, output, std::move(reservation), outputLayers);
-}
-
-XrResult VulkanBackend::PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
-										std::shared_ptr<VulkanFrame>& output)
-{
-	if (sources.size() != plan.draws.size())
-		return XR_ERROR_VALIDATION_FAILURE;
-	return PrepareComposition(plan, {}, sources, output, {}, 2);
 }
 
 XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const VulkanImageResolver& resolve,
@@ -649,52 +949,6 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	return XR_SUCCESS;
 }
 
-XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, bool linear,
-											const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
-											std::shared_ptr<FrameReservation> reservation)
-{
-	if (!resolve)
-		return XR_ERROR_VALIDATION_FAILURE;
-	const auto image = resolve(depth.image.source);
-	if (!image || !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT))
-		return XR_ERROR_LAYER_INVALID;
-	if (image->format != VK_FORMAT_D32_SFLOAT && image->format != VK_FORMAT_D16_UNORM &&
-		image->format != VK_FORMAT_D24_UNORM_S8_UINT && image->format != VK_FORMAT_D32_SFLOAT_S8_UINT)
-		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT))
-		return XR_ERROR_FEATURE_UNSUPPORTED;
-	CompositionPlan plan;
-	const auto prepared = PrepareDepthComposition(
-		depth, linear,
-		{static_cast<std::int32_t>(image->extent.width), static_cast<std::int32_t>(image->extent.height)},
-		image->samples != VK_SAMPLE_COUNT_1_BIT, plan);
-	if (XR_FAILED(prepared))
-		return prepared;
-	return Prepare(plan, resolve, output, std::move(reservation), 1);
-}
-
-XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description, const VulkanImageResolver& resolve,
-									   std::shared_ptr<VulkanFrame>& output,
-									   std::shared_ptr<FrameReservation> reservation)
-{
-	return PrepareImageCopy(description, resolve, output, std::move(reservation), false);
-}
-
-XrResult VulkanBackend::PrepareRetainedLayer(const LayerImageDescription& description,
-											 const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output)
-{
-	RetireCompleted();
-	auto reservation = m_state->reprojectionReservations.Reserve();
-	if (!reservation)
-		return XR_ERROR_LIMIT_REACHED;
-	return PrepareImageCopy(description, resolve, output, std::move(reservation), true);
-}
-
-FramePool VulkanBackend::ReprojectionReservations() const
-{
-	return m_state->reprojectionReservations;
-}
-
 XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& description, const VulkanImageResolver& resolve,
 										 std::shared_ptr<VulkanFrame>& output,
 										 std::shared_ptr<FrameReservation> reservation, bool retained)
@@ -793,260 +1047,6 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 		return XR_ERROR_CALL_ORDER_INVALID;
 	resources.reservation = std::move(reservation);
 	output = std::move(frame);
-	return XR_SUCCESS;
-}
-
-#ifdef _WIN32
-XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready,
-										  std::uint64_t readyValue, std::shared_ptr<const void> owner,
-										  std::span<const FrameView> views, std::shared_ptr<VulkanFrame>& output,
-										  std::shared_ptr<FrameReservation> reservation)
-{
-	RetireCompleted();
-	if (m_state->closed || m_state->failed || m_state->device->lost.load())
-		return XR_ERROR_SESSION_LOST;
-	if (!m_state->external)
-		return XR_ERROR_FEATURE_UNSUPPORTED;
-	if (!source || source->device != m_state->device || !ready || !owner ||
-		(source->format != VK_FORMAT_R8G8B8A8_SRGB && source->format != VK_FORMAT_R8G8B8A8_UNORM &&
-		 source->format != VK_FORMAT_B8G8R8A8_SRGB && source->format != VK_FORMAT_B8G8R8A8_UNORM &&
-		 source->format != VK_FORMAT_R16G16B16A16_SFLOAT && source->format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
-		 source->format != VK_FORMAT_R32G32B32A32_SFLOAT) ||
-		!source->layers || source->layers > 2 || !source->mipLevels || source->samples != VK_SAMPLE_COUNT_1_BIT ||
-		!(source->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
-		return XR_ERROR_VALIDATION_FAILURE;
-	if (m_state->submissions.size() >= 64)
-		return XR_ERROR_LIMIT_REACHED;
-	if (reservation &&
-		((!m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation) &&
-		  !m_state->historyReservations.Owns(reservation) && !m_state->reprojectionReservations.Owns(reservation)) ||
-		 reservation->Consumed()))
-		return XR_ERROR_VALIDATION_FAILURE;
-	if (!reservation)
-		reservation = m_state->reservations.Reserve();
-	if (!reservation)
-		return XR_ERROR_LIMIT_REACHED;
-	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
-	auto frame = std::shared_ptr<VulkanFrame>(new VulkanFrame(job, views));
-	m_state->submissions.push_back(job);
-	auto& resources = *job->m_resources;
-	resources.sources.push_back(source);
-	resources.nativeSource = std::move(owner);
-	resources.nativeReady = ready;
-	resources.nativeReadyValue = readyValue;
-	VulkanExternalImageSpec spec;
-	spec.format = source->format;
-	spec.arrayLayers = source->layers;
-	spec.mipLevels = source->mipLevels;
-	spec.extent = {source->extent.width, source->extent.height, 1};
-	resources.imageLease = m_state->imagePool->Acquire(spec);
-	resources.external = resources.imageLease->External();
-	resources.output = resources.external->Image();
-	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
-	m_state->images.push_back(resources.output);
-	resources.sync = m_state->syncPool->Acquire();
-	for (std::uint32_t eye = 0; eye < source->layers; ++eye)
-		resources.outputViews[eye] = resources.output->View(eye);
-	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-	acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-	acquire.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-	acquire.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-	acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
-	acquire.dstQueueFamilyIndex = m_state->device->binding.queueFamily;
-	acquire.image = source->image;
-	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
-	vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-						 0, 0, nullptr, 0, nullptr, 1, &acquire);
-	VulkanImageBarrier(resources.commands->command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED,
-					   VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
-	for (std::uint32_t mip = 0; mip < source->mipLevels; ++mip)
-	{
-		VkImageCopy copy{};
-		copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, source->layers};
-		copy.extent = {std::max(1u, spec.extent.width >> mip), std::max(1u, spec.extent.height >> mip), 1};
-		vkCmdCopyImage(resources.commands->command, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-					   resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-	}
-	// Imported frames are immutable and never returned to their producer for reuse.
-	VkImageMemoryBarrier release{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	release.oldLayout = release.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-	release.srcQueueFamilyIndex = m_state->device->binding.queueFamily;
-	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
-	release.image = resources.output->image;
-	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
-	vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
-						 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
-	CheckVulkan(vkEndCommandBuffer(resources.commands->command), "End native compositor GPU copy");
-	if (!(m_state->reservations.Owns(reservation)				? m_state->reservations
-		  : m_state->historyReservations.Owns(reservation)		? m_state->historyReservations
-		  : m_state->reprojectionReservations.Owns(reservation) ? m_state->reprojectionReservations
-																: m_state->liveReservations)
-			 .Consume(reservation))
-		return XR_ERROR_CALL_ORDER_INVALID;
-	resources.reservation = std::move(reservation);
-	output = std::move(frame);
-	return XR_SUCCESS;
-}
-#endif
-
-XrResult VulkanBackend::Submit(const std::shared_ptr<VulkanFrame>& frame)
-{
-	return Submit(std::span<const std::shared_ptr<VulkanFrame>>(&frame, 1));
-}
-
-XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> frames)
-{
-	if (m_state->closed || m_state->failed || m_state->device->lost.load())
-		return XR_ERROR_SESSION_LOST;
-	if (frames.empty() || frames.size() > 64)
-		return XR_ERROR_VALIDATION_FAILURE;
-	std::array<VkCommandBuffer, 64> commands{};
-	std::array<VkSemaphore, 64> signals{};
-	std::size_t signalCount = 0;
-#ifdef _WIN32
-	std::array<VkSemaphore, 64> waits{};
-	std::array<std::uint64_t, 64> waitValues{};
-	std::array<std::uint64_t, 64> signalValues{};
-	std::array<VkPipelineStageFlags, 64> waitStages{};
-	std::size_t waitCount = 0;
-#endif
-	for (std::size_t index = 0; index < frames.size(); ++index)
-	{
-		const auto& frame = frames[index];
-		if (!frame || frame->m_submission->m_resources->device != m_state->device)
-			return XR_ERROR_SESSION_LOST;
-		if (frame->Submitted())
-			return XR_ERROR_CALL_ORDER_INVALID;
-		for (std::size_t previous = 0; previous < index; ++previous)
-			if (frames[previous] == frame)
-				return XR_ERROR_VALIDATION_FAILURE;
-		const auto& resources = *frame->m_submission->m_resources;
-		commands[index] = resources.commands->command;
-#ifdef _WIN32
-		if (resources.nativeReady)
-		{
-			waits[waitCount] = resources.nativeReady;
-			waitValues[waitCount] = resources.nativeReadyValue;
-			waitStages[waitCount++] = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-#endif
-		if (resources.sync)
-			signals[signalCount++] = resources.sync->Signal();
-	}
-	const auto leader = frames.front()->m_submission;
-	{
-		std::lock_guard lock(m_state->retirement->mutex);
-		if (m_state->retirement->pending.size() + frames.size() > 64)
-			return XR_ERROR_LIMIT_REACHED;
-		m_state->retirement->pending.reserve(m_state->retirement->pending.size() + frames.size());
-		for (const auto& frame : frames)
-		{
-			auto job = frame->m_submission;
-			if (job != leader)
-				job->m_resources->completion = leader;
-			m_state->retirement->pending.push_back({job, frame});
-			job->m_attempted.store(true);
-		}
-	}
-	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-#ifdef _WIN32
-	VkTimelineSemaphoreSubmitInfo nativeWait{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
-	if (waitCount)
-	{
-		nativeWait.waitSemaphoreValueCount = static_cast<std::uint32_t>(waitCount);
-		nativeWait.pWaitSemaphoreValues = waitValues.data();
-		nativeWait.signalSemaphoreValueCount = static_cast<std::uint32_t>(signalCount);
-		nativeWait.pSignalSemaphoreValues = signalValues.data();
-		submit.pNext = &nativeWait;
-		submit.waitSemaphoreCount = static_cast<std::uint32_t>(waitCount);
-		submit.pWaitSemaphores = waits.data();
-		submit.pWaitDstStageMask = waitStages.data();
-	}
-#endif
-	submit.commandBufferCount = static_cast<std::uint32_t>(frames.size());
-	submit.pCommandBuffers = commands.data();
-	submit.signalSemaphoreCount = static_cast<std::uint32_t>(signalCount);
-	submit.pSignalSemaphores = signals.data();
-	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, leader->m_resources->commands->fence);
-	{
-		std::lock_guard lock(m_state->retirement->mutex);
-		for (const auto& frame : frames)
-		{
-			auto& job = *frame->m_submission;
-			job.m_submitResult.store(result);
-			if (result != VK_SUCCESS)
-			{
-				auto expected = CompletionStatus::Pending;
-				job.m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
-			}
-			job.m_ready.store(true);
-		}
-	}
-	if (result != VK_SUCCESS)
-	{
-		m_state->failed = true;
-		if (result == VK_ERROR_DEVICE_LOST)
-			m_state->device->lost.store(true);
-		return XR_ERROR_RUNTIME_FAILURE;
-	}
-	return XR_SUCCESS;
-}
-
-VkResult VulkanBackend::Drain(std::uint64_t timeout)
-{
-	const auto deadline =
-		std::chrono::steady_clock::now() + std::chrono::nanoseconds(std::min<std::uint64_t>(timeout, 5000000000ULL));
-	std::array<State::Pending, 64> pending;
-	std::size_t count = 0;
-	{
-		std::lock_guard lock(m_state->retirement->mutex);
-		for (const auto& entry : m_state->retirement->pending)
-			pending.at(count++) = entry;
-	}
-	for (std::size_t index = 0; index < count; ++index)
-	{
-		// A known rejected submission has no native work to wait for. Its
-		// public completion remains Failed; unknown failures still retain use.
-		if (pending[index].submission->PollCompletion() == CompletionStatus::Failed &&
-			pending[index].submission->NativeIdle())
-			continue;
-		const auto now = std::chrono::steady_clock::now();
-		const auto remaining =
-			now < deadline ? std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now).count() : 0;
-		const auto result = pending[index].submission->Wait(static_cast<std::uint64_t>(remaining));
-		if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
-			return result;
-	}
-	for (auto& entry : pending)
-		entry = {};
-	RetireCompleted();
-	return m_state->device->lost.load() ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
-}
-
-XrResult VulkanBackend::Close()
-{
-	if (m_state->closed)
-		return XR_SUCCESS;
-	m_state->reservations.CloseAdmission();
-	m_state->liveReservations.CloseAdmission();
-	m_state->historyReservations.CloseAdmission();
-	m_state->reprojectionReservations.CloseAdmission();
-	const auto result = Drain(5000000000ULL);
-	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
-		return XR_ERROR_RUNTIME_FAILURE;
-	m_state->localOutputs = {};
-	RetireCompleted();
-	if (!m_state->submissions.empty() || !m_state->images.empty())
-		return XR_ERROR_LIMIT_REACHED;
-	if (m_state->syncPool)
-		m_state->syncPool->Close();
-	if (m_state->imagePool)
-		m_state->imagePool->Close();
-	m_state->device->ClearCommands();
-	m_state->closed = true;
-	m_state->pipeline.reset();
-	m_state->depthMultisamplePipeline.reset();
 	return XR_SUCCESS;
 }
 } // namespace simxr

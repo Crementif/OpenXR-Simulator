@@ -23,32 +23,37 @@ public:
 	~PreviewTexture();
 	PreviewTexture(const PreviewTexture&) = delete;
 	PreviewTexture& operator=(const PreviewTexture&) = delete;
+
 	control::ImageDeviceIdentity Identity() const;
+	const control::ImageDescription& Description() const;
+	std::size_t SliceCount() const;
+	bool Ready() const;
+
 	std::shared_ptr<control::TransferHandle> ConsumerFence();
 	void Import(control::ImageDescription description,
 				std::span<const std::shared_ptr<control::TransferHandle>> handles);
 	void AbandonUnsent();
 	CompletionStatus Poll();
-	bool Ready() const;
-	const control::ImageDescription& Description() const;
-	std::size_t SliceCount() const;
+
 	void BeginFrame();
 	// crop is the shown region (x0, y0, x1, y1) in normalized image coordinates;
 	// width is the shown width and the height follows the region's aspect.
 	void Draw(float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1},
 			  bool correctProportions = true);
+	// The private copy, for a GPU copy recorded into this frame's UI commands;
+	// marks the texture as used by this frame like Draw does.
+	VkImage UseForCopy();
+
 	VkSemaphore ReadyWait() const;
 	void Submitted(std::uint64_t serial);
 	void ObserveCompletion(std::uint64_t serial);
 	bool CanRetire(std::uint64_t completed);
 	// On timeout, retain the native owner if GPU completion remains unknown.
 	void PreserveUnfinished(std::uint64_t completed) noexcept;
-	// The private copy, for a GPU copy recorded into this frame's UI commands;
-	// marks the texture as used by this frame like Draw does.
-	VkImage UseForCopy();
+
+	std::uint64_t SnapshotChargeBytes() const;
 	// Bytes held by textures preserved for the process lifetime.
 	static std::uint64_t PreservedBytes();
-	std::uint64_t SnapshotChargeBytes() const;
 	static std::uint64_t TotalSnapshotChargeBytes();
 	static bool CanReserveSnapshot(std::uint64_t imageBytes);
 

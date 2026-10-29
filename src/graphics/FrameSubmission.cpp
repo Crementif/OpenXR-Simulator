@@ -30,122 +30,6 @@ FrameSubmission::~FrameSubmission()
 	}
 }
 
-const CompositionPlan& FrameSubmission::Composition() const noexcept
-{
-	return m_composition.plan;
-}
-
-XrResult FrameSubmission::PrepareCaptures()
-{
-	const auto targets = m_session.Captures().RequestedTargets(m_key);
-	m_captures.reserve(targets.size());
-	for (const auto target : targets)
-	{
-		FrameCaptureRequest request;
-		request.target = target;
-		if (target.IsFilteredComposition())
-		{
-			request.composition = m_composition.plan;
-			const bool projection = target.kind == CaptureKind::ProjectionLayers;
-			std::erase_if(request.composition->draws, [projection](const CompositionDraw& draw) {
-				return (draw.constants.control[0] == 0) != projection;
-			});
-			if (request.composition->draws.empty())
-				continue;
-			if (target.kind == CaptureKind::QuadLayers)
-				request.quadBounds = CompositionQuadBounds(*request.composition);
-		}
-		else if (target.IsLayerImage())
-		{
-			if (target.IsDepth())
-			{
-				const auto* depth = FindLayerDepth(*m_composition.layers, target.layer, target.view);
-				if (depth)
-				{
-					request.depth = *depth;
-					request.image = depth->image;
-				}
-			}
-			else
-				request.image = FindLayerImage(*m_composition.layers, target.layer, target.view);
-			if (!request.image || !request.image->rectangle.extent.width || !request.image->rectangle.extent.height)
-				continue;
-		}
-		else
-			continue;
-		m_captures.push_back(std::move(request));
-		auto& retained = m_captures.back();
-		const auto result = m_session.PrepareCaptureProducer(m_key, retained.reservation, target);
-		if (XR_FAILED(result))
-			return result;
-		if (!retained.reservation)
-			m_captures.pop_back();
-	}
-	return XR_SUCCESS;
-}
-
-void FrameSubmission::PreparePreviewHistory()
-{
-	FrameCaptureRequest request;
-	request.history = request.preview = true;
-	request.composition = m_composition.plan;
-	auto& plan = *request.composition;
-	const auto largest = std::max(plan.width, plan.height);
-	if (!largest)
-		return;
-	if (largest > FramePreviewHistory::Extent)
-	{
-		plan.width =
-			std::max(1u, static_cast<std::uint32_t>(std::uint64_t{plan.width} * FramePreviewHistory::Extent / largest));
-		plan.height = std::max(
-			1u, static_cast<std::uint32_t>(std::uint64_t{plan.height} * FramePreviewHistory::Extent / largest));
-	}
-	request.historyPool = m_session.PreviewHistory().Budget();
-	request.historyReservation = m_session.PreviewHistory().Reserve(m_key, false);
-	if (request.historyReservation)
-		request.reservation = m_backend.HistoryReservations().Reserve();
-	m_captures.push_back(std::move(request));
-}
-
-void FrameSubmission::PrepareQuadHistory()
-{
-	const CaptureTarget target{CaptureKind::QuadLayers};
-	if (!m_session.SupportsImageHistory() || !m_session.SupportsCapture(target))
-		return;
-	const auto requested = m_session.Captures().RequestedTargets(m_key);
-	if (std::find(requested.begin(), requested.end(), target) != requested.end())
-		return;
-	try
-	{
-		FrameCaptureRequest request;
-		request.target = target;
-		request.history = true;
-		request.composition = m_composition.plan;
-		std::erase_if(request.composition->draws,
-					  [](const CompositionDraw& draw) { return draw.constants.control[0] != 1; });
-		request.quadBounds = CompositionQuadBounds(*request.composition);
-		m_captures.push_back(std::move(request));
-		auto& history = m_captures.back();
-		const auto& plan = *history.composition;
-		if (plan.draws.empty() ||
-			std::none_of(history.quadBounds->begin(), history.quadBounds->end(), [](const XrRect2Di& rectangle) {
-				return rectangle.extent.width > 0 && rectangle.extent.height > 0;
-			}))
-			return;
-		const auto bytes = static_cast<std::uint64_t>(plan.width) * plan.height * 8;
-		if (!bytes || bytes > FrameImageHistory::MaxImageBytes)
-			return;
-		history.historyPool = m_session.ImageHistory().Budget(ImageHistoryView::Quads);
-		history.historyReservation = history.historyPool->Reserve();
-		if (history.historyReservation)
-			history.reservation = m_backend.HistoryReservations().Reserve();
-	}
-	catch (const std::bad_alloc&)
-	{
-		// Optional history leaves a gap without rejecting the application's frame.
-	}
-}
-
 XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDescriptionResolver& describe)
 {
 	if (std::exchange(m_executed, true))
@@ -239,5 +123,121 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 	{
 		return XR_ERROR_OUT_OF_MEMORY;
 	}
+}
+
+const CompositionPlan& FrameSubmission::Composition() const noexcept
+{
+	return m_composition.plan;
+}
+
+XrResult FrameSubmission::PrepareCaptures()
+{
+	const auto targets = m_session.Captures().RequestedTargets(m_key);
+	m_captures.reserve(targets.size());
+	for (const auto target : targets)
+	{
+		FrameCaptureRequest request;
+		request.target = target;
+		if (target.IsFilteredComposition())
+		{
+			request.composition = m_composition.plan;
+			const bool projection = target.kind == CaptureKind::ProjectionLayers;
+			std::erase_if(request.composition->draws, [projection](const CompositionDraw& draw) {
+				return (draw.constants.control[0] == 0) != projection;
+			});
+			if (request.composition->draws.empty())
+				continue;
+			if (target.kind == CaptureKind::QuadLayers)
+				request.quadBounds = CompositionQuadBounds(*request.composition);
+		}
+		else if (target.IsLayerImage())
+		{
+			if (target.IsDepth())
+			{
+				const auto* depth = FindLayerDepth(*m_composition.layers, target.layer, target.view);
+				if (depth)
+				{
+					request.depth = *depth;
+					request.image = depth->image;
+				}
+			}
+			else
+				request.image = FindLayerImage(*m_composition.layers, target.layer, target.view);
+			if (!request.image || !request.image->rectangle.extent.width || !request.image->rectangle.extent.height)
+				continue;
+		}
+		else
+			continue;
+		m_captures.push_back(std::move(request));
+		auto& retained = m_captures.back();
+		const auto result = m_session.PrepareCaptureProducer(m_key, retained.reservation, target);
+		if (XR_FAILED(result))
+			return result;
+		if (!retained.reservation)
+			m_captures.pop_back();
+	}
+	return XR_SUCCESS;
+}
+
+void FrameSubmission::PrepareQuadHistory()
+{
+	const CaptureTarget target{CaptureKind::QuadLayers};
+	if (!m_session.SupportsImageHistory() || !m_session.SupportsCapture(target))
+		return;
+	const auto requested = m_session.Captures().RequestedTargets(m_key);
+	if (std::find(requested.begin(), requested.end(), target) != requested.end())
+		return;
+	try
+	{
+		FrameCaptureRequest request;
+		request.target = target;
+		request.history = true;
+		request.composition = m_composition.plan;
+		std::erase_if(request.composition->draws,
+					  [](const CompositionDraw& draw) { return draw.constants.control[0] != 1; });
+		request.quadBounds = CompositionQuadBounds(*request.composition);
+		m_captures.push_back(std::move(request));
+		auto& history = m_captures.back();
+		const auto& plan = *history.composition;
+		if (plan.draws.empty() ||
+			std::none_of(history.quadBounds->begin(), history.quadBounds->end(), [](const XrRect2Di& rectangle) {
+				return rectangle.extent.width > 0 && rectangle.extent.height > 0;
+			}))
+			return;
+		const auto bytes = static_cast<std::uint64_t>(plan.width) * plan.height * 8;
+		if (!bytes || bytes > FrameImageHistory::MaxImageBytes)
+			return;
+		history.historyPool = m_session.ImageHistory().Budget(ImageHistoryView::Quads);
+		history.historyReservation = history.historyPool->Reserve();
+		if (history.historyReservation)
+			history.reservation = m_backend.HistoryReservations().Reserve();
+	}
+	catch (const std::bad_alloc&)
+	{
+		// Optional history leaves a gap without rejecting the application's frame.
+	}
+}
+
+void FrameSubmission::PreparePreviewHistory()
+{
+	FrameCaptureRequest request;
+	request.history = request.preview = true;
+	request.composition = m_composition.plan;
+	auto& plan = *request.composition;
+	const auto largest = std::max(plan.width, plan.height);
+	if (!largest)
+		return;
+	if (largest > FramePreviewHistory::Extent)
+	{
+		plan.width =
+			std::max(1u, static_cast<std::uint32_t>(std::uint64_t{plan.width} * FramePreviewHistory::Extent / largest));
+		plan.height = std::max(
+			1u, static_cast<std::uint32_t>(std::uint64_t{plan.height} * FramePreviewHistory::Extent / largest));
+	}
+	request.historyPool = m_session.PreviewHistory().Budget();
+	request.historyReservation = m_session.PreviewHistory().Reserve(m_key, false);
+	if (request.historyReservation)
+		request.reservation = m_backend.HistoryReservations().Reserve();
+	m_captures.push_back(std::move(request));
 }
 } // namespace simxr

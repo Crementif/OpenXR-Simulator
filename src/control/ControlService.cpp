@@ -141,6 +141,157 @@ struct ControlService::HeldReaders
 	static_assert(std::is_nothrow_move_assignable_v<decltype(display)>);
 };
 
+ControlService::ControlService(Runtime& runtime, std::size_t capacity, std::shared_ptr<ImageInspectionProvider> images)
+	: m_runtime(runtime), m_images(std::move(images)), m_capacity(capacity), m_sessions(runtime)
+{
+	if (!capacity || capacity > 64)
+		throw std::invalid_argument("Invalid control connection capacity");
+	// Registration cannot allocate after transferring the client owner while
+	// the registry mutex is held: its destructor may retire runtime sources.
+	m_clients.reserve(capacity);
+}
+
+ControlService::~ControlService()
+{
+	Close();
+}
+
+std::optional<ConnectionId> ControlService::Connect(bool nativeHandles)
+{
+	auto client = std::make_shared<Client>(m_runtime, nativeHandles);
+	std::lock_guard lock(m_mutex);
+	if (m_closed || m_clients.size() >= m_capacity || m_nextConnection == std::numeric_limits<std::uint64_t>::max())
+		return {};
+	const ConnectionId id{m_nextConnection++};
+	client->identity = id;
+	client->simulation = std::make_unique<SimulationConnection>(id, m_runtime.Game());
+	m_clients.push_back({id, std::move(client)});
+	return id;
+}
+
+void ControlService::Disconnect(ConnectionId connection) noexcept
+{
+	std::shared_ptr<Client> client;
+	{
+		std::lock_guard lock(m_mutex);
+		const auto found = std::find_if(m_clients.begin(), m_clients.end(),
+										[&](const auto& entry) { return entry.first == connection; });
+		if (found == m_clients.end())
+			return;
+		client = std::move(found->second);
+		m_clients.erase(found);
+	}
+	client->requests.Close();
+	// Cancel game work immediately, then again at settlement if an already
+	// admitted request submitted another command while disconnect was pending.
+	m_runtime.Game().Disconnect(client->identity.value, true);
+}
+
+Message ControlService::Handle(ConnectionId connection, const Message& request)
+{
+	ControlPacket packet;
+	packet.message = request;
+	auto response = HandlePacket(connection, packet);
+	return std::move(response.message);
+}
+
+ControlPacket ControlService::HandlePacket(ConnectionId connection, const ControlPacket& packet)
+{
+	const auto& request = packet.message;
+	std::uint16_t minor = std::min(request.minor, ProtocolMinor);
+	const auto failureResponse = [&](ErrorCode error, const char* detail) {
+		ControlPacket response;
+		response.message = Response(request, error, detail);
+		response.message.minor = minor;
+		response.encoded = std::make_shared<const std::vector<std::byte>>(Encode(response.message));
+		return response;
+	};
+	try
+	{
+		auto client = Find(connection);
+		if (!client)
+			return failureResponse(ErrorCode::Closed, "Connection closed");
+		HeldReaders held;
+		ConnectionRequests::RetiredReplay retiredReplay;
+		auto exchange = client->requests.Begin(packet);
+		minor = exchange.ResponseMinor();
+		switch (exchange.Result())
+		{
+		case ConnectionRequests::Exchange::Admission::Reject:
+			return failureResponse(exchange.Error(), exchange.Detail());
+		case ConnectionRequests::Exchange::Admission::Replay:
+			return exchange.Replay();
+		case ConnectionRequests::Exchange::Admission::Execute:
+			break;
+		}
+		// Failed response/cache construction removes unannounced resources before
+		// reopening admission. Actual GPU ownership remains backend-managed.
+		Publication publication{*client, held.images, held.retiredWindow};
+		ControlPacket response;
+		try
+		{
+			response.message = Dispatch(*client, request, held, publication, packet, response);
+		}
+		catch (const ControlRequestError& failure)
+		{
+			response = failureResponse(failure.error, failure.detail);
+		}
+		catch (const ConnectionImages::RequestFailure& failure)
+		{
+			response = failureResponse(failure.error, failure.detail);
+		}
+		minor = client->requests.ResponseMinor(request.minor);
+		response.message.minor = minor;
+		response.encoded = std::make_shared<const std::vector<std::byte>>(Encode(response.message));
+		exchange.Publish(response, retiredReplay);
+		if (response.message.fields.front().AsU32() == static_cast<std::uint32_t>(ErrorCode::Ok))
+		{
+			// Commit negotiation only after its reply is replayable. Admission
+			// remains exclusive, including while a disconnect awaits settlement.
+			if (request.opcode == static_cast<std::uint16_t>(OpCode::Hello))
+				client->requests.Negotiate(response.message.minor);
+			publication.Commit();
+		}
+		return response;
+	}
+	catch (const ImageInspectionError& error)
+	{
+		return failureResponse(error.code, error.what());
+	}
+	catch (const std::bad_alloc&)
+	{
+		return failureResponse(ErrorCode::Capacity, "Control allocation capacity exhausted");
+	}
+	catch (const std::length_error&)
+	{
+		return failureResponse(ErrorCode::Capacity, "Control message capacity exceeded");
+	}
+	catch (const std::invalid_argument&)
+	{
+		return failureResponse(ErrorCode::Invalid, "Malformed control request");
+	}
+	catch (...)
+	{
+		return failureResponse(ErrorCode::Internal, "Control request failed");
+	}
+}
+
+void ControlService::Close() noexcept
+{
+	while (true)
+	{
+		ConnectionId id;
+		{
+			std::lock_guard lock(m_mutex);
+			m_closed = true;
+			if (m_clients.empty())
+				return;
+			id = m_clients.back().first;
+		}
+		Disconnect(id);
+	}
+}
+
 std::uint64_t ControlService::ServiceCapabilities(std::uint16_t minor) const
 {
 	auto capabilities = s_commonCapabilities;
@@ -886,154 +1037,4 @@ Message ControlService::Dispatch(Client& client, const Message& request, HeldRea
 	return DispatchDebugger(client, request, binding, held, std::move(response));
 }
 
-ControlService::ControlService(Runtime& runtime, std::size_t capacity, std::shared_ptr<ImageInspectionProvider> images)
-	: m_runtime(runtime), m_images(std::move(images)), m_capacity(capacity), m_sessions(runtime)
-{
-	if (!capacity || capacity > 64)
-		throw std::invalid_argument("Invalid control connection capacity");
-	// Registration cannot allocate after transferring the client owner while
-	// the registry mutex is held: its destructor may retire runtime sources.
-	m_clients.reserve(capacity);
-}
-
-ControlService::~ControlService()
-{
-	Close();
-}
-
-std::optional<ConnectionId> ControlService::Connect(bool nativeHandles)
-{
-	auto client = std::make_shared<Client>(m_runtime, nativeHandles);
-	std::lock_guard lock(m_mutex);
-	if (m_closed || m_clients.size() >= m_capacity || m_nextConnection == std::numeric_limits<std::uint64_t>::max())
-		return {};
-	const ConnectionId id{m_nextConnection++};
-	client->identity = id;
-	client->simulation = std::make_unique<SimulationConnection>(id, m_runtime.Game());
-	m_clients.push_back({id, std::move(client)});
-	return id;
-}
-
-void ControlService::Disconnect(ConnectionId connection) noexcept
-{
-	std::shared_ptr<Client> client;
-	{
-		std::lock_guard lock(m_mutex);
-		const auto found = std::find_if(m_clients.begin(), m_clients.end(),
-										[&](const auto& entry) { return entry.first == connection; });
-		if (found == m_clients.end())
-			return;
-		client = std::move(found->second);
-		m_clients.erase(found);
-	}
-	client->requests.Close();
-	// Cancel game work immediately, then again at settlement if an already
-	// admitted request submitted another command while disconnect was pending.
-	m_runtime.Game().Disconnect(client->identity.value, true);
-}
-
-ControlPacket ControlService::HandlePacket(ConnectionId connection, const ControlPacket& packet)
-{
-	const auto& request = packet.message;
-	std::uint16_t minor = std::min(request.minor, ProtocolMinor);
-	const auto failureResponse = [&](ErrorCode error, const char* detail) {
-		ControlPacket response;
-		response.message = Response(request, error, detail);
-		response.message.minor = minor;
-		response.encoded = std::make_shared<const std::vector<std::byte>>(Encode(response.message));
-		return response;
-	};
-	try
-	{
-		auto client = Find(connection);
-		if (!client)
-			return failureResponse(ErrorCode::Closed, "Connection closed");
-		HeldReaders held;
-		ConnectionRequests::RetiredReplay retiredReplay;
-		auto exchange = client->requests.Begin(packet);
-		minor = exchange.ResponseMinor();
-		switch (exchange.Result())
-		{
-		case ConnectionRequests::Exchange::Admission::Reject:
-			return failureResponse(exchange.Error(), exchange.Detail());
-		case ConnectionRequests::Exchange::Admission::Replay:
-			return exchange.Replay();
-		case ConnectionRequests::Exchange::Admission::Execute:
-			break;
-		}
-		// Failed response/cache construction removes unannounced resources before
-		// reopening admission. Actual GPU ownership remains backend-managed.
-		Publication publication{*client, held.images, held.retiredWindow};
-		ControlPacket response;
-		try
-		{
-			response.message = Dispatch(*client, request, held, publication, packet, response);
-		}
-		catch (const ControlRequestError& failure)
-		{
-			response = failureResponse(failure.error, failure.detail);
-		}
-		catch (const ConnectionImages::RequestFailure& failure)
-		{
-			response = failureResponse(failure.error, failure.detail);
-		}
-		minor = client->requests.ResponseMinor(request.minor);
-		response.message.minor = minor;
-		response.encoded = std::make_shared<const std::vector<std::byte>>(Encode(response.message));
-		exchange.Publish(response, retiredReplay);
-		if (response.message.fields.front().AsU32() == static_cast<std::uint32_t>(ErrorCode::Ok))
-		{
-			// Commit negotiation only after its reply is replayable. Admission
-			// remains exclusive, including while a disconnect awaits settlement.
-			if (request.opcode == static_cast<std::uint16_t>(OpCode::Hello))
-				client->requests.Negotiate(response.message.minor);
-			publication.Commit();
-		}
-		return response;
-	}
-	catch (const ImageInspectionError& error)
-	{
-		return failureResponse(error.code, error.what());
-	}
-	catch (const std::bad_alloc&)
-	{
-		return failureResponse(ErrorCode::Capacity, "Control allocation capacity exhausted");
-	}
-	catch (const std::length_error&)
-	{
-		return failureResponse(ErrorCode::Capacity, "Control message capacity exceeded");
-	}
-	catch (const std::invalid_argument&)
-	{
-		return failureResponse(ErrorCode::Invalid, "Malformed control request");
-	}
-	catch (...)
-	{
-		return failureResponse(ErrorCode::Internal, "Control request failed");
-	}
-}
-
-void ControlService::Close() noexcept
-{
-	while (true)
-	{
-		ConnectionId id;
-		{
-			std::lock_guard lock(m_mutex);
-			m_closed = true;
-			if (m_clients.empty())
-				return;
-			id = m_clients.back().first;
-		}
-		Disconnect(id);
-	}
-}
-
-Message ControlService::Handle(ConnectionId connection, const Message& request)
-{
-	ControlPacket packet;
-	packet.message = request;
-	auto response = HandlePacket(connection, packet);
-	return std::move(response.message);
-}
 } // namespace simxr::control

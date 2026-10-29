@@ -25,14 +25,16 @@ class WindowsRuntimeFiles
 public:
 	explicit WindowsRuntimeFiles(std::filesystem::path directory);
 	~WindowsRuntimeFiles();
+
 	bool PublishStatus(std::string document);
 	bool Log(std::string message);
 	WindowsFileStatus Status() const;
 	void Close();
 
 private:
-	void Run() noexcept;
 	void RecordError(std::string_view error) noexcept;
+	void Run() noexcept;
+
 	std::filesystem::path m_directory;
 	mutable std::mutex m_mutex;
 	std::mutex m_closeMutex;

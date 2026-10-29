@@ -107,6 +107,43 @@ static Field Integer(std::uint16_t tag, T value, bool required)
 	return result;
 }
 
+std::optional<std::uint64_t> FieldView::AsU64() const noexcept
+{
+	return value.size() == sizeof(std::uint64_t) ? std::optional{Read<std::uint64_t>(value)} : std::nullopt;
+}
+
+std::optional<std::uint32_t> FieldView::AsU32() const noexcept
+{
+	return value.size() == sizeof(std::uint32_t) ? std::optional{Read<std::uint32_t>(value)} : std::nullopt;
+}
+
+std::optional<std::int64_t> FieldView::AsI64() const noexcept
+{
+	const auto integer = AsU64();
+	return integer ? std::optional{std::bit_cast<std::int64_t>(*integer)} : std::nullopt;
+}
+
+std::optional<float> FieldView::AsF32() const noexcept
+{
+	const auto integer = AsU32();
+	return integer ? std::optional{std::bit_cast<float>(*integer)} : std::nullopt;
+}
+
+std::optional<bool> FieldView::AsBool() const noexcept
+{
+	return value.size() == 1 && std::to_integer<unsigned char>(value.front()) <= 1
+			   ? std::optional{value.front() == std::byte{1}}
+			   : std::nullopt;
+}
+
+std::optional<std::string_view> FieldView::AsText() const noexcept
+{
+	if (!ValidText(value))
+		return {};
+	return value.empty() ? std::string_view{}
+						 : std::string_view{reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
 Field Field::U64(std::uint16_t tag, std::uint64_t value, bool required)
 {
 	return Integer(tag, value, required);
@@ -148,43 +185,6 @@ Field Field::Bytes(std::uint16_t tag, std::span<const std::byte> value, bool req
 	return Field{tag, required, {value.begin(), value.end()}};
 }
 
-std::optional<std::uint64_t> FieldView::AsU64() const noexcept
-{
-	return value.size() == sizeof(std::uint64_t) ? std::optional{Read<std::uint64_t>(value)} : std::nullopt;
-}
-
-std::optional<std::uint32_t> FieldView::AsU32() const noexcept
-{
-	return value.size() == sizeof(std::uint32_t) ? std::optional{Read<std::uint32_t>(value)} : std::nullopt;
-}
-
-std::optional<std::int64_t> FieldView::AsI64() const noexcept
-{
-	const auto integer = AsU64();
-	return integer ? std::optional{std::bit_cast<std::int64_t>(*integer)} : std::nullopt;
-}
-
-std::optional<float> FieldView::AsF32() const noexcept
-{
-	const auto integer = AsU32();
-	return integer ? std::optional{std::bit_cast<float>(*integer)} : std::nullopt;
-}
-
-std::optional<bool> FieldView::AsBool() const noexcept
-{
-	return value.size() == 1 && std::to_integer<unsigned char>(value.front()) <= 1
-			   ? std::optional{value.front() == std::byte{1}}
-			   : std::nullopt;
-}
-
-std::optional<std::string_view> FieldView::AsText() const noexcept
-{
-	if (!ValidText(value))
-		return {};
-	return value.empty() ? std::string_view{}
-						 : std::string_view{reinterpret_cast<const char*>(value.data()), value.size()};
-}
-
 std::optional<std::uint64_t> Field::AsU64() const noexcept
 {
 	return FieldView{tag, required, value}.AsU64();
@@ -215,14 +215,6 @@ std::optional<std::string_view> Field::AsText() const noexcept
 	return FieldView{tag, required, value}.AsText();
 }
 
-const FieldView* FieldViewsResult::Find(std::uint16_t tag) const noexcept
-{
-	for (const auto& field : fields)
-		if (field.tag == tag)
-			return &field;
-	return nullptr;
-}
-
 Field* Message::Find(std::uint16_t tag) noexcept
 {
 	return const_cast<Field*>(std::as_const(*this).Find(tag));
@@ -240,6 +232,14 @@ std::optional<std::uint16_t> Message::ValidateFields(std::span<const std::uint16
 		if (field.required && std::find(knownTags.begin(), knownTags.end(), field.tag) == knownTags.end())
 			return field.tag;
 	return {};
+}
+
+const FieldView* FieldViewsResult::Find(std::uint16_t tag) const noexcept
+{
+	for (const auto& field : fields)
+		if (field.tag == tag)
+			return &field;
+	return nullptr;
 }
 
 std::vector<std::byte> EncodeFields(std::span<const Field> fields)

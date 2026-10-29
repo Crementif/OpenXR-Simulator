@@ -19,9 +19,11 @@ public:
 	~OpenXrRuntime();
 	OpenXrRuntime(const OpenXrRuntime&) = delete;
 	OpenXrRuntime& operator=(const OpenXrRuntime&) = delete;
+
 	void Open();
 	void PreserveNativeResources();
 	bool ResourcesPreserved() const;
+
 	bool Supports(std::string_view extension) const;
 	PFN_xrVoidFunction Procedure(const char* name) const;
 	XrInstance Instance() const;

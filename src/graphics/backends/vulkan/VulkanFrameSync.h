@@ -20,9 +20,11 @@ public:
 private:
 	friend class VulkanFrameSyncPool;
 	friend class VulkanInspectionWork;
+
+	explicit VulkanFrameSync(std::shared_ptr<VulkanExternalSemaphore> producer);
 	// Only confirmed completion of the imported wait permits reuse.
 	void MarkConsumed() noexcept;
-	explicit VulkanFrameSync(std::shared_ptr<VulkanExternalSemaphore> producer);
+
 	const std::shared_ptr<VulkanExternalSemaphore> m_producer;
 	std::shared_ptr<VulkanExternalSemaphore> m_consumer;
 	VulkanExternalHandle m_handle;
@@ -33,12 +35,14 @@ class VulkanFrameSyncPool final : public std::enable_shared_from_this<VulkanFram
 {
 public:
 	explicit VulkanFrameSyncPool(std::shared_ptr<VulkanExternalDevice> producer);
+
 	std::shared_ptr<VulkanFrameSync> Acquire();
 	// Clear idle native objects before the borrowed producer device is destroyed.
 	void Close();
 
 private:
 	void Recycle(std::unique_ptr<VulkanFrameSync> sync);
+
 	const std::shared_ptr<VulkanExternalDevice> m_producer;
 	std::mutex m_mutex;
 	std::array<std::unique_ptr<VulkanFrameSync>, 16> m_available;

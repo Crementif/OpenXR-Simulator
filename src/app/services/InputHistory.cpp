@@ -221,6 +221,13 @@ InputHistory::InputHistory(std::size_t capacity, std::size_t byteBudget) : m_byt
 	m_bytes = m_samples.capacity() * sizeof(InputSample);
 }
 
+const InputSample* InputHistory::Find(std::uint64_t sequence) const noexcept
+{
+	if (!sequence || sequence >= m_next || m_next - sequence > m_size)
+		return nullptr;
+	return &m_samples[sequence % m_samples.size()];
+}
+
 std::size_t InputHistory::RetainedBytes() const noexcept
 {
 	return m_bytes;
@@ -229,46 +236,6 @@ std::size_t InputHistory::RetainedBytes() const noexcept
 std::size_t InputHistory::ByteBudget() const noexcept
 {
 	return m_byteBudget;
-}
-
-void InputHistory::Retain(const void* identity, std::size_t bytes)
-{
-	if (!identity)
-		return;
-	// Include an allowance for the shared control block and ordered-map node.
-	const auto [entry, inserted] = m_blocks.try_emplace(identity, Block{bytes + 128, 0});
-	if (inserted)
-		m_bytes += entry->second.bytes;
-	++entry->second.references;
-}
-
-void InputHistory::Release(const void* identity) noexcept
-{
-	if (!identity)
-		return;
-	const auto entry = m_blocks.find(identity);
-	if (--entry->second.references == 0)
-	{
-		m_bytes -= entry->second.bytes;
-		m_blocks.erase(entry);
-	}
-}
-
-void InputHistory::ReleaseSample(const InputSample& sample) noexcept
-{
-	Release(sample.body.get());
-	Release(sample.bodyObservation.get());
-	Release(sample.trackers.get());
-	Release(sample.context.get());
-	m_bytes -= ProfileBytes(sample);
-}
-
-void InputHistory::Evict() noexcept
-{
-	auto& oldest = m_samples[(m_next - m_size) % m_samples.size()];
-	ReleaseSample(oldest);
-	oldest = {};
-	--m_size;
 }
 
 std::uint64_t InputHistory::Append(InputSample sample)
@@ -325,13 +292,6 @@ std::uint64_t InputHistory::Append(InputSample sample)
 	return sequence;
 }
 
-const InputSample* InputHistory::Find(std::uint64_t sequence) const noexcept
-{
-	if (!sequence || sequence >= m_next || m_next - sequence > m_size)
-		return nullptr;
-	return &m_samples[sequence % m_samples.size()];
-}
-
 void InputHistory::Clear() noexcept
 {
 	// Sequence numbers keep rising so stale references never resolve.
@@ -339,6 +299,46 @@ void InputHistory::Clear() noexcept
 	std::fill(m_samples.begin(), m_samples.end(), InputSample{});
 	m_blocks.clear();
 	m_bytes = m_samples.capacity() * sizeof(InputSample);
+}
+
+void InputHistory::Retain(const void* identity, std::size_t bytes)
+{
+	if (!identity)
+		return;
+	// Include an allowance for the shared control block and ordered-map node.
+	const auto [entry, inserted] = m_blocks.try_emplace(identity, Block{bytes + 128, 0});
+	if (inserted)
+		m_bytes += entry->second.bytes;
+	++entry->second.references;
+}
+
+void InputHistory::Release(const void* identity) noexcept
+{
+	if (!identity)
+		return;
+	const auto entry = m_blocks.find(identity);
+	if (--entry->second.references == 0)
+	{
+		m_bytes -= entry->second.bytes;
+		m_blocks.erase(entry);
+	}
+}
+
+void InputHistory::ReleaseSample(const InputSample& sample) noexcept
+{
+	Release(sample.body.get());
+	Release(sample.bodyObservation.get());
+	Release(sample.trackers.get());
+	Release(sample.context.get());
+	m_bytes -= ProfileBytes(sample);
+}
+
+void InputHistory::Evict() noexcept
+{
+	auto& oldest = m_samples[(m_next - m_size) % m_samples.size()];
+	ReleaseSample(oldest);
+	oldest = {};
+	--m_size;
 }
 
 automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples)

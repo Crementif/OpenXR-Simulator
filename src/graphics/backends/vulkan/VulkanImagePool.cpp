@@ -5,16 +5,6 @@ namespace simxr
 {
 static constexpr VkDeviceSize s_idleBytesLimit = 64ULL * 1024 * 1024;
 
-bool VulkanImagePool::Allocation::Idle() const noexcept
-{
-	return !producerUsed && !consumerUses;
-}
-
-VulkanImagePool::Lease::Lease(std::shared_ptr<VulkanImagePool> pool, std::shared_ptr<Allocation> allocation,
-							  std::shared_ptr<VulkanExternalImage> image, bool producer)
-	: m_pool(std::move(pool)), m_allocation(std::move(allocation)), m_image(std::move(image)), m_producer(producer)
-{}
-
 VulkanImagePool::Lease::~Lease()
 {
 	m_image.reset();
@@ -30,6 +20,11 @@ std::shared_ptr<VulkanImage> VulkanImagePool::Lease::Import(const VulkanExternal
 {
 	return m_pool->Import(*this, consumer);
 }
+
+VulkanImagePool::Lease::Lease(std::shared_ptr<VulkanImagePool> pool, std::shared_ptr<Allocation> allocation,
+							  std::shared_ptr<VulkanExternalImage> image, bool producer)
+	: m_pool(std::move(pool)), m_allocation(std::move(allocation)), m_image(std::move(image)), m_producer(producer)
+{}
 
 VulkanImagePool::VulkanImagePool(std::shared_ptr<VulkanExternalDevice> producer) : m_producer(std::move(producer)) {}
 
@@ -88,6 +83,27 @@ std::shared_ptr<VulkanImagePool::Lease> VulkanImagePool::Acquire(const VulkanExt
 		throw;
 	}
 	return std::shared_ptr<Lease>(std::move(lease));
+}
+
+void VulkanImagePool::Close()
+{
+	std::array<std::shared_ptr<VulkanExternalImage>, 128> retired;
+	std::size_t count = 0;
+	std::lock_guard lock(m_mutex);
+	m_closed = true;
+	for (auto& allocation : m_allocations)
+		if (allocation)
+		{
+			allocation->cached = false;
+			retired[count++] = std::move(allocation->producer);
+			retired[count++] = std::move(allocation->consumer);
+			allocation.reset();
+		}
+}
+
+bool VulkanImagePool::Allocation::Idle() const noexcept
+{
+	return !producerUsed && !consumerUses;
 }
 
 std::shared_ptr<VulkanExternalImage> VulkanImagePool::External(const std::shared_ptr<Lease>& lease)
@@ -168,21 +184,5 @@ void VulkanImagePool::Return(const std::shared_ptr<Allocation>& allocation, bool
 		retiredProducer = std::move(allocation->producer);
 		retiredConsumer = std::move(allocation->consumer);
 	}
-}
-
-void VulkanImagePool::Close()
-{
-	std::array<std::shared_ptr<VulkanExternalImage>, 128> retired;
-	std::size_t count = 0;
-	std::lock_guard lock(m_mutex);
-	m_closed = true;
-	for (auto& allocation : m_allocations)
-		if (allocation)
-		{
-			allocation->cached = false;
-			retired[count++] = std::move(allocation->producer);
-			retired[count++] = std::move(allocation->consumer);
-			allocation.reset();
-		}
 }
 } // namespace simxr

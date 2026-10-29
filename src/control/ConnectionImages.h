@@ -60,10 +60,12 @@ public:
 		~Publication();
 		Publication(const Publication&) = delete;
 		Publication& operator=(const Publication&) = delete;
+
 		void Commit() noexcept;
 
 	private:
 		void Track(ResourceKind kind, std::uint64_t id) noexcept;
+
 		ConnectionImages& m_owner;
 		RetiredResource& m_retired;
 		std::optional<ResourceKind> m_kind;
@@ -75,6 +77,7 @@ public:
 	~ConnectionImages();
 	ConnectionImages(const ConnectionImages&) = delete;
 	ConnectionImages& operator=(const ConnectionImages&) = delete;
+
 	// Reuse requires source identity and the selected image tick. Display images
 	// can change without a new submitted application frame.
 	void Retain(Message& response, ImageSource source, std::shared_ptr<const FrameOutput> output,

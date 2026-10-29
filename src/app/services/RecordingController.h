@@ -53,6 +53,7 @@ public:
 	~RecordingController();
 	RecordingController(const RecordingController&) = delete;
 	RecordingController& operator=(const RecordingController&) = delete;
+
 	void SetTarget(RecordingTarget target);
 	bool Request(RecordingAction action, std::uint64_t offset = 0, std::string path = {});
 	RecordingSnapshot Snapshot() const;
@@ -69,6 +70,7 @@ private:
 	static control::Message Read(WorkerConnection& connection, const Job& job, std::uint64_t offset);
 	static RecordingSnapshot Execute(WorkerConnection& connection, const Job& job);
 	void Run();
+
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::thread m_worker;

@@ -97,6 +97,7 @@ private:
 	void Push(RuntimeFrameRun run, double seconds, std::string text, bool failed = false);
 	TimelineSpan Start(TimelinePoint point, bool replay = false);
 	static void Close(std::optional<TimelineSpan>& span, std::vector<TimelineSpan>& destination);
+
 	std::optional<Observation> m_previous;
 	std::optional<TimelineSpan> m_recording, m_script, m_pause;
 	std::vector<TimelineSpan> m_clips, m_pauses;

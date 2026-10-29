@@ -33,8 +33,8 @@ struct AppPickerChoice
 class AppPicker
 {
 public:
-	~AppPicker();
 	AppPicker() = default;
+	~AppPicker();
 	AppPicker(const AppPicker&) = delete;
 	AppPicker& operator=(const AppPicker&) = delete;
 	void StopDiscovery() noexcept;

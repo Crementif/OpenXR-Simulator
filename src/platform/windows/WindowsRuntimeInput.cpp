@@ -20,10 +20,10 @@ WindowsRuntimeInput::WindowsRuntimeInput()
 		m_renderHeight = ParseLaunchRenderExtent(height);
 }
 
-static XrFovf EyeFov(const settings::EyeFov& eye)
+RuntimeInputSnapshot WindowsRuntimeInput::Snapshot() const
 {
-	constexpr float radians = std::numbers::pi_v<float> / 180;
-	return {eye.angleLeft * radians, eye.angleRight * radians, eye.angleUp * radians, eye.angleDown * radians};
+	std::lock_guard lock(m_mutex);
+	return SnapshotLocked();
 }
 
 static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(bool inputActive, float frameSeconds)
@@ -77,64 +77,6 @@ static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(bool input
 	return input;
 }
 
-RuntimeHeadPose WindowsRuntimeInput::Head() const
-{
-	std::lock_guard lock(m_mutex);
-	return m_head;
-}
-
-RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked() const
-{
-	RuntimeInputSnapshot output;
-	output.head = m_head;
-	const XrVector3f position{m_head.x, m_head.y, m_head.z};
-	output.tracking.head.pose = {EulerAngles(m_head.yaw, m_head.pitch, m_head.roll), position};
-	const auto controllers = m_controllers.Snapshot({position, m_head.yaw, m_head.pitch});
-	for (std::size_t hand = 0; hand < controllers.hands.size(); ++hand)
-	{
-		output.tracking.controllers[hand].pose.pose = controllers.hands[hand].worldPose;
-		auto& controls = output.controls[hand];
-		const auto& controller = controllers.hands[hand].controls;
-		controls.connected = true;
-		controls.trigger = controller.trigger;
-		controls.grip = controls.gripForce = controller.grip;
-		controls.stick = controls.trackpad = controller.stick;
-		controls.primary = controls.primaryTouch = controller.primary;
-		controls.secondary = controls.secondaryTouch = controller.secondary;
-		controls.menu = controller.menu;
-		controls.thumbClick = controls.trackpadClick = controller.thumbClick;
-		controls.triggerTouch = controller.triggerTouch;
-		controls.thumbTouch = controls.trackpadTouch = controller.thumbClick;
-	}
-	const auto configuration = settings::ReadState();
-	settings::GetRenderResolution(output.views.outerWidth, output.views.outerHeight);
-	if (m_renderWidth)
-		output.views.outerWidth = *m_renderWidth;
-	if (m_renderHeight)
-		output.views.outerHeight = *m_renderHeight;
-	output.views.ipd = std::clamp(configuration.ipdMeters, 0.0f, .2f);
-	if (configuration.useAsymmetricFov && configuration.headsetProfile != settings::HeadsetProfile::GenericSymmetric)
-	{
-		const auto& profile = settings::GetHeadsetSpec(configuration.headsetProfile);
-		for (std::size_t eye = 0; eye < output.views.outerFov.size(); ++eye)
-			output.views.outerFov[eye] = EyeFov(profile.eye[eye]);
-	}
-	else
-	{
-		const auto degrees =
-			configuration.fovDegrees > 0 && configuration.fovDegrees <= 180 ? configuration.fovDegrees : 90;
-		const float halfAngle = degrees * std::numbers::pi_v<float> / 360;
-		output.views.outerFov.fill({-halfAngle, halfAngle, halfAngle, -halfAngle});
-	}
-	return output;
-}
-
-RuntimeInputSnapshot WindowsRuntimeInput::Snapshot() const
-{
-	std::lock_guard lock(m_mutex);
-	return SnapshotLocked();
-}
-
 RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, WindowsRuntimeFiles& files)
 {
 	XrTime counterTime;
@@ -182,5 +124,63 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 	if (controllers.animationToggle)
 		files.Log(*controllers.animationToggle ? "[SimXR] Auto motion ENABLED" : "[SimXR] Auto motion DISABLED");
 	return SnapshotLocked();
+}
+
+RuntimeHeadPose WindowsRuntimeInput::Head() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_head;
+}
+
+static XrFovf EyeFov(const settings::EyeFov& eye)
+{
+	constexpr float radians = std::numbers::pi_v<float> / 180;
+	return {eye.angleLeft * radians, eye.angleRight * radians, eye.angleUp * radians, eye.angleDown * radians};
+}
+
+RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked() const
+{
+	RuntimeInputSnapshot output;
+	output.head = m_head;
+	const XrVector3f position{m_head.x, m_head.y, m_head.z};
+	output.tracking.head.pose = {EulerAngles(m_head.yaw, m_head.pitch, m_head.roll), position};
+	const auto controllers = m_controllers.Snapshot({position, m_head.yaw, m_head.pitch});
+	for (std::size_t hand = 0; hand < controllers.hands.size(); ++hand)
+	{
+		output.tracking.controllers[hand].pose.pose = controllers.hands[hand].worldPose;
+		auto& controls = output.controls[hand];
+		const auto& controller = controllers.hands[hand].controls;
+		controls.connected = true;
+		controls.trigger = controller.trigger;
+		controls.grip = controls.gripForce = controller.grip;
+		controls.stick = controls.trackpad = controller.stick;
+		controls.primary = controls.primaryTouch = controller.primary;
+		controls.secondary = controls.secondaryTouch = controller.secondary;
+		controls.menu = controller.menu;
+		controls.thumbClick = controls.trackpadClick = controller.thumbClick;
+		controls.triggerTouch = controller.triggerTouch;
+		controls.thumbTouch = controls.trackpadTouch = controller.thumbClick;
+	}
+	const auto configuration = settings::ReadState();
+	settings::GetRenderResolution(output.views.outerWidth, output.views.outerHeight);
+	if (m_renderWidth)
+		output.views.outerWidth = *m_renderWidth;
+	if (m_renderHeight)
+		output.views.outerHeight = *m_renderHeight;
+	output.views.ipd = std::clamp(configuration.ipdMeters, 0.0f, .2f);
+	if (configuration.useAsymmetricFov && configuration.headsetProfile != settings::HeadsetProfile::GenericSymmetric)
+	{
+		const auto& profile = settings::GetHeadsetSpec(configuration.headsetProfile);
+		for (std::size_t eye = 0; eye < output.views.outerFov.size(); ++eye)
+			output.views.outerFov[eye] = EyeFov(profile.eye[eye]);
+	}
+	else
+	{
+		const auto degrees =
+			configuration.fovDegrees > 0 && configuration.fovDegrees <= 180 ? configuration.fovDegrees : 90;
+		const float halfAngle = degrees * std::numbers::pi_v<float> / 360;
+		output.views.outerFov.fill({-halfAngle, halfAngle, halfAngle, -halfAngle});
+	}
+	return output;
 }
 } // namespace simxr::windows

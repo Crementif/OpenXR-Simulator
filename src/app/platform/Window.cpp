@@ -102,6 +102,12 @@ std::pair<int, int> Window::PixelSize() const
 	return {width, height};
 }
 
+void Window::Resize(int width, int height)
+{
+	if (!SDL_SetWindowSize(m_window, width, height))
+		throw std::runtime_error(SDL_GetError());
+}
+
 bool Window::PollEvents(const std::function<void(const SDL_Event&)>& processEvent)
 {
 	if (m_pointerReleasePending)
@@ -157,23 +163,35 @@ bool Window::PollEvents(const std::function<void(const SDL_Event&)>& processEven
 	return running;
 }
 
+bool Window::TakeFocusLost()
+{
+	return std::exchange(m_focusLost, false);
+}
+
 bool Window::Focused() const
 {
 	return (SDL_GetWindowFlags(m_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
 }
 
-void Window::OpenGamepad()
+bool Window::CapturePointer(bool enabled, bool relative)
 {
-	if (m_gamepad)
-		return;
-	int count = 0;
-	auto ids = SDL_GetGamepads(&count);
-	for (int index = 0; index < count && !m_gamepad; ++index)
-		m_gamepad = SDL_OpenGamepad(ids[index]);
-	SDL_free(ids);
-	m_feedback.Attach(m_gamepad);
-	m_gyroEnabled = m_gamepad && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO) &&
-					SDL_SetGamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO, true);
+	if (!enabled || m_pointerReleasePending)
+		m_pointerMotion = {};
+	m_pointerReleasePending = !enabled && m_pointerCaptured;
+	if (m_pointerCaptured == enabled && (!enabled || m_pointerRelative == relative))
+		return true;
+	if (!SDL_SetWindowRelativeMouseMode(m_window, enabled && relative))
+		return false;
+	m_pointerCaptured = enabled;
+	m_pointerRelative = enabled && relative;
+	m_pointerReleasePending = false;
+	m_pointerMotion = {};
+	return true;
+}
+
+std::pair<float, float> Window::TakePointerMotion()
+{
+	return std::exchange(m_pointerMotion, {});
 }
 
 GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
@@ -214,9 +232,9 @@ GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
 	return result;
 }
 
-std::uint32_t Window::GamepadIdentity() const noexcept
+bool Window::Rumble(std::array<std::uint16_t, 2> motors, std::chrono::steady_clock::time_point deadline)
 {
-	return m_gamepad ? SDL_GetGamepadID(m_gamepad) : 0;
+	return m_feedback.Rumble(motors, deadline);
 }
 
 bool Window::HasGamepad() const noexcept
@@ -224,40 +242,22 @@ bool Window::HasGamepad() const noexcept
 	return m_gamepad != nullptr;
 }
 
-bool Window::Rumble(std::array<std::uint16_t, 2> motors, std::chrono::steady_clock::time_point deadline)
+std::uint32_t Window::GamepadIdentity() const noexcept
 {
-	return m_feedback.Rumble(motors, deadline);
+	return m_gamepad ? SDL_GetGamepadID(m_gamepad) : 0;
 }
 
-bool Window::TakeFocusLost()
+void Window::OpenGamepad()
 {
-	return std::exchange(m_focusLost, false);
-}
-
-bool Window::CapturePointer(bool enabled, bool relative)
-{
-	if (!enabled || m_pointerReleasePending)
-		m_pointerMotion = {};
-	m_pointerReleasePending = !enabled && m_pointerCaptured;
-	if (m_pointerCaptured == enabled && (!enabled || m_pointerRelative == relative))
-		return true;
-	if (!SDL_SetWindowRelativeMouseMode(m_window, enabled && relative))
-		return false;
-	m_pointerCaptured = enabled;
-	m_pointerRelative = enabled && relative;
-	m_pointerReleasePending = false;
-	m_pointerMotion = {};
-	return true;
-}
-
-std::pair<float, float> Window::TakePointerMotion()
-{
-	return std::exchange(m_pointerMotion, {});
-}
-
-void Window::Resize(int width, int height)
-{
-	if (!SDL_SetWindowSize(m_window, width, height))
-		throw std::runtime_error(SDL_GetError());
+	if (m_gamepad)
+		return;
+	int count = 0;
+	auto ids = SDL_GetGamepads(&count);
+	for (int index = 0; index < count && !m_gamepad; ++index)
+		m_gamepad = SDL_OpenGamepad(ids[index]);
+	SDL_free(ids);
+	m_feedback.Attach(m_gamepad);
+	m_gyroEnabled = m_gamepad && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO) &&
+					SDL_SetGamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO, true);
 }
 } // namespace simxr::app

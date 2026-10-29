@@ -13,20 +13,24 @@ class SessionInteraction
 {
 public:
 	SessionInteraction(XrSession session, Instance& instance);
+
 	void Reset();
 	void SetFocused(bool focused, RuntimeTime time);
 	void LoseFocus(RuntimeTime time);
 	XrResult Attach(const XrSessionActionSetsAttachInfo& info, const InputSnapshot& input);
 	XrResult Sync(const XrActionsSyncInfo& info, const InputSnapshot& input, RuntimeTime time, bool focused);
 	void PublishProfileChange(bool changed, bool running);
+
 	XrResult ApplyHaptic(const XrHapticActionInfo* info, const XrHapticBaseHeader* feedback, RuntimeTime time,
 						 bool focused);
 	XrResult StopHaptic(const XrHapticActionInfo* info, RuntimeTime time, bool focused);
+
 	ActionSyncState& Actions();
 	HapticState& Haptics();
 
 private:
 	void RetireInactiveHaptics(RuntimeTime time);
+
 	XrSession m_session;
 	Instance& m_instance;
 	ActionSyncState m_actions;

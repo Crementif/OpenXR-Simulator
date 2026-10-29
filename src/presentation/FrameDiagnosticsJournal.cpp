@@ -14,30 +14,6 @@ FrameDiagnosticsJournal::~FrameDiagnosticsJournal()
 	auto timestamp = std::move(m_timestamp);
 }
 
-std::size_t FrameDiagnosticsJournal::ValidateCapacity(std::size_t capacity)
-{
-	if (!capacity || capacity > 8192)
-		throw std::invalid_argument("Frame diagnostic capacity out of bounds");
-	return capacity;
-}
-
-void FrameDiagnosticsJournal::CopyDetail(FrameDiagnostic& event, std::string_view detail) noexcept
-{
-	auto bytes = std::min(detail.size(), event.detail.size());
-	if (bytes < detail.size())
-	{
-		// Keep a complete UTF-8 prefix when the caller supplies a longer message.
-		while (bytes && (static_cast<unsigned char>(detail[bytes]) & 0xC0) == 0x80)
-		{
-			--bytes;
-		}
-	}
-	if (bytes)
-		std::copy_n(detail.data(), bytes, event.detail.data());
-	event.detailLength = static_cast<std::uint16_t>(bytes);
-	event.detailTruncated = bytes < detail.size();
-}
-
 FrameDiagnostic FrameDiagnosticsJournal::Trace(FrameTraceKind kind, FrameKey frame, RuntimeTime time, XrResult result,
 											   FrameDiagnosticCategory category, std::uint64_t related,
 											   std::string_view detail) noexcept
@@ -96,6 +72,30 @@ bool FrameDiagnosticsJournal::ReadInto(FrameDiagnostics& snapshot, std::uint64_t
 	{
 		return false;
 	}
+}
+
+std::size_t FrameDiagnosticsJournal::ValidateCapacity(std::size_t capacity)
+{
+	if (!capacity || capacity > 8192)
+		throw std::invalid_argument("Frame diagnostic capacity out of bounds");
+	return capacity;
+}
+
+void FrameDiagnosticsJournal::CopyDetail(FrameDiagnostic& event, std::string_view detail) noexcept
+{
+	auto bytes = std::min(detail.size(), event.detail.size());
+	if (bytes < detail.size())
+	{
+		// Keep a complete UTF-8 prefix when the caller supplies a longer message.
+		while (bytes && (static_cast<unsigned char>(detail[bytes]) & 0xC0) == 0x80)
+		{
+			--bytes;
+		}
+	}
+	if (bytes)
+		std::copy_n(detail.data(), bytes, event.detail.data());
+	event.detailLength = static_cast<std::uint16_t>(bytes);
+	event.detailTruncated = bytes < detail.size();
 }
 
 void FrameDiagnosticsJournal::CopyLocked(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,

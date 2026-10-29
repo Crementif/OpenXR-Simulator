@@ -33,31 +33,35 @@ public:
 	~PreviewHistory();
 	PreviewHistory(const PreviewHistory&) = delete;
 	PreviewHistory& operator=(const PreviewHistory&) = delete;
+
 	// Keeps one eye of each displayed live image.
 	void Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch);
 	// The newest kept image at or shortly before a frame of the same run.
 	std::optional<PreviewShot> Nearest(FrameIdentity frame, std::uint64_t epoch) const;
 
-	const std::vector<PreviewShot>& Shots() const noexcept
-	{
-		return m_shots;
-	}
-
 	void BeginThumbnails();
 	void RequestThumbnail(FrameIdentity frame, std::uint64_t epoch);
 	std::optional<PreviewShot> MissingThumbnail() const;
 	void UnavailableThumbnail(FrameIdentity frame, std::uint64_t epoch);
-	float Aspect() const noexcept;
-	void Draw(const PreviewShot& shot, float width, ImVec4 crop = {0, 0, 1, 1});
-	void DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop);
+
 	void BeginFrame();
 	void Poll();
+	void Draw(const PreviewShot& shot, float width, ImVec4 crop = {0, 0, 1, 1});
+	void DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop);
+	void Record(VkCommandBuffer command);
+	void Submitted(std::uint64_t serial);
+
 	void BeginRetirement();
 	bool RetirementComplete() const noexcept;
 	void PreserveRetired() noexcept;
-	void Record(VkCommandBuffer command);
-	void Submitted(std::uint64_t serial);
+
+	float Aspect() const noexcept;
 	std::uint64_t Bytes() const noexcept;
+
+	const std::vector<PreviewShot>& Shots() const noexcept
+	{
+		return m_shots;
+	}
 
 	std::uint64_t Budget() const noexcept
 	{

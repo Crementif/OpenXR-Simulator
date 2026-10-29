@@ -6,6 +6,9 @@
 
 namespace simxr::app
 {
+
+RangeExportTask::RangeExportTask(RuntimeSession& session) : m_session(session) {}
+
 static void WriteRangeMetadata(const std::vector<HistoryFrame>& frames, const std::filesystem::path& destination)
 {
 	SaveExportFile(
@@ -20,32 +23,6 @@ static void WriteRangeMetadata(const std::vector<HistoryFrame>& frames, const st
 					   << bool(frame.flags & HistoryDropped) << '\n';
 		},
 		true);
-}
-
-RangeExportTask::RangeExportTask(RuntimeSession& session) : m_session(session) {}
-
-RangeExportTask::Protection::Protection(PreviewImages& preview, std::span<const std::uint64_t> images)
-	: m_preview(preview)
-{
-	m_preview.ProtectExports(images);
-}
-
-RangeExportTask::Protection::~Protection()
-{
-	m_preview.ProtectExports({});
-}
-
-bool RangeExportTask::Busy() const
-{
-	return m_csv.valid() || m_protection.has_value();
-}
-
-void RangeExportTask::Finish(std::string result)
-{
-	m_images = std::move(result);
-	m_queue.clear();
-	m_requested = false;
-	m_protection.reset();
 }
 
 bool RangeExportTask::Start(FrameIdentity first, FrameIdentity last, std::uint64_t epoch, const std::string& path)
@@ -149,5 +126,29 @@ void RangeExportTask::Poll()
 	{
 		Finish("Snapshot export failed: " + std::string(error.what()));
 	}
+}
+
+bool RangeExportTask::Busy() const
+{
+	return m_csv.valid() || m_protection.has_value();
+}
+
+RangeExportTask::Protection::Protection(PreviewImages& preview, std::span<const std::uint64_t> images)
+	: m_preview(preview)
+{
+	m_preview.ProtectExports(images);
+}
+
+RangeExportTask::Protection::~Protection()
+{
+	m_preview.ProtectExports({});
+}
+
+void RangeExportTask::Finish(std::string result)
+{
+	m_images = std::move(result);
+	m_queue.clear();
+	m_requested = false;
+	m_protection.reset();
 }
 } // namespace simxr::app

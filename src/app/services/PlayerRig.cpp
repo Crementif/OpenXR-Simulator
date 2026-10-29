@@ -254,99 +254,6 @@ PosedBody PoseBody(BodyPose pose, const BodyControls& current, const BodyProport
 	return result;
 }
 
-XrPosef PlayerRig::Root() const
-{
-	return {EulerAngles(facing, 0, 0), position};
-}
-
-XrPosef PlayerRig::Head() const
-{
-	return Compose(Root(),
-				   {Multiply(EulerAngles(m_headYaw, m_headPitch, 0), m_headRoll), {m_lean.x, height, m_lean.z}});
-}
-
-XrPosef PlayerRig::AnchorPose(Anchor anchor) const
-{
-	switch (anchor)
-	{
-	case Anchor::Body:
-		return Root();
-	case Anchor::Head:
-		return Head();
-	case Anchor::World:
-		return IdentityPose();
-	}
-	return IdentityPose();
-}
-
-XrPosef PlayerRig::Hand(std::size_t hand) const
-{
-	const auto& device = m_hands.at(hand);
-	return Compose(AnchorPose(device.anchor), device.offset);
-}
-
-XrPosef PlayerRig::JointPose(BodyJoint joint) const
-{
-	auto controls = m_body;
-	controls.active = true;
-	controls.rootPose = m_bodyRoot ? std::optional{Root()} : std::nullopt;
-	const PoseSample head{Head(), TrackedPoseFlags};
-	return BodyModel{m_proportions}.Evaluate(head, controls, RuntimeTime{Duration{1}}).joints[Index(joint)].pose;
-}
-
-XrPosef PlayerRig::Tracker(std::size_t slot) const
-{
-	const auto& tracker = m_trackers.at(slot);
-	return tracker.joint ? Compose(JointPose(*tracker.joint), tracker.offset) : tracker.offset;
-}
-
-void PlayerRig::SetHeadWorld(XrPosef pose)
-{
-	const auto localHead = RelativePose(pose, Root());
-	height = localHead.position.y;
-	m_lean = localHead.position;
-	m_headYaw = Yaw(localHead.orientation);
-	const auto forward = Rotate(localHead.orientation, {0, 0, -1});
-	m_headPitch = std::asin(std::clamp(forward.y, -1.0f, 1.0f));
-	m_headRoll = RelativePose({localHead.orientation, {}}, {EulerAngles(m_headYaw, m_headPitch, 0), {}}).orientation;
-}
-
-void PlayerRig::SetHandWorld(std::size_t hand, XrPosef pose)
-{
-	auto& device = m_hands.at(hand);
-	device.offset = RelativePose(pose, AnchorPose(device.anchor));
-}
-
-void PlayerRig::SetTrackerWorld(std::size_t slot, XrPosef pose)
-{
-	auto& tracker = m_trackers.at(slot);
-	tracker.offset = tracker.joint ? RelativePose(pose, JointPose(*tracker.joint)) : pose;
-}
-
-void PlayerRig::SetHandAnchor(std::size_t hand, Anchor anchor)
-{
-	const auto pose = Hand(hand);
-	m_hands.at(hand).anchor = anchor;
-	SetHandWorld(hand, pose);
-}
-
-void PlayerRig::AttachTracker(std::size_t slot, std::optional<BodyJoint> joint)
-{
-	const auto pose = Tracker(slot);
-	m_trackers.at(slot).joint = joint;
-	SetTrackerWorld(slot, pose);
-}
-
-void PlayerRig::SnapTracker(std::size_t slot)
-{
-	m_trackers.at(slot) = {BodyModel::TrackerJoint(m_trackerDevices.at(slot).role), IdentityPose()};
-}
-
-void PlayerRig::SetTrackerOffset(std::size_t slot, XrPosef offset)
-{
-	m_trackers.at(slot).offset = offset;
-}
-
 void PlayerRig::Reset(const ObservedSetup& observed)
 {
 	const auto& head = observed.values.tracking.head.pose;
@@ -407,36 +314,97 @@ void PlayerRig::Observe(const ObservedSetup& observed)
 	ObserveTrackers(observed);
 }
 
-void PlayerRig::ObserveTrackers(const ObservedSetup& observed)
+XrPosef PlayerRig::AnchorPose(Anchor anchor) const
 {
-	if (observed.values.tracking.trackers.size() > MaxTrackerDevices)
-		throw std::invalid_argument("Tracker inventory exceeds capacity");
-	std::vector<TrackerAttachment> attachments;
-	attachments.reserve(observed.values.tracking.trackers.size());
-	for (const auto& device : observed.values.tracking.trackers)
+	switch (anchor)
 	{
-		const auto previous = std::find_if(m_trackerDevices.begin(), m_trackerDevices.end(),
-										   [&](const auto& value) { return value.identity == device.identity; });
-		const auto joint = device.anchor.value_or(BodyModel::TrackerJoint(device.role));
-		TrackerAttachment tracker{joint, IdentityPose()};
-		if (previous != m_trackerDevices.end())
-		{
-			const auto index = static_cast<std::size_t>(previous - m_trackerDevices.begin());
-			if (index < m_trackers.size())
-				tracker = m_trackers[index];
-		}
-		if (device.jointOffset)
-			tracker = {joint, *device.jointOffset};
-		else if (!device.poseOverride)
-			tracker = {joint, IdentityPose()};
-		else if (!tracker.joint)
-			tracker.offset = *device.poseOverride;
-		else
-			tracker = {joint, RelativePose(*device.poseOverride, JointPose(joint))};
-		attachments.push_back(tracker);
+	case Anchor::Body:
+		return Root();
+	case Anchor::Head:
+		return Head();
+	case Anchor::World:
+		return IdentityPose();
 	}
-	m_trackerDevices = observed.values.tracking.trackers;
-	m_trackers = std::move(attachments);
+	return IdentityPose();
+}
+
+XrPosef PlayerRig::Root() const
+{
+	return {EulerAngles(facing, 0, 0), position};
+}
+
+XrPosef PlayerRig::Head() const
+{
+	return Compose(Root(),
+				   {Multiply(EulerAngles(m_headYaw, m_headPitch, 0), m_headRoll), {m_lean.x, height, m_lean.z}});
+}
+
+XrPosef PlayerRig::Hand(std::size_t hand) const
+{
+	const auto& device = m_hands.at(hand);
+	return Compose(AnchorPose(device.anchor), device.offset);
+}
+
+XrPosef PlayerRig::Tracker(std::size_t slot) const
+{
+	const auto& tracker = m_trackers.at(slot);
+	return tracker.joint ? Compose(JointPose(*tracker.joint), tracker.offset) : tracker.offset;
+}
+
+XrPosef PlayerRig::JointPose(BodyJoint joint) const
+{
+	auto controls = m_body;
+	controls.active = true;
+	controls.rootPose = m_bodyRoot ? std::optional{Root()} : std::nullopt;
+	const PoseSample head{Head(), TrackedPoseFlags};
+	return BodyModel{m_proportions}.Evaluate(head, controls, RuntimeTime{Duration{1}}).joints[Index(joint)].pose;
+}
+
+void PlayerRig::SetHeadWorld(XrPosef pose)
+{
+	const auto localHead = RelativePose(pose, Root());
+	height = localHead.position.y;
+	m_lean = localHead.position;
+	m_headYaw = Yaw(localHead.orientation);
+	const auto forward = Rotate(localHead.orientation, {0, 0, -1});
+	m_headPitch = std::asin(std::clamp(forward.y, -1.0f, 1.0f));
+	m_headRoll = RelativePose({localHead.orientation, {}}, {EulerAngles(m_headYaw, m_headPitch, 0), {}}).orientation;
+}
+
+void PlayerRig::SetHandWorld(std::size_t hand, XrPosef pose)
+{
+	auto& device = m_hands.at(hand);
+	device.offset = RelativePose(pose, AnchorPose(device.anchor));
+}
+
+void PlayerRig::SetTrackerWorld(std::size_t slot, XrPosef pose)
+{
+	auto& tracker = m_trackers.at(slot);
+	tracker.offset = tracker.joint ? RelativePose(pose, JointPose(*tracker.joint)) : pose;
+}
+
+void PlayerRig::SetHandAnchor(std::size_t hand, Anchor anchor)
+{
+	const auto pose = Hand(hand);
+	m_hands.at(hand).anchor = anchor;
+	SetHandWorld(hand, pose);
+}
+
+void PlayerRig::AttachTracker(std::size_t slot, std::optional<BodyJoint> joint)
+{
+	const auto pose = Tracker(slot);
+	m_trackers.at(slot).joint = joint;
+	SetTrackerWorld(slot, pose);
+}
+
+void PlayerRig::SnapTracker(std::size_t slot)
+{
+	m_trackers.at(slot) = {BodyModel::TrackerJoint(m_trackerDevices.at(slot).role), IdentityPose()};
+}
+
+void PlayerRig::SetTrackerOffset(std::size_t slot, XrPosef offset)
+{
+	m_trackers.at(slot).offset = offset;
 }
 
 void PlayerRig::Preset(std::size_t hand, HandPreset preset)
@@ -578,4 +546,37 @@ ManualTransaction PlayerRig::Transaction(const ObservedSetup& observed, std::opt
 	}
 	return result;
 }
+
+void PlayerRig::ObserveTrackers(const ObservedSetup& observed)
+{
+	if (observed.values.tracking.trackers.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
+	std::vector<TrackerAttachment> attachments;
+	attachments.reserve(observed.values.tracking.trackers.size());
+	for (const auto& device : observed.values.tracking.trackers)
+	{
+		const auto previous = std::find_if(m_trackerDevices.begin(), m_trackerDevices.end(),
+										   [&](const auto& value) { return value.identity == device.identity; });
+		const auto joint = device.anchor.value_or(BodyModel::TrackerJoint(device.role));
+		TrackerAttachment tracker{joint, IdentityPose()};
+		if (previous != m_trackerDevices.end())
+		{
+			const auto index = static_cast<std::size_t>(previous - m_trackerDevices.begin());
+			if (index < m_trackers.size())
+				tracker = m_trackers[index];
+		}
+		if (device.jointOffset)
+			tracker = {joint, *device.jointOffset};
+		else if (!device.poseOverride)
+			tracker = {joint, IdentityPose()};
+		else if (!tracker.joint)
+			tracker.offset = *device.poseOverride;
+		else
+			tracker = {joint, RelativePose(*device.poseOverride, JointPose(joint))};
+		attachments.push_back(tracker);
+	}
+	m_trackerDevices = observed.values.tracking.trackers;
+	m_trackers = std::move(attachments);
+}
+
 } // namespace simxr::app

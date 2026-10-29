@@ -27,12 +27,14 @@ public:
 	~HeadsetTrackers();
 	HeadsetTrackers(const HeadsetTrackers&) = delete;
 	HeadsetTrackers& operator=(const HeadsetTrackers&) = delete;
+
 	// Must precede attachment of the caller-owned action set.
 	void Open(XrSession session, XrActionSet actionSet);
+	void Close();
+
+	bool Available() const;
 	// Called after synchronizing that action set.
 	std::vector<PhysicalTrackerSample> Sample(XrTime time, XrSpace baseSpace, bool locate = true);
-	bool Available() const;
-	void Close();
 
 private:
 	struct RoleAction
@@ -45,6 +47,7 @@ private:
 
 	std::string PathString(XrPath path) const;
 	std::vector<XrViveTrackerPathsHTCX> Enumerate() const;
+
 	OpenXrRuntime& m_runtime;
 	XrSession m_session = XR_NULL_HANDLE;
 	PFN_xrEnumerateViveTrackerPathsHTCX m_enumerate = nullptr;

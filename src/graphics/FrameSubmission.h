@@ -64,6 +64,7 @@ public:
 	~FrameSubmission();
 	FrameSubmission(const FrameSubmission&) = delete;
 	FrameSubmission& operator=(const FrameSubmission&) = delete;
+
 	XrResult Execute(const XrFrameEndInfo& info, const SwapchainDescriptionResolver& describe);
 	const CompositionPlan& Composition() const noexcept;
 
@@ -71,6 +72,7 @@ private:
 	XrResult PrepareCaptures();
 	void PrepareQuadHistory();
 	void PreparePreviewHistory();
+
 	Session& m_session;
 	FrameSubmissionBackend& m_backend;
 	FrameKey m_key{};

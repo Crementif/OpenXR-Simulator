@@ -31,6 +31,118 @@ static void CheckRecordingResponse(const wire::Message& response)
 	}
 }
 
+automation::SavedRecording OpenSavedRecording(const std::string& path)
+{
+	if (path.empty() || path.find('\0') != std::string::npos)
+		throw std::invalid_argument("Invalid recording path");
+	if (std::filesystem::is_directory(Utf8Path(path)))
+	{
+		automation::RecordingArchiveReader archive(Utf8Path(path));
+		return {path, archive.State().origin.seed};
+	}
+	std::error_code error;
+	const auto size = std::filesystem::file_size(Utf8Path(path), error);
+	if (error || size == 0 || size > automation::MaxRigSourceBytes)
+		throw std::runtime_error("Cannot read the recording. Choose a nonempty file up to 64 MiB.");
+	std::ifstream input(Utf8Path(path), std::ios::binary);
+	if (!input)
+		throw std::runtime_error("Cannot open saved recording");
+	std::string bytes(static_cast<std::size_t>(size), '\0');
+	if (!input.read(bytes.data(), static_cast<std::streamsize>(bytes.size())) ||
+		input.peek() != std::char_traits<char>::eof() || input.bad())
+		throw std::runtime_error("Cannot read complete saved recording");
+	input.clear();
+	input.close();
+	if (!input)
+		throw std::runtime_error("Cannot close saved recording");
+	const std::string_view script(bytes);
+	const auto firstLine = script.find('\n');
+	if (firstLine == std::string_view::npos)
+		throw std::runtime_error("Saved recording omitted its seed");
+	const auto signature = script.substr(0, firstLine);
+	auto seedLine = script.substr(firstLine + 1);
+	seedLine = seedLine.substr(0, seedLine.find('\n'));
+	if (!seedLine.empty() && seedLine.back() == '\r')
+		seedLine.remove_suffix(1);
+	constexpr std::string_view prefix = "-- Launch simxr_runner with --seed ";
+	if ((!signature.starts_with("-- OpenXR Simulator recorded inputs, schema 1.") &&
+		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 2.") &&
+		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 3.") &&
+		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 4.")) ||
+		!seedLine.starts_with(prefix))
+		throw std::runtime_error("This is not a saved simulator recording. Open other Luau scripts in Rigs.");
+	const auto text = std::string_view(seedLine).substr(prefix.size());
+	std::uint64_t seed = 0;
+	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), seed);
+	if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
+		throw std::runtime_error("The recording's seed is invalid");
+	return {path, seed};
+}
+
+void SaveRecording(const std::filesystem::path& destination, const automation::InputRecording& recording, bool replace)
+{
+	const auto script = automation::EditableRig(recording);
+	SaveExportFile(destination, std::as_bytes(std::span(script)), replace);
+}
+
+RecordingController::RecordingController() = default;
+
+RecordingController::~RecordingController()
+{
+	{
+		std::lock_guard lock(m_mutex);
+		m_stopping = true;
+		if (m_current)
+			m_current->Stop();
+	}
+	m_changed.notify_all();
+	if (m_worker.joinable())
+		m_worker.join();
+}
+
+void RecordingController::SetTarget(RecordingTarget target)
+{
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_target == target)
+			return;
+		m_target = std::move(target);
+		++m_revision;
+		const auto busy = m_snapshot.busy;
+		m_snapshot = {};
+		m_snapshot.busy = busy;
+		if (m_current)
+			m_current->Stop();
+	}
+	m_changed.notify_all();
+}
+
+bool RecordingController::Request(RecordingAction action, std::uint64_t offset, std::string path)
+{
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_stopping || m_snapshot.busy || m_target.endpoint.empty() || !m_target.session || !m_target.generation)
+			return false;
+		if (offset > 1024 || (action == RecordingAction::Save &&
+							  (path.empty() || path.size() > 2048 || path.find('\0') != std::string::npos)))
+			throw std::invalid_argument("Invalid recording page or destination");
+		Job job{action, m_target, m_revision, offset, std::move(path)};
+		if (!m_worker.joinable())
+			m_worker = std::thread([this] { Run(); });
+		m_pending = std::move(job);
+		m_snapshot.busy = true;
+		m_snapshot.error.clear();
+	}
+	m_changed.notify_all();
+	return true;
+}
+
+RecordingSnapshot RecordingController::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_snapshot;
+}
+
 wire::Message RecordingController::Read(WorkerConnection& connection, const Job& job, std::uint64_t offset)
 {
 	auto fields = SessionFields(job.target);
@@ -39,12 +151,6 @@ wire::Message RecordingController::Read(WorkerConnection& connection, const Job&
 	auto response = connection.Exchange(wire::OpCode::ReadRecording, std::move(fields));
 	CheckRecordingResponse(response);
 	return response;
-}
-
-void SaveRecording(const std::filesystem::path& destination, const automation::InputRecording& recording, bool replace)
-{
-	const auto script = automation::EditableRig(recording);
-	SaveExportFile(destination, std::as_bytes(std::span(script)), replace);
 }
 
 RecordingSnapshot RecordingController::Execute(WorkerConnection& connection, const Job& job)
@@ -158,110 +264,4 @@ void RecordingController::Run()
 		}
 	}
 }
-
-RecordingController::~RecordingController()
-{
-	{
-		std::lock_guard lock(m_mutex);
-		m_stopping = true;
-		if (m_current)
-			m_current->Stop();
-	}
-	m_changed.notify_all();
-	if (m_worker.joinable())
-		m_worker.join();
-}
-
-void RecordingController::SetTarget(RecordingTarget target)
-{
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_target == target)
-			return;
-		m_target = std::move(target);
-		++m_revision;
-		const auto busy = m_snapshot.busy;
-		m_snapshot = {};
-		m_snapshot.busy = busy;
-		if (m_current)
-			m_current->Stop();
-	}
-	m_changed.notify_all();
-}
-
-bool RecordingController::Request(RecordingAction action, std::uint64_t offset, std::string path)
-{
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_stopping || m_snapshot.busy || m_target.endpoint.empty() || !m_target.session || !m_target.generation)
-			return false;
-		if (offset > 1024 || (action == RecordingAction::Save &&
-							  (path.empty() || path.size() > 2048 || path.find('\0') != std::string::npos)))
-			throw std::invalid_argument("Invalid recording page or destination");
-		Job job{action, m_target, m_revision, offset, std::move(path)};
-		if (!m_worker.joinable())
-			m_worker = std::thread([this] { Run(); });
-		m_pending = std::move(job);
-		m_snapshot.busy = true;
-		m_snapshot.error.clear();
-	}
-	m_changed.notify_all();
-	return true;
-}
-
-RecordingSnapshot RecordingController::Snapshot() const
-{
-	std::lock_guard lock(m_mutex);
-	return m_snapshot;
-}
-
-automation::SavedRecording OpenSavedRecording(const std::string& path)
-{
-	if (path.empty() || path.find('\0') != std::string::npos)
-		throw std::invalid_argument("Invalid recording path");
-	if (std::filesystem::is_directory(Utf8Path(path)))
-	{
-		automation::RecordingArchiveReader archive(Utf8Path(path));
-		return {path, archive.State().origin.seed};
-	}
-	std::error_code error;
-	const auto size = std::filesystem::file_size(Utf8Path(path), error);
-	if (error || size == 0 || size > automation::MaxRigSourceBytes)
-		throw std::runtime_error("Cannot read the recording. Choose a nonempty file up to 64 MiB.");
-	std::ifstream input(Utf8Path(path), std::ios::binary);
-	if (!input)
-		throw std::runtime_error("Cannot open saved recording");
-	std::string bytes(static_cast<std::size_t>(size), '\0');
-	if (!input.read(bytes.data(), static_cast<std::streamsize>(bytes.size())) ||
-		input.peek() != std::char_traits<char>::eof() || input.bad())
-		throw std::runtime_error("Cannot read complete saved recording");
-	input.clear();
-	input.close();
-	if (!input)
-		throw std::runtime_error("Cannot close saved recording");
-	const std::string_view script(bytes);
-	const auto firstLine = script.find('\n');
-	if (firstLine == std::string_view::npos)
-		throw std::runtime_error("Saved recording omitted its seed");
-	const auto signature = script.substr(0, firstLine);
-	auto seedLine = script.substr(firstLine + 1);
-	seedLine = seedLine.substr(0, seedLine.find('\n'));
-	if (!seedLine.empty() && seedLine.back() == '\r')
-		seedLine.remove_suffix(1);
-	constexpr std::string_view prefix = "-- Launch simxr_runner with --seed ";
-	if ((!signature.starts_with("-- OpenXR Simulator recorded inputs, schema 1.") &&
-		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 2.") &&
-		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 3.") &&
-		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 4.")) ||
-		!seedLine.starts_with(prefix))
-		throw std::runtime_error("This is not a saved simulator recording. Open other Luau scripts in Rigs.");
-	const auto text = std::string_view(seedLine).substr(prefix.size());
-	std::uint64_t seed = 0;
-	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), seed);
-	if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
-		throw std::runtime_error("The recording's seed is invalid");
-	return {path, seed};
-}
-
-RecordingController::RecordingController() = default;
 } // namespace simxr::app

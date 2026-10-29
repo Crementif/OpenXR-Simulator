@@ -95,80 +95,6 @@ bool SpaceSystem::Owns(XrSpace space) const
 	return static_cast<bool>(m_spaces.Find(space, m_ownerSession));
 }
 
-std::optional<SpaceSystem::Origin> SpaceSystem::OriginAt(RuntimeTime time) const
-{
-	std::lock_guard lock(m_mutex);
-	for (auto origin = m_origins.rbegin(); origin != m_origins.rend(); ++origin)
-		if (origin->time <= time)
-			return *origin;
-	return std::nullopt;
-}
-
-PoseSample SpaceSystem::Resolve(const SpaceRecord& record, RuntimeTime time, const std::optional<Origin>& origin) const
-{
-	PoseSample result;
-	if (record.action != XR_NULL_HANDLE)
-		result = m_actionSource(record.action, record.subactionPath, time);
-	else if (record.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW ||
-			 record.referenceType == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO)
-	{
-		auto sample = m_tracking.Sample(time);
-		if (sample)
-			result = record.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW ? sample->head : sample->gaze;
-		result.eyeGazeSampleTime.reset();
-	}
-	else if (origin)
-		result = {record.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL ? origin->local : origin->stage,
-				  TrackedPoseFlags, time};
-	return ApplyPoseOffset(result, record.poseOffset);
-}
-
-bool SpaceSystem::SameEntity(const SpaceRecord& left, const SpaceRecord& right)
-{
-	return left.referenceType == right.referenceType && left.action == right.action &&
-		   left.subactionPath == right.subactionPath;
-}
-
-PoseSample SpaceSystem::Relative(const SpaceRecord& target, const SpaceRecord& base, RuntimeTime time) const
-{
-	if (SameEntity(target, base))
-	{
-		auto result = PoseSample{RelativePose(target.poseOffset, base.poseOffset), TrackedPoseFlags, time};
-		result.eyeGazeSampleTime = Resolve(target, time, OriginAt(time)).eyeGazeSampleTime;
-		result.flags = FinitePoseFlags(result.pose, result.flags);
-		return result;
-	}
-	auto origin = OriginAt(time);
-	auto targetPose = Resolve(target, time, origin);
-	auto basePose = Resolve(base, time, origin);
-	PoseSample result{RelativePose(targetPose.pose, basePose.pose), 0,
-					  std::min(targetPose.sampleTime, basePose.sampleTime)};
-	result.eyeGazeSampleTime = targetPose.eyeGazeSampleTime;
-	for (auto bit : {XR_SPACE_LOCATION_ORIENTATION_VALID_BIT, XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT})
-		if (HasFlags(targetPose.flags, bit) && HasFlags(basePose.flags, bit))
-			result.flags |= bit;
-	if (HasFlags(targetPose.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
-		HasFlags(basePose.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
-		result.flags |= XR_SPACE_LOCATION_POSITION_VALID_BIT;
-	if (HasFlags(targetPose.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) &&
-		HasFlags(basePose.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
-		result.flags |= XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
-	result.flags = FinitePoseFlags(result.pose, result.flags);
-	constexpr auto tracked = XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
-	if (result.eyeGazeSampleTime && !HasFlags(result.flags, tracked))
-		result.flags &= ~tracked;
-	return result;
-}
-
-XrResult SpaceSystem::WorldPose(XrSpace space, RuntimeTime time, PoseSample& output) const
-{
-	SpaceSample sample;
-	const auto result = Sample(space, time, sample);
-	if (XR_SUCCEEDED(result))
-		output = sample.worldPose;
-	return result;
-}
-
 XrResult SpaceSystem::Sample(XrSpace space, RuntimeTime time, SpaceSample& output) const
 {
 	auto record = m_spaces.Find(space, m_ownerSession);
@@ -178,6 +104,15 @@ XrResult SpaceSystem::Sample(XrSpace space, RuntimeTime time, SpaceSample& outpu
 		return XR_ERROR_TIME_INVALID;
 	output = {Resolve(*record.operator->(), time, OriginAt(time)), record->referenceType, record->poseOffset};
 	return XR_SUCCESS;
+}
+
+XrResult SpaceSystem::WorldPose(XrSpace space, RuntimeTime time, PoseSample& output) const
+{
+	SpaceSample sample;
+	const auto result = Sample(space, time, sample);
+	if (XR_SUCCEEDED(result))
+		output = sample.worldPose;
+	return result;
 }
 
 XrResult SpaceSystem::Locate(XrSpace space, XrSpace base, RuntimeTime time, SpaceLocation& output) const
@@ -307,6 +242,71 @@ XrResult SpaceSystem::Restore(RuntimeTime time, ReferenceSpaceState state, bool 
 	if (!NormalizeReferenceSpaces(state))
 		return XR_ERROR_POSE_INVALID;
 	return ApplyOrigin(time, state, false, requested);
+}
+
+std::optional<SpaceSystem::Origin> SpaceSystem::OriginAt(RuntimeTime time) const
+{
+	std::lock_guard lock(m_mutex);
+	for (auto origin = m_origins.rbegin(); origin != m_origins.rend(); ++origin)
+		if (origin->time <= time)
+			return *origin;
+	return std::nullopt;
+}
+
+PoseSample SpaceSystem::Resolve(const SpaceRecord& record, RuntimeTime time, const std::optional<Origin>& origin) const
+{
+	PoseSample result;
+	if (record.action != XR_NULL_HANDLE)
+		result = m_actionSource(record.action, record.subactionPath, time);
+	else if (record.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW ||
+			 record.referenceType == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO)
+	{
+		auto sample = m_tracking.Sample(time);
+		if (sample)
+			result = record.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW ? sample->head : sample->gaze;
+		result.eyeGazeSampleTime.reset();
+	}
+	else if (origin)
+		result = {record.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL ? origin->local : origin->stage,
+				  TrackedPoseFlags, time};
+	return ApplyPoseOffset(result, record.poseOffset);
+}
+
+bool SpaceSystem::SameEntity(const SpaceRecord& left, const SpaceRecord& right)
+{
+	return left.referenceType == right.referenceType && left.action == right.action &&
+		   left.subactionPath == right.subactionPath;
+}
+
+PoseSample SpaceSystem::Relative(const SpaceRecord& target, const SpaceRecord& base, RuntimeTime time) const
+{
+	if (SameEntity(target, base))
+	{
+		auto result = PoseSample{RelativePose(target.poseOffset, base.poseOffset), TrackedPoseFlags, time};
+		result.eyeGazeSampleTime = Resolve(target, time, OriginAt(time)).eyeGazeSampleTime;
+		result.flags = FinitePoseFlags(result.pose, result.flags);
+		return result;
+	}
+	auto origin = OriginAt(time);
+	auto targetPose = Resolve(target, time, origin);
+	auto basePose = Resolve(base, time, origin);
+	PoseSample result{RelativePose(targetPose.pose, basePose.pose), 0,
+					  std::min(targetPose.sampleTime, basePose.sampleTime)};
+	result.eyeGazeSampleTime = targetPose.eyeGazeSampleTime;
+	for (auto bit : {XR_SPACE_LOCATION_ORIENTATION_VALID_BIT, XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT})
+		if (HasFlags(targetPose.flags, bit) && HasFlags(basePose.flags, bit))
+			result.flags |= bit;
+	if (HasFlags(targetPose.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+		HasFlags(basePose.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+		result.flags |= XR_SPACE_LOCATION_POSITION_VALID_BIT;
+	if (HasFlags(targetPose.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) &&
+		HasFlags(basePose.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
+		result.flags |= XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	result.flags = FinitePoseFlags(result.pose, result.flags);
+	constexpr auto tracked = XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+	if (result.eyeGazeSampleTime && !HasFlags(result.flags, tracked))
+		result.flags &= ~tracked;
+	return result;
 }
 
 XrResult SpaceSystem::ApplyOrigin(RuntimeTime time, const ReferenceSpaceState& state, bool requireNewTime,

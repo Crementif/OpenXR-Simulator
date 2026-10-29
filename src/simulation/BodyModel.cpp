@@ -254,6 +254,158 @@ std::span<const SkeletonJoint> BodyModel::Skeleton() const
 	return m_skeleton;
 }
 
+BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& controls, RuntimeTime time,
+							   bool focused) const
+{
+	if (!std::isfinite(controls.confidence) || controls.confidence < 0 || controls.confidence > 1 ||
+		(controls.preset != BodyPreset::Standing && controls.preset != BodyPreset::TPose &&
+		 controls.preset != BodyPreset::Seated))
+		throw std::invalid_argument("Invalid body controls");
+	auto head = inputHead;
+	auto& headOrientation = head.pose.orientation;
+	float headLength = std::sqrt(headOrientation.x * headOrientation.x + headOrientation.y * headOrientation.y +
+								 headOrientation.z * headOrientation.z + headOrientation.w * headOrientation.w);
+	if (time.value.count() <= 0 || !IsFinite(head.pose.position) || !std::isfinite(headLength) ||
+		std::abs(headLength - 1) > 0.01f)
+		throw std::invalid_argument("Invalid body head pose or time");
+	headOrientation = {headOrientation.x / headLength, headOrientation.y / headLength, headOrientation.z / headLength,
+					   headOrientation.w / headLength};
+	for (const auto& override : controls.joints)
+	{
+		if (!override || !override->pose)
+			continue;
+		const auto& pose = *override->pose;
+		const auto& q = pose.orientation;
+		float norm = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+		if (!IsFinite(pose.position) || !std::isfinite(norm) || std::abs(norm - 1) > 0.01f)
+			throw std::invalid_argument("Invalid joint override");
+	}
+	BodySample sample;
+	sample.active = controls.active && focused && (head.flags & ValidPoseFlags) == ValidPoseFlags;
+	sample.confidence = sample.active ? controls.confidence : 0;
+	sample.skeletonRevision = m_revision;
+	sample.sampleTime = time;
+	sample.skeleton = m_skeleton;
+	auto forward = Rotate(head.pose.orientation, {0, 0, -1});
+	float yaw = std::atan2(-forward.x, -forward.z);
+	auto orientation = EulerAngles(yaw, 0, 0);
+	XrPosef root{orientation, {head.pose.position.x, 0, head.pose.position.z}};
+	if (controls.rootPose)
+	{
+		const auto normalized = NormalizedPose(*controls.rootPose);
+		if (!normalized)
+			throw std::invalid_argument("Invalid body root pose");
+		root = *normalized;
+	}
+	const double headHeight = static_cast<double>(head.pose.position.y) - root.position.y;
+	const double heightScale = headHeight / m_proportions.height;
+	std::array<XrVector3f, 5> defaults{{{0, Coordinate(headHeight * 0.53f), 0.05f},
+										{0, Coordinate(headHeight * 0.76f), 0.04f},
+										{0, Coordinate(headHeight), 0},
+										{-m_proportions.hipWidth / 2, 0.08f, 0.02f},
+										{m_proportions.hipWidth / 2, 0.08f, 0.02f}}};
+	std::array<XrVector3f, 5> shifts{};
+	for (std::size_t index = 0; index < shifts.size(); ++index)
+	{
+		auto offset = controls.controls[index].offset.value_or(defaults[index]);
+		if (!IsFinite(offset))
+			throw std::invalid_argument("Invalid body control offset");
+		shifts[index] = Difference(offset, defaults[index]);
+	}
+	for (const auto& joint : m_skeleton)
+	{
+		auto name = joint.joint;
+		auto position = joint.bindPose.position;
+		double jointHeight = position.y * heightScale;
+		std::size_t control = static_cast<std::size_t>(BodyControl::Chest);
+		bool leftLeg = name == BodyJoint::LeftUpperLeg || name == BodyJoint::LeftLowerLeg ||
+					   name == BodyJoint::LeftFootAnkleTwist || name == BodyJoint::LeftFootAnkle ||
+					   name == BodyJoint::LeftFootSubtalar || name == BodyJoint::LeftFootTransverse ||
+					   name == BodyJoint::LeftFootBall;
+		bool rightLeg = name == BodyJoint::RightUpperLeg || name == BodyJoint::RightLowerLeg ||
+						name == BodyJoint::RightFootAnkleTwist || name == BodyJoint::RightFootAnkle ||
+						name == BodyJoint::RightFootSubtalar || name == BodyJoint::RightFootTransverse ||
+						name == BodyJoint::RightFootBall;
+		XrVector3f shift;
+		if (leftLeg || rightLeg)
+		{
+			control = static_cast<std::size_t>(leftLeg ? BodyControl::LeftFoot : BodyControl::RightFoot);
+			float weight = (name == BodyJoint::LeftUpperLeg || name == BodyJoint::RightUpperLeg)
+							   ? 0.1f
+							   : ((name == BodyJoint::LeftLowerLeg || name == BodyJoint::RightLowerLeg) ? 0.5f : 1.0f);
+			shift = Blend(shifts[0], shifts[control], weight);
+			if (weight == 1)
+				jointHeight = joint.bindPose.position.y;
+			if (weight == 0.1f)
+				control = static_cast<std::size_t>(BodyControl::Hips);
+			if (controls.preset == BodyPreset::Seated)
+				position.z -= weight * 0.25f;
+		}
+		else if (name == BodyJoint::Root || name == BodyJoint::Hips || name == BodyJoint::SpineLower)
+		{
+			control = 0;
+			shift = shifts[0];
+		}
+		else if (name == BodyJoint::Head || name == BodyJoint::Neck)
+		{
+			control = 2;
+			shift = name == BodyJoint::Head ? shifts[2] : Blend(shifts[1], shifts[2], 0.6f);
+		}
+		else
+		{
+			shift = shifts[1];
+			if (name == BodyJoint::SpineMiddle || name == BodyJoint::SpineUpper)
+				shift = Blend(shifts[0], shifts[1], name == BodyJoint::SpineMiddle ? 0.5f : 0.8f);
+			if (controls.preset == BodyPreset::TPose && std::abs(position.x) > 0.01f)
+			{
+				float shoulder = m_proportions.shoulderWidth / 2;
+				double distance = std::hypot(std::abs(position.x) - shoulder, jointHeight - headHeight * 0.82f);
+				position.x = Coordinate(std::copysign(shoulder + distance, position.x));
+				jointHeight = headHeight * 0.82f;
+			}
+		}
+		if (controls.preset == BodyPreset::Seated && !leftLeg && !rightLeg && name != BodyJoint::Head &&
+			name != BodyJoint::Neck)
+			jointHeight -= name == BodyJoint::Hips ? 0.18f : 0.08f;
+		position = {position.x + shift.x, Coordinate(jointHeight + shift.y), position.z + shift.z};
+		if (name == BodyJoint::Root)
+			position.y = 0;
+		auto& location = sample.joints[Index(name)];
+		location.sampleTime = time;
+		location.pose = Compose(root, {{0, 0, 0, 1}, position});
+		if (name == BodyJoint::Head)
+		{
+			location.pose.orientation = head.pose.orientation;
+			if (controls.rootPose)
+			{
+				const auto offset = Rotate(root.orientation, shifts[2]);
+				location.pose.position = {head.pose.position.x + offset.x, head.pose.position.y + offset.y,
+										  head.pose.position.z + offset.z};
+			}
+		}
+		location.flags = sample.active ? ValidPoseFlags : 0;
+		if (sample.active && controls.controls[control].tracked)
+			location.flags |=
+				head.flags & (XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
+		if (const auto& override = controls.joints[Index(name)])
+		{
+			if (override->pose)
+			{
+				auto pose = *override->pose;
+				auto& q = pose.orientation;
+				float length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+				q = {q.x / length, q.y / length, q.z / length, q.w / length};
+				location.pose = Compose(root, pose);
+			}
+			if (!override->tracked)
+				location.flags &= ValidPoseFlags;
+		}
+		if (!IsFinite(location.pose.position))
+			throw std::invalid_argument("Body joint position is not representable");
+	}
+	return sample;
+}
+
 std::span<const BodyJoint> BodyModel::JointMap(BodyJointSet set)
 {
 	switch (set)
@@ -510,155 +662,4 @@ void BodyModel::Rebuild()
 	set(BodyJoint::RightFootBall, BodyJoint::RightFootTransverse, {1 * hip, 0.025f, -0.13f});
 }
 
-BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& controls, RuntimeTime time,
-							   bool focused) const
-{
-	if (!std::isfinite(controls.confidence) || controls.confidence < 0 || controls.confidence > 1 ||
-		(controls.preset != BodyPreset::Standing && controls.preset != BodyPreset::TPose &&
-		 controls.preset != BodyPreset::Seated))
-		throw std::invalid_argument("Invalid body controls");
-	auto head = inputHead;
-	auto& headOrientation = head.pose.orientation;
-	float headLength = std::sqrt(headOrientation.x * headOrientation.x + headOrientation.y * headOrientation.y +
-								 headOrientation.z * headOrientation.z + headOrientation.w * headOrientation.w);
-	if (time.value.count() <= 0 || !IsFinite(head.pose.position) || !std::isfinite(headLength) ||
-		std::abs(headLength - 1) > 0.01f)
-		throw std::invalid_argument("Invalid body head pose or time");
-	headOrientation = {headOrientation.x / headLength, headOrientation.y / headLength, headOrientation.z / headLength,
-					   headOrientation.w / headLength};
-	for (const auto& override : controls.joints)
-	{
-		if (!override || !override->pose)
-			continue;
-		const auto& pose = *override->pose;
-		const auto& q = pose.orientation;
-		float norm = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-		if (!IsFinite(pose.position) || !std::isfinite(norm) || std::abs(norm - 1) > 0.01f)
-			throw std::invalid_argument("Invalid joint override");
-	}
-	BodySample sample;
-	sample.active = controls.active && focused && (head.flags & ValidPoseFlags) == ValidPoseFlags;
-	sample.confidence = sample.active ? controls.confidence : 0;
-	sample.skeletonRevision = m_revision;
-	sample.sampleTime = time;
-	sample.skeleton = m_skeleton;
-	auto forward = Rotate(head.pose.orientation, {0, 0, -1});
-	float yaw = std::atan2(-forward.x, -forward.z);
-	auto orientation = EulerAngles(yaw, 0, 0);
-	XrPosef root{orientation, {head.pose.position.x, 0, head.pose.position.z}};
-	if (controls.rootPose)
-	{
-		const auto normalized = NormalizedPose(*controls.rootPose);
-		if (!normalized)
-			throw std::invalid_argument("Invalid body root pose");
-		root = *normalized;
-	}
-	const double headHeight = static_cast<double>(head.pose.position.y) - root.position.y;
-	const double heightScale = headHeight / m_proportions.height;
-	std::array<XrVector3f, 5> defaults{{{0, Coordinate(headHeight * 0.53f), 0.05f},
-										{0, Coordinate(headHeight * 0.76f), 0.04f},
-										{0, Coordinate(headHeight), 0},
-										{-m_proportions.hipWidth / 2, 0.08f, 0.02f},
-										{m_proportions.hipWidth / 2, 0.08f, 0.02f}}};
-	std::array<XrVector3f, 5> shifts{};
-	for (std::size_t index = 0; index < shifts.size(); ++index)
-	{
-		auto offset = controls.controls[index].offset.value_or(defaults[index]);
-		if (!IsFinite(offset))
-			throw std::invalid_argument("Invalid body control offset");
-		shifts[index] = Difference(offset, defaults[index]);
-	}
-	for (const auto& joint : m_skeleton)
-	{
-		auto name = joint.joint;
-		auto position = joint.bindPose.position;
-		double jointHeight = position.y * heightScale;
-		std::size_t control = static_cast<std::size_t>(BodyControl::Chest);
-		bool leftLeg = name == BodyJoint::LeftUpperLeg || name == BodyJoint::LeftLowerLeg ||
-					   name == BodyJoint::LeftFootAnkleTwist || name == BodyJoint::LeftFootAnkle ||
-					   name == BodyJoint::LeftFootSubtalar || name == BodyJoint::LeftFootTransverse ||
-					   name == BodyJoint::LeftFootBall;
-		bool rightLeg = name == BodyJoint::RightUpperLeg || name == BodyJoint::RightLowerLeg ||
-						name == BodyJoint::RightFootAnkleTwist || name == BodyJoint::RightFootAnkle ||
-						name == BodyJoint::RightFootSubtalar || name == BodyJoint::RightFootTransverse ||
-						name == BodyJoint::RightFootBall;
-		XrVector3f shift;
-		if (leftLeg || rightLeg)
-		{
-			control = static_cast<std::size_t>(leftLeg ? BodyControl::LeftFoot : BodyControl::RightFoot);
-			float weight = (name == BodyJoint::LeftUpperLeg || name == BodyJoint::RightUpperLeg)
-							   ? 0.1f
-							   : ((name == BodyJoint::LeftLowerLeg || name == BodyJoint::RightLowerLeg) ? 0.5f : 1.0f);
-			shift = Blend(shifts[0], shifts[control], weight);
-			if (weight == 1)
-				jointHeight = joint.bindPose.position.y;
-			if (weight == 0.1f)
-				control = static_cast<std::size_t>(BodyControl::Hips);
-			if (controls.preset == BodyPreset::Seated)
-				position.z -= weight * 0.25f;
-		}
-		else if (name == BodyJoint::Root || name == BodyJoint::Hips || name == BodyJoint::SpineLower)
-		{
-			control = 0;
-			shift = shifts[0];
-		}
-		else if (name == BodyJoint::Head || name == BodyJoint::Neck)
-		{
-			control = 2;
-			shift = name == BodyJoint::Head ? shifts[2] : Blend(shifts[1], shifts[2], 0.6f);
-		}
-		else
-		{
-			shift = shifts[1];
-			if (name == BodyJoint::SpineMiddle || name == BodyJoint::SpineUpper)
-				shift = Blend(shifts[0], shifts[1], name == BodyJoint::SpineMiddle ? 0.5f : 0.8f);
-			if (controls.preset == BodyPreset::TPose && std::abs(position.x) > 0.01f)
-			{
-				float shoulder = m_proportions.shoulderWidth / 2;
-				double distance = std::hypot(std::abs(position.x) - shoulder, jointHeight - headHeight * 0.82f);
-				position.x = Coordinate(std::copysign(shoulder + distance, position.x));
-				jointHeight = headHeight * 0.82f;
-			}
-		}
-		if (controls.preset == BodyPreset::Seated && !leftLeg && !rightLeg && name != BodyJoint::Head &&
-			name != BodyJoint::Neck)
-			jointHeight -= name == BodyJoint::Hips ? 0.18f : 0.08f;
-		position = {position.x + shift.x, Coordinate(jointHeight + shift.y), position.z + shift.z};
-		if (name == BodyJoint::Root)
-			position.y = 0;
-		auto& location = sample.joints[Index(name)];
-		location.sampleTime = time;
-		location.pose = Compose(root, {{0, 0, 0, 1}, position});
-		if (name == BodyJoint::Head)
-		{
-			location.pose.orientation = head.pose.orientation;
-			if (controls.rootPose)
-			{
-				const auto offset = Rotate(root.orientation, shifts[2]);
-				location.pose.position = {head.pose.position.x + offset.x, head.pose.position.y + offset.y,
-										  head.pose.position.z + offset.z};
-			}
-		}
-		location.flags = sample.active ? ValidPoseFlags : 0;
-		if (sample.active && controls.controls[control].tracked)
-			location.flags |=
-				head.flags & (XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
-		if (const auto& override = controls.joints[Index(name)])
-		{
-			if (override->pose)
-			{
-				auto pose = *override->pose;
-				auto& q = pose.orientation;
-				float length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-				q = {q.x / length, q.y / length, q.z / length, q.w / length};
-				location.pose = Compose(root, pose);
-			}
-			if (!override->tracked)
-				location.flags &= ValidPoseFlags;
-		}
-		if (!IsFinite(location.pose.position))
-			throw std::invalid_argument("Body joint position is not representable");
-	}
-	return sample;
-}
 } // namespace simxr

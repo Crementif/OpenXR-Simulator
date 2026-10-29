@@ -34,14 +34,17 @@ public:
 			Replay,
 			Reject
 		};
+
 		~Exchange();
 		Exchange(const Exchange&) = delete;
 		Exchange& operator=(const Exchange&) = delete;
+
 		Admission Result() const noexcept;
 		ErrorCode Error() const noexcept;
 		const char* Detail() const noexcept;
 		std::uint16_t ResponseMinor() const noexcept;
 		const ControlPacket& Replay() const;
+
 		// Copies before committing. Replaced packets remain in retired until the
 		// caller has left this Exchange and reopened admission.
 		void Publish(const ControlPacket& response, RetiredReplay& retired);
@@ -49,6 +52,7 @@ public:
 	private:
 		Exchange(ConnectionRequests& owner, const ControlPacket& request);
 		void Reject(ErrorCode error, const char* detail) noexcept;
+
 		ConnectionRequests& m_owner;
 		Admission m_admission = Admission::Reject;
 		ErrorCode m_error = ErrorCode::Internal;
@@ -66,11 +70,14 @@ public:
 	~ConnectionRequests();
 	ConnectionRequests(const ConnectionRequests&) = delete;
 	ConnectionRequests& operator=(const ConnectionRequests&) = delete;
+
 	Exchange Begin(const ControlPacket& request);
+
 	bool Negotiated() const;
 	std::uint16_t Minor() const;
 	std::uint16_t ResponseMinor(std::uint16_t requested) const;
 	bool Negotiate(std::uint16_t minor);
+
 	void Close() noexcept;
 
 private:
@@ -81,7 +88,9 @@ private:
 		Closing,
 		Closed
 	};
+
 	void Finish() noexcept;
+
 	mutable std::mutex m_mutex;
 	std::function<void()> m_onClosed;
 	Phase m_phase = Phase::Idle;

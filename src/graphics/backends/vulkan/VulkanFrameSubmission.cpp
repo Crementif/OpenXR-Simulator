@@ -25,6 +25,59 @@ FramePool VulkanFrameSubmission::HistoryReservations() const
 	return m_backend.HistoryReservations();
 }
 
+XrResult VulkanFrameSubmission::Prepare(FrameKey key, const SessionComposition& composition,
+										std::shared_ptr<FrameReservation> reservation,
+										std::span<const FrameCaptureRequest> captures, PreparedFrameSubmission& output)
+{
+	m_key = key;
+	m_layers = composition.layers;
+	m_target = composition.target;
+	m_head = composition.head;
+	m_composition = composition.plan;
+	try
+	{
+		const auto result = PrepareOutputs(std::move(reservation), captures);
+		if (XR_FAILED(result))
+			return result;
+		output = {m_composed, m_output, m_captureOutputs, m_reprojection, m_composed->Timing(), m_preview};
+		return XR_SUCCESS;
+	}
+	catch (const VulkanError& error)
+	{
+		if (error.Result() == VK_ERROR_DEVICE_LOST)
+			m_backend.Device()->lost.store(true);
+		return VulkanGraphicsFailure(error.Result());
+	}
+}
+
+XrResult VulkanFrameSubmission::Submit()
+{
+	const auto result = m_backend.Submit(m_batch);
+	if (m_composed->Submitted())
+	{
+		const auto completion = m_composed->Completion();
+		if (m_retention)
+			for (const auto swapchain : m_retention->Swapchains())
+				m_bindings.MarkReleasedUsed(swapchain, completion);
+		for (const auto& draw : m_composition.draws)
+			m_bindings.MarkReleasedUsed(draw.source.source, completion);
+		// Filtered draws are a subset of the composed draws and share this batch completion.
+		for (const auto& capture : m_captures)
+			if (capture.source != XR_NULL_HANDLE)
+				m_bindings.MarkReleasedUsed(capture.source, completion);
+	}
+	if (XR_SUCCEEDED(result))
+	{
+		if (m_retention)
+			m_retention->Commit();
+		if (m_composedTransfer)
+			m_composedTransfer->Commit();
+		for (const auto& capture : m_captures)
+			capture.transfer->Commit();
+	}
+	return result;
+}
+
 bool VulkanFrameSubmission::Submitted() const noexcept
 {
 	return m_composed && m_composed->Submitted();
@@ -95,34 +148,6 @@ XrResult VulkanFrameSubmission::PrepareReprojection()
 	}
 }
 
-XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth,
-											   Capture& capture, std::shared_ptr<FrameReservation> reservation)
-{
-	try
-	{
-		if (depth)
-			return m_backend.PrepareDepthCapture(
-				*depth, capture.target.kind == CaptureKind::LayerDepthLinear,
-				[this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, capture.producer,
-				std::move(reservation));
-		return m_backend.PrepareCapture(
-			image, [this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, capture.producer,
-			std::move(reservation));
-	}
-	catch (const VulkanError& error)
-	{
-		switch (error.Result())
-		{
-		case VK_ERROR_FORMAT_NOT_SUPPORTED:
-		case VK_ERROR_FEATURE_NOT_PRESENT:
-		case VK_ERROR_EXTENSION_NOT_PRESENT:
-			return XR_ERROR_FEATURE_UNSUPPORTED;
-		default:
-			throw;
-		}
-	}
-}
-
 XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequest> requests)
 {
 	const auto required =
@@ -189,6 +214,34 @@ XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequ
 	return XR_SUCCESS;
 }
 
+XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth,
+											   Capture& capture, std::shared_ptr<FrameReservation> reservation)
+{
+	try
+	{
+		if (depth)
+			return m_backend.PrepareDepthCapture(
+				*depth, capture.target.kind == CaptureKind::LayerDepthLinear,
+				[this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, capture.producer,
+				std::move(reservation));
+		return m_backend.PrepareCapture(
+			image, [this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); }, capture.producer,
+			std::move(reservation));
+	}
+	catch (const VulkanError& error)
+	{
+		switch (error.Result())
+		{
+		case VK_ERROR_FORMAT_NOT_SUPPORTED:
+		case VK_ERROR_FEATURE_NOT_PRESENT:
+		case VK_ERROR_EXTENSION_NOT_PRESENT:
+			return XR_ERROR_FEATURE_UNSUPPORTED;
+		default:
+			throw;
+		}
+	}
+}
+
 std::unique_ptr<VulkanInspectionTransfer>
 VulkanFrameSubmission::PrepareInspection(const std::shared_ptr<VulkanFrame>& source, CaptureTarget target,
 										 VulkanInspectionKind kind)
@@ -229,58 +282,5 @@ std::function<void(SharedImageKey)> VulkanFrameSubmission::DeliveryRetirementObs
 		journal->Trace(FrameTraceKind::ImageRetired, key, time, XR_SUCCESS, FrameDiagnosticCategory::Timing,
 					   image.image.value, "delivery_pool:" + std::to_string(image.pool.value));
 	};
-}
-
-XrResult VulkanFrameSubmission::Submit()
-{
-	const auto result = m_backend.Submit(m_batch);
-	if (m_composed->Submitted())
-	{
-		const auto completion = m_composed->Completion();
-		if (m_retention)
-			for (const auto swapchain : m_retention->Swapchains())
-				m_bindings.MarkReleasedUsed(swapchain, completion);
-		for (const auto& draw : m_composition.draws)
-			m_bindings.MarkReleasedUsed(draw.source.source, completion);
-		// Filtered draws are a subset of the composed draws and share this batch completion.
-		for (const auto& capture : m_captures)
-			if (capture.source != XR_NULL_HANDLE)
-				m_bindings.MarkReleasedUsed(capture.source, completion);
-	}
-	if (XR_SUCCEEDED(result))
-	{
-		if (m_retention)
-			m_retention->Commit();
-		if (m_composedTransfer)
-			m_composedTransfer->Commit();
-		for (const auto& capture : m_captures)
-			capture.transfer->Commit();
-	}
-	return result;
-}
-
-XrResult VulkanFrameSubmission::Prepare(FrameKey key, const SessionComposition& composition,
-										std::shared_ptr<FrameReservation> reservation,
-										std::span<const FrameCaptureRequest> captures, PreparedFrameSubmission& output)
-{
-	m_key = key;
-	m_layers = composition.layers;
-	m_target = composition.target;
-	m_head = composition.head;
-	m_composition = composition.plan;
-	try
-	{
-		const auto result = PrepareOutputs(std::move(reservation), captures);
-		if (XR_FAILED(result))
-			return result;
-		output = {m_composed, m_output, m_captureOutputs, m_reprojection, m_composed->Timing(), m_preview};
-		return XR_SUCCESS;
-	}
-	catch (const VulkanError& error)
-	{
-		if (error.Result() == VK_ERROR_DEVICE_LOST)
-			m_backend.Device()->lost.store(true);
-		return VulkanGraphicsFailure(error.Result());
-	}
 }
 } // namespace simxr

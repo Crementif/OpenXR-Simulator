@@ -23,9 +23,11 @@ public:
 	~McpServer();
 	McpServer(const McpServer&) = delete;
 	McpServer& operator=(const McpServer&) = delete;
+
+	void Stop() noexcept;
+
 	std::uint16_t Port() const noexcept;
 	std::size_t ClientSessions() const;
-	void Stop() noexcept;
 
 private:
 	void Route(const httplib::Request& request, httplib::Response& response);
@@ -33,8 +35,10 @@ private:
 	void DeleteSession(const httplib::Request& request, httplib::Response& response);
 	void ReapExpired();
 	bool Authorize(const httplib::Request& request, httplib::Response& response) const;
+
 	struct Session;
 	struct Artifact;
+
 	McpApplication& m_application;
 	std::string m_token;
 	httplib::Server m_server;

@@ -71,6 +71,7 @@ public:
 	XrPosef Hand(std::size_t hand) const;
 	XrPosef Tracker(std::size_t slot) const;
 	XrPosef JointPose(BodyJoint joint) const;
+
 	void SetHeadWorld(XrPosef pose);
 	void SetHandWorld(std::size_t hand, XrPosef pose);
 	void SetTrackerWorld(std::size_t slot, XrPosef pose);
@@ -115,11 +116,13 @@ public:
 	void Move(XrVector3f localVelocity, float yaw, float pitch, float seconds, bool freeLook = false);
 	ManualTransaction Transaction(const ObservedSetup& observed, std::optional<CommandSource> ownSource,
 								  bool includeWorld = false) const;
+
 	XrVector3f position{};
 	float facing = 0, walkSpeed = 1, height = 1.7f;
 
 private:
 	void ObserveTrackers(const ObservedSetup& observed);
+
 	bool m_ready = false;
 	XrVector3f m_lean{};
 	float m_headYaw = 0, m_headPitch = 0;

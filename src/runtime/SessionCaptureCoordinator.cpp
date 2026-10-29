@@ -40,23 +40,6 @@ XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews,
 	return XR_SUCCESS;
 }
 
-XrResult SessionCaptureCoordinator::EnableImageHistory()
-{
-	std::lock_guard lock(m_mutex);
-	if (m_running)
-		return XR_ERROR_CALL_ORDER_INVALID;
-	if (!m_pool || !m_promoter)
-		return XR_ERROR_FEATURE_UNSUPPORTED;
-	m_imageHistory = true;
-	return XR_SUCCESS;
-}
-
-bool SessionCaptureCoordinator::SupportsImageHistory() const
-{
-	std::lock_guard lock(m_mutex);
-	return m_imageHistory;
-}
-
 FrameImageHistory::Retired SessionCaptureCoordinator::Start(SessionGeneration generation)
 {
 	std::lock_guard lock(m_mutex);
@@ -88,16 +71,26 @@ void SessionCaptureCoordinator::Retire() noexcept
 	m_store.RetireAll();
 }
 
+XrResult SessionCaptureCoordinator::EnableImageHistory()
+{
+	std::lock_guard lock(m_mutex);
+	if (m_running)
+		return XR_ERROR_CALL_ORDER_INVALID;
+	if (!m_pool || !m_promoter)
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	m_imageHistory = true;
+	return XR_SUCCESS;
+}
+
+bool SessionCaptureCoordinator::SupportsImageHistory() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_imageHistory;
+}
+
 SnapshotStore& SessionCaptureCoordinator::Snapshots()
 {
 	return m_store;
-}
-
-bool SessionCaptureCoordinator::SupportsLocked(CaptureTarget target) const
-{
-	return m_pool && (target == CaptureTarget{} || (m_layerViews && target.kind == CaptureKind::LayerView) ||
-					  (m_depthViews && target.IsDepth()) ||
-					  (m_filteredComposition && target.IsFilteredComposition() && !target.layer && !target.view));
 }
 
 bool SessionCaptureCoordinator::Supports(CaptureTarget target) const
@@ -183,93 +176,6 @@ SessionCaptureCoordinator::PrepareSequenceCapture(const std::optional<SequenceCa
 	return SequenceCapture(*this, request);
 }
 
-SessionCaptureCoordinator::SequenceCapture::SequenceCapture(SessionCaptureCoordinator& owner,
-															const std::optional<SequenceCaptureIntent>& request)
-	: m_owner(owner)
-{
-	if (!request)
-		return;
-	std::lock_guard lock(owner.m_mutex);
-	m_record = SequenceCaptureRecord{*request, owner.ReserveLocked({})};
-}
-
-SessionCaptureCoordinator::SequenceCapture::~SequenceCapture()
-{
-	if (!m_committed && m_record && m_record->reservation.result == SnapshotAdmission::Accepted)
-		m_owner.m_store.Release(m_record->reservation.id);
-}
-
-const std::optional<SequenceCaptureRecord>& SessionCaptureCoordinator::SequenceCapture::Record() const noexcept
-{
-	return m_record;
-}
-
-void SessionCaptureCoordinator::SequenceCapture::Bind(const std::shared_ptr<const FrameRecord>& issued,
-													  std::shared_ptr<const FrameRecord> cancelled)
-{
-	if (!m_record)
-		return;
-	if (m_record->reservation.result == SnapshotAdmission::Accepted &&
-		!m_owner.m_store.Bind(m_record->reservation.id, issued, std::move(cancelled)))
-		throw std::logic_error("Sequence capture reservation was cancelled before admission");
-	m_committed = true;
-	XrResult result = XR_SUCCESS;
-	switch (m_record->reservation.result)
-	{
-	case SnapshotAdmission::Accepted:
-		return;
-	case SnapshotAdmission::Capacity:
-		result = XR_ERROR_LIMIT_REACHED;
-		break;
-	case SnapshotAdmission::Closed:
-		result = XR_ERROR_SESSION_NOT_RUNNING;
-		break;
-	case SnapshotAdmission::Unsupported:
-		result = XR_ERROR_FEATURE_UNSUPPORTED;
-		break;
-	case SnapshotAdmission::Invalid:
-		result = XR_ERROR_VALIDATION_FAILURE;
-		break;
-	}
-	m_owner.m_history.Trace(FrameTraceKind::CaptureFailed, issued->key, issued->prediction.displayTime, result,
-							result == XR_ERROR_LIMIT_REACHED ? FrameDiagnosticCategory::Performance
-															 : FrameDiagnosticCategory::ApiError,
-							0, "sequence_capture_admission");
-}
-
-CaptureReservation SessionCaptureCoordinator::ReserveLocked(CaptureTarget target)
-{
-	if (!m_running)
-		return {SnapshotAdmission::Closed, {}};
-	if (!SupportsLocked(target))
-		return {SnapshotAdmission::Unsupported, {}};
-	if (m_queued.size() == m_store.Capacity())
-		return {SnapshotAdmission::Capacity, {}};
-	auto producer = m_pool->Reserve(false);
-	if (!producer)
-		return {SnapshotAdmission::Capacity, {}};
-	std::shared_ptr<FrameReservation> composedProducer;
-	if (target.IsAdditionalImage())
-	{
-		composedProducer = m_pool->Reserve(false);
-		if (!composedProducer)
-			return {SnapshotAdmission::Capacity, {}};
-	}
-	return m_store.Reserve(target, std::move(producer), std::move(composedProducer));
-}
-
-bool SessionCaptureCoordinator::HasRequest(FrameKey frame, CaptureTarget target) const
-{
-	for (const auto& requested : m_store.RequestedTargets(frame))
-	{
-		if (requested == target)
-			return true;
-		if (target == CaptureTarget{} && requested.IsAdditionalImage())
-			return true;
-	}
-	return false;
-}
-
 std::pair<XrResult, std::shared_ptr<FrameReservation>> SessionCaptureCoordinator::PrepareProducer(FrameKey frame,
 																								  CaptureTarget target)
 {
@@ -335,18 +241,6 @@ SnapshotAdmission SessionCaptureCoordinator::StartImageRecording(CaptureTarget t
 		std::copy(m_imageRecording.captures.begin(), m_imageRecording.captures.end(), captures.begin());
 	m_imageRecording.phase = ImageRecordingPhase::Recording;
 	return SnapshotAdmission::Accepted;
-}
-
-void SessionCaptureCoordinator::StopImageRecordingLocked() noexcept
-{
-	if (m_imageRecording.phase != ImageRecordingPhase::Overrun)
-		m_imageRecording.phase = ImageRecordingPhase::Stopped;
-	for (const auto capture : m_recordingQueued)
-	{
-		m_store.Release(capture); // Unissued reservations have no native image reader.
-		std::erase(m_imageRecording.captures, capture);
-	}
-	m_recordingQueued.clear();
 }
 
 void SessionCaptureCoordinator::StopImageRecording() noexcept
@@ -427,29 +321,10 @@ void SessionCaptureCoordinator::ObserveFrame(FrameKey frame)
 	m_store.Update(m_history.Find(frame));
 }
 
-std::size_t SessionCaptureCoordinator::CancelQueuedLocked() noexcept
-{
-	const auto count = m_queued.size();
-	for (const auto& bundle : m_queued)
-		for (const auto id : bundle)
-			m_store.Release(id); // Queued records have no output/native reader.
-	m_queued.clear();
-	return count;
-}
-
 std::size_t SessionCaptureCoordinator::CancelQueued() noexcept
 {
 	std::lock_guard lock(m_mutex);
 	return CancelQueuedLocked();
-}
-
-SnapshotAdmission SessionCaptureCoordinator::Promote(const std::shared_ptr<const FrameOutput>& output,
-													 std::shared_ptr<FrameReservation> producer)
-{
-	std::lock_guard lock(m_mutex);
-	if (!m_pool)
-		return SnapshotAdmission::Unsupported;
-	return m_promoter ? m_promoter(output, *m_pool, std::move(producer)) : SnapshotAdmission::Accepted;
 }
 
 SessionCaptureCoordinator::Submission
@@ -462,6 +337,131 @@ SessionCaptureCoordinator::PrepareSubmission(std::shared_ptr<const FrameOutput> 
 SessionCaptureCoordinator::Boundary SessionCaptureCoordinator::PrepareBoundary()
 {
 	return Boundary(*this);
+}
+
+bool SessionCaptureCoordinator::SupportsLocked(CaptureTarget target) const
+{
+	return m_pool && (target == CaptureTarget{} || (m_layerViews && target.kind == CaptureKind::LayerView) ||
+					  (m_depthViews && target.IsDepth()) ||
+					  (m_filteredComposition && target.IsFilteredComposition() && !target.layer && !target.view));
+}
+
+CaptureReservation SessionCaptureCoordinator::ReserveLocked(CaptureTarget target)
+{
+	if (!m_running)
+		return {SnapshotAdmission::Closed, {}};
+	if (!SupportsLocked(target))
+		return {SnapshotAdmission::Unsupported, {}};
+	if (m_queued.size() == m_store.Capacity())
+		return {SnapshotAdmission::Capacity, {}};
+	auto producer = m_pool->Reserve(false);
+	if (!producer)
+		return {SnapshotAdmission::Capacity, {}};
+	std::shared_ptr<FrameReservation> composedProducer;
+	if (target.IsAdditionalImage())
+	{
+		composedProducer = m_pool->Reserve(false);
+		if (!composedProducer)
+			return {SnapshotAdmission::Capacity, {}};
+	}
+	return m_store.Reserve(target, std::move(producer), std::move(composedProducer));
+}
+
+void SessionCaptureCoordinator::StopImageRecordingLocked() noexcept
+{
+	if (m_imageRecording.phase != ImageRecordingPhase::Overrun)
+		m_imageRecording.phase = ImageRecordingPhase::Stopped;
+	for (const auto capture : m_recordingQueued)
+	{
+		m_store.Release(capture); // Unissued reservations have no native image reader.
+		std::erase(m_imageRecording.captures, capture);
+	}
+	m_recordingQueued.clear();
+}
+
+bool SessionCaptureCoordinator::HasRequest(FrameKey frame, CaptureTarget target) const
+{
+	for (const auto& requested : m_store.RequestedTargets(frame))
+	{
+		if (requested == target)
+			return true;
+		if (target == CaptureTarget{} && requested.IsAdditionalImage())
+			return true;
+	}
+	return false;
+}
+
+std::size_t SessionCaptureCoordinator::CancelQueuedLocked() noexcept
+{
+	const auto count = m_queued.size();
+	for (const auto& bundle : m_queued)
+		for (const auto id : bundle)
+			m_store.Release(id); // Queued records have no output/native reader.
+	m_queued.clear();
+	return count;
+}
+
+SnapshotAdmission SessionCaptureCoordinator::Promote(const std::shared_ptr<const FrameOutput>& output,
+													 std::shared_ptr<FrameReservation> producer)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_pool)
+		return SnapshotAdmission::Unsupported;
+	return m_promoter ? m_promoter(output, *m_pool, std::move(producer)) : SnapshotAdmission::Accepted;
+}
+
+SessionCaptureCoordinator::SequenceCapture::SequenceCapture(SessionCaptureCoordinator& owner,
+															const std::optional<SequenceCaptureIntent>& request)
+	: m_owner(owner)
+{
+	if (!request)
+		return;
+	std::lock_guard lock(owner.m_mutex);
+	m_record = SequenceCaptureRecord{*request, owner.ReserveLocked({})};
+}
+
+SessionCaptureCoordinator::SequenceCapture::~SequenceCapture()
+{
+	if (!m_committed && m_record && m_record->reservation.result == SnapshotAdmission::Accepted)
+		m_owner.m_store.Release(m_record->reservation.id);
+}
+
+const std::optional<SequenceCaptureRecord>& SessionCaptureCoordinator::SequenceCapture::Record() const noexcept
+{
+	return m_record;
+}
+
+void SessionCaptureCoordinator::SequenceCapture::Bind(const std::shared_ptr<const FrameRecord>& issued,
+													  std::shared_ptr<const FrameRecord> cancelled)
+{
+	if (!m_record)
+		return;
+	if (m_record->reservation.result == SnapshotAdmission::Accepted &&
+		!m_owner.m_store.Bind(m_record->reservation.id, issued, std::move(cancelled)))
+		throw std::logic_error("Sequence capture reservation was cancelled before admission");
+	m_committed = true;
+	XrResult result = XR_SUCCESS;
+	switch (m_record->reservation.result)
+	{
+	case SnapshotAdmission::Accepted:
+		return;
+	case SnapshotAdmission::Capacity:
+		result = XR_ERROR_LIMIT_REACHED;
+		break;
+	case SnapshotAdmission::Closed:
+		result = XR_ERROR_SESSION_NOT_RUNNING;
+		break;
+	case SnapshotAdmission::Unsupported:
+		result = XR_ERROR_FEATURE_UNSUPPORTED;
+		break;
+	case SnapshotAdmission::Invalid:
+		result = XR_ERROR_VALIDATION_FAILURE;
+		break;
+	}
+	m_owner.m_history.Trace(FrameTraceKind::CaptureFailed, issued->key, issued->prediction.displayTime, result,
+							result == XR_ERROR_LIMIT_REACHED ? FrameDiagnosticCategory::Performance
+															 : FrameDiagnosticCategory::ApiError,
+							0, "sequence_capture_admission");
 }
 
 SessionCaptureCoordinator::Submission::Submission(SessionCaptureCoordinator& owner,

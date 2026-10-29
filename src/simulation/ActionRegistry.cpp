@@ -438,6 +438,13 @@ std::optional<ActionSetDefinition> ActionRegistry::Set(XrActionSet handle) const
 	return resource && resource->live ? resource : std::nullopt;
 }
 
+std::vector<ActionDefinition> ActionRegistry::Actions() const
+{
+	auto resources = Resources();
+	std::erase_if(resources, [](const auto& resource) { return !resource.live; });
+	return resources;
+}
+
 std::optional<ActionDefinition> ActionRegistry::ActionResource(XrAction handle) const
 {
 	std::lock_guard lock(m_mutex);
@@ -450,13 +457,6 @@ std::optional<ActionSetDefinition> ActionRegistry::SetResource(XrActionSet handl
 	std::lock_guard lock(m_mutex);
 	auto set = m_sets.Find(handle, m_owner);
 	return set ? std::optional{*set.operator->()} : std::nullopt;
-}
-
-std::vector<ActionDefinition> ActionRegistry::Actions() const
-{
-	auto resources = Resources();
-	std::erase_if(resources, [](const auto& resource) { return !resource.live; });
-	return resources;
 }
 
 std::vector<ActionDefinition> ActionRegistry::Resources() const
@@ -1025,38 +1025,6 @@ XrResult ActionSyncState::Sync(const XrActionsSyncInfo& info, const InputSnapsho
 	return focused ? XR_SUCCESS : XR_SESSION_NOT_FOCUSED;
 }
 
-XrResult ActionSyncState::Value(const XrActionStateGetInfo& info, XrActionType type, ActionStateValue& value,
-								bool retained) const
-{
-	if (info.type != XR_TYPE_ACTION_STATE_GET_INFO)
-		return XR_ERROR_VALIDATION_FAILURE;
-	auto definition = retained ? m_registry.ActionResource(info.action) : m_registry.Action(info.action);
-	if (!definition)
-		return XR_ERROR_HANDLE_INVALID;
-	if (definition->type != type)
-		return XR_ERROR_ACTION_TYPE_MISMATCH;
-	auto result = m_registry.ValidateSubaction(*definition, info.subactionPath);
-	if (XR_FAILED(result))
-		return result;
-	std::lock_guard lock(m_mutex);
-	if (std::find(m_sets.begin(), m_sets.end(), definition->set) == m_sets.end())
-		return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-	auto action = std::find_if(m_snapshot.actions.begin(), m_snapshot.actions.end(),
-							   [&](const auto& state) { return state.definition.handle == info.action; });
-	value = {};
-	if (action != m_snapshot.actions.end())
-	{
-		if (auto found = action->values.find(info.subactionPath); found != action->values.end())
-			value = found->second;
-	}
-	if (!m_queryFocused)
-	{
-		value = {};
-		value.inactiveReason = InactiveReason::NotFocused;
-	}
-	return XR_SUCCESS;
-}
-
 XrResult ActionSyncState::GetBoolean(const XrActionStateGetInfo& info, XrActionStateBoolean& state) const
 {
 	if (state.type != XR_TYPE_ACTION_STATE_BOOLEAN)
@@ -1163,28 +1131,6 @@ XrResult ActionSyncState::SpaceSources(XrAction handle, XrPath subaction,
 	return Sources(handle, subaction, sources, true);
 }
 
-XrResult ActionSyncState::Sources(XrAction handle, XrPath subaction, std::vector<ResolvedActionSource>& sources,
-								  bool retained) const
-{
-	XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, handle, subaction};
-	ActionStateValue ignored;
-	auto result = Value(info, XR_ACTION_TYPE_POSE_INPUT, ignored, retained);
-	if (XR_FAILED(result))
-		return result;
-	std::lock_guard lock(m_mutex);
-	sources.clear();
-	if (!m_queryFocused)
-		return XR_SUCCESS;
-	for (const auto& action : m_snapshot.actions)
-		if (action.definition.handle == handle)
-			for (const auto& source : action.sources)
-				if (source.active && source.binding.sourceType == XR_ACTION_TYPE_POSE_INPUT &&
-					(!subaction ||
-					 std::find(source.userPaths.begin(), source.userPaths.end(), subaction) != source.userPaths.end()))
-					sources.push_back(source);
-	return XR_SUCCESS;
-}
-
 XrResult ActionSyncState::BoundSources(XrAction handle, std::vector<XrPath>& paths) const
 {
 	auto definition = m_registry.Action(handle);
@@ -1202,6 +1148,20 @@ XrResult ActionSyncState::BoundSources(XrAction handle, std::vector<XrPath>& pat
 	return XR_SUCCESS;
 }
 
+XrResult ActionSyncState::CurrentProfile(XrPath userPath, XrPath& profile) const
+{
+	if (!m_registry.PathString(userPath))
+		return XR_ERROR_PATH_INVALID;
+	if (!m_registry.IsUserPath(userPath))
+		return XR_ERROR_PATH_UNSUPPORTED;
+	std::lock_guard lock(m_mutex);
+	if (!m_attached)
+		return XR_ERROR_ACTIONSET_NOT_ATTACHED;
+	auto found = m_snapshot.profiles.find(userPath);
+	profile = found == m_snapshot.profiles.end() ? XR_NULL_PATH : found->second;
+	return XR_SUCCESS;
+}
+
 std::optional<std::array<std::string, 2>> ActionSyncState::ControllerProfiles() const
 {
 	std::lock_guard lock(m_mutex);
@@ -1216,20 +1176,6 @@ std::optional<std::array<std::string, 2>> ActionSyncState::ControllerProfiles() 
 		result[*path == "/user/hand/right" ? 1 : 0] = m_registry.PathString(profile).value_or("");
 	}
 	return result;
-}
-
-XrResult ActionSyncState::CurrentProfile(XrPath userPath, XrPath& profile) const
-{
-	if (!m_registry.PathString(userPath))
-		return XR_ERROR_PATH_INVALID;
-	if (!m_registry.IsUserPath(userPath))
-		return XR_ERROR_PATH_UNSUPPORTED;
-	std::lock_guard lock(m_mutex);
-	if (!m_attached)
-		return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-	auto found = m_snapshot.profiles.find(userPath);
-	profile = found == m_snapshot.profiles.end() ? XR_NULL_PATH : found->second;
-	return XR_SUCCESS;
 }
 
 XrResult ActionSyncState::LocalizedName(XrPath source, XrInputSourceLocalizedNameFlags flags, std::string& name) const
@@ -1260,6 +1206,12 @@ ActionSyncSnapshot ActionSyncState::Snapshot() const
 	return m_snapshot;
 }
 
+void ActionSyncState::SetFocused(bool focused)
+{
+	std::lock_guard lock(m_mutex);
+	m_queryFocused = focused;
+}
+
 void ActionSyncState::Reset()
 {
 	std::lock_guard lock(m_mutex);
@@ -1277,9 +1229,58 @@ void ActionSyncState::Reset()
 	m_queryFocused = false;
 }
 
-void ActionSyncState::SetFocused(bool focused)
+XrResult ActionSyncState::Value(const XrActionStateGetInfo& info, XrActionType type, ActionStateValue& value,
+								bool retained) const
 {
+	if (info.type != XR_TYPE_ACTION_STATE_GET_INFO)
+		return XR_ERROR_VALIDATION_FAILURE;
+	auto definition = retained ? m_registry.ActionResource(info.action) : m_registry.Action(info.action);
+	if (!definition)
+		return XR_ERROR_HANDLE_INVALID;
+	if (definition->type != type)
+		return XR_ERROR_ACTION_TYPE_MISMATCH;
+	auto result = m_registry.ValidateSubaction(*definition, info.subactionPath);
+	if (XR_FAILED(result))
+		return result;
 	std::lock_guard lock(m_mutex);
-	m_queryFocused = focused;
+	if (std::find(m_sets.begin(), m_sets.end(), definition->set) == m_sets.end())
+		return XR_ERROR_ACTIONSET_NOT_ATTACHED;
+	auto action = std::find_if(m_snapshot.actions.begin(), m_snapshot.actions.end(),
+							   [&](const auto& state) { return state.definition.handle == info.action; });
+	value = {};
+	if (action != m_snapshot.actions.end())
+	{
+		if (auto found = action->values.find(info.subactionPath); found != action->values.end())
+			value = found->second;
+	}
+	if (!m_queryFocused)
+	{
+		value = {};
+		value.inactiveReason = InactiveReason::NotFocused;
+	}
+	return XR_SUCCESS;
 }
+
+XrResult ActionSyncState::Sources(XrAction handle, XrPath subaction, std::vector<ResolvedActionSource>& sources,
+								  bool retained) const
+{
+	XrActionStateGetInfo info{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, handle, subaction};
+	ActionStateValue ignored;
+	auto result = Value(info, XR_ACTION_TYPE_POSE_INPUT, ignored, retained);
+	if (XR_FAILED(result))
+		return result;
+	std::lock_guard lock(m_mutex);
+	sources.clear();
+	if (!m_queryFocused)
+		return XR_SUCCESS;
+	for (const auto& action : m_snapshot.actions)
+		if (action.definition.handle == handle)
+			for (const auto& source : action.sources)
+				if (source.active && source.binding.sourceType == XR_ACTION_TYPE_POSE_INPUT &&
+					(!subaction ||
+					 std::find(source.userPaths.begin(), source.userPaths.end(), subaction) != source.userPaths.end()))
+					sources.push_back(source);
+	return XR_SUCCESS;
+}
+
 } // namespace simxr

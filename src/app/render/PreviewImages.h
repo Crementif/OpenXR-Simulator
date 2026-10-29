@@ -87,11 +87,12 @@ private:
 		bool live = false, thumbnail = false;
 	};
 
-	std::optional<PendingImage> m_pending;
-	std::optional<std::size_t> m_capacity;
 	std::size_t Capacity() const noexcept;
 	Image* Find(std::uint64_t id) const;
 	PreviewImageSummary Summary(const Image& image) const;
+
+	std::optional<PendingImage> m_pending;
+	std::optional<std::size_t> m_capacity;
 	UiRenderer& m_renderer;
 	RuntimePanelRequests& m_requests;
 	PanelScope m_scope;

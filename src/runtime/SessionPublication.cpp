@@ -3,20 +3,6 @@
 
 namespace simxr
 {
-SessionPublication::SessionPublication(Instance& instance, ActionSyncState& actions)
-	: m_instance(instance), m_actions(actions), m_gaze(instance.Extensions())
-{
-	TrackingSnapshot initial;
-	for (std::size_t index = 0; index < initial.trackers.size(); ++index)
-		initial.trackers[index].device = initial.input.trackers[index];
-	InputSnapshot input;
-	m_gaze.ContributeInput(initial, input);
-	m_instance.Trackers().ContributeInput(initial, input);
-	if (XR_FAILED(m_input.Publish(std::move(input))))
-		throw std::logic_error("Invalid initial device input");
-	m_managedInputRevision = m_input.Revision();
-}
-
 SessionPublication::PreparedStart::PreparedStart(SessionPublication& owner, RuntimeTime epoch, ViewLayout layout)
 	: m_owner(owner), m_baseline(owner.m_initial.value_or(CommandConfiguration{})), m_epoch(epoch), m_layout(layout)
 {
@@ -47,16 +33,6 @@ void SessionPublication::PreparedStart::Commit()
 	m_owner.m_viewQueries.clear();
 	m_owner.m_layout = m_layout;
 	m_committed = true;
-}
-
-void SessionPublication::Configure(std::uint64_t seed, std::optional<CommandConfiguration> initial,
-								   bool overrideInitial)
-{
-	CommandScheduler validation;
-	validation.Start(seed, initial);
-	m_seed = seed;
-	m_initial = std::move(initial);
-	m_overrideInitial = overrideInitial;
 }
 
 SessionPublication::FrameBoundary::FrameBoundary(SessionPublication& owner, bool focused,
@@ -121,6 +97,30 @@ void SessionPublication::FrameBoundary::Publish()
 	m_published = true;
 }
 
+SessionPublication::SessionPublication(Instance& instance, ActionSyncState& actions)
+	: m_instance(instance), m_actions(actions), m_gaze(instance.Extensions())
+{
+	TrackingSnapshot initial;
+	for (std::size_t index = 0; index < initial.trackers.size(); ++index)
+		initial.trackers[index].device = initial.input.trackers[index];
+	InputSnapshot input;
+	m_gaze.ContributeInput(initial, input);
+	m_instance.Trackers().ContributeInput(initial, input);
+	if (XR_FAILED(m_input.Publish(std::move(input))))
+		throw std::logic_error("Invalid initial device input");
+	m_managedInputRevision = m_input.Revision();
+}
+
+void SessionPublication::Configure(std::uint64_t seed, std::optional<CommandConfiguration> initial,
+								   bool overrideInitial)
+{
+	CommandScheduler validation;
+	validation.Start(seed, initial);
+	m_seed = seed;
+	m_initial = std::move(initial);
+	m_overrideInitial = overrideInitial;
+}
+
 void SessionPublication::Stop()
 {
 	m_commands.Close();
@@ -150,49 +150,18 @@ void SessionPublication::StopPoseSequence(CommandSource source)
 	ReleaseChannels(m_commands.StopPoseSequence(source));
 }
 
-bool SessionPublication::ReleaseChannels(const std::array<bool, ControlChannelCount>& channels)
+void SessionPublication::PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings,
+										 bool focused)
 {
-	const std::array<bool, 2> released{channels[static_cast<std::size_t>(ControlChannel::LeftControls)],
-									   channels[static_cast<std::size_t>(ControlChannel::RightControls)]};
-	m_input.ReleaseControls(released);
-	m_managedInputRevision = m_input.Revision();
-	const bool restoreFocus = channels[static_cast<std::size_t>(ControlChannel::Session)] && m_sessionOverride;
-	if (restoreFocus)
-		m_sessionOverride = false;
-	for (std::size_t hand = 0; hand < released.size(); ++hand)
-		if (released[hand])
-		{
-			const bool connected = m_baseline.input.controllers[hand].connected;
-			m_baseline.input.controllers[hand] = {};
-			m_baseline.input.controllers[hand].connected = connected;
-		}
-	return restoreFocus;
-}
-
-RecordingResult SessionPublication::StartRecording(const ReferenceSpaceState& spaces, bool drain, CommandSource owner)
-{
+	state.focused = focused;
 	auto baseline = m_baseline;
-	auto observed = m_input.Snapshot();
-	if (observed.revision != m_managedInputRevision)
-		baseline.input = std::move(observed);
-	// Native publication may report the scenario-induced focus state. Preserve
-	// the underlying focused origin rather than baking that failure into it.
-	baseline.tracking.focused = m_sessionOverride || baseline.tracking.focused;
-	return m_commands.StartRecording(baseline, spaces, drain, owner);
-}
-
-CommandConfiguration SessionPublication::ConfigurationSnapshot(const FramePrediction& lastIssued) const
-{
-	auto baseline = m_baseline;
-	if (lastIssued.id.value || !m_initial)
-		baseline.input = m_input.Snapshot();
-	auto result = m_commands.Merge(baseline);
-	if (const auto sample = m_tracking.Sample(lastIssued.displayTime))
-	{
-		result.tracking = sample->input;
-		result.proportions = sample->proportions;
-	}
-	return result;
+	baseline.tracking = std::move(state);
+	baseline.views = settings;
+	// Only native baseline values change after WaitFrame. Applied command
+	// overlays remain authoritative and are not executed a second time.
+	const auto effective = m_commands.Merge(baseline);
+	PublishEffective(time, effective);
+	m_baseline = std::move(baseline);
 }
 
 XrResult SessionPublication::PublishInput(InputSnapshot input)
@@ -211,59 +180,16 @@ XrResult SessionPublication::PublishInput(InputSnapshot input)
 	return result;
 }
 
-void SessionPublication::PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings,
-										 bool focused)
+RecordingResult SessionPublication::StartRecording(const ReferenceSpaceState& spaces, bool drain, CommandSource owner)
 {
-	state.focused = focused;
 	auto baseline = m_baseline;
-	baseline.tracking = std::move(state);
-	baseline.views = settings;
-	// Only native baseline values change after WaitFrame. Applied command
-	// overlays remain authoritative and are not executed a second time.
-	const auto effective = m_commands.Merge(baseline);
-	PublishEffective(time, effective);
-	m_baseline = std::move(baseline);
-}
-
-void SessionPublication::PublishEffective(RuntimeTime time, const CommandConfiguration& effective)
-{
-	ViewConfiguration configuration(m_layout, effective.views);
-	m_tracking.SetBodyProportions(effective.proportions);
-	const auto snapshot = m_tracking.Publish(time, effective.tracking, true);
-	auto input = effective.input;
-	input.time = std::max({input.time, time, m_input.Snapshot().time});
-	m_gaze.ContributeInput(snapshot, input);
-	m_instance.Trackers().ContributeInput(snapshot, input);
-	if (XR_FAILED(m_input.Publish(input)))
-		throw std::logic_error("Invalid device input");
-	m_managedInputRevision = m_input.Revision();
-	std::vector<XrPath> changedPaths;
-	const auto trackerResult = m_instance.Trackers().Publish(snapshot, &changedPaths);
-	if (XR_FAILED(trackerResult) && trackerResult != XR_ERROR_FUNCTION_UNSUPPORTED)
-		throw std::logic_error("Invalid tracker inventory");
-	if (!changedPaths.empty())
-	{
-		XrPath trackerProfile{};
-		m_instance.Actions().StringToPath("/interaction_profiles/htc/vive_tracker_htcx", trackerProfile);
-		for (const auto& action : m_actions.Snapshot().actions)
-			for (const auto& binding : m_instance.Actions().Bindings(action.definition.handle, trackerProfile))
-				if (std::find(changedPaths.begin(), changedPaths.end(), binding.userPath) != changedPaths.end())
-					m_profileChanged = true;
-	}
-	if (!m_viewHistory.empty() && m_viewHistory.back().time == time)
-		m_viewHistory.back().configuration = std::move(configuration);
-	else
-		m_viewHistory.push_back({time, std::move(configuration)});
-	while (m_viewHistory.size() > 128)
-		m_viewHistory.pop_front();
-}
-
-void SessionPublication::RecordViewQuery(ViewQuerySnapshot query)
-{
-	std::erase_if(m_viewQueries, [&](const auto& previous) { return previous.displayTime == query.displayTime; });
-	m_viewQueries.push_back(std::move(query));
-	while (m_viewQueries.size() > 128)
-		m_viewQueries.pop_front();
+	auto observed = m_input.Snapshot();
+	if (observed.revision != m_managedInputRevision)
+		baseline.input = std::move(observed);
+	// Native publication may report the scenario-induced focus state. Preserve
+	// the underlying focused origin rather than baking that failure into it.
+	baseline.tracking.focused = m_sessionOverride || baseline.tracking.focused;
+	return m_commands.StartRecording(baseline, spaces, drain, owner);
 }
 
 void SessionPublication::CaptureFrame(FrameId frame, FrameSubmissionState& submission) const
@@ -297,9 +223,31 @@ void SessionPublication::CaptureFrame(FrameId frame, FrameSubmissionState& submi
 	}
 }
 
+void SessionPublication::RecordViewQuery(ViewQuerySnapshot query)
+{
+	std::erase_if(m_viewQueries, [&](const auto& previous) { return previous.displayTime == query.displayTime; });
+	m_viewQueries.push_back(std::move(query));
+	while (m_viewQueries.size() > 128)
+		m_viewQueries.pop_front();
+}
+
 bool SessionPublication::TakeProfileChange() noexcept
 {
 	return std::exchange(m_profileChanged, false);
+}
+
+CommandConfiguration SessionPublication::ConfigurationSnapshot(const FramePrediction& lastIssued) const
+{
+	auto baseline = m_baseline;
+	if (lastIssued.id.value || !m_initial)
+		baseline.input = m_input.Snapshot();
+	auto result = m_commands.Merge(baseline);
+	if (const auto sample = m_tracking.Sample(lastIssued.displayTime))
+	{
+		result.tracking = sample->input;
+		result.proportions = sample->proportions;
+	}
+	return result;
 }
 
 CommandScheduler& SessionPublication::Commands()
@@ -338,16 +286,6 @@ LocatedViews SessionPublication::ViewsAt(RuntimeTime time, bool foveated) const
 	return ConfigurationAt(time).Locate(*sample, foveated);
 }
 
-XrResult SessionPublication::ValidatePoseAction(XrAction action, XrPath subaction) const
-{
-	auto definition = m_instance.Actions().Action(action);
-	if (!definition)
-		return XR_ERROR_HANDLE_INVALID;
-	if (definition->type != XR_ACTION_TYPE_POSE_INPUT)
-		return XR_ERROR_ACTION_TYPE_MISMATCH;
-	return m_instance.Actions().ValidateSubaction(*definition, subaction);
-}
-
 PoseSample SessionPublication::ActionPose(XrAction action, XrPath subaction, RuntimeTime time) const
 {
 	std::vector<ResolvedActionSource> sources;
@@ -381,4 +319,67 @@ PoseSample SessionPublication::ActionPose(XrAction action, XrPath subaction, Run
 	}
 	return {};
 }
+
+XrResult SessionPublication::ValidatePoseAction(XrAction action, XrPath subaction) const
+{
+	auto definition = m_instance.Actions().Action(action);
+	if (!definition)
+		return XR_ERROR_HANDLE_INVALID;
+	if (definition->type != XR_ACTION_TYPE_POSE_INPUT)
+		return XR_ERROR_ACTION_TYPE_MISMATCH;
+	return m_instance.Actions().ValidateSubaction(*definition, subaction);
+}
+
+bool SessionPublication::ReleaseChannels(const std::array<bool, ControlChannelCount>& channels)
+{
+	const std::array<bool, 2> released{channels[static_cast<std::size_t>(ControlChannel::LeftControls)],
+									   channels[static_cast<std::size_t>(ControlChannel::RightControls)]};
+	m_input.ReleaseControls(released);
+	m_managedInputRevision = m_input.Revision();
+	const bool restoreFocus = channels[static_cast<std::size_t>(ControlChannel::Session)] && m_sessionOverride;
+	if (restoreFocus)
+		m_sessionOverride = false;
+	for (std::size_t hand = 0; hand < released.size(); ++hand)
+		if (released[hand])
+		{
+			const bool connected = m_baseline.input.controllers[hand].connected;
+			m_baseline.input.controllers[hand] = {};
+			m_baseline.input.controllers[hand].connected = connected;
+		}
+	return restoreFocus;
+}
+
+void SessionPublication::PublishEffective(RuntimeTime time, const CommandConfiguration& effective)
+{
+	ViewConfiguration configuration(m_layout, effective.views);
+	m_tracking.SetBodyProportions(effective.proportions);
+	const auto snapshot = m_tracking.Publish(time, effective.tracking, true);
+	auto input = effective.input;
+	input.time = std::max({input.time, time, m_input.Snapshot().time});
+	m_gaze.ContributeInput(snapshot, input);
+	m_instance.Trackers().ContributeInput(snapshot, input);
+	if (XR_FAILED(m_input.Publish(input)))
+		throw std::logic_error("Invalid device input");
+	m_managedInputRevision = m_input.Revision();
+	std::vector<XrPath> changedPaths;
+	const auto trackerResult = m_instance.Trackers().Publish(snapshot, &changedPaths);
+	if (XR_FAILED(trackerResult) && trackerResult != XR_ERROR_FUNCTION_UNSUPPORTED)
+		throw std::logic_error("Invalid tracker inventory");
+	if (!changedPaths.empty())
+	{
+		XrPath trackerProfile{};
+		m_instance.Actions().StringToPath("/interaction_profiles/htc/vive_tracker_htcx", trackerProfile);
+		for (const auto& action : m_actions.Snapshot().actions)
+			for (const auto& binding : m_instance.Actions().Bindings(action.definition.handle, trackerProfile))
+				if (std::find(changedPaths.begin(), changedPaths.end(), binding.userPath) != changedPaths.end())
+					m_profileChanged = true;
+	}
+	if (!m_viewHistory.empty() && m_viewHistory.back().time == time)
+		m_viewHistory.back().configuration = std::move(configuration);
+	else
+		m_viewHistory.push_back({time, std::move(configuration)});
+	while (m_viewHistory.size() > 128)
+		m_viewHistory.pop_front();
+}
+
 } // namespace simxr

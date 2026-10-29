@@ -28,21 +28,22 @@ public:
 	~SimulationConnection();
 	SimulationConnection(const SimulationConnection&) = delete;
 	SimulationConnection& operator=(const SimulationConnection&) = delete;
+
 	Message Dispatch(const Message& request, const ControlSession& binding, Message response,
 					 std::vector<SnapshotRecord>& held);
 	bool OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept;
 
 private:
-	Message DispatchLiveInput(const Message& request, const ControlSession& binding, Message response);
-	std::optional<CommandSource> Source(std::optional<CommandSourceKind> requested) const;
-	CommandSource RequestSource(const Message& request) const;
-	void Track(const std::shared_ptr<Session>& session, CommandSource source);
-
 	struct Use
 	{
 		std::shared_ptr<Session> session;
 		CommandSource source;
 	};
+
+	Message DispatchLiveInput(const Message& request, const ControlSession& binding, Message response);
+	std::optional<CommandSource> Source(std::optional<CommandSourceKind> requested) const;
+	CommandSource RequestSource(const Message& request) const;
+	void Track(const std::shared_ptr<Session>& session, CommandSource source);
 
 	ConnectionId m_connection;
 	GameBridge& m_game;

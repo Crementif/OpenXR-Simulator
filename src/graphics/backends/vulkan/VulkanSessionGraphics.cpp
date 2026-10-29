@@ -77,44 +77,74 @@ XrResult VulkanSessionGraphics::Create(const VulkanBinding& binding, std::shared
 	}
 }
 
-VulkanSessionGraphics::VulkanSessionGraphics(const VulkanBinding& binding, std::shared_ptr<Session> session,
-											 bool validation)
-	: m_session(std::move(session))
-{
-	const auto sharing = VulkanSharingExtensions(binding.physicalDevice);
-#ifdef _WIN32
-	constexpr const char* memoryCommand = "vkGetMemoryWin32HandleKHR";
-	constexpr const char* semaphoreCommand = "vkGetSemaphoreWin32HandleKHR";
-	constexpr const char* importCommand = "vkImportSemaphoreWin32HandleKHR";
-#else
-	constexpr const char* memoryCommand = "vkGetMemoryFdKHR";
-	constexpr const char* semaphoreCommand = "vkGetSemaphoreFdKHR";
-	constexpr const char* importCommand = "vkImportSemaphoreFdKHR";
-#endif
-	if (!sharing.empty() &&
-		(!vkGetDeviceProcAddr(binding.device, memoryCommand) ||
-		 !vkGetDeviceProcAddr(binding.device, semaphoreCommand) || !vkGetDeviceProcAddr(binding.device, importCommand)))
-		throw std::invalid_argument("Vulkan sharing extensions were not enabled on the device");
-	m_backend = std::make_unique<VulkanBackend>(binding, 0, sharing, VK_API_VERSION_1_1);
-	if (m_backend->Sharing())
-	{
-		VulkanExternalDevice external(m_backend->Device(), sharing, VK_API_VERSION_1_1);
-		if (validation)
-			m_validation = std::make_shared<VulkanInspectionValidation>();
-		m_inspection = std::make_unique<VulkanInspection>(external.Identity(), 0, m_validation);
-		m_capabilities = {m_inspection->CanShare(), true};
-	}
-}
-
 VulkanSessionGraphics::~VulkanSessionGraphics() = default;
 
-XrResult VulkanSessionGraphics::ConfigureCapture()
+void VulkanSessionGraphics::BeginClose()
 {
-	if (!m_inspection)
+	m_closing = true;
+	m_waits.Close();
+	for (const auto handle : m_swapchains.Children(m_session.get()))
+		FindSwapchain(handle)->Close();
+}
+
+XrResult VulkanSessionGraphics::Drain(std::chrono::nanoseconds timeout)
+{
+	if (timeout < std::chrono::nanoseconds::zero())
+		return XR_ERROR_VALIDATION_FAILURE;
+	std::lock_guard lock(m_closeMutex);
+	if (m_closeStage != CloseStage::Pending)
 		return XR_SUCCESS;
-	const auto result =
-		m_session->ConfigureCapturePool(m_backend->Reservations(), true, PromoteInspectionCapture, true, true);
-	return XR_FAILED(result) ? result : m_session->EnableImageHistory();
+	if (!m_session->Snapshot().closed)
+		return XR_ERROR_CALL_ORDER_INVALID;
+	using Clock = std::chrono::steady_clock;
+	const auto maximum = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(5));
+	const auto deadline = Clock::now() + std::min(timeout, maximum);
+	const auto remaining = [&] {
+		return std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::max(deadline - Clock::now(), Clock::duration::zero()));
+	};
+	if (!m_waits.Drain(remaining()))
+		return XR_ERROR_RUNTIME_FAILURE;
+	const auto drained = m_backend->Drain(static_cast<std::uint64_t>(remaining().count()));
+	if (drained != VK_SUCCESS && drained != VK_ERROR_DEVICE_LOST)
+		return XR_ERROR_RUNTIME_FAILURE;
+	if (m_inspection)
+	{
+		const auto inspected = m_inspection->Close(static_cast<std::uint64_t>(remaining().count()));
+		if (inspected != VK_SUCCESS && inspected != VK_ERROR_DEVICE_LOST)
+			return XR_ERROR_RUNTIME_FAILURE;
+		if (m_validation && m_validation->errors.load())
+			return XR_ERROR_RUNTIME_FAILURE;
+	}
+	m_closeStage = CloseStage::Drained;
+	return XR_SUCCESS;
+}
+
+XrResult VulkanSessionGraphics::FinishClose()
+{
+	std::lock_guard lock(m_closeMutex);
+	if (m_closeStage == CloseStage::Closed)
+		return m_closeResult;
+	if (m_closeStage != CloseStage::Drained)
+		return XR_ERROR_CALL_ORDER_INVALID;
+	for (const auto handle : m_swapchains.Children(m_session.get()))
+		DestroySwapchain(FindSwapchain(handle));
+	const auto result = m_backend->Close();
+	if (XR_FAILED(result))
+		return result;
+	const auto validation = m_validation;
+	m_inspection.reset();
+	m_validation.reset();
+	m_backend.reset();
+	m_closeStage = CloseStage::Closed;
+	if (validation && validation->errors.load())
+		m_closeResult = XR_ERROR_RUNTIME_FAILURE;
+	return m_closeResult;
+}
+
+std::shared_ptr<VulkanDevice> VulkanSessionGraphics::Device() const
+{
+	return m_backend->Device();
 }
 
 control::ImageCapabilities VulkanSessionGraphics::Capabilities() const noexcept
@@ -127,13 +157,6 @@ control::ImageCapabilities VulkanSessionGraphics::Capabilities() const noexcept
 bool VulkanSessionGraphics::SupportsReprojection() const noexcept
 {
 	return m_inspection != nullptr;
-}
-
-XrResult VulkanSessionGraphics::GraphicsFailure(VkResult result)
-{
-	if (result == VK_ERROR_DEVICE_LOST)
-		m_backend->Device()->lost.store(true);
-	return VulkanGraphicsFailure(result);
 }
 
 XrResult VulkanSessionGraphics::CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output)
@@ -198,71 +221,48 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 	return result;
 }
 
-std::shared_ptr<VulkanDevice> VulkanSessionGraphics::Device() const
+VulkanSessionGraphics::VulkanSessionGraphics(const VulkanBinding& binding, std::shared_ptr<Session> session,
+											 bool validation)
+	: m_session(std::move(session))
 {
-	return m_backend->Device();
-}
-
-void VulkanSessionGraphics::BeginClose()
-{
-	m_closing = true;
-	m_waits.Close();
-	for (const auto handle : m_swapchains.Children(m_session.get()))
-		FindSwapchain(handle)->Close();
-}
-
-XrResult VulkanSessionGraphics::Drain(std::chrono::nanoseconds timeout)
-{
-	if (timeout < std::chrono::nanoseconds::zero())
-		return XR_ERROR_VALIDATION_FAILURE;
-	std::lock_guard lock(m_closeMutex);
-	if (m_closeStage != CloseStage::Pending)
-		return XR_SUCCESS;
-	if (!m_session->Snapshot().closed)
-		return XR_ERROR_CALL_ORDER_INVALID;
-	using Clock = std::chrono::steady_clock;
-	const auto maximum = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(5));
-	const auto deadline = Clock::now() + std::min(timeout, maximum);
-	const auto remaining = [&] {
-		return std::chrono::duration_cast<std::chrono::nanoseconds>(
-			std::max(deadline - Clock::now(), Clock::duration::zero()));
-	};
-	if (!m_waits.Drain(remaining()))
-		return XR_ERROR_RUNTIME_FAILURE;
-	const auto drained = m_backend->Drain(static_cast<std::uint64_t>(remaining().count()));
-	if (drained != VK_SUCCESS && drained != VK_ERROR_DEVICE_LOST)
-		return XR_ERROR_RUNTIME_FAILURE;
-	if (m_inspection)
+	const auto sharing = VulkanSharingExtensions(binding.physicalDevice);
+#ifdef _WIN32
+	constexpr const char* memoryCommand = "vkGetMemoryWin32HandleKHR";
+	constexpr const char* semaphoreCommand = "vkGetSemaphoreWin32HandleKHR";
+	constexpr const char* importCommand = "vkImportSemaphoreWin32HandleKHR";
+#else
+	constexpr const char* memoryCommand = "vkGetMemoryFdKHR";
+	constexpr const char* semaphoreCommand = "vkGetSemaphoreFdKHR";
+	constexpr const char* importCommand = "vkImportSemaphoreFdKHR";
+#endif
+	if (!sharing.empty() &&
+		(!vkGetDeviceProcAddr(binding.device, memoryCommand) ||
+		 !vkGetDeviceProcAddr(binding.device, semaphoreCommand) || !vkGetDeviceProcAddr(binding.device, importCommand)))
+		throw std::invalid_argument("Vulkan sharing extensions were not enabled on the device");
+	m_backend = std::make_unique<VulkanBackend>(binding, 0, sharing, VK_API_VERSION_1_1);
+	if (m_backend->Sharing())
 	{
-		const auto inspected = m_inspection->Close(static_cast<std::uint64_t>(remaining().count()));
-		if (inspected != VK_SUCCESS && inspected != VK_ERROR_DEVICE_LOST)
-			return XR_ERROR_RUNTIME_FAILURE;
-		if (m_validation && m_validation->errors.load())
-			return XR_ERROR_RUNTIME_FAILURE;
+		VulkanExternalDevice external(m_backend->Device(), sharing, VK_API_VERSION_1_1);
+		if (validation)
+			m_validation = std::make_shared<VulkanInspectionValidation>();
+		m_inspection = std::make_unique<VulkanInspection>(external.Identity(), 0, m_validation);
+		m_capabilities = {m_inspection->CanShare(), true};
 	}
-	m_closeStage = CloseStage::Drained;
-	return XR_SUCCESS;
 }
 
-XrResult VulkanSessionGraphics::FinishClose()
+XrResult VulkanSessionGraphics::ConfigureCapture()
 {
-	std::lock_guard lock(m_closeMutex);
-	if (m_closeStage == CloseStage::Closed)
-		return m_closeResult;
-	if (m_closeStage != CloseStage::Drained)
-		return XR_ERROR_CALL_ORDER_INVALID;
-	for (const auto handle : m_swapchains.Children(m_session.get()))
-		DestroySwapchain(FindSwapchain(handle));
-	const auto result = m_backend->Close();
-	if (XR_FAILED(result))
-		return result;
-	const auto validation = m_validation;
-	m_inspection.reset();
-	m_validation.reset();
-	m_backend.reset();
-	m_closeStage = CloseStage::Closed;
-	if (validation && validation->errors.load())
-		m_closeResult = XR_ERROR_RUNTIME_FAILURE;
-	return m_closeResult;
+	if (!m_inspection)
+		return XR_SUCCESS;
+	const auto result =
+		m_session->ConfigureCapturePool(m_backend->Reservations(), true, PromoteInspectionCapture, true, true);
+	return XR_FAILED(result) ? result : m_session->EnableImageHistory();
+}
+
+XrResult VulkanSessionGraphics::GraphicsFailure(VkResult result)
+{
+	if (result == VK_ERROR_DEVICE_LOST)
+		m_backend->Device()->lost.store(true);
+	return VulkanGraphicsFailure(result);
 }
 } // namespace simxr

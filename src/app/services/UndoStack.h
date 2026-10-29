@@ -29,15 +29,16 @@ public:
 
 	void Observe(const ObservedSetup& observed);
 
+	// Restores the channels authored by the newest groups; blocked ownership keeps history intact.
+	std::optional<ManualTransaction> Undo(const ObservedSetup& current, std::optional<CommandSource> source,
+										  std::size_t steps = 1);
+	void Clear();
+
 	bool Empty() const
 	{
 		return m_entries.empty();
 	}
 
-	void Clear();
-	// Restores the channels authored by the newest groups; blocked ownership keeps history intact.
-	std::optional<ManualTransaction> Undo(const ObservedSetup& current, std::optional<CommandSource> source,
-										  std::size_t steps = 1);
 	std::vector<Change> Changes() const;
 
 private:
@@ -61,6 +62,7 @@ private:
 	};
 
 	static std::string Describe(const State& before, const State& after);
+
 	std::vector<Entry> m_entries;
 	std::optional<State> m_authored;
 	bool m_open = false;

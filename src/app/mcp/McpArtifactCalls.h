@@ -42,6 +42,7 @@ public:
 	~ArtifactCalls();
 	ArtifactCalls(const ArtifactCalls&) = delete;
 	ArtifactCalls& operator=(const ArtifactCalls&) = delete;
+
 	void Check() const;
 	control::Message Request(control::OpCode opcode, std::vector<control::Field> fields,
 							 std::optional<std::string_view> program = {});
@@ -52,6 +53,7 @@ private:
 	std::shared_ptr<McpCancellation> Begin();
 	void End() noexcept;
 	void Disconnect() noexcept;
+
 	McpApplication& m_app;
 	McpDebug& m_debug;
 	std::string m_connection;

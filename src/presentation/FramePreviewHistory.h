@@ -44,11 +44,13 @@ public:
 	static constexpr std::uint64_t SlotBytes = 4ull << 20, BudgetBytes = 480ull << 20, RamBudgetBytes = 1024ull << 20;
 	static constexpr std::size_t Capacity = BudgetBytes / SlotBytes;
 	static constexpr std::uint32_t MinMiB = 64, MaxMiB = 16384;
+
 	FramePreviewHistory();
 	~FramePreviewHistory();
+
 	void Configure(std::uint64_t bytes);
-	void CloseAdmission();
 	void ConfigureRam(std::uint64_t bytes);
+	void CloseAdmission();
 
 	std::uint64_t Limit() const
 	{
@@ -71,13 +73,13 @@ public:
 	}
 
 	std::string Error() const;
-	std::shared_ptr<FrameReservation> Reserve(FrameKey key, bool waitForSpace = true);
 
 	const FramePool& Budget() const noexcept
 	{
 		return m_budget;
 	}
 
+	std::shared_ptr<FrameReservation> Reserve(FrameKey key, bool waitForSpace = true);
 	void Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
 				const TrackingSnapshot* tracking = nullptr, RuntimeTime time = {}, Duration period = {});
 	FramePreview Find(FrameKey key);
@@ -110,6 +112,7 @@ private:
 	std::shared_ptr<Entry> EvictRaw();
 	void TrimRam();
 	void Run() noexcept;
+
 	FramePool m_budget{Capacity};
 	std::shared_ptr<std::atomic<std::uint64_t>> m_ramBytes = std::make_shared<std::atomic<std::uint64_t>>(0);
 	std::atomic<std::uint64_t> m_ramLimit{RamBudgetBytes};

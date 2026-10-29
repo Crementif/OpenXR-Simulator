@@ -44,36 +44,12 @@ LibraryCatalog::~LibraryCatalog()
 		m_worker.join();
 }
 
-bool LibraryCatalog::ValidName(const std::string& name)
-{
-	return !name.empty() && name != "." && name != ".." && name.back() != '.' && name.back() != ' ' &&
-		   name.find_first_of("/\\:<>\"|?*") == std::string::npos &&
-		   std::none_of(name.begin(), name.end(), [](unsigned char character) { return character < 32; });
-}
-
-void LibraryCatalog::StartWorker()
-{
-	if (!m_worker.joinable())
-		m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
-}
-
 void LibraryCatalog::Refresh()
 {
 	std::lock_guard lock(m_mutex);
 	StartWorker();
 	m_refresh = true;
 	m_changed.notify_all();
-}
-
-bool LibraryCatalog::Submit(Job job)
-{
-	std::lock_guard lock(m_mutex);
-	if (m_busy || m_job || m_result)
-		return false;
-	StartWorker();
-	m_job = std::move(job);
-	m_changed.notify_all();
-	return true;
 }
 
 bool LibraryCatalog::Rename(std::string path, std::string name)
@@ -108,6 +84,112 @@ std::optional<LibraryResult> LibraryCatalog::TakeResult()
 	auto result = std::exchange(m_result, {});
 	m_changed.notify_all();
 	return result;
+}
+
+bool LibraryCatalog::ValidName(const std::string& name)
+{
+	return !name.empty() && name != "." && name != ".." && name.back() != '.' && name.back() != ' ' &&
+		   name.find_first_of("/\\:<>\"|?*") == std::string::npos &&
+		   std::none_of(name.begin(), name.end(), [](unsigned char character) { return character < 32; });
+}
+
+bool LibraryCatalog::Submit(Job job)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_busy || m_job || m_result)
+		return false;
+	StartWorker();
+	m_job = std::move(job);
+	m_changed.notify_all();
+	return true;
+}
+
+void LibraryCatalog::StartWorker()
+{
+	if (!m_worker.joinable())
+		m_worker = std::jthread([this](std::stop_token stop) { Run(stop); });
+}
+
+void LibraryCatalog::Run(std::stop_token stop)
+{
+	while (true)
+	{
+		Job job{LibraryAction::Scan, {}, {}};
+		{
+			std::unique_lock lock(m_mutex);
+			if (!m_changed.wait(lock, stop, [this] { return !m_result && (m_job || m_refresh); }))
+				return;
+			if (m_job)
+				job = std::move(*m_job);
+			m_job.reset();
+			m_refresh = false;
+			m_busy = true;
+		}
+		LibraryResult result;
+		result.action = job.action;
+		result.path = std::move(job.path);
+		try
+		{
+			if (job.action != LibraryAction::Scan)
+			{
+				if (result.path.empty() || result.path.find('\0') != std::string::npos)
+					throw std::invalid_argument("Invalid library file path");
+				const auto source = Utf8Path(result.path);
+				const auto status = std::filesystem::symlink_status(source);
+				const bool archive = source.extension() == ".simxrtake" && std::filesystem::is_directory(status);
+				if (!std::filesystem::is_regular_file(status) && !std::filesystem::is_symlink(status) && !archive)
+					throw std::runtime_error("The selected file is missing or is a directory");
+				if (job.action == LibraryAction::Evidence)
+				{
+					if (!archive)
+						throw std::runtime_error("SDK evidence requires an archive");
+					result.evidence = automation::ReadRecordingEvidence(source, job.first, stop);
+				}
+				else if (job.action == LibraryAction::Rename)
+				{
+					if (!ValidName(job.name))
+						throw std::invalid_argument("Choose a valid file name without path separators");
+					const auto destination =
+						source.parent_path() / Utf8Path(job.name + (archive ? ".simxrtake" : ".luau"));
+					result.renamed = PathText(destination);
+					RenameFileWithoutReplacing(source, destination);
+				}
+				else if (job.action == LibraryAction::ExportRange)
+				{
+					if (!archive || !ValidName(job.name))
+						throw std::invalid_argument("Choose an archive and a valid output name");
+					const auto destination = source.parent_path() / Utf8Path(job.name + ".luau");
+					const auto range =
+						automation::ReadRecordingRange(source, FrameId{job.first}, FrameId{job.last}, stop);
+					if (stop.stop_requested())
+						throw std::runtime_error("Range export cancelled");
+					SaveRecording(destination, range, false);
+					result.renamed = PathText(destination);
+				}
+				else if (archive)
+				{
+					for (const auto& child : std::filesystem::directory_iterator(source))
+						if (child.path().filename() != "input.simxr" || !child.is_regular_file() || child.is_symlink())
+							throw std::runtime_error("Take folder contains other files; remove it manually");
+					std::filesystem::remove(source / "input.simxr");
+					if (!std::filesystem::remove(source))
+						throw std::runtime_error("Cannot remove take folder");
+				}
+				else if (!std::filesystem::remove(source))
+					throw std::runtime_error("The selected file no longer exists");
+				result.changed = job.action != LibraryAction::Evidence;
+			}
+			if (job.action != LibraryAction::Evidence)
+				Scan(result, stop);
+		}
+		catch (...)
+		{
+			result.error = std::current_exception();
+		}
+		std::lock_guard lock(m_mutex);
+		m_result = std::move(result);
+		m_busy = false;
+	}
 }
 
 void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop)
@@ -191,87 +273,5 @@ void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop)
 		if (entry.archive && entry.error.empty())
 			m_archiveCache.push_back(entry);
 	result.entries = std::move(entries);
-}
-
-void LibraryCatalog::Run(std::stop_token stop)
-{
-	while (true)
-	{
-		Job job{LibraryAction::Scan, {}, {}};
-		{
-			std::unique_lock lock(m_mutex);
-			if (!m_changed.wait(lock, stop, [this] { return !m_result && (m_job || m_refresh); }))
-				return;
-			if (m_job)
-				job = std::move(*m_job);
-			m_job.reset();
-			m_refresh = false;
-			m_busy = true;
-		}
-		LibraryResult result;
-		result.action = job.action;
-		result.path = std::move(job.path);
-		try
-		{
-			if (job.action != LibraryAction::Scan)
-			{
-				if (result.path.empty() || result.path.find('\0') != std::string::npos)
-					throw std::invalid_argument("Invalid library file path");
-				const auto source = Utf8Path(result.path);
-				const auto status = std::filesystem::symlink_status(source);
-				const bool archive = source.extension() == ".simxrtake" && std::filesystem::is_directory(status);
-				if (!std::filesystem::is_regular_file(status) && !std::filesystem::is_symlink(status) && !archive)
-					throw std::runtime_error("The selected file is missing or is a directory");
-				if (job.action == LibraryAction::Evidence)
-				{
-					if (!archive)
-						throw std::runtime_error("SDK evidence requires an archive");
-					result.evidence = automation::ReadRecordingEvidence(source, job.first, stop);
-				}
-				else if (job.action == LibraryAction::Rename)
-				{
-					if (!ValidName(job.name))
-						throw std::invalid_argument("Choose a valid file name without path separators");
-					const auto destination =
-						source.parent_path() / Utf8Path(job.name + (archive ? ".simxrtake" : ".luau"));
-					result.renamed = PathText(destination);
-					RenameFileWithoutReplacing(source, destination);
-				}
-				else if (job.action == LibraryAction::ExportRange)
-				{
-					if (!archive || !ValidName(job.name))
-						throw std::invalid_argument("Choose an archive and a valid output name");
-					const auto destination = source.parent_path() / Utf8Path(job.name + ".luau");
-					const auto range =
-						automation::ReadRecordingRange(source, FrameId{job.first}, FrameId{job.last}, stop);
-					if (stop.stop_requested())
-						throw std::runtime_error("Range export cancelled");
-					SaveRecording(destination, range, false);
-					result.renamed = PathText(destination);
-				}
-				else if (archive)
-				{
-					for (const auto& child : std::filesystem::directory_iterator(source))
-						if (child.path().filename() != "input.simxr" || !child.is_regular_file() || child.is_symlink())
-							throw std::runtime_error("Take folder contains other files; remove it manually");
-					std::filesystem::remove(source / "input.simxr");
-					if (!std::filesystem::remove(source))
-						throw std::runtime_error("Cannot remove take folder");
-				}
-				else if (!std::filesystem::remove(source))
-					throw std::runtime_error("The selected file no longer exists");
-				result.changed = job.action != LibraryAction::Evidence;
-			}
-			if (job.action != LibraryAction::Evidence)
-				Scan(result, stop);
-		}
-		catch (...)
-		{
-			result.error = std::current_exception();
-		}
-		std::lock_guard lock(m_mutex);
-		m_result = std::move(result);
-		m_busy = false;
-	}
 }
 } // namespace simxr::app

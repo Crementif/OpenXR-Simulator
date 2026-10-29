@@ -85,8 +85,10 @@ class FrameDiagnosticsJournal
 {
 public:
 	using TimestampSource = std::function<Duration()>;
+
 	explicit FrameDiagnosticsJournal(std::size_t capacity = 1024, TimestampSource timestamp = {});
 	~FrameDiagnosticsJournal();
+
 	// Storage is preallocated. A clock/locking failure returns an unsequenced
 	// event (sequence == 0) and does not change retained observations.
 	FrameDiagnostic Trace(FrameTraceKind kind, FrameKey frame, RuntimeTime time, XrResult result = XR_SUCCESS,
@@ -99,10 +101,11 @@ public:
 				  std::optional<FrameKey> frame = {}) const noexcept;
 
 private:
-	void CopyLocked(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
-					std::optional<FrameKey> frame) const noexcept;
 	static std::size_t ValidateCapacity(std::size_t capacity);
 	static void CopyDetail(FrameDiagnostic& event, std::string_view detail) noexcept;
+	void CopyLocked(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
+					std::optional<FrameKey> frame) const noexcept;
+
 	TimestampSource m_timestamp;
 	mutable std::mutex m_mutex;
 	std::vector<FrameDiagnostic> m_events;

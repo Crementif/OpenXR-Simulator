@@ -23,27 +23,6 @@ HeadsetImages::~HeadsetImages()
 	Close();
 }
 
-std::shared_ptr<const HeadsetImageFrame> HeadsetImages::Current() const
-{
-	return m_current;
-}
-
-std::optional<std::chrono::nanoseconds> HeadsetImages::Age(std::chrono::steady_clock::time_point now) const
-{
-	return m_current ? HeadsetImageAge(m_current->metadata, now) : std::nullopt;
-}
-
-bool HeadsetImages::Fresh(std::chrono::nanoseconds period) const
-{
-	return m_presentationAvailable && m_current &&
-		   FreshHeadsetImage(m_current->metadata, period, std::chrono::steady_clock::now());
-}
-
-void HeadsetImages::RetireUnused()
-{
-	std::erase_if(m_frames, [&](const auto& frame) { return frame != m_current && frame.use_count() == 1; });
-}
-
 void HeadsetImages::Tick()
 {
 	if (m_closed)
@@ -175,5 +154,26 @@ bool HeadsetImages::Close()
 	m_pending.reset();
 	m_frames.clear();
 	return m_retired;
+}
+
+std::shared_ptr<const HeadsetImageFrame> HeadsetImages::Current() const
+{
+	return m_current;
+}
+
+bool HeadsetImages::Fresh(std::chrono::nanoseconds period) const
+{
+	return m_presentationAvailable && m_current &&
+		   FreshHeadsetImage(m_current->metadata, period, std::chrono::steady_clock::now());
+}
+
+std::optional<std::chrono::nanoseconds> HeadsetImages::Age(std::chrono::steady_clock::time_point now) const
+{
+	return m_current ? HeadsetImageAge(m_current->metadata, now) : std::nullopt;
+}
+
+void HeadsetImages::RetireUnused()
+{
+	std::erase_if(m_frames, [&](const auto& frame) { return frame != m_current && frame.use_count() == 1; });
 }
 } // namespace simxr::headset

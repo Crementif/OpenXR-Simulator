@@ -8,7 +8,9 @@
 namespace simxr::app
 {
 namespace wire = control;
+
 namespace tag = wire::tag;
+
 using namespace panel;
 
 ImageExportWriter::ImageExportWriter() : m_worker([this] { Run(); }) {}
@@ -119,16 +121,6 @@ void ImageExportWriter::Run() noexcept
 
 ImageExportTask::ImageExportTask(RuntimePanelRequests& requests) : m_requests(requests) {}
 
-bool ImageExportTask::Busy() const
-{
-	return m_requested || m_id || m_writer.Busy();
-}
-
-const std::string& ImageExportTask::Detail() const noexcept
-{
-	return m_detail;
-}
-
 void ImageExportTask::ResetEpoch()
 {
 	if (m_requested || m_id)
@@ -174,24 +166,33 @@ bool ImageExportTask::RequestVideo(std::uint64_t session, std::uint64_t generati
 	return m_requested;
 }
 
-void ImageExportTask::ReleaseRemote()
+void ImageExportTask::Poll()
 {
-	if (m_id)
-		m_requests.Release(wire::OpCode::ReleaseExport, tag::ExportId, std::exchange(m_id, 0));
-	m_requested = false;
-}
-
-void ImageExportTask::Abort(std::string detail)
-{
-	ReleaseRemote();
-	m_bytes.clear();
-	m_detail = std::move(detail);
-}
-
-void ImageExportTask::Failed(const PanelTask& task, std::string detail)
-{
-	if (task.kind == PanelWork::Export || task.kind == PanelWork::ExportInfo || task.kind == PanelWork::ExportRead)
-		Abort(std::move(detail));
+	if (auto result = m_writer.TakeResult())
+	{
+		switch (result->status)
+		{
+		case ImageExportWriteResult::Status::Saved:
+			m_succeeded = true;
+			m_detail = "Saved " + result->path;
+			break;
+		case ImageExportWriteResult::Status::Failed:
+			m_detail = result->error;
+			break;
+		}
+	}
+	if (m_requests.Snapshot().state == RuntimeConnectionState::Connected && m_id &&
+		!m_requests.Has(PanelWork::ExportInfo) && !m_requests.Has(PanelWork::ExportRead))
+	{
+		if (m_ready)
+			m_requests.Send(wire::OpCode::ReadExport, PanelWork::ExportRead,
+							{wire::Field::U64(tag::ExportId, m_id, true), wire::Field::U64(tag::Offset, m_offset, true),
+							 wire::Field::U64(tag::Length, wire::MaxPayload - 4096, true)},
+							m_id);
+		else
+			m_requests.Send(wire::OpCode::ExportInfo, PanelWork::ExportInfo,
+							{wire::Field::U64(tag::ExportId, m_id, true)}, m_id);
+	}
 }
 
 bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message)
@@ -278,32 +279,33 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 	return true;
 }
 
-void ImageExportTask::Poll()
+void ImageExportTask::Failed(const PanelTask& task, std::string detail)
 {
-	if (auto result = m_writer.TakeResult())
-	{
-		switch (result->status)
-		{
-		case ImageExportWriteResult::Status::Saved:
-			m_succeeded = true;
-			m_detail = "Saved " + result->path;
-			break;
-		case ImageExportWriteResult::Status::Failed:
-			m_detail = result->error;
-			break;
-		}
-	}
-	if (m_requests.Snapshot().state == RuntimeConnectionState::Connected && m_id &&
-		!m_requests.Has(PanelWork::ExportInfo) && !m_requests.Has(PanelWork::ExportRead))
-	{
-		if (m_ready)
-			m_requests.Send(wire::OpCode::ReadExport, PanelWork::ExportRead,
-							{wire::Field::U64(tag::ExportId, m_id, true), wire::Field::U64(tag::Offset, m_offset, true),
-							 wire::Field::U64(tag::Length, wire::MaxPayload - 4096, true)},
-							m_id);
-		else
-			m_requests.Send(wire::OpCode::ExportInfo, PanelWork::ExportInfo,
-							{wire::Field::U64(tag::ExportId, m_id, true)}, m_id);
-	}
+	if (task.kind == PanelWork::Export || task.kind == PanelWork::ExportInfo || task.kind == PanelWork::ExportRead)
+		Abort(std::move(detail));
+}
+
+bool ImageExportTask::Busy() const
+{
+	return m_requested || m_id || m_writer.Busy();
+}
+
+const std::string& ImageExportTask::Detail() const noexcept
+{
+	return m_detail;
+}
+
+void ImageExportTask::Abort(std::string detail)
+{
+	ReleaseRemote();
+	m_bytes.clear();
+	m_detail = std::move(detail);
+}
+
+void ImageExportTask::ReleaseRemote()
+{
+	if (m_id)
+		m_requests.Release(wire::OpCode::ReleaseExport, tag::ExportId, std::exchange(m_id, 0));
+	m_requested = false;
 }
 } // namespace simxr::app

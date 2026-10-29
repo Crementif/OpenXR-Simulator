@@ -54,27 +54,40 @@ public:
 	// Each application keeps its own workspace state, while preferences are shared.
 	WorkspacePanels(ProcessSupervisor& processes, WorkspacePanels& existing);
 	~WorkspacePanels();
-	std::string InitialEndpoint() const;
+
 	void BeginFrame(RuntimePanels& runtime);
 	// Advances launch and automation work even while this workspace is hidden.
 	void Poll(RuntimePanels& runtime);
+	void Draw(RuntimePanels& runtime);
+	void Finish();
+
 	void SetTabBar(std::function<void()> draw);
 	void SetOpenHandlers(std::function<bool(const RunningApp&)> connect,
 						 std::function<bool(const LaunchProfile&)> launch);
 	void SetEndpointAdmission(std::function<bool(const std::string&)> available);
+	void SetScale(float scale);
+
 	void OpenAppPicker();
 	void ConnectApp(RuntimePanels& runtime, const RunningApp& app);
 	void LaunchApp(const LaunchProfile& profile);
 	bool RequestApplicationClose(const RuntimePanels& runtime);
 	bool RequestApplicationRestart(RuntimePanels& runtime, std::uint64_t expectedProcess);
 	bool ConnectionMatchesLaunch(const RuntimePanels& runtime) const;
+
+	std::string InitialEndpoint() const;
 	const std::string& LaunchError() const noexcept;
 	LaunchSnapshot Process() const;
 	std::string LaunchControlEndpoint() const;
 	std::string LaunchDataDirectory() const;
+	std::string ApplicationName(const RuntimePanels& runtime) const;
 	bool McpEnabled() const;
 	McpUiState& McpState();
-	std::string ApplicationName(const RuntimePanels& runtime) const;
+
+	const ShellState& State() const;
+	void Select(Selection selection);
+	void SetPreviewExpanded(bool expanded);
+	void ShowLibrary(bool open);
+
 	bool HasActiveAutomation() const;
 	bool HasPendingFiles() const;
 	bool ClosingWorkDone() const;
@@ -91,15 +104,23 @@ public:
 		return m_rigs;
 	}
 #endif
-	void Draw(RuntimePanels& runtime);
-	const ShellState& State() const;
-	void Select(Selection selection);
-	void SetPreviewExpanded(bool expanded);
-	void ShowLibrary(bool open);
-	void SetScale(float scale);
-	void Finish();
 
 private:
+	struct DividerDrag
+	{
+		ImGuiID id;
+		float request, travel;
+	};
+
+	struct PendingRestart
+	{
+		LaunchRestartRequest request;
+		RuntimeFrameRun run;
+		std::string endpoint;
+		std::chrono::steady_clock::time_point deadline;
+		bool queued = false;
+	};
+
 	WorkspacePanels(ProcessSupervisor& processes, std::shared_ptr<SharedWorkspaceSettings> shared);
 	void Save();
 	void SaveLayout();
@@ -108,9 +129,6 @@ private:
 	void PollLaunch(RuntimePanels& runtime);
 	bool Restart(RuntimePanels& runtime, LaunchRestartRequest request);
 	void CancelRestart();
-	void DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view, float maximumWidth, bool compact = false);
-	void DrawHistory(RuntimePanels& runtime);
-	void DrawToolbar(RuntimePanels& runtime);
 	void ToggleLibrary();
 	void ShowInspector();
 	void FoldTimeline();
@@ -120,6 +138,9 @@ private:
 	bool Divider(const char* id, ShellRect strip, bool vertical, float& value, float minimum, float maximum,
 				 float defaultValue, bool folded, float foldBelow);
 	void DrawShell(RuntimePanels& runtime);
+	void DrawToolbar(RuntimePanels& runtime);
+	void DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view, float maximumWidth, bool compact = false);
+	void DrawHistory(RuntimePanels& runtime);
 	void DrawInspectorPanel(RuntimePanels& runtime, bool rail);
 	void DrawLibrary(RuntimePanels& runtime);
 	void DrawInspector(RuntimePanels& runtime);
@@ -127,6 +148,7 @@ private:
 	RuntimeFrameRun ReplayTarget(const RuntimePanels& runtime) const;
 	void QueueScript(RuntimePanels& runtime, ScriptRun run);
 #endif
+
 	std::shared_ptr<SharedWorkspaceSettings> m_shared;
 	std::function<void()> m_tabBar;
 	std::function<bool(const RunningApp&)> m_openRunning;
@@ -145,13 +167,6 @@ private:
 	std::string m_workspaceProfile;
 	std::optional<std::string> m_cropProfile;
 	bool m_wasOverlay = false;
-
-	struct DividerDrag
-	{
-		ImGuiID id;
-		float request, travel;
-	};
-
 	std::optional<DividerDrag> m_dividerDrag;
 	std::filesystem::path& m_path;
 	std::filesystem::path& m_layoutPath;
@@ -161,16 +176,6 @@ private:
 	RuntimeConnection m_launchDiscovery;
 	std::unique_ptr<LaunchAttachment> m_attachment;
 	std::optional<LaunchProfile> m_launchedProfile;
-
-	struct PendingRestart
-	{
-		LaunchRestartRequest request;
-		RuntimeFrameRun run;
-		std::string endpoint;
-		std::chrono::steady_clock::time_point deadline;
-		bool queued = false;
-	};
-
 	std::optional<PendingRestart> m_restart;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	RigController m_rigs;

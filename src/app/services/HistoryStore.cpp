@@ -31,12 +31,6 @@ HistoryStore::HistoryStore(std::size_t capacity)
 	m_segments.reserve(capacity + 1);
 }
 
-std::size_t HistoryStore::RetainedBytes() const noexcept
-{
-	return m_frames.capacity() * sizeof(HistoryFrame) + m_buckets.capacity() * sizeof(HistoryBucket) +
-		   m_segments.capacity() * sizeof(Segment);
-}
-
 void HistoryStore::Clear() noexcept
 {
 	if (m_identityRevision != std::numeric_limits<std::uint64_t>::max())
@@ -45,37 +39,6 @@ void HistoryStore::Clear() noexcept
 	m_appended = 0;
 	m_segments.clear();
 	std::fill(m_buckets.begin(), m_buckets.end(), HistoryBucket{});
-}
-
-std::size_t HistoryStore::Physical(std::size_t index) const noexcept
-{
-	return (m_start + index) % Capacity();
-}
-
-const HistoryFrame& HistoryStore::At(std::size_t index) const
-{
-	if (index >= m_size)
-		throw std::out_of_range("Frame history index");
-	return m_frames[Physical(index)];
-}
-
-void HistoryStore::Update(std::size_t physical) noexcept
-{
-	const auto& frame = m_frames[physical];
-	auto node = m_leaves + physical;
-	m_buckets[node] = {1,
-					   frame.frameMilliseconds,
-					   frame.frameMilliseconds,
-					   frame.flags,
-					   frame.hands,
-					   frame.cpuMilliseconds,
-					   (frame.flags & (HistoryLate | HistoryDropped)) ? 1U : 0U,
-					   (frame.flags & HistoryDriven) ? 1U : 0U};
-	while (node > 1)
-	{
-		node /= 2;
-		m_buckets[node] = Merge(m_buckets[node * 2], m_buckets[node * 2 + 1]);
-	}
 }
 
 void HistoryStore::Append(const HistoryFrame& frame)
@@ -123,6 +86,32 @@ void HistoryStore::SetCoverage(std::size_t index, std::uint64_t capture, std::ui
 	}
 }
 
+void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)
+{
+	(void)At(index);
+	const auto physical = Physical(index);
+	auto& flags = m_frames[physical].flags;
+	const auto updated = enabled ? flags | mask : flags & ~mask;
+	if (flags != updated)
+	{
+		flags = updated;
+		Update(physical);
+	}
+}
+
+std::size_t HistoryStore::RetainedBytes() const noexcept
+{
+	return m_frames.capacity() * sizeof(HistoryFrame) + m_buckets.capacity() * sizeof(HistoryBucket) +
+		   m_segments.capacity() * sizeof(Segment);
+}
+
+const HistoryFrame& HistoryStore::At(std::size_t index) const
+{
+	if (index >= m_size)
+		throw std::out_of_range("Frame history index");
+	return m_frames[Physical(index)];
+}
+
 std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint64_t epoch) const
 {
 	const auto oldest = m_appended - m_size;
@@ -144,6 +133,13 @@ std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint6
 				end = middle;
 		}
 	}
+	return {};
+}
+
+std::optional<std::size_t> HistoryStore::Latest(FrameIdentity scope, std::uint64_t epoch) const
+{
+	if (const auto segment = LatestSegment(scope, epoch))
+		return segment->second - 1;
 	return {};
 }
 
@@ -169,13 +165,6 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> HistoryStore::FrameBounds
 	return bounds;
 }
 
-std::optional<std::size_t> HistoryStore::Latest(FrameIdentity scope, std::uint64_t epoch) const
-{
-	if (const auto segment = LatestSegment(scope, epoch))
-		return segment->second - 1;
-	return {};
-}
-
 std::optional<std::pair<std::size_t, std::size_t>> HistoryStore::LatestSegment(FrameIdentity scope,
 																			   std::uint64_t epoch) const
 {
@@ -197,19 +186,6 @@ std::pair<std::size_t, std::size_t> HistoryStore::SegmentAt(std::size_t index) c
 						 [](const Segment& candidate, std::uint64_t position) { return candidate.end <= position; });
 	return {static_cast<std::size_t>(std::max(segment->begin, oldest) - oldest),
 			static_cast<std::size_t>(segment->end - oldest)};
-}
-
-void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)
-{
-	(void)At(index);
-	const auto physical = Physical(index);
-	auto& flags = m_frames[physical].flags;
-	const auto updated = enabled ? flags | mask : flags & ~mask;
-	if (flags != updated)
-	{
-		flags = updated;
-		Update(physical);
-	}
 }
 
 std::size_t HistoryStore::LowerBound(double seconds) const noexcept
@@ -239,6 +215,41 @@ std::optional<std::size_t> HistoryStore::Nearest(double seconds) const noexcept
 																										: next;
 }
 
+HistoryBucket HistoryStore::Query(std::size_t first, std::size_t end) const
+{
+	if (first > end || end > m_size)
+		throw std::out_of_range("Frame history range");
+	if (first == end)
+		return {};
+	const auto start = Physical(first), count = end - first;
+	const auto tail = std::min(count, Capacity() - start);
+	return Merge(PhysicalQuery(start, start + tail), PhysicalQuery(0, count - tail));
+}
+
+std::size_t HistoryStore::Physical(std::size_t index) const noexcept
+{
+	return (m_start + index) % Capacity();
+}
+
+void HistoryStore::Update(std::size_t physical) noexcept
+{
+	const auto& frame = m_frames[physical];
+	auto node = m_leaves + physical;
+	m_buckets[node] = {1,
+					   frame.frameMilliseconds,
+					   frame.frameMilliseconds,
+					   frame.flags,
+					   frame.hands,
+					   frame.cpuMilliseconds,
+					   (frame.flags & (HistoryLate | HistoryDropped)) ? 1U : 0U,
+					   (frame.flags & HistoryDriven) ? 1U : 0U};
+	while (node > 1)
+	{
+		node /= 2;
+		m_buckets[node] = Merge(m_buckets[node * 2], m_buckets[node * 2 + 1]);
+	}
+}
+
 HistoryBucket HistoryStore::PhysicalQuery(std::size_t first, std::size_t end) const noexcept
 {
 	HistoryBucket result;
@@ -250,16 +261,5 @@ HistoryBucket HistoryStore::PhysicalQuery(std::size_t first, std::size_t end) co
 			result = Merge(result, m_buckets[--end]);
 	}
 	return result;
-}
-
-HistoryBucket HistoryStore::Query(std::size_t first, std::size_t end) const
-{
-	if (first > end || end > m_size)
-		throw std::out_of_range("Frame history range");
-	if (first == end)
-		return {};
-	const auto start = Physical(first), count = end - first;
-	const auto tail = std::min(count, Capacity() - start);
-	return Merge(PhysicalQuery(start, start + tail), PhysicalQuery(0, count - tail));
 }
 } // namespace simxr::app

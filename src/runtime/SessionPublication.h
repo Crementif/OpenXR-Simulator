@@ -28,6 +28,7 @@ public:
 		~PreparedStart();
 		PreparedStart(const PreparedStart&) = delete;
 		PreparedStart& operator=(const PreparedStart&) = delete;
+
 		const ReferenceSpaceState& ReferenceSpaces() const;
 		void Commit();
 
@@ -48,6 +49,7 @@ public:
 		FrameBoundary(SessionPublication& owner, bool focused, const ReferenceSpaceState& spaces);
 		FrameBoundary(const FrameBoundary&) = delete;
 		FrameBoundary& operator=(const FrameBoundary&) = delete;
+
 		void Reserve(const FramePrediction& prediction,
 					 const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory);
 		const AppliedCommandSnapshot& Applied() const;
@@ -63,37 +65,42 @@ public:
 	};
 
 	SessionPublication(Instance& instance, ActionSyncState& actions);
+
 	void Configure(std::uint64_t seed, std::optional<CommandConfiguration> initial, bool overrideInitial);
 	void Stop();
+
 	bool ReleaseSource(CommandSource source, bool retire);
 	bool ExpireLiveInput(LiveInputClock::time_point now);
 	void StopPoseSequence(CommandSource source);
+
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings, bool focused);
 	XrResult PublishInput(InputSnapshot input);
-	CommandConfiguration ConfigurationSnapshot(const FramePrediction& lastIssued) const;
+
 	RecordingResult StartRecording(const ReferenceSpaceState& spaces, bool drain, CommandSource owner);
 	void CaptureFrame(FrameId frame, FrameSubmissionState& submission) const;
 	void RecordViewQuery(ViewQuerySnapshot query);
 	bool TakeProfileChange() noexcept;
+	CommandConfiguration ConfigurationSnapshot(const FramePrediction& lastIssued) const;
+
 	CommandScheduler& Commands();
 	InputState& Input();
 	TrackingSystem& Tracking();
-	ViewConfiguration ConfigurationAt(RuntimeTime time) const;
 	ViewLayout Layout() const noexcept;
+	ViewConfiguration ConfigurationAt(RuntimeTime time) const;
 	LocatedViews ViewsAt(RuntimeTime time, bool foveated) const;
 	PoseSample ActionPose(XrAction action, XrPath subaction, RuntimeTime time) const;
 	XrResult ValidatePoseAction(XrAction action, XrPath subaction) const;
 
 private:
-	bool ReleaseChannels(const std::array<bool, ControlChannelCount>& channels);
-
 	struct ViewRevision
 	{
 		RuntimeTime time;
 		ViewConfiguration configuration;
 	};
 
+	bool ReleaseChannels(const std::array<bool, ControlChannelCount>& channels);
 	void PublishEffective(RuntimeTime time, const CommandConfiguration& effective);
+
 	Instance& m_instance;
 	ActionSyncState& m_actions;
 	CommandScheduler m_commands;

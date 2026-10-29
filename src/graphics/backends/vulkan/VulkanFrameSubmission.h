@@ -42,6 +42,7 @@ public:
 	~VulkanFrameSubmission() override;
 	VulkanFrameSubmission(const VulkanFrameSubmission&) = delete;
 	VulkanFrameSubmission& operator=(const VulkanFrameSubmission&) = delete;
+
 	FramePool LiveReservations() const override;
 	FramePool HistoryReservations() const override;
 	XrResult Prepare(FrameKey key, const SessionComposition& composition, std::shared_ptr<FrameReservation> reservation,

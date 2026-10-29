@@ -51,12 +51,6 @@ IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, c
 	return update;
 }
 
-void IncidentCapture::Expire(uint64_t frame)
-{
-	if (frame >= m_lastIncidentFrame && frame - m_lastIncidentFrame > s_postIncidentFrames)
-		m_activeDirectory.clear();
-}
-
 std::optional<SampleArtifact> IncidentCapture::Continue(const Sample& sample)
 {
 	Expire(sample.frame);
@@ -72,6 +66,12 @@ std::optional<SampleArtifact> IncidentCapture::Continue(const Sample& sample)
 const IncidentStatistics& IncidentCapture::Statistics() const
 {
 	return m_statistics;
+}
+
+void IncidentCapture::Expire(uint64_t frame)
+{
+	if (frame >= m_lastIncidentFrame && frame - m_lastIncidentFrame > s_postIncidentFrames)
+		m_activeDirectory.clear();
 }
 
 PreviewMonitor::PreviewMonitor(std::filesystem::path sessionDirectory) : m_capture(std::move(sessionDirectory)) {}
@@ -186,6 +186,13 @@ IncidentUpdate PreviewMonitor::Paint(uint64_t generation, bool paintedPreview)
 	return update;
 }
 
+PreviewStatistics PreviewMonitor::Snapshot() const
+{
+	auto snapshot = m_statistics;
+	snapshot.incidents = m_capture.Statistics();
+	return snapshot;
+}
+
 bool PreviewMonitor::AcceptsGeneration(uint64_t generation) const
 {
 	return generation != 0 && generation != m_lastGeneration;
@@ -194,13 +201,6 @@ bool PreviewMonitor::AcceptsGeneration(uint64_t generation) const
 uint64_t PreviewMonitor::Frame() const
 {
 	return m_statistics.lastFrame;
-}
-
-PreviewStatistics PreviewMonitor::Snapshot() const
-{
-	auto snapshot = m_statistics;
-	snapshot.incidents = m_capture.Statistics();
-	return snapshot;
 }
 
 bool PreviewMonitor::TakeDirty()

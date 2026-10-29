@@ -84,11 +84,6 @@ static bool SameDevice(ID3D11DeviceChild* resource, ID3D11Device* expected)
 	return device.Get() == expected;
 }
 
-D3D11Frame::D3D11Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
-					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
-	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
-{}
-
 D3D11Frame::~D3D11Frame()
 {
 	if (m_textureHandle)
@@ -132,76 +127,53 @@ DXGI_FORMAT D3D11Frame::Format() const noexcept
 	return m_format;
 }
 
-HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::uint32_t layers, DXGI_FORMAT format,
-							   std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output,
-							   std::uint32_t mipLevels, bool retained)
+D3D11Frame::D3D11Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
+					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
+	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
+{}
+
+D3D11Backend::D3D11Backend(ID3D11Device* device)
+	: m_dxgiLibrary(std::make_shared<windows::WindowsLibrary>(L"dxgi.dll")),
+	  m_runtimeLibrary(std::make_shared<windows::WindowsLibrary>(L"d3d11.dll")), m_device(device)
 {
-	std::erase_if(m_pending, [](const auto& frame) { return frame->PollCompletion() == CompletionStatus::Complete; });
-	const auto& pool = retained ? m_retainedFrames : m_frames;
-	auto reservation = pool.Reserve();
-	if (!reservation)
-		return DXGI_ERROR_WAS_STILL_DRAWING;
-	ComPtr<ID3D11Device5> device;
-	auto result = m_device.As(&device);
-	if (FAILED(result))
-		return result;
-	ComPtr<ID3D11DeviceContext> immediate;
-	m_device->GetImmediateContext(&immediate);
-	ComPtr<ID3D11DeviceContext4> context;
-	result = immediate.As(&context);
-	if (FAILED(result))
-		return result;
-	auto frame = std::shared_ptr<D3D11Frame>(new D3D11Frame(m_dxgiLibrary, m_runtimeLibrary, views));
-	D3D11_TEXTURE2D_DESC description{};
-	description.Width = width;
-	description.Height = height;
-	description.MipLevels = mipLevels;
-	description.ArraySize = layers;
-	switch (format)
-	{
-	case DXGI_FORMAT_B8G8R8A8_UNORM:
-	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-		description.Format = DXGI_FORMAT_B8G8R8A8_TYPELESS;
-		break;
-	case DXGI_FORMAT_R16G16B16A16_FLOAT:
-		description.Format = DXGI_FORMAT_R16G16B16A16_TYPELESS;
-		break;
-	case DXGI_FORMAT_R10G10B10A2_UNORM:
-		description.Format = DXGI_FORMAT_R10G10B10A2_TYPELESS;
-		break;
-	case DXGI_FORMAT_R32G32B32A32_FLOAT:
-		description.Format = DXGI_FORMAT_R32G32B32A32_TYPELESS;
-		break;
-	default:
-		description.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
-		break;
-	}
-	frame->m_format = format;
-	description.SampleDesc.Count = 1;
-	description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-	description.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
-	result = device->CreateTexture2D(&description, nullptr, &frame->m_texture);
-	if (FAILED(result))
-		return result;
-	ComPtr<IDXGIResource1> shared;
-	result = frame->m_texture.As(&shared);
-	if (FAILED(result))
-		return result;
-	result = shared->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
-										&frame->m_textureHandle);
-	if (FAILED(result))
-		return result;
-	result = device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&frame->m_fence));
-	if (FAILED(result))
-		return result;
-	result = frame->m_fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &frame->m_fenceHandle);
-	if (FAILED(result))
-		return result;
-	if (!pool.Consume(reservation))
-		return E_UNEXPECTED;
-	frame->m_reservation = std::move(reservation);
-	output = std::move(frame);
-	return S_OK;
+	if (!device)
+		throw std::invalid_argument("D3D11 compositor requires a device");
+	m_pending.reserve(m_frames.Capacity() + m_retainedFrames.Capacity());
+	Check(device->CreateDeferredContext(0, &m_commands), "Create compositor context");
+	const windows::WindowsLibrary compiler(D3DCOMPILER_DLL_W);
+	const auto compile = std::bit_cast<decltype(&D3DCompile)>(compiler.Procedure("D3DCompile"));
+	const auto vertex = Compile(compile, "VSMain", "vs_5_0");
+	const auto pixel = Compile(compile, "PSMain", "ps_5_0");
+	Check(device->CreateVertexShader(vertex->GetBufferPointer(), vertex->GetBufferSize(), nullptr, &m_vertex),
+		  "Create compositor vertex shader");
+	Check(device->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &m_pixel),
+		  "Create compositor pixel shader");
+	D3D11_BUFFER_DESC buffer{};
+	buffer.ByteWidth = sizeof(LayerConstants);
+	buffer.Usage = D3D11_USAGE_DYNAMIC;
+	buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	buffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	Check(device->CreateBuffer(&buffer, nullptr, &m_constants), "Create compositor constants");
+	D3D11_SAMPLER_DESC sampler{};
+	sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+	sampler.MaxLOD = D3D11_FLOAT32_MAX;
+	Check(device->CreateSamplerState(&sampler, &m_sampler), "Create compositor sampler");
+	D3D11_BLEND_DESC blend{};
+	auto& color = blend.RenderTarget[0];
+	color.BlendEnable = TRUE;
+	color.SrcBlend = color.SrcBlendAlpha = D3D11_BLEND_ONE;
+	color.DestBlend = color.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+	color.BlendOp = color.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+	color.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+	Check(device->CreateBlendState(&blend, &m_blend), "Create compositor blending");
+	D3D11_RASTERIZER_DESC rasterizer{};
+	rasterizer.FillMode = D3D11_FILL_SOLID;
+	rasterizer.CullMode = D3D11_CULL_NONE;
+	rasterizer.DepthClipEnable = TRUE;
+	Check(device->CreateRasterizerState(&rasterizer, &m_rasterizer), "Create compositor rasterizer");
+	D3D11_DEPTH_STENCIL_DESC depth{};
+	Check(device->CreateDepthStencilState(&depth, &m_depth), "Create compositor depth state");
 }
 
 HRESULT D3D11Backend::Prepare(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,
@@ -311,48 +283,76 @@ HRESULT D3D11Backend::Submit(const std::shared_ptr<D3D11Frame>& frame)
 	return S_OK;
 }
 
-D3D11Backend::D3D11Backend(ID3D11Device* device)
-	: m_dxgiLibrary(std::make_shared<windows::WindowsLibrary>(L"dxgi.dll")),
-	  m_runtimeLibrary(std::make_shared<windows::WindowsLibrary>(L"d3d11.dll")), m_device(device)
+HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::uint32_t layers, DXGI_FORMAT format,
+							   std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output,
+							   std::uint32_t mipLevels, bool retained)
 {
-	if (!device)
-		throw std::invalid_argument("D3D11 compositor requires a device");
-	m_pending.reserve(m_frames.Capacity() + m_retainedFrames.Capacity());
-	Check(device->CreateDeferredContext(0, &m_commands), "Create compositor context");
-	const windows::WindowsLibrary compiler(D3DCOMPILER_DLL_W);
-	const auto compile = std::bit_cast<decltype(&D3DCompile)>(compiler.Procedure("D3DCompile"));
-	const auto vertex = Compile(compile, "VSMain", "vs_5_0");
-	const auto pixel = Compile(compile, "PSMain", "ps_5_0");
-	Check(device->CreateVertexShader(vertex->GetBufferPointer(), vertex->GetBufferSize(), nullptr, &m_vertex),
-		  "Create compositor vertex shader");
-	Check(device->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &m_pixel),
-		  "Create compositor pixel shader");
-	D3D11_BUFFER_DESC buffer{};
-	buffer.ByteWidth = sizeof(LayerConstants);
-	buffer.Usage = D3D11_USAGE_DYNAMIC;
-	buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	buffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	Check(device->CreateBuffer(&buffer, nullptr, &m_constants), "Create compositor constants");
-	D3D11_SAMPLER_DESC sampler{};
-	sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-	sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-	sampler.MaxLOD = D3D11_FLOAT32_MAX;
-	Check(device->CreateSamplerState(&sampler, &m_sampler), "Create compositor sampler");
-	D3D11_BLEND_DESC blend{};
-	auto& color = blend.RenderTarget[0];
-	color.BlendEnable = TRUE;
-	color.SrcBlend = color.SrcBlendAlpha = D3D11_BLEND_ONE;
-	color.DestBlend = color.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-	color.BlendOp = color.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-	color.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-	Check(device->CreateBlendState(&blend, &m_blend), "Create compositor blending");
-	D3D11_RASTERIZER_DESC rasterizer{};
-	rasterizer.FillMode = D3D11_FILL_SOLID;
-	rasterizer.CullMode = D3D11_CULL_NONE;
-	rasterizer.DepthClipEnable = TRUE;
-	Check(device->CreateRasterizerState(&rasterizer, &m_rasterizer), "Create compositor rasterizer");
-	D3D11_DEPTH_STENCIL_DESC depth{};
-	Check(device->CreateDepthStencilState(&depth, &m_depth), "Create compositor depth state");
+	std::erase_if(m_pending, [](const auto& frame) { return frame->PollCompletion() == CompletionStatus::Complete; });
+	const auto& pool = retained ? m_retainedFrames : m_frames;
+	auto reservation = pool.Reserve();
+	if (!reservation)
+		return DXGI_ERROR_WAS_STILL_DRAWING;
+	ComPtr<ID3D11Device5> device;
+	auto result = m_device.As(&device);
+	if (FAILED(result))
+		return result;
+	ComPtr<ID3D11DeviceContext> immediate;
+	m_device->GetImmediateContext(&immediate);
+	ComPtr<ID3D11DeviceContext4> context;
+	result = immediate.As(&context);
+	if (FAILED(result))
+		return result;
+	auto frame = std::shared_ptr<D3D11Frame>(new D3D11Frame(m_dxgiLibrary, m_runtimeLibrary, views));
+	D3D11_TEXTURE2D_DESC description{};
+	description.Width = width;
+	description.Height = height;
+	description.MipLevels = mipLevels;
+	description.ArraySize = layers;
+	switch (format)
+	{
+	case DXGI_FORMAT_B8G8R8A8_UNORM:
+	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+		description.Format = DXGI_FORMAT_B8G8R8A8_TYPELESS;
+		break;
+	case DXGI_FORMAT_R16G16B16A16_FLOAT:
+		description.Format = DXGI_FORMAT_R16G16B16A16_TYPELESS;
+		break;
+	case DXGI_FORMAT_R10G10B10A2_UNORM:
+		description.Format = DXGI_FORMAT_R10G10B10A2_TYPELESS;
+		break;
+	case DXGI_FORMAT_R32G32B32A32_FLOAT:
+		description.Format = DXGI_FORMAT_R32G32B32A32_TYPELESS;
+		break;
+	default:
+		description.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+		break;
+	}
+	frame->m_format = format;
+	description.SampleDesc.Count = 1;
+	description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+	description.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
+	result = device->CreateTexture2D(&description, nullptr, &frame->m_texture);
+	if (FAILED(result))
+		return result;
+	ComPtr<IDXGIResource1> shared;
+	result = frame->m_texture.As(&shared);
+	if (FAILED(result))
+		return result;
+	result = shared->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
+										&frame->m_textureHandle);
+	if (FAILED(result))
+		return result;
+	result = device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&frame->m_fence));
+	if (FAILED(result))
+		return result;
+	result = frame->m_fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &frame->m_fenceHandle);
+	if (FAILED(result))
+		return result;
+	if (!pool.Consume(reservation))
+		return E_UNEXPECTED;
+	frame->m_reservation = std::move(reservation);
+	output = std::move(frame);
+	return S_OK;
 }
 
 HRESULT D3D11Backend::Record(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,

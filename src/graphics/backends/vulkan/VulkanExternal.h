@@ -42,6 +42,7 @@ using VulkanImportSemaphoreHandle = PFN_vkImportSemaphoreFdKHR;
 using VulkanGetFenceHandle = PFN_vkGetFenceFdKHR;
 using VulkanImportFenceHandle = PFN_vkImportFenceFdKHR;
 #endif
+
 class VulkanExternalHandle
 {
 public:
@@ -51,6 +52,7 @@ public:
 	VulkanExternalHandle& operator=(VulkanExternalHandle&& other) noexcept;
 	VulkanExternalHandle(const VulkanExternalHandle&) = delete;
 	VulkanExternalHandle& operator=(const VulkanExternalHandle&) = delete;
+
 	VulkanNativeHandle Get() const noexcept;
 	explicit operator bool() const noexcept;
 	VulkanNativeHandle Release() noexcept;
@@ -135,6 +137,7 @@ private:
 	VulkanExternalImage(std::shared_ptr<VulkanImage> image, std::shared_ptr<const VulkanExternalImage> allocation);
 	VulkanExternalImage(std::shared_ptr<VulkanImage> image, VulkanExternalImageDescriptor descriptor,
 						VulkanGetMemoryHandle getMemoryHandle, bool exportable);
+
 	const std::shared_ptr<VulkanImage> m_image;
 	const VulkanExternalImageDescriptor m_descriptor;
 	const VulkanGetMemoryHandle m_getMemoryHandle;
@@ -161,6 +164,7 @@ private:
 	friend class VulkanExternalDevice;
 	VulkanExternalSemaphore(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
 							VulkanGetSemaphoreHandle getSemaphoreHandle, bool exportable);
+
 	const std::shared_ptr<VulkanDevice> m_device;
 	const VulkanExternalIdentity m_identity;
 	const VulkanGetSemaphoreHandle m_getSemaphoreHandle;
@@ -183,6 +187,7 @@ private:
 	friend class VulkanExternalDevice;
 	VulkanExternalTimeline(std::shared_ptr<VulkanExternalSemaphore> semaphore,
 						   PFN_vkGetSemaphoreCounterValueKHR counter);
+
 	const std::shared_ptr<VulkanExternalSemaphore> m_semaphore;
 	const PFN_vkGetSemaphoreCounterValueKHR m_counter;
 	mutable std::atomic<CompletionStatus> m_status{CompletionStatus::Pending};
@@ -206,6 +211,7 @@ private:
 	friend class VulkanExternalDevice;
 	VulkanExternalFence(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
 						VulkanGetFenceHandle getFenceHandle, bool exportable);
+
 	const std::shared_ptr<VulkanDevice> m_device;
 	const VulkanExternalIdentity m_identity;
 	const VulkanGetFenceHandle m_getFenceHandle;
@@ -224,23 +230,28 @@ public:
 	// timelineEnabled must reflect the feature enabled during logical-device creation.
 	VulkanExternalDevice(std::shared_ptr<VulkanDevice> device, std::span<const char* const> enabledExtensions,
 						 std::uint32_t instanceApiVersion, bool timelineEnabled = false);
+
 	static VulkanExternalCapabilities Query(VkPhysicalDevice physicalDevice, const VulkanExternalImageSpec& image,
 											std::uint32_t instanceApiVersion);
 	static VulkanExternalFenceCapabilities QueryFence(VkPhysicalDevice physicalDevice,
 													  std::uint32_t instanceApiVersion);
 	static VulkanExternalCapabilities QueryTimeline(VkPhysicalDevice physicalDevice, std::uint32_t instanceApiVersion);
+
 	bool TimelineCommandsEnabled() const noexcept;
 	std::shared_ptr<VulkanExternalTimeline> CreateExportableTimeline() const;
 	std::shared_ptr<VulkanExternalTimeline> ImportTimeline(const VulkanExternalIdentity& identity,
 														   VulkanExternalHandle& handle) const;
+
 	const VulkanExternalIdentity& Identity() const noexcept;
 	std::shared_ptr<VulkanDevice> Device() const noexcept;
+
 	std::shared_ptr<VulkanExternalImage> CreateExportable(const VulkanExternalImageSpec& image,
 														  VkImageLayout producerLayout = VK_IMAGE_LAYOUT_GENERAL) const;
 	// Imports duplicate the supplied native handle for Vulkan. Every failure preserves the
 	// original; only complete helper success resets the caller's handle ownership.
 	std::shared_ptr<VulkanExternalImage> ImportImage(const VulkanExternalImageDescriptor& descriptor,
 													 VulkanExternalHandle& handle) const;
+
 	std::shared_ptr<VulkanExternalSemaphore> CreateExportableSemaphore() const;
 	std::shared_ptr<VulkanExternalSemaphore> ImportSemaphore(const VulkanExternalIdentity& identity,
 															 VulkanExternalHandle& handle) const;
@@ -254,7 +265,6 @@ private:
 	std::shared_ptr<VulkanExternalSemaphore> CreateSemaphore(bool timeline) const;
 	std::shared_ptr<VulkanExternalSemaphore> ImportSemaphore(const VulkanExternalIdentity& identity,
 															 VulkanExternalHandle& handle, bool timeline) const;
-	PFN_vkGetSemaphoreCounterValueKHR m_counter = nullptr;
 	std::shared_ptr<VulkanImage> CreateImage(const VulkanExternalImageSpec& image) const;
 	VulkanExternalCapabilities ImageCapabilities(const VulkanExternalImageSpec& image) const;
 
@@ -264,6 +274,7 @@ private:
 		VulkanExternalCapabilities capabilities;
 	};
 
+	PFN_vkGetSemaphoreCounterValueKHR m_counter = nullptr;
 	mutable std::mutex m_imageQueryMutex;
 	mutable std::array<ImageQuery, 16> m_imageQueries{};
 	mutable std::size_t m_nextImageQuery = 0;

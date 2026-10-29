@@ -18,19 +18,16 @@ public:
 	ScriptEngine(RigRuntime& runtime, RigProgress& progress, const RigOptions& options);
 	ScriptEngine(const ScriptEngine&) = delete;
 	ScriptEngine& operator=(const ScriptEngine&) = delete;
+
 	void Execute();
 
 private:
-	RigRuntime& m_runtime;
-	RigProgress& m_progress;
-	const RigOptions& m_options;
-	std::size_t m_allocated = 0;
-	std::string m_bindingError;
 	static ScriptEngine& Self(lua_State* state);
 	static void* Allocate(void* context, void* pointer, std::size_t oldSize, std::size_t newSize);
 	static void Interrupt(lua_State* state, int gc);
 	template<int (ScriptEngine::*Handler)(lua_State*)>
 	static int Binding(lua_State* state);
+
 	int Wait(lua_State* state);
 	int MonitorCadence(lua_State* state);
 	int MonotonicTime(lua_State* state);
@@ -72,5 +69,11 @@ private:
 	int GameCommand(lua_State* state);
 	int AwaitGame(lua_State* state);
 	int GameState(lua_State* state);
+
+	RigRuntime& m_runtime;
+	RigProgress& m_progress;
+	const RigOptions& m_options;
+	std::size_t m_allocated = 0;
+	std::string m_bindingError;
 };
 } // namespace simxr::automation

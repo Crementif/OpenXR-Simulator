@@ -148,38 +148,6 @@ bool Library::Busy() const
 	return m_catalog && m_catalog->Busy();
 }
 
-void Library::Poll(Selection& selection, RigController& rigs)
-{
-	Advance(selection, rigs);
-	if (std::chrono::steady_clock::now() >= m_nextScan)
-		Refresh();
-}
-
-const LibraryEntry* Library::Find(const std::string& path) const
-{
-	const auto found = std::ranges::find(m_entries, path, &LibraryEntry::path);
-	return found == m_entries.end() ? nullptr : &*found;
-}
-
-void Library::Play(const LibraryEntry& entry, RuntimePanels& runtime)
-{
-	m_error.clear();
-	if (entry.take)
-		runtime.RequestReplay({entry.path, entry.seed});
-	else
-		m_run = ScriptRun{entry.path, m_options};
-}
-
-std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runtime, RigController& rigs)
-{
-	Poll(selection, rigs);
-	if (const auto take = std::get_if<TakeSel>(&selection))
-		DrawTake(selection, std::string(take->id), runtime, rigs);
-	else if (const auto script = std::get_if<ScriptSel>(&selection))
-		DrawScript(selection, std::string(script->id), runtime, rigs);
-	return std::exchange(m_run, {});
-}
-
 std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanels& runtime, RigController& rigs)
 {
 	Poll(selection, rigs);
@@ -264,68 +232,27 @@ std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanel
 	return std::exchange(m_run, {});
 }
 
-bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kind, bool changing)
+std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runtime, RigController& rigs)
 {
-	const auto name = PathText(Utf8Path(path).stem());
-	const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
-	const auto origin = ImGui::GetCursorScreenPos();
-	const auto width = std::max(button, ImGui::GetContentRegionAvail().x - button * 3 - spacing * 3);
-	DrawIcon(ImGui::GetWindowDrawList(), kind, {origin.x + button / 2, origin.y + button / 2}, button * .7f,
-			 theme::Text);
-	ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(),
-							  {origin.x + button, origin.y + (button - ImGui::GetFontSize()) / 2},
-							  {origin.x + width, origin.y + button}, origin.x + width, name.c_str(), nullptr, nullptr);
-	ImGui::Dummy({width, button});
-	ImGui::SetItemTooltip("%s", path.c_str());
-	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - button * 3 - spacing * 2));
-	ImGui::BeginDisabled(!changing || !m_catalog || m_catalog->Busy());
-	if (IconButton("Rename entry", Icon::Rename, "Change this file name on disk"))
-	{
-		std::snprintf(m_rename.data(), m_rename.size(), "%s", name.c_str());
-		ImGui::OpenPopup("Rename");
-	}
-	ImGui::SameLine();
-	if (IconButton("Delete entry", Icon::Delete, "Delete this file after confirmation.", false, nullptr, theme::Record))
-		ImGui::OpenPopup("Delete?");
-	ImGui::EndDisabled();
-	if (PageClose())
-	{
-		selection = std::monostate{};
-		return false;
-	}
-	if (ImGui::BeginPopup("Rename"))
-	{
-		if (ImGui::IsWindowAppearing())
-			ImGui::SetKeyboardFocusHere();
-		const bool entered =
-			ImGui::InputText("##New name", m_rename.data(), m_rename.size(), ImGuiInputTextFlags_EnterReturnsTrue);
-		const std::string next = m_rename.data();
-		const bool valid = LibraryCatalog::ValidName(next);
-		ImGui::BeginDisabled(!valid || !changing || !m_catalog || m_catalog->Busy());
-		if (ImGui::Button("Rename") || (entered && valid && changing && m_catalog && !m_catalog->Busy()))
-		{
-			if (m_catalog->Rename(path, next))
-				ImGui::CloseCurrentPopup();
-		}
-		ImGui::EndDisabled();
-		ImGui::EndPopup();
-	}
-	if (ImGui::BeginPopup("Delete?"))
-	{
-		ImGui::Text("Delete %s?", name.c_str());
-		ImGui::BeginDisabled(!changing || !m_catalog || m_catalog->Busy());
-		if (ImGui::Button("Delete") && m_catalog->Delete(path))
-			ImGui::CloseCurrentPopup();
-		ImGui::EndDisabled();
-		ImGui::SameLine();
-		if (ImGui::Button("Keep"))
-			ImGui::CloseCurrentPopup();
-		ImGui::EndPopup();
-	}
-	for (const auto* error : {&m_error, &m_scanError})
-		if (!error->empty())
-			ImGui::TextColored(theme::Vec(theme::Record), "%s", error->c_str());
-	return true;
+	Poll(selection, rigs);
+	if (const auto take = std::get_if<TakeSel>(&selection))
+		DrawTake(selection, std::string(take->id), runtime, rigs);
+	else if (const auto script = std::get_if<ScriptSel>(&selection))
+		DrawScript(selection, std::string(script->id), runtime, rigs);
+	return std::exchange(m_run, {});
+}
+
+void Library::Poll(Selection& selection, RigController& rigs)
+{
+	Advance(selection, rigs);
+	if (std::chrono::steady_clock::now() >= m_nextScan)
+		Refresh();
+}
+
+const LibraryEntry* Library::Find(const std::string& path) const
+{
+	const auto found = std::ranges::find(m_entries, path, &LibraryEntry::path);
+	return found == m_entries.end() ? nullptr : &*found;
 }
 
 void Library::DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs)
@@ -634,5 +561,78 @@ void Library::DrawScript(Selection& selection, const std::string& path, RuntimeP
 			ImGui::SetItemTooltip("%s", m_report.c_str());
 		}
 	}
+}
+
+bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kind, bool changing)
+{
+	const auto name = PathText(Utf8Path(path).stem());
+	const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
+	const auto origin = ImGui::GetCursorScreenPos();
+	const auto width = std::max(button, ImGui::GetContentRegionAvail().x - button * 3 - spacing * 3);
+	DrawIcon(ImGui::GetWindowDrawList(), kind, {origin.x + button / 2, origin.y + button / 2}, button * .7f,
+			 theme::Text);
+	ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(),
+							  {origin.x + button, origin.y + (button - ImGui::GetFontSize()) / 2},
+							  {origin.x + width, origin.y + button}, origin.x + width, name.c_str(), nullptr, nullptr);
+	ImGui::Dummy({width, button});
+	ImGui::SetItemTooltip("%s", path.c_str());
+	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - button * 3 - spacing * 2));
+	ImGui::BeginDisabled(!changing || !m_catalog || m_catalog->Busy());
+	if (IconButton("Rename entry", Icon::Rename, "Change this file name on disk"))
+	{
+		std::snprintf(m_rename.data(), m_rename.size(), "%s", name.c_str());
+		ImGui::OpenPopup("Rename");
+	}
+	ImGui::SameLine();
+	if (IconButton("Delete entry", Icon::Delete, "Delete this file after confirmation.", false, nullptr, theme::Record))
+		ImGui::OpenPopup("Delete?");
+	ImGui::EndDisabled();
+	if (PageClose())
+	{
+		selection = std::monostate{};
+		return false;
+	}
+	if (ImGui::BeginPopup("Rename"))
+	{
+		if (ImGui::IsWindowAppearing())
+			ImGui::SetKeyboardFocusHere();
+		const bool entered =
+			ImGui::InputText("##New name", m_rename.data(), m_rename.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+		const std::string next = m_rename.data();
+		const bool valid = LibraryCatalog::ValidName(next);
+		ImGui::BeginDisabled(!valid || !changing || !m_catalog || m_catalog->Busy());
+		if (ImGui::Button("Rename") || (entered && valid && changing && m_catalog && !m_catalog->Busy()))
+		{
+			if (m_catalog->Rename(path, next))
+				ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndDisabled();
+		ImGui::EndPopup();
+	}
+	if (ImGui::BeginPopup("Delete?"))
+	{
+		ImGui::Text("Delete %s?", name.c_str());
+		ImGui::BeginDisabled(!changing || !m_catalog || m_catalog->Busy());
+		if (ImGui::Button("Delete") && m_catalog->Delete(path))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Keep"))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+	for (const auto* error : {&m_error, &m_scanError})
+		if (!error->empty())
+			ImGui::TextColored(theme::Vec(theme::Record), "%s", error->c_str());
+	return true;
+}
+
+void Library::Play(const LibraryEntry& entry, RuntimePanels& runtime)
+{
+	m_error.clear();
+	if (entry.take)
+		runtime.RequestReplay({entry.path, entry.seed});
+	else
+		m_run = ScriptRun{entry.path, m_options};
 }
 } // namespace simxr::app

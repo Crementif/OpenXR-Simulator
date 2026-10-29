@@ -7,76 +7,6 @@
 
 namespace simxr::automation
 {
-void RigRunner::Run()
-{
-	RigPhase phase = RigPhase::Complete;
-	std::string error;
-	try
-	{
-		m_runtime.ObserveCompatibility();
-		if (!m_options.recordingArchive.empty())
-			ReplayRecordingArchive(m_options.recordingArchive, m_options.seed, m_runtime, m_progress);
-		else
-		{
-			ScriptEngine engine{m_runtime, m_progress, m_options};
-			engine.Execute();
-		}
-	}
-	catch (const std::exception& failure)
-	{
-		phase = m_progress.Cancelled() ? RigPhase::Cancelled : RigPhase::Failed;
-		error = failure.what();
-	}
-	catch (...)
-	{
-		phase = RigPhase::Failed;
-		error = "Unknown rig failure";
-	}
-	const auto cleanup = [&](auto action) {
-		try
-		{
-			action();
-		}
-		catch (const std::exception& failure)
-		{
-			if (phase == RigPhase::Complete)
-			{
-				phase = RigPhase::Failed;
-				error = failure.what();
-			}
-		}
-		catch (...)
-		{
-			if (phase == RigPhase::Complete)
-			{
-				phase = RigPhase::Failed;
-				error = "Unknown automation cleanup failure";
-			}
-		}
-	};
-	cleanup([&] {
-		const auto cleanupError = m_runtime.Cleanup();
-		if (!cleanupError.empty())
-			throw std::runtime_error(cleanupError);
-	});
-	// Terminal status is published only after the transport releases native ownership.
-	cleanup([&] {
-		if (m_releaseTransport)
-			m_releaseTransport();
-	});
-	m_progress.Finish(phase, std::move(error));
-}
-
-RigRunner::RigRunner(RigExchange exchange, std::function<void()> releaseTransport)
-	: m_runtime(std::move(exchange), m_progress), m_releaseTransport(std::move(releaseTransport))
-{}
-
-RigRunner::~RigRunner()
-{
-	Cancel();
-	Join();
-}
-
 void ValidateRigOptions(const RigOptions& options)
 {
 	if (options.name.size() > 1024 || options.name.find('\0') != std::string::npos)
@@ -87,6 +17,16 @@ void ValidateRigOptions(const RigOptions& options)
 		options.memoryLimit < 1024 * 1024 || options.memoryLimit > 512 * 1024 * 1024 || options.deadline.count() <= 0 ||
 		options.deadline > std::chrono::hours{1})
 		throw std::invalid_argument("Invalid bounded rig options");
+}
+
+RigRunner::RigRunner(RigExchange exchange, std::function<void()> releaseTransport)
+	: m_runtime(std::move(exchange), m_progress), m_releaseTransport(std::move(releaseTransport))
+{}
+
+RigRunner::~RigRunner()
+{
+	Cancel();
+	Join();
 }
 
 void RigRunner::Start(RigOptions options)
@@ -155,4 +95,65 @@ std::string RigRunner::JunitReport() const
 {
 	return SerializeRigJunit(Snapshot());
 }
+
+void RigRunner::Run()
+{
+	RigPhase phase = RigPhase::Complete;
+	std::string error;
+	try
+	{
+		m_runtime.ObserveCompatibility();
+		if (!m_options.recordingArchive.empty())
+			ReplayRecordingArchive(m_options.recordingArchive, m_options.seed, m_runtime, m_progress);
+		else
+		{
+			ScriptEngine engine{m_runtime, m_progress, m_options};
+			engine.Execute();
+		}
+	}
+	catch (const std::exception& failure)
+	{
+		phase = m_progress.Cancelled() ? RigPhase::Cancelled : RigPhase::Failed;
+		error = failure.what();
+	}
+	catch (...)
+	{
+		phase = RigPhase::Failed;
+		error = "Unknown rig failure";
+	}
+	const auto cleanup = [&](auto action) {
+		try
+		{
+			action();
+		}
+		catch (const std::exception& failure)
+		{
+			if (phase == RigPhase::Complete)
+			{
+				phase = RigPhase::Failed;
+				error = failure.what();
+			}
+		}
+		catch (...)
+		{
+			if (phase == RigPhase::Complete)
+			{
+				phase = RigPhase::Failed;
+				error = "Unknown automation cleanup failure";
+			}
+		}
+	};
+	cleanup([&] {
+		const auto cleanupError = m_runtime.Cleanup();
+		if (!cleanupError.empty())
+			throw std::runtime_error(cleanupError);
+	});
+	// Terminal status is published only after the transport releases native ownership.
+	cleanup([&] {
+		if (m_releaseTransport)
+			m_releaseTransport();
+	});
+	m_progress.Finish(phase, std::move(error));
+}
+
 } // namespace simxr::automation

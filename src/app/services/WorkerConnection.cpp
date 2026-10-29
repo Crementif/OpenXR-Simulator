@@ -7,64 +7,12 @@
 
 namespace simxr::app
 {
-#if defined(__linux__) || defined(_WIN32)
-control::Message WorkerConnection::Request(control::OpCode code, std::vector<control::Field> fields)
-{
-	control::ControlPacket packet;
-	packet.message.opcode = static_cast<std::uint16_t>(code);
-	packet.message.fields = std::move(fields);
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-	bool retry = false;
-	while (true)
-	{
-		if (m_stopping || std::chrono::steady_clock::now() >= deadline)
-		{
-			m_failed = true;
-			m_client->Close();
-			throw std::runtime_error("The request stopped or timed out. It may still be running.");
-		}
-		try
-		{
-			return (retry ? m_client->Retry() : m_client->Request(std::move(packet))).message;
-		}
-		catch (const control::ControlExchangeTimeout&)
-		{
-			retry = true;
-		}
-		catch (...)
-		{
-			m_failed = true;
-			m_client->Close();
-			throw;
-		}
-	}
-}
-#endif
 WorkerConnection::WorkerConnection(std::string endpoint, std::string name, std::uint64_t required,
 								   std::optional<std::uint64_t> expectedProcess)
 	: m_endpoint(std::move(endpoint)), m_name(std::move(name)), m_required(required), m_expectedProcess(expectedProcess)
 {}
 
 WorkerConnection::~WorkerConnection() = default;
-
-void WorkerConnection::Stop() noexcept
-{
-	m_stopping = true;
-}
-
-void WorkerConnection::Close() noexcept
-{
-	m_stopping = true;
-#if defined(__linux__) || defined(_WIN32)
-	if (m_client)
-		m_client->Close();
-#endif
-}
-
-bool WorkerConnection::Failed() const noexcept
-{
-	return m_failed || m_stopping;
-}
 
 control::Message WorkerConnection::Exchange(control::OpCode code, std::vector<control::Field> fields)
 {
@@ -100,4 +48,57 @@ control::Message WorkerConnection::Exchange(control::OpCode code, std::vector<co
 	throw std::runtime_error("Worker transport is unavailable on this platform");
 #endif
 }
+
+void WorkerConnection::Stop() noexcept
+{
+	m_stopping = true;
+}
+
+void WorkerConnection::Close() noexcept
+{
+	m_stopping = true;
+#if defined(__linux__) || defined(_WIN32)
+	if (m_client)
+		m_client->Close();
+#endif
+}
+
+bool WorkerConnection::Failed() const noexcept
+{
+	return m_failed || m_stopping;
+}
+
+#if defined(__linux__) || defined(_WIN32)
+control::Message WorkerConnection::Request(control::OpCode code, std::vector<control::Field> fields)
+{
+	control::ControlPacket packet;
+	packet.message.opcode = static_cast<std::uint16_t>(code);
+	packet.message.fields = std::move(fields);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	bool retry = false;
+	while (true)
+	{
+		if (m_stopping || std::chrono::steady_clock::now() >= deadline)
+		{
+			m_failed = true;
+			m_client->Close();
+			throw std::runtime_error("The request stopped or timed out. It may still be running.");
+		}
+		try
+		{
+			return (retry ? m_client->Retry() : m_client->Request(std::move(packet))).message;
+		}
+		catch (const control::ControlExchangeTimeout&)
+		{
+			retry = true;
+		}
+		catch (...)
+		{
+			m_failed = true;
+			m_client->Close();
+			throw;
+		}
+	}
+}
+#endif
 } // namespace simxr::app

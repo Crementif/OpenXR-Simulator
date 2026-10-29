@@ -71,13 +71,16 @@ public:
 	~Channel();
 	Channel(const Channel&) = delete;
 	Channel& operator=(const Channel&) = delete;
+
 	HANDLE Value() const;
 	void Authenticate(bool server, const std::vector<std::byte>& sid);
 	bool NativeHandles() const noexcept;
+
 	std::vector<std::byte> Offer(const ControlPacket& packet);
 	void PublishOffer(const std::shared_ptr<PacketExposure>& exposure = {}) noexcept;
 	void AcknowledgeOffer() noexcept;
 	std::vector<std::shared_ptr<TransferHandle>> Import(std::span<const std::byte> bytes);
+
 	void Connect(Clock::time_point deadline, HANDLE stop);
 	std::size_t Transfer(bool write, std::span<std::byte> bytes, Clock::time_point deadline, HANDLE stop);
 	void Close() noexcept;
@@ -87,6 +90,7 @@ private:
 	struct Native;
 	DWORD Finish(Clock::time_point deadline, HANDLE stop);
 	void Prepare(Kind kind, DWORD goal);
+
 	std::unique_ptr<Native> m_native;
 	bool m_charged = false;
 };

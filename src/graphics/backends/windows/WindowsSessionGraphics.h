@@ -26,17 +26,22 @@ public:
 	using ImageResolver = std::function<Source(XrSwapchain)>;
 	// Called after native source use begins, including failed submission. Must not allocate or throw.
 	using SourceUse = std::function<void(XrSwapchain, const std::shared_ptr<const GpuCompletion>&)>;
+
 	WindowsSessionGraphics(ID3D11Device* device, std::shared_ptr<Session> session);
 	WindowsSessionGraphics(ID3D12Device* device, ID3D12CommandQueue* queue, std::shared_ptr<Session> session);
 	WindowsSessionGraphics(HDC device, HGLRC context, std::shared_ptr<Session> session);
 	~WindowsSessionGraphics();
+
+	XrResult Close();
+
+	control::ImageCapabilities Capabilities() const noexcept;
+
 	XrResult EndFrame(const XrFrameEndInfo& info, const SwapchainDescriptionResolver& describe,
 					  const ImageResolver& resolve, const SourceUse& sourceUsed = {});
-	control::ImageCapabilities Capabilities() const noexcept;
-	XrResult Close();
 
 private:
 	void Configure(const VulkanExternalIdentity& identity);
+
 	const std::shared_ptr<Session> m_session;
 	std::variant<std::unique_ptr<D3D11Backend>, std::unique_ptr<D3D12Backend>, std::unique_ptr<OpenGLBackend>> m_native;
 	std::unique_ptr<VulkanInspectionDevice> m_device;

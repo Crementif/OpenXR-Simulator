@@ -24,54 +24,6 @@ HeadsetSession::~HeadsetSession()
 	Close();
 }
 
-bool HeadsetSession::Close()
-{
-	m_outputState = HeadsetOutputState::Waiting;
-	if (!m_session && !m_pattern && !m_output && !m_images)
-		return !m_graphics.ResourcesPreserved();
-	m_output.reset();
-	m_images.reset();
-	m_pattern.reset();
-	if (!m_graphics.Drain())
-	{
-		m_runtime.PreserveNativeResources();
-		return false;
-	}
-	m_body.reset();
-	m_actions.reset();
-	if ((m_space && XR_FAILED(xrDestroySpace(m_space))) || (m_session && XR_FAILED(xrDestroySession(m_session))))
-	{
-		m_graphics.PreserveNativeResources();
-		m_runtime.PreserveNativeResources();
-		return false;
-	}
-	m_space = XR_NULL_HANDLE;
-	m_session = XR_NULL_HANDLE;
-	return true;
-}
-
-void HeadsetSession::ApplyHaptics(const std::array<std::optional<HeadsetVibration>, 2>& commands)
-{
-	if (!m_running || !m_actions)
-		return;
-	for (std::uint32_t hand = 0; hand < commands.size(); ++hand)
-		if (const auto& command = commands[hand])
-		{
-			if (command->amplitude == 0 || command->remaining <= 0)
-				m_actions->StopHaptic(hand);
-			else
-				m_actions->ApplyHaptic(hand, command->amplitude, command->frequency, command->remaining);
-		}
-}
-
-void HeadsetSession::SetCalibration(std::optional<XrPosef> worldFromInitial)
-{
-	const auto normalized = worldFromInitial ? NormalizedPose(*worldFromInitial) : std::nullopt;
-	if (worldFromInitial && !normalized)
-		throw std::invalid_argument("Invalid physical output calibration");
-	m_worldFromInitial = normalized;
-}
-
 void HeadsetSession::Open(std::optional<HeadsetImageSource> source, bool trackers, std::optional<BodyJointSet> body)
 {
 	if (m_session)
@@ -135,6 +87,103 @@ void HeadsetSession::Open(std::optional<HeadsetImageSource> source, bool tracker
 	}
 }
 
+void HeadsetSession::Run(std::optional<std::uint32_t> frames,
+						 const std::function<void(const HeadsetInputSample&)>& observe,
+						 const std::function<bool()>& stopRequested)
+{
+	if (!m_session || (frames && !*frames))
+		throw std::logic_error("Open a physical session with a positive frame limit or continuous operation");
+	std::uint64_t submitted = 0;
+	bool cancelled = false;
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	while (!m_exiting)
+	{
+		PollEvents();
+		if (m_exiting)
+			break;
+		if ((frames || !m_running || m_exitRequested) && std::chrono::steady_clock::now() >= deadline)
+			throw std::runtime_error("Physical session timed out waiting for presentation or shutdown");
+		if (!cancelled && stopRequested && stopRequested())
+			cancelled = true;
+		if (cancelled && !m_running)
+			break;
+		if (!m_running)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			continue;
+		}
+		if ((cancelled || (frames && submitted >= *frames)) && !m_exitRequested)
+		{
+			ApplyHaptics({HeadsetVibration{}, HeadsetVibration{}});
+			CheckXr(xrRequestExitSession(m_session), "Request physical session exit");
+			m_exitRequested = true;
+			deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			continue;
+		}
+		if (Frame(!m_exitRequested, observe))
+			++submitted;
+	}
+	std::cout << (frames ? "submitted_test_frames=" : "submitted_frames=") << submitted << '\n';
+	std::cout << "valid_head_samples=" << m_validHeadSamples << '\n'
+			  << "valid_left_grip_samples=" << m_validGripSamples[0] << '\n'
+			  << "valid_right_grip_samples=" << m_validGripSamples[1] << '\n';
+	if (!cancelled && frames && submitted < *frames)
+		throw std::runtime_error("Physical session ended before the requested stereo test completed");
+}
+
+bool HeadsetSession::Close()
+{
+	m_outputState = HeadsetOutputState::Waiting;
+	if (!m_session && !m_pattern && !m_output && !m_images)
+		return !m_graphics.ResourcesPreserved();
+	m_output.reset();
+	m_images.reset();
+	m_pattern.reset();
+	if (!m_graphics.Drain())
+	{
+		m_runtime.PreserveNativeResources();
+		return false;
+	}
+	m_body.reset();
+	m_actions.reset();
+	if ((m_space && XR_FAILED(xrDestroySpace(m_space))) || (m_session && XR_FAILED(xrDestroySession(m_session))))
+	{
+		m_graphics.PreserveNativeResources();
+		m_runtime.PreserveNativeResources();
+		return false;
+	}
+	m_space = XR_NULL_HANDLE;
+	m_session = XR_NULL_HANDLE;
+	return true;
+}
+
+HeadsetImageTiming HeadsetSession::ImageTiming() const
+{
+	return m_images ? m_images->Timing() : HeadsetImageTiming{};
+}
+
+void HeadsetSession::SetCalibration(std::optional<XrPosef> worldFromInitial)
+{
+	const auto normalized = worldFromInitial ? NormalizedPose(*worldFromInitial) : std::nullopt;
+	if (worldFromInitial && !normalized)
+		throw std::invalid_argument("Invalid physical output calibration");
+	m_worldFromInitial = normalized;
+}
+
+void HeadsetSession::ApplyHaptics(const std::array<std::optional<HeadsetVibration>, 2>& commands)
+{
+	if (!m_running || !m_actions)
+		return;
+	for (std::uint32_t hand = 0; hand < commands.size(); ++hand)
+		if (const auto& command = commands[hand])
+		{
+			if (command->amplitude == 0 || command->remaining <= 0)
+				m_actions->StopHaptic(hand);
+			else
+				m_actions->ApplyHaptic(hand, command->amplitude, command->frequency, command->remaining);
+		}
+}
+
 void HeadsetSession::PollEvents()
 {
 	while (true)
@@ -179,11 +228,6 @@ void HeadsetSession::PollEvents()
 		else if (state.state == XR_SESSION_STATE_EXITING || state.state == XR_SESSION_STATE_LOSS_PENDING)
 			m_exiting = true;
 	}
-}
-
-HeadsetImageTiming HeadsetSession::ImageTiming() const
-{
-	return m_images ? m_images->Timing() : HeadsetImageTiming{};
 }
 
 bool HeadsetSession::Frame(bool render, const std::function<void(const HeadsetInputSample&)>& observe)
@@ -346,49 +390,5 @@ bool HeadsetSession::Frame(bool render, const std::function<void(const HeadsetIn
 					: inspection		  ? HeadsetOutputState::Inspection
 										  : HeadsetOutputState::Live;
 	return submitted;
-}
-
-void HeadsetSession::Run(std::optional<std::uint32_t> frames,
-						 const std::function<void(const HeadsetInputSample&)>& observe,
-						 const std::function<bool()>& stopRequested)
-{
-	if (!m_session || (frames && !*frames))
-		throw std::logic_error("Open a physical session with a positive frame limit or continuous operation");
-	std::uint64_t submitted = 0;
-	bool cancelled = false;
-	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-	while (!m_exiting)
-	{
-		PollEvents();
-		if (m_exiting)
-			break;
-		if ((frames || !m_running || m_exitRequested) && std::chrono::steady_clock::now() >= deadline)
-			throw std::runtime_error("Physical session timed out waiting for presentation or shutdown");
-		if (!cancelled && stopRequested && stopRequested())
-			cancelled = true;
-		if (cancelled && !m_running)
-			break;
-		if (!m_running)
-		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
-			continue;
-		}
-		if ((cancelled || (frames && submitted >= *frames)) && !m_exitRequested)
-		{
-			ApplyHaptics({HeadsetVibration{}, HeadsetVibration{}});
-			CheckXr(xrRequestExitSession(m_session), "Request physical session exit");
-			m_exitRequested = true;
-			deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-			continue;
-		}
-		if (Frame(!m_exitRequested, observe))
-			++submitted;
-	}
-	std::cout << (frames ? "submitted_test_frames=" : "submitted_frames=") << submitted << '\n';
-	std::cout << "valid_head_samples=" << m_validHeadSamples << '\n'
-			  << "valid_left_grip_samples=" << m_validGripSamples[0] << '\n'
-			  << "valid_right_grip_samples=" << m_validGripSamples[1] << '\n';
-	if (!cancelled && frames && submitted < *frames)
-		throw std::runtime_error("Physical session ended before the requested stereo test completed");
 }
 } // namespace simxr::headset

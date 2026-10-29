@@ -23,16 +23,6 @@ RuntimeConnectionSnapshot RuntimePanelRequests::Snapshot() const
 	return m_connection.Snapshot();
 }
 
-std::uint64_t RuntimePanelRequests::Epoch() const noexcept
-{
-	return m_epoch;
-}
-
-bool RuntimePanelRequests::Pending() const noexcept
-{
-	return !m_tasks.empty() || Has(PanelWork::Release) || Has(PanelWork::Relinquish);
-}
-
 bool RuntimePanelRequests::RefreshEpoch()
 {
 	const auto epoch = m_connection.Snapshot().epoch;
@@ -42,6 +32,11 @@ bool RuntimePanelRequests::RefreshEpoch()
 	m_tasks.clear();
 	m_epoch = epoch;
 	return true;
+}
+
+std::uint64_t RuntimePanelRequests::Epoch() const noexcept
+{
+	return m_epoch;
 }
 
 std::vector<PanelReply> RuntimePanelRequests::Poll()
@@ -103,6 +98,11 @@ bool RuntimePanelRequests::Has(PanelWork kind, std::uint64_t id) const
 		return true;
 	return std::any_of(m_tasks.begin(), m_tasks.end(),
 					   [&](const auto& entry) { return entry.second.kind == kind && (!id || entry.second.id == id); });
+}
+
+bool RuntimePanelRequests::Pending() const noexcept
+{
+	return !m_tasks.empty() || Has(PanelWork::Release) || Has(PanelWork::Relinquish);
 }
 
 void RuntimePanelRequests::Release(control::OpCode code, std::uint16_t field, std::uint64_t id, std::uint64_t session,

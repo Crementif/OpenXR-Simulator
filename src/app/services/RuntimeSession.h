@@ -183,9 +183,11 @@ public:
 
 private:
 	using Clock = std::chrono::steady_clock;
+
 	void Reply(const PanelReply& response);
 	void ScopeChanged();
 	void ShowCapture(std::uint64_t capture);
+
 	RuntimePanelRequests m_requests;
 	DebuggerPanelController m_debugger;
 	InspectionWorkspace m_workspace;

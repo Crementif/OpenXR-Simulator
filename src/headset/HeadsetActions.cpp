@@ -51,26 +51,6 @@ HeadsetActions::~HeadsetActions()
 		xrDestroyActionSet(m_set);
 }
 
-XrPath HeadsetActions::Path(const char* text) const
-{
-	XrPath path = XR_NULL_PATH;
-	CheckXr(xrStringToPath(m_runtime.Instance(), text, &path), "Create physical input path");
-	return path;
-}
-
-XrAction HeadsetActions::CreateAction(const char* name, XrActionType type)
-{
-	XrActionCreateInfo info{XR_TYPE_ACTION_CREATE_INFO};
-	std::strcpy(info.actionName, name);
-	std::strcpy(info.localizedActionName, name);
-	info.actionType = type;
-	info.countSubactionPaths = m_hands.size();
-	info.subactionPaths = m_hands.data();
-	XrAction action = XR_NULL_HANDLE;
-	CheckXr(xrCreateAction(m_set, &info, &action), "Create physical input action");
-	return action;
-}
-
 void HeadsetActions::Open(XrSession session, bool trackers)
 {
 	if (m_set)
@@ -181,42 +161,6 @@ void HeadsetActions::Open(XrSession session, bool trackers)
 	head.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
 	head.poseInReferenceSpace.orientation.w = 1;
 	CheckXr(xrCreateReferenceSpace(session, &head, &m_head), "Create physical head space");
-}
-
-bool HeadsetActions::ApplyHaptic(std::uint32_t hand, float amplitude, float frequency, XrDuration remaining)
-{
-	if (!m_haptic || hand >= m_hands.size() || !std::isfinite(amplitude) || amplitude < 0 || amplitude > 1 ||
-		!std::isfinite(frequency) || frequency < 0 || remaining <= 0)
-		throw std::invalid_argument("Invalid physical haptic request");
-	if (amplitude == 0)
-		return StopHaptic(hand);
-	XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
-	info.action = m_haptic;
-	info.subactionPath = m_hands[hand];
-	XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
-	vibration.amplitude = amplitude;
-	vibration.frequency = frequency;
-	// Match the existing physical-controller feedback duration ceiling.
-	vibration.duration = std::min<XrDuration>(remaining, 2'000'000'000);
-	const auto result =
-		xrApplyHapticFeedback(m_session, &info, reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
-	CheckXr(result, "Apply physical vibration");
-	if (result == XR_SUCCESS)
-		m_hapticActive[hand] = true;
-	return result == XR_SUCCESS;
-}
-
-bool HeadsetActions::StopHaptic(std::uint32_t hand)
-{
-	if (!m_haptic || hand >= m_hands.size())
-		throw std::invalid_argument("Invalid physical haptic hand");
-	XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
-	info.action = m_haptic;
-	info.subactionPath = m_hands[hand];
-	const auto result = xrStopHapticFeedback(m_session, &info);
-	CheckXr(result, "Stop physical vibration");
-	m_hapticActive[hand] = false;
-	return result == XR_SUCCESS;
 }
 
 HeadsetInputSample HeadsetActions::Sample(XrTime time, XrSpace baseSpace)
@@ -342,5 +286,61 @@ HeadsetInputSample HeadsetActions::Sample(XrTime time, XrSpace baseSpace)
 	else
 		sample.controlsReady = true;
 	return sample;
+}
+
+bool HeadsetActions::ApplyHaptic(std::uint32_t hand, float amplitude, float frequency, XrDuration remaining)
+{
+	if (!m_haptic || hand >= m_hands.size() || !std::isfinite(amplitude) || amplitude < 0 || amplitude > 1 ||
+		!std::isfinite(frequency) || frequency < 0 || remaining <= 0)
+		throw std::invalid_argument("Invalid physical haptic request");
+	if (amplitude == 0)
+		return StopHaptic(hand);
+	XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+	info.action = m_haptic;
+	info.subactionPath = m_hands[hand];
+	XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+	vibration.amplitude = amplitude;
+	vibration.frequency = frequency;
+	// Match the existing physical-controller feedback duration ceiling.
+	vibration.duration = std::min<XrDuration>(remaining, 2'000'000'000);
+	const auto result =
+		xrApplyHapticFeedback(m_session, &info, reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+	CheckXr(result, "Apply physical vibration");
+	if (result == XR_SUCCESS)
+		m_hapticActive[hand] = true;
+	return result == XR_SUCCESS;
+}
+
+bool HeadsetActions::StopHaptic(std::uint32_t hand)
+{
+	if (!m_haptic || hand >= m_hands.size())
+		throw std::invalid_argument("Invalid physical haptic hand");
+	XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+	info.action = m_haptic;
+	info.subactionPath = m_hands[hand];
+	const auto result = xrStopHapticFeedback(m_session, &info);
+	CheckXr(result, "Stop physical vibration");
+	m_hapticActive[hand] = false;
+	return result == XR_SUCCESS;
+}
+
+XrPath HeadsetActions::Path(const char* text) const
+{
+	XrPath path = XR_NULL_PATH;
+	CheckXr(xrStringToPath(m_runtime.Instance(), text, &path), "Create physical input path");
+	return path;
+}
+
+XrAction HeadsetActions::CreateAction(const char* name, XrActionType type)
+{
+	XrActionCreateInfo info{XR_TYPE_ACTION_CREATE_INFO};
+	std::strcpy(info.actionName, name);
+	std::strcpy(info.localizedActionName, name);
+	info.actionType = type;
+	info.countSubactionPaths = m_hands.size();
+	info.subactionPaths = m_hands.data();
+	XrAction action = XR_NULL_HANDLE;
+	CheckXr(xrCreateAction(m_set, &info, &action), "Create physical input action");
+	return action;
 }
 } // namespace simxr::headset

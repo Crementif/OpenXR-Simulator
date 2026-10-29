@@ -30,16 +30,20 @@ public:
 	~ControlService();
 	ControlService(const ControlService&) = delete;
 	ControlService& operator=(const ControlService&) = delete;
+
 	std::optional<ConnectionId> Connect(bool nativeHandles = false);
 	void Disconnect(ConnectionId connection) noexcept;
+
 	Message Handle(ConnectionId connection, const Message& request);
 	ControlPacket HandlePacket(ConnectionId connection, const ControlPacket& request);
+
 	void Close() noexcept;
 
 private:
 	struct Client;
 	struct Publication;
 	struct HeldReaders;
+
 	std::uint64_t ServiceCapabilities(std::uint16_t minor) const;
 	std::uint64_t AdvertisedCapabilities(const Client& client, std::uint16_t minor) const;
 	std::shared_ptr<Client> Find(ConnectionId id);

@@ -57,12 +57,14 @@ public:
 	static constexpr std::size_t PostCount = 12;
 	static constexpr std::size_t Capacity = 22;
 	~FrameImageWindow();
+
 	ImageWindowSnapshot Snapshot() const;
 	HistoricalImage Find(FrameId frame) const;
 	void Cancel() noexcept;
 
 private:
 	void Append(const HistoricalImage& image) noexcept;
+
 	mutable std::mutex m_mutex;
 	std::array<HistoricalImage, Capacity> m_entries;
 	SessionGeneration m_generation;
@@ -103,6 +105,7 @@ public:
 	Retired Clear() noexcept;
 	Retired Append(HistoricalImage image) noexcept;
 	StartedWindow BeginWindow(ImageHistoryView view = ImageHistoryView::Composed);
+
 	ImageHistorySnapshot Snapshot(std::size_t count = Capacity,
 								  ImageHistoryView view = ImageHistoryView::Composed) const;
 	HistoricalImage Find(FrameKey frame, ImageHistoryView view = ImageHistoryView::Composed) const;

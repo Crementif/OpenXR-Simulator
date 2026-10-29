@@ -129,43 +129,6 @@ void HeadsetTestPattern::Open(XrSession session)
 	}
 }
 
-void HeadsetTestPattern::Record(Image& image)
-{
-	CheckVk(vkResetCommandBuffer(image.command, 0), "Reset headset test command");
-	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	CheckVk(vkBeginCommandBuffer(image.command, &begin), "Begin headset test command");
-	// Diagnostic L/R glyphs use attachment clears, not a second compositor/shader set.
-	constexpr std::array<std::array<unsigned, 7>, 2> glyphs{
-		{{{16, 16, 16, 16, 16, 16, 31}}, {{30, 17, 17, 30, 20, 18, 17}}}};
-	for (std::size_t eye = 0; eye < 2; ++eye)
-	{
-		VkClearValue background{};
-		background.color.float32[eye == 0 ? 0 : 2] = 0.3f;
-		background.color.float32[3] = 1;
-		VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-		pass.renderPass = m_renderPass;
-		pass.framebuffer = image.framebuffers[eye];
-		pass.renderArea.extent = {s_size, s_size};
-		pass.clearValueCount = 1;
-		pass.pClearValues = &background;
-		vkCmdBeginRenderPass(image.command, &pass, VK_SUBPASS_CONTENTS_INLINE);
-		VkClearAttachment white{};
-		white.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		white.clearValue.color = {{1, 1, 1, 1}};
-		for (unsigned row = 0; row < 7; ++row)
-			for (unsigned column = 0; column < 5; ++column)
-				if (glyphs[eye][row] & (1u << (4 - column)))
-				{
-					VkClearRect rectangle{
-						{{static_cast<int>(48 + column * 32), static_cast<int>(16 + row * 32)}, {32, 32}}, 0, 1};
-					vkCmdClearAttachments(image.command, 1, &white, 1, &rectangle);
-				}
-		vkCmdEndRenderPass(image.command);
-	}
-	CheckVk(vkEndCommandBuffer(image.command), "End headset test command");
-}
-
 bool HeadsetTestPattern::Draw()
 {
 	if (!m_acquired)
@@ -215,5 +178,42 @@ XrSwapchain HeadsetTestPattern::Swapchain() const
 XrExtent2Di HeadsetTestPattern::Extent() const
 {
 	return {s_size, s_size};
+}
+
+void HeadsetTestPattern::Record(Image& image)
+{
+	CheckVk(vkResetCommandBuffer(image.command, 0), "Reset headset test command");
+	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	CheckVk(vkBeginCommandBuffer(image.command, &begin), "Begin headset test command");
+	// Diagnostic L/R glyphs use attachment clears, not a second compositor/shader set.
+	constexpr std::array<std::array<unsigned, 7>, 2> glyphs{
+		{{{16, 16, 16, 16, 16, 16, 31}}, {{30, 17, 17, 30, 20, 18, 17}}}};
+	for (std::size_t eye = 0; eye < 2; ++eye)
+	{
+		VkClearValue background{};
+		background.color.float32[eye == 0 ? 0 : 2] = 0.3f;
+		background.color.float32[3] = 1;
+		VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+		pass.renderPass = m_renderPass;
+		pass.framebuffer = image.framebuffers[eye];
+		pass.renderArea.extent = {s_size, s_size};
+		pass.clearValueCount = 1;
+		pass.pClearValues = &background;
+		vkCmdBeginRenderPass(image.command, &pass, VK_SUBPASS_CONTENTS_INLINE);
+		VkClearAttachment white{};
+		white.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		white.clearValue.color = {{1, 1, 1, 1}};
+		for (unsigned row = 0; row < 7; ++row)
+			for (unsigned column = 0; column < 5; ++column)
+				if (glyphs[eye][row] & (1u << (4 - column)))
+				{
+					VkClearRect rectangle{
+						{{static_cast<int>(48 + column * 32), static_cast<int>(16 + row * 32)}, {32, 32}}, 0, 1};
+					vkCmdClearAttachments(image.command, 1, &white, 1, &rectangle);
+				}
+		vkCmdEndRenderPass(image.command);
+	}
+	CheckVk(vkEndCommandBuffer(image.command), "End headset test command");
 }
 } // namespace simxr::headset

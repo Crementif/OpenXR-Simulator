@@ -22,6 +22,7 @@ public:
 	private:
 		friend class SwapchainWaits;
 		explicit Registration(SwapchainWaits& owner);
+
 		SwapchainWaits* m_owner;
 	};
 
@@ -31,6 +32,7 @@ public:
 
 private:
 	void Leave();
+
 	std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::size_t m_readers = 0;

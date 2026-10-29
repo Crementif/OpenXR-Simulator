@@ -19,20 +19,24 @@ public:
 	void Resume();
 	void Step();
 	void Cancel();
+
 	void Check(bool bindingBoundary = false);
 	void WaitUntil(std::chrono::steady_clock::time_point target);
 	void Finish(RigPhase phase, std::string error);
 	bool Cancelled() const;
+
 	void SetCompatibility(std::optional<std::vector<std::string>> deviations);
 	void TransactionScheduled();
 	void CaptureRetained();
 	void Checkpoint(RigCheckpoint checkpoint);
 	void Print(std::string line);
+
 	void ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed, std::uint64_t skipped,
 					   std::uint64_t pairs, std::uint64_t gaps);
 	void MissedCadences(std::uint64_t count);
 	void BeginObservation();
 	void EndObservation();
+
 	RigPhase Phase() const;
 	RigSnapshot Snapshot() const;
 

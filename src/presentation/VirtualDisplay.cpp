@@ -46,32 +46,6 @@ PresentationPolicy VirtualDisplay::Policy() const
 	return m_policy;
 }
 
-std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
-															std::optional<SessionGeneration> generation, bool exact,
-															const std::function<bool()>& current)
-{
-	if (m_policy == PresentationPolicy::Repeat)
-		return exact ? m_controller.AdvanceExternal(time, *generation, {}, current)
-					 : m_controller.Advance(time, generation);
-	const auto reproject = [this](const PresentationTick& baseline) {
-		PoseSample head;
-		try
-		{
-			if (baseline.output && baseline.reprojection.source)
-				head = m_sampleHead(baseline.time);
-		}
-		catch (const std::bad_alloc&)
-		{
-			auto fallback = m_reprojection.Process(baseline, {});
-			fallback.result = XR_ERROR_OUT_OF_MEMORY;
-			return fallback;
-		}
-		return m_reprojection.Process(baseline, head);
-	};
-	return exact ? m_controller.AdvanceExternal(time, *generation, reproject, current)
-				 : m_controller.Advance(time, generation, reproject);
-}
-
 void VirtualDisplay::Start(SessionGeneration generation, const DisplayTimeline& timeline, ExecutionMode mode,
 						   std::optional<HostTime> hostEpoch)
 {
@@ -101,28 +75,6 @@ void VirtualDisplay::Start(SessionGeneration generation, const DisplayTimeline& 
 		StopLocked();
 		throw;
 	}
-}
-
-void VirtualDisplay::StopLocked() noexcept
-{
-	{
-		std::lock_guard lock(m_mutex);
-		m_active = false;
-		m_external.reset();
-		m_changed.notify_all();
-		try
-		{
-			m_waiter->Wake();
-		}
-		catch (...)
-		{
-			m_faulted.store(true);
-		}
-	}
-	m_controller.Stop();
-	if (m_worker.joinable())
-		m_worker.join();
-	m_reprojection.Reset();
 }
 
 void VirtualDisplay::Stop() noexcept
@@ -199,26 +151,6 @@ bool VirtualDisplay::Paused() const
 	return m_active && m_paused;
 }
 
-DisplayTick VirtualDisplay::NextTick() const
-{
-	std::optional<DisplayTimeline> timeline;
-	{
-		std::lock_guard lock(m_mutex);
-		timeline = m_timeline;
-	}
-	const auto latest = m_controller.Snapshot().latest;
-	if (!latest || !timeline)
-		return {};
-	auto next = timeline->TickAtOrAfter(latest->time);
-	if (timeline->TimeAt(next) <= latest->time)
-	{
-		if (next.value == std::numeric_limits<std::uint64_t>::max())
-			throw std::overflow_error("Virtual display tick exhausted");
-		++next.value;
-	}
-	return next;
-}
-
 bool VirtualDisplay::PublishExternalPrediction(SessionGeneration generation, std::uint64_t attachment,
 											   std::uint64_t sequence, RuntimeTime target, Duration period)
 {
@@ -255,6 +187,26 @@ void VirtualDisplay::ReleaseExternalPrediction(std::uint64_t attachment)
 	m_external.reset();
 	m_waiter->Wake();
 	m_changed.notify_all();
+}
+
+DisplayTick VirtualDisplay::NextTick() const
+{
+	std::optional<DisplayTimeline> timeline;
+	{
+		std::lock_guard lock(m_mutex);
+		timeline = m_timeline;
+	}
+	const auto latest = m_controller.Snapshot().latest;
+	if (!latest || !timeline)
+		return {};
+	auto next = timeline->TickAtOrAfter(latest->time);
+	if (timeline->TimeAt(next) <= latest->time)
+	{
+		if (next.value == std::numeric_limits<std::uint64_t>::max())
+			throw std::overflow_error("Virtual display tick exhausted");
+		++next.value;
+	}
+	return next;
 }
 
 std::optional<PresentationTick> VirtualDisplay::Step()
@@ -327,6 +279,69 @@ void VirtualDisplay::AdvanceFromFrame(SessionGeneration generation, RuntimeTime 
 		m_controller.Stop();
 		m_reprojection.Reset();
 	}
+}
+
+PresentationSnapshot VirtualDisplay::Snapshot() const
+{
+	return m_controller.Snapshot();
+}
+
+bool VirtualDisplay::Faulted() const noexcept
+{
+	return m_faulted.load();
+}
+
+std::size_t VirtualDisplay::PollRetired()
+{
+	return m_controller.PollRetired();
+}
+
+std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
+															std::optional<SessionGeneration> generation, bool exact,
+															const std::function<bool()>& current)
+{
+	if (m_policy == PresentationPolicy::Repeat)
+		return exact ? m_controller.AdvanceExternal(time, *generation, {}, current)
+					 : m_controller.Advance(time, generation);
+	const auto reproject = [this](const PresentationTick& baseline) {
+		PoseSample head;
+		try
+		{
+			if (baseline.output && baseline.reprojection.source)
+				head = m_sampleHead(baseline.time);
+		}
+		catch (const std::bad_alloc&)
+		{
+			auto fallback = m_reprojection.Process(baseline, {});
+			fallback.result = XR_ERROR_OUT_OF_MEMORY;
+			return fallback;
+		}
+		return m_reprojection.Process(baseline, head);
+	};
+	return exact ? m_controller.AdvanceExternal(time, *generation, reproject, current)
+				 : m_controller.Advance(time, generation, reproject);
+}
+
+void VirtualDisplay::StopLocked() noexcept
+{
+	{
+		std::lock_guard lock(m_mutex);
+		m_active = false;
+		m_external.reset();
+		m_changed.notify_all();
+		try
+		{
+			m_waiter->Wake();
+		}
+		catch (...)
+		{
+			m_faulted.store(true);
+		}
+	}
+	m_controller.Stop();
+	if (m_worker.joinable())
+		m_worker.join();
+	m_reprojection.Reset();
 }
 
 void VirtualDisplay::Run() noexcept
@@ -407,18 +422,4 @@ void VirtualDisplay::Run() noexcept
 	}
 }
 
-PresentationSnapshot VirtualDisplay::Snapshot() const
-{
-	return m_controller.Snapshot();
-}
-
-bool VirtualDisplay::Faulted() const noexcept
-{
-	return m_faulted.load();
-}
-
-std::size_t VirtualDisplay::PollRetired()
-{
-	return m_controller.PollRetired();
-}
 } // namespace simxr

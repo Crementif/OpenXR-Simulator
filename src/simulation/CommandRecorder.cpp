@@ -29,6 +29,19 @@ void CommandRecorder::Start(const CommandRecordingOrigin& origin, bool drain)
 	m_slots.swap(slots);
 }
 
+void CommandRecorder::Acknowledge(std::size_t through)
+{
+	std::lock_guard mutation(m_mutationMutex);
+	std::lock_guard lock(m_mutex);
+	if (!m_state.drain || through > m_state.total)
+		throw std::invalid_argument("Invalid recording acknowledgement");
+	while (m_state.floor < through)
+	{
+		m_slots[m_state.floor % m_slots.size()].reset();
+		++m_state.floor;
+	}
+}
+
 void CommandRecorder::Stop()
 {
 	std::lock_guard mutation(m_mutationMutex);
@@ -44,19 +57,6 @@ void CommandRecorder::Fail()
 	{
 		m_state.active = false;
 		m_state.overflow = true;
-	}
-}
-
-void CommandRecorder::Acknowledge(std::size_t through)
-{
-	std::lock_guard mutation(m_mutationMutex);
-	std::lock_guard lock(m_mutex);
-	if (!m_state.drain || through > m_state.total)
-		throw std::invalid_argument("Invalid recording acknowledgement");
-	while (m_state.floor < through)
-	{
-		m_slots[m_state.floor % m_slots.size()].reset();
-		++m_state.floor;
 	}
 }
 

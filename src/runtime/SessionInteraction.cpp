@@ -56,22 +56,6 @@ void SessionInteraction::PublishProfileChange(bool changed, bool running)
 	m_profileChangePending = false;
 }
 
-void SessionInteraction::RetireInactiveHaptics(RuntimeTime time)
-{
-	for (const auto& output : m_haptics.Snapshot(time))
-	{
-		if (output.status != HapticStatus::Active)
-			continue;
-		const XrHapticActionInfo target{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, output.action, output.subactionPath};
-		std::vector<InputDeviceId> devices;
-		const auto result = m_actions.OutputTargets(target, devices);
-		if (XR_SUCCEEDED(result) && std::find(devices.begin(), devices.end(), output.device) != devices.end())
-			continue;
-		const std::array stale{output.device};
-		m_haptics.Stop(stale, output.action, time, true);
-	}
-}
-
 XrResult SessionInteraction::ApplyHaptic(const XrHapticActionInfo* info, const XrHapticBaseHeader* feedback,
 										 RuntimeTime time, bool focused)
 {
@@ -105,4 +89,21 @@ HapticState& SessionInteraction::Haptics()
 {
 	return m_haptics;
 }
+
+void SessionInteraction::RetireInactiveHaptics(RuntimeTime time)
+{
+	for (const auto& output : m_haptics.Snapshot(time))
+	{
+		if (output.status != HapticStatus::Active)
+			continue;
+		const XrHapticActionInfo target{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, output.action, output.subactionPath};
+		std::vector<InputDeviceId> devices;
+		const auto result = m_actions.OutputTargets(target, devices);
+		if (XR_SUCCEEDED(result) && std::find(devices.begin(), devices.end(), output.device) != devices.end())
+			continue;
+		const std::array stale{output.device};
+		m_haptics.Stop(stale, output.action, time, true);
+	}
+}
+
 } // namespace simxr

@@ -142,6 +142,7 @@ class LegacyControllerMotion
 {
 public:
 	LegacyControllerMotion();
+
 	ControllerMotionResult Update(const ControllerMotionFrame& frame);
 	ControllerMotionSnapshot Snapshot() const;
 	ControllerMotionSnapshot Snapshot(ControllerHeadPose head) const;
@@ -183,12 +184,14 @@ private:
 	static void Grip(Controller& controller, float value);
 	static void ThumbClick(Controller& controller, bool value);
 	static void Stick(Controller& controller, XrVector2f value);
+
 	void AdvanceGlides(double seconds);
 	std::optional<bool> ApplyKeyboard(const ControllerKeyboardSample& keyboard);
 	void ApplyPose(const ControllerPoseEdit& edit);
 	void ApplyHoldEdit(const ControllerHoldEdit& edit);
 	void ApplyHolds();
 	ControllerMotionSnapshot SnapshotLocked(ControllerHeadPose head) const;
+
 	mutable std::mutex m_mutex;
 	std::array<Controller, 2> m_controllers;
 	std::array<Glide, 2> m_glides;

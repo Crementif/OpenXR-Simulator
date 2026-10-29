@@ -67,10 +67,11 @@ class GameBridge
 {
 public:
 	explicit GameBridge(std::size_t observationCapacity = 1024);
-	GameObservationPage Observations(std::optional<std::uint64_t> offset = {}, std::size_t count = 16) const;
+
 	std::uint64_t Register(std::uint32_t capabilities);
-	void Close() noexcept;
 	void Unregister(std::uint64_t game) noexcept;
+	void Close() noexcept;
+
 	std::optional<GameCommandRecord> Submit(std::uint64_t game, std::uint64_t source, std::uint64_t clientId,
 											std::uint32_t kind, std::string payload);
 	std::optional<GameCommandRecord> Read(std::uint64_t game, std::uint64_t source, std::uint64_t id) const;
@@ -78,11 +79,19 @@ public:
 	bool Complete(std::uint64_t game, std::uint64_t id, bool success, std::string result);
 	bool Publish(std::uint64_t game, std::string telemetry);
 	void Disconnect(std::uint64_t source, bool retire = false) noexcept;
+
+	GameObservationPage Observations(std::optional<std::uint64_t> offset = {}, std::size_t count = 16) const;
 	GameBridgeSnapshot Snapshot() const;
 	bool FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcept;
 
 private:
+	struct SourceCursor
+	{
+		std::uint64_t source = 0, last = 0;
+	};
+
 	void Observe(GameObservation observation) noexcept;
+
 	std::vector<std::optional<GameObservation>> m_observations;
 	std::uint64_t m_observationNext = 0;
 	bool m_observationFailed = false;
@@ -90,12 +99,6 @@ private:
 	GameBridgeSnapshot m_state;
 	bool m_closed = false;
 	std::uint64_t m_nextGame = 1, m_nextCommand = 1, m_lastGame = 0;
-
-	struct SourceCursor
-	{
-		std::uint64_t source = 0, last = 0;
-	};
-
 	std::vector<SourceCursor> m_sources;
 	std::vector<GameCommandRecord> m_commands;
 };
