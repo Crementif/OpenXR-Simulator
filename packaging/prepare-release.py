@@ -145,7 +145,7 @@ def python_wheels(directory, version):
     if directory is None:
         return []
     wheels = []
-    for name in ("simxr_control", "openxr_simulator_mcp"):
+    for name in ("simxr_control",):
         path = directory / f"{name}-{version}-py3-none-any.whl"
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"Missing Python distribution: {path}")
@@ -173,7 +173,7 @@ Launch OpenXR applications, control simulated devices and inspect stereo output 
 Both platforms require a Vulkan driver and loader. Choose **Add application**, select an executable and launch it. For MCP, copy the configuration from **Preferences → MCP**. See the package README for installation and removal instructions.
 """
     if wheels:
-        notes += "\nOptional Python SDK and compatibility server wheels are included.\n"
+        notes += "\nAn optional Python SDK wheel is included.\n"
     return notes
 
 
@@ -182,7 +182,7 @@ def main():
     parser.add_argument("--version", required=True, help="version embedded in the packages, e.g. 2.0.0")
     parser.add_argument("--directory", type=Path, required=True, help="directory containing all three packages")
     parser.add_argument("--python-wheels", type=Path,
-                        help="include the matching SDK and legacy MCP wheels from this directory")
+                        help="include the matching Python SDK wheel from this directory")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
         parser.error("version must contain three numeric components")

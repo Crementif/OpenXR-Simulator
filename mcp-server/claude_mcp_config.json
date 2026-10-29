@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "openxr-simulator": {
-      "command": "python",
-      "args": ["E:/Github/OpenXR-Simulator/mcp-server/openxr_simulator_mcp.py"],
-      "env": {}
-    }
-  }
-}

@@ -1,8 +1,7 @@
-"""Synthetic stereo scenes shared by the Python and native analyzers."""
+"""Synthetic stereo scenes with independently constructed disparity and lighting faults."""
 
 import numpy as np
 from PIL import Image
-import stereo_consistency as sc
 
 W, H = 640, 400
 HORIZON = 120
@@ -105,8 +104,6 @@ def highlight_one_eye(eye, surface, x, y, d):
     # A glint one eye catches and the other does not: brighter than the surface around it.
     return _blob(140, 300, 50, 25, surface, y, depth=1.7) if eye == "right" else np.ones_like(x)
 
-
-FRUSTA = sc.Frusta(infinity=INFINITY / W, focal=0.45, ipd=0.064)
 
 CASES = [
     # name, shadow, expected verdict prefix, expected kind of the largest region

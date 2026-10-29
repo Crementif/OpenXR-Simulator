@@ -53,15 +53,6 @@ class VideoTests(unittest.TestCase):
                 self.assertEqual(list(Path(folder).iterdir()), [path])
                 self.assertTrue(client.released)
 
-    def test_mcp_video_schema_and_dispatch(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('video_debug', Path(__file__).resolve().parents[2] / 'mcp-server/debug_control.py')
-        adapter = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(adapter)
-        args = adapter._validate('debug_save_video', dict(connection='c', session='1', generation='1',
-            first_frame='3', last_frame='5', path='clip.mp4'))
-        self.assertEqual(args['first_frame'], 3)
-        self.assertIn('debug_start_video_export', adapter._SCHEMAS)
 
 if __name__ == '__main__':
     unittest.main()

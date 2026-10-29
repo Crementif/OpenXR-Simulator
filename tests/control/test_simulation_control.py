@@ -1,8 +1,5 @@
-"""Focused real endpoint/SDK/MCP/compiled-Luau command integration."""
-import importlib.util
+"""Focused real endpoint/SDK/compiled-Luau command integration."""
 import json
-import math
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,10 +9,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'sdk/python'))
-sys.path.insert(0, str(ROOT / 'mcp-server'))
 from simxr_control import (Client, CommandKind, Capability, ControlError, ProtocolError,
                            collect_recording, to_luau, encode_command, decode_command, Scenario)
-from simxr_control.protocol import Tag
 
 HOST, RUNNER = sys.argv[1:3]
 
@@ -56,10 +51,7 @@ class SimulationTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             encode_command({'kind': 'gaze', 'ywa': .4})
 
-    def test_sdk_and_mcp_apply_record_release_and_trace(self):
-        spec = importlib.util.spec_from_file_location('simulation_debug_adapter', ROOT / 'mcp-server/debug_control.py')
-        adapter = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(adapter)
+    def test_sdk_sources_apply_record_release_and_trace(self):
         with tempfile.TemporaryDirectory(prefix='simxr-commands-') as directory:
             path, marker = Path(directory) / 'control.sock', Path(directory) / 'start'
             finish = Path(directory) / 'finish'
@@ -120,27 +112,20 @@ class SimulationTests(unittest.TestCase):
                     diagnostics = client.diagnostics(session)['document']
                     self.assertTrue(any(event['kind'] == 'commands_applied' for event in diagnostics['events']))
                     self.assertTrue(any(event['kind'] == 'submitted' for event in diagnostics['events']))
-                    tools = adapter.DebugTools()
-                    try:
-                        connected = tools.call('debug_connect', {'path': str(path)})
-                        self.assertTrue(connected['ok'], connected)
-                        common = {'connection': connected['connection'], **connected['sessions'][0]}
-                        self.assertTrue(tools.call('simulation_start_recording', common)['ok'])
-                        queued = tools.call('simulation_schedule', {**common, 'transaction_id': '1', 'frame': '2',
-                            'commands': [{'kind': 'take_control', 'channel': 'gaze'}, {'kind': 'gaze', 'yaw': .5}]})
-                        self.assertTrue(queued['ok'], queued)
+                    with Client(path) as source:
+                        source.start_recording(session)
+                        queued = source.schedule(session,
+                            [{'kind': 'take_control', 'channel': 'gaze'}, {'kind': 'gaze', 'yaw': .5}],
+                            transaction_id=1, frame=2)
+                        self.assertEqual(queued['phase'], 'queued')
                         step = client.submit(lease, CommandKind.STEP)
                         self.assertEqual(client.wait(session, step['operation_id'])['phase'], 'complete')
-                        observed = tools.call('simulation_status', {**common, 'transaction_id': '1'})
-                        self.assertTrue(observed['ok'], observed)
-                        self.assertEqual(observed['document']['applied_frame'], '2')
+                        observed = source.simulation_status(session, 1)
+                        self.assertEqual(observed['document']['applied_frame'], 2)
                         self.assertEqual(observed['phase'], 'applied')
-                        invalid = tools.call('simulation_schedule', {**common, 'transaction_id': '2', 'frame': '3',
-                            'commands': [{'kind': 'gaze', 'ywa': .8}]})
-                        self.assertFalse(invalid['ok'])
-                        self.assertTrue(tools.call('simulation_release_control', common)['ok'])
-                    finally:
-                        tools.close()
+                        with self.assertRaises(ProtocolError):
+                            source.schedule(session, [{'kind': 'gaze', 'ywa': .8}], transaction_id=2, frame=3)
+                        source.release_control(session)
                     wait_for(lambda: not client.read_recording(session, count=0)['document']['active'])
                     client.start_recording(session)
                     client.stop_recording(session)
@@ -160,72 +145,6 @@ class SimulationTests(unittest.TestCase):
                     process.terminate()
                 process.communicate(timeout=5)
 
-    def test_compatibility_tools_use_shared_acknowledged_commands(self):
-        spec = importlib.util.spec_from_file_location('compatibility_control', ROOT / 'mcp-server/legacy_control.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        with tempfile.TemporaryDirectory(prefix='simxr-compatibility-') as directory:
-            path, marker = Path(directory) / 'control.123.sock', Path(directory) / 'start'
-            tools = module.LegacyControl(directory)
-            self.assertFalse(tools.call('set_head_pose', {})['ok'])
-            host = subprocess.Popen([HOST, str(path), str(marker)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            try:
-                wait_for(path.exists, host)
-                with Client(path) as client:
-                    session = client.sessions()[0]
-                    lease = client.acquire(session)
-                    pause = client.submit(lease, CommandKind.PAUSE)
-                    self.assertEqual(client.wait(session, pause['operation_id'])['phase'], 'complete')
-                    queued = tools.call('set_head_pose', {'x': 2, 'y': 1.8, 'z': -3, 'yaw_deg': 90})
-                    self.assertTrue(queued['ok'], queued)
-                    self.assertEqual(queued['phase'], 'queued')
-                    self.assertFalse(queued['applied'])
-                    self.assertFalse((Path(directory) / 'head_pose_command.json').exists())
-                    marker.touch()
-                    def step():
-                        operation = client.submit(lease, CommandKind.STEP)
-                        self.assertEqual(client.wait(session, operation['operation_id'])['phase'], 'complete')
-                        return client.simulation_status(session)['document']['configuration']
-                    state = step()
-                    self.assertEqual(state['head']['position'][0], 2)
-                    self.assertAlmostEqual(state['head']['orientation'][1], 2**-.5, places=5)
-                    queued = tools.call('set_controller_pose', {'hand': 0, 'posX': 0, 'posY': 0, 'posZ': -1, 'trigger': .5})
-                    self.assertTrue(queued['ok'], queued)
-                    pending = tools.call('hold_controller_inputs', {'hand': 0, 'grip': .75})
-                    self.assertFalse(pending['ok'], pending)
-                    self.assertEqual(pending['transaction_id'], queued['transaction_id'])
-                    state = step()
-                    self.assertAlmostEqual(state['controllers'][0]['pose']['position'][0], 1, places=5)
-                    self.assertEqual(state['controllers'][0]['controls']['trigger'], .5)
-                    queued = tools.call('hold_controller_inputs', {'hand': 0, 'grip': .75, 'primary': 1})
-                    self.assertTrue(queued['ok'], queued)
-                    state = step()
-                    self.assertEqual(state['controllers'][0]['controls']['trigger'], .5)
-                    self.assertEqual(state['controllers'][0]['controls']['grip'], .75)
-                    self.assertTrue(state['controllers'][0]['controls']['primary'])
-                    original_fov = state['views']['outer_fov']
-                    queued = tools.call('set_ipd', {'ipd_mm': 70})
-                    self.assertTrue(queued['ok'], queued)
-                    state = step()
-                    self.assertAlmostEqual(state['views']['ipd'], .07)
-                    self.assertEqual(state['views']['outer_fov'], original_fov)
-                    eye = {'left_deg': -40, 'right_deg': 50, 'up_deg': 45, 'down_deg': -45}
-                    queued = tools.call('set_fov', {'left_eye': eye, 'right_eye': eye})
-                    self.assertTrue(queued['ok'], queued)
-                    state = step()
-                    self.assertAlmostEqual(state['views']['ipd'], .07)
-                    self.assertAlmostEqual(state['views']['outer_fov'][0], math.radians(-40), places=5)
-                    tools.close()
-                    self.assertEqual(client.simulation_status(session)['document']['frame_id'], 5)
-                    resumed = client.submit(lease, CommandKind.RESUME)
-                    self.assertGreater(resumed['operation_id'], 0)
-                output = host.communicate(timeout=5)[0]
-                self.assertEqual(host.returncode, 0, output)
-            finally:
-                tools.close()
-                if host.poll() is None:
-                    host.terminate()
-                host.communicate(timeout=5)
 
     def test_python_saved_recording_replays_with_application_and_display_steps(self):
         with tempfile.TemporaryDirectory(prefix='simxr-python-recording-') as directory:

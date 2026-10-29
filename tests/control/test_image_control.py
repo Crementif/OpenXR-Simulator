@@ -133,45 +133,6 @@ class ImageEndpointTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 os.fstat(fd)
 
-    def test_mcp_explicit_export_against_actual_cpp_endpoint(self):
-        import base64
-        import importlib.util
-        source = Path(__file__).resolve().parents[2] / 'mcp-server/debug_control.py'
-        spec = importlib.util.spec_from_file_location('image_debug_adapter', source)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        tools = module.DebugTools()
-        self.addCleanup(tools.close)
-        connected = tools.call('debug_connect', {'path': str(self.path)})
-        self.assertTrue(connected['ok'], connected)
-        common = {'connection': connected['connection'], **connected['sessions'][0]}
-        retained = tools.call('debug_retain_image', {**common, 'capture': str(self.capture)})
-        self.assertTrue(retained['ok'], retained)
-        image = retained['image_reader_id']
-        self.assertIsInstance(image, str)
-        info = tools.call('debug_image_info', {'connection': common['connection'], 'image': image})
-        self.assertEqual(info['image_descriptor']['device_uuid'], bytes(range(1, 17)).hex())
-        exported = tools.call('debug_start_export', {'connection': common['connection'], 'image': image, 'layer': 0})
-        export = exported['export_id']
-        read_args = {'connection': common['connection'], 'export': export, 'offset': '0', 'length': 16}
-        pending = tools.call('debug_read_export', read_args)
-        self.assertEqual(pending['code'], ErrorCode.BUSY)
-        self.ready.touch()
-        deadline = time.monotonic() + 3
-        while True:
-            result = tools.call('debug_read_export', read_args)
-            if result['ok']:
-                break
-            self.assertEqual(result['code'], ErrorCode.BUSY)
-            self.assertLess(time.monotonic(), deadline)
-            time.sleep(0.005)
-        self.assertEqual(base64.b64decode(result['bytes']['data']), bytes((i * 17 + 3) & 255 for i in range(16)))
-        self.assertEqual(result['bytes']['encoding'], 'base64')
-        self.assertTrue(tools.call('debug_release_export', {'connection': common['connection'], 'export': export})['ok'])
-        self.assertTrue(tools.call('debug_release_image', {'connection': common['connection'], 'image': image})['ok'])
-        status = tools.call('debug_status', common)
-        self.assertEqual(status['pipeline']['permits'], 0)  # Image tools issued no frame work.
-        tools.close()
 
     def test_fragmented_rights_in_payload_replay_and_bad_ancillary_close(self):
         # Exercise LocalControlServer's recvmsg on both header and payload; all

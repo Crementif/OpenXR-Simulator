@@ -72,7 +72,7 @@ jobs:
           elif [ -n "${SIMXR_CI_DESKTOP_DRIVER:-}" ]; then
             python3 tests/packaging/test_linux_desktop_mcp.py "$stage" --video-driver "$SIMXR_CI_DESKTOP_DRIVER"
           fi
-          /usr/bin/python3 tests/app/test_stereo_consistency_reference.py "$GITHUB_WORKSPACE/out/ci-linux/build/stereo_consistency_tests"
+          /usr/bin/python3 tests/app/test_stereo_consistency_scenes.py "$GITHUB_WORKSPACE/out/ci-linux/build/stereo_consistency_tests"
           xvfb-run -a -s '-screen 0 640x480x24' python3 tests/app/test_startup_failure.py \
             "$stage/bin/simxr_companion" "$stage/bin/simxr_mcp_connector"
           SIMXR_DATA_DIR="$GITHUB_WORKSPACE/out/ci-linux/smoke-data" xvfb-run -a \
@@ -118,15 +118,14 @@ jobs:
       - name: Build optional Python distributions
         run: |
           python3 -m venv out/python-build
-          out/python-build/bin/python -m pip wheel --no-deps --wheel-dir out/python-wheels ./sdk/python ./mcp-server
+          out/python-build/bin/python -m pip wheel --no-deps --wheel-dir out/python-wheels ./sdk/python
           (cd out/python-wheels && sha256sum *.whl > SHA256SUMS)
       - name: Install and test without source imports
         run: |
           python3 -m venv out/python-test
-          out/python-test/bin/python -m pip install --find-links out/python-wheels out/python-wheels/openxr_simulator_mcp-*.whl
+          out/python-test/bin/python -m pip install --find-links out/python-wheels out/python-wheels/simxr_control-*.whl
           out/python-test/bin/python -m pip check
           env -u PYTHONPATH out/python-test/bin/python tests/packaging/test_python_distributions.py
-          out/python-test/bin/python tests/packaging/test_missing_python_sdk.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-distributions
@@ -148,8 +147,8 @@ jobs:
         run: |
           python -m venv out/python-test
           $py = (Resolve-Path out/python-test/Scripts/python.exe).Path
-          $wheel = @(Get-ChildItem out/python-wheels/openxr_simulator_mcp-*.whl)
-          if ($wheel.Count -ne 1) { throw 'Expected exactly one MCP wheel.' }
+          $wheel = @(Get-ChildItem out/python-wheels/simxr_control-*.whl)
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one SDK wheel.' }
           & $py -m pip install --find-links out/python-wheels $wheel[0].FullName
           if ($LASTEXITCODE -ne 0) { throw 'Wheel installation failed.' }
           & $py -m pip check
@@ -157,8 +156,6 @@ jobs:
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
           & $py tests/packaging/test_python_distributions.py
           if ($LASTEXITCODE -ne 0) { throw 'Installed package test failed.' }
-          & $py tests/packaging/test_missing_python_sdk.py
-          if ($LASTEXITCODE -ne 0) { throw 'Missing SDK test failed.' }
 
   candidate:
     needs: [linux, windows, python-packages, python-windows]

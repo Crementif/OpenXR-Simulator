@@ -24,8 +24,6 @@ def retain(client, session, frame):
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'mcp-server'))
-from debug_control import DebugTools
 
 
 def main():
@@ -52,20 +50,6 @@ def main():
                         owner = clients[(frame - 3) // 8]
                         readers.append((owner, retain(owner, session, frame), frame))
                     if frame == 15:
-                        tools = DebugTools()
-                        try:
-                            connected = tools.call('debug_connect', {'path': str(data / f'control.{host.pid}.sock')})
-                            require(connected['ok'], connected)
-                            scope = {'connection': connected['connection'], **connected['sessions'][0]}
-                            history = tools.call('debug_image_history', dict(scope, count=1))
-                            require(history['ok'] and history['document']['entries'][0]['frame_id'] == '15', history)
-                            retained = tools.call('debug_retain_history', dict(scope, frame='15'))
-                            require(retained['ok'] and retained['frame']['frame_id'] == '15', retained)
-                            released = tools.call('debug_release_image', {'connection': scope['connection'],
-                                                'image': retained['image_reader_id']})
-                            require(released['ok'], released)
-                        finally:
-                            tools.close()
                         runner = subprocess.run([sys.argv[2], '--socket', str(data / f'control.{host.pid}.sock'),
                                                  '--rig', str(ROOT / 'examples/rigs/export_history.luau'),
                                                  '--json', str(data / 'history-report.json')],

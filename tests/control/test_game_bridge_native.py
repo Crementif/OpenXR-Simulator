@@ -1,5 +1,4 @@
-"""Actual runtime C ABI -> game update point -> SDK/MCP, without XR or GPU."""
-import importlib.util
+"""Actual runtime C ABI -> game update point -> SDK, without XR or GPU."""
 import json
 from pathlib import Path
 import os
@@ -14,35 +13,28 @@ from simxr_control import Client, ControlError
 
 
 def run():
-    spec = importlib.util.spec_from_file_location('game_tools', ROOT / 'mcp-server/debug_control.py')
-    adapter = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(adapter)
     with tempfile.TemporaryDirectory(prefix='simxr-native-game-') as temporary:
         path, stop = Path(temporary) / 'control.sock', Path(temporary) / 'stop'
         environment = dict(os.environ, VK_DRIVER_FILES='/nonexistent/simxr-no-graphics-driver.json')
         process = subprocess.Popen([sys.argv[1], sys.argv[2], str(path), str(stop)], stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, env=environment)
-        tools = adapter.DebugTools()
+        client = None
         try:
             deadline = time.monotonic() + 5
             while not path.exists():
                 assert process.poll() is None, process.communicate()[0]
                 assert time.monotonic() < deadline, 'C ABI did not publish endpoint without XR'
                 time.sleep(.005)
-            connected = tools.call('debug_connect', {'path': str(path)})
-            assert connected['ok'] and connected['sessions'] == [], connected
-            common = {'connection': connected['connection']}
-            status = tools.call('game_bridge_status', common)
-            assert status['ok'] and status['document']['capabilities'] == 1, status
+            client = Client(path)
+            assert client.sessions() == []
+            status = client.game_status()
+            assert status['document']['capabilities'] == 1, status
             game = status['game_id']
-            args = {**common, 'game': game, 'command_id': '1', 'kind': 1, 'payload': 'checkpoint:start'}
-            queued = tools.call('game_bridge_command', args)
-            assert queued['ok'], queued
-            duplicate = tools.call('game_bridge_command', args)
-            assert duplicate['ok'] and duplicate['operation_id'] == queued['operation_id'], duplicate
+            queued = client.game_command(None, game, 1, 'checkpoint:start', command_id=1)
+            duplicate = client.game_command(None, game, 1, 'checkpoint:start', command_id=1)
+            assert duplicate['operation_id'] == queued['operation_id'], duplicate
             while True:
-                result = tools.call('game_bridge_operation', {**common, 'game': game, 'operation': queued['operation_id']})
-                assert result['ok'], result
+                result = client.game_operation(None, game, queued['operation_id'])
                 if result['phase'] == 'complete':
                     assert result['document']['result'] == 'reset applied', result
                     break
@@ -61,9 +53,6 @@ def run():
                     assert event['observed_time']['domain'] in (1, 2), event
                     assert event['observed_time']['nanoseconds'] > 0, event
                     assert event['observed_time']['resolution'] > 0, event
-                mcp_journal = tools.call('game_bridge_observations', {**common, 'offset': '0', 'count': 16})
-                assert mcp_journal['ok'] and len(mcp_journal['document']['observations']) == 2, mcp_journal
-                assert int(mcp_journal['document']['next']) == journal['next'], mcp_journal
                 tail = observer.game_observations(offset=journal['next'])['document']
                 assert not tail['gap'] and tail['observations'] == [], tail
                 try:
@@ -71,14 +60,16 @@ def run():
                     raise AssertionError('Another connection read a private game operation')
                 except ControlError:
                     pass
-            tools.close()
+            if client is not None:
+                client.close()
             stop.touch()
             output = process.communicate(timeout=5)[0]
             assert process.returncode == 0, output
             assert not path.exists(), 'Explicit C ABI shutdown left control socket behind'
             print(output.strip())
         finally:
-            tools.close()
+            if client is not None:
+                client.close()
             if process.poll() is None:
                 process.terminate()
                 process.communicate(timeout=5)

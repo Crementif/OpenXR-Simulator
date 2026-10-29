@@ -1,5 +1,4 @@
 """Real Vulkan H.264 MP4 export, independently decoded using test-only FFmpeg tools."""
-import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -52,19 +51,7 @@ def main(probe, destination):
                     wait_file(data / f'recording.{frame+1}.ready', host)
                 status = client.status(session)
                 require(status['preview_ram_bytes'] > 0 and not status['preview_error'], status)
-                spec = importlib.util.spec_from_file_location('video_mcp', Path(__file__).resolve().parents[2] / 'mcp-server/debug_control.py')
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                adapter = module.DebugTools()
-                try:
-                    connection = adapter.call('debug_connect', {'path': str(data / f'control.{host.pid}.sock')})
-                    require(connection['ok'], connection)
-                    saved = adapter.call('debug_save_video', dict(connection=connection['connection'],
-                        session=str(session.id), generation=str(session.generation), first_frame='3', last_frame='26',
-                        path=str(destination / 'archived-and-recent.mp4'), overwrite=True))
-                    require(saved['ok'], saved)
-                finally:
-                    adapter.close()
+                client.save_video(session, 3, 26, destination / 'archived-and-recent.mp4', overwrite=True)
                 verify(destination / 'archived-and-recent.mp4', 3, 26)
                 try:
                     client.start_video_export(session, 3, 999)
