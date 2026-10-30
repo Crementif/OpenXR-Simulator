@@ -263,14 +263,22 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 								FrameDiagnosticCategory::Command, outcome.transaction.id);
 			bool spaceChangeRequested = false;
 			for (const auto& outcome : applied.outcomes)
-				if (outcome.result == CommandResult::Applied)
+			{
+				// A physical headset taking or returning the head moves the tracked origin apps calibrated against.
+				const bool device = outcome.transaction.source.kind == CommandSourceKind::Device;
+				if (outcome.result == CommandResult::Applied || (device && outcome.result == CommandResult::Released))
 					for (const auto& command : outcome.transaction.commands)
 					{
 						const auto* scenario = std::get_if<SetScenario>(&command);
+						const auto* take = std::get_if<TakeControl>(&command);
+						const auto* release = std::get_if<ReleaseControl>(&command);
 						spaceChangeRequested |=
 							std::holds_alternative<SetReferenceSpaces>(command) ||
-							(scenario && scenario->scenario == FailureScenario::Recenter && scenario->enabled);
+							(scenario && scenario->scenario == FailureScenario::Recenter && scenario->enabled) ||
+							(device && ((take && take->channel == ControlChannel::Head) ||
+										(release && release->channel == ControlChannel::Head)));
 					}
+			}
 			const auto restored =
 				m_spaces.Restore(prediction.displayTime, applied.configuration.referenceSpaces, spaceChangeRequested);
 			if (XR_FAILED(restored))

@@ -171,6 +171,47 @@ void TestConcurrentNativeControlSynchronization()
 			"Native synchronization weakened standalone input validation");
 }
 
+void TestPhysicalHeadsetSpaceChange()
+{
+	using namespace simxr;
+	Instance instance(reinterpret_cast<XrInstance>(910), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(911), instance);
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+			"Begin physical takeover session");
+	std::uint64_t id = 0;
+	// Applies one transaction and counts the reference-space changes the app is told about.
+	const auto spaceChanges = [&](CommandSource source, SimulationCommand command) {
+		Require(session.Commands()
+						.Submit({++id, source, {FrameId{id}, {}}, CommandLatePolicy::RescheduleNext, {command}})
+						.result == CommandResult::Queued,
+				"Queue head ownership change");
+		FramePrediction prediction;
+		Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS &&
+					session.EndFrame(prediction) == XR_SUCCESS,
+				"Publish head ownership change");
+		int changes = 0;
+		XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
+		while (instance.Events().Poll(event) == XR_SUCCESS)
+		{
+			changes += event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING;
+			event = {XR_TYPE_EVENT_DATA_BUFFER};
+		}
+		return changes;
+	};
+	const CommandSource manual{CommandSourceKind::Manual, 1}, headset{CommandSourceKind::Device, 2};
+	Require(spaceChanges(manual, TakeControl{ControlChannel::Head}) == 0 &&
+				spaceChanges(manual, ReleaseControl{ControlChannel::Head}) == 0,
+			"Manual head edits keep the tracking origin");
+	Require(spaceChanges(headset, TakeControl{ControlChannel::Head}) == 2,
+			"Physical head takeover announces LOCAL and STAGE changes");
+	Require(spaceChanges(headset, ReleaseControl{ControlChannel::Head}) == 2,
+			"Returning the head to simulation announces LOCAL and STAGE changes");
+	session.Close();
+}
+
 void TestReentrantCaptureCollection()
 {
 	using namespace simxr;
@@ -1838,6 +1879,7 @@ int main()
 	Require(session.Ready({Duration{40}}) == XR_ERROR_SESSION_LOST, "Closed session reactivated");
 	TestPresentationPolicyLifecycle();
 	TestConcurrentNativeControlSynchronization();
+	TestPhysicalHeadsetSpaceChange();
 	TestRetainedInstanceAndCpuOwnership();
 	TestInteractionDevices();
 	TestCaptureConfigurationOwnership();
