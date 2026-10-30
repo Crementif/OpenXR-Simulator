@@ -250,7 +250,8 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	const float reserved =
 		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
 	const float middle = std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2);
-	ImGui::SetCursorPosY(middle);
+	// The leading icons share a line with the tabs, which stand on the bar's bottom rule.
+	ImGui::SetCursorPosY(m_tabBar ? ImGui::GetWindowHeight() - button : middle);
 	// The headset sits outside the apps, so it comes before them.
 	DrawHeadset(runtime);
 	ImGui::SameLine(0, 0);
