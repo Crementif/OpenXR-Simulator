@@ -14,7 +14,6 @@ CMakeFiles/
 cmake_install.cmake
 CTestTestfile.cmake
 Makefile
-*.cmake
 
 # Visual Studio
 .vs/
@@ -150,5 +149,3 @@ openxr_simulator.log
 .tmp.driveupload/14217
 .tmp.driveupload/14169
 
-!cmake/*.cmake
-!third_party/vcpkg_triplets/*.cmake

@@ -9,7 +9,6 @@ if [ -e "$work" ]; then
     exit 1
 fi
 mkdir -p "$work"
-python3 "$root/tests/packaging/test_linux_abi.py"
 cmake --preset release -S "$root" -B "$work/build" \
     -DSIMXR_BUILD_PROBES=ON -DSIMXR_BUILD_HEADSET=ON \
     "-DSIMXR_RELEASE_REPOSITORY=${SIMXR_RELEASE_REPOSITORY:-}"
@@ -18,16 +17,14 @@ cmake --build "$work/build" --parallel "${SIMXR_CI_JOBS:-4}" --target \
     companion_settings_tests update_checker_tests mcp_simulation_command_tests mcp_history_tests startup_failure_tests \
     stereo_surface_tests stereo_consistency_tests mcp_image_encode_tests mcp_application_tests package_documentation_tests \
     simxr_native_regression_tests
-ctest --test-dir "$work/build" --output-on-failure -R '^(companion_settings|update_checker|mcp_simulation_commands|mcp_history|mcp_connector_cancellation|mcp_connector_configuration|mcp_connector_protocol|native_mcp_game_bridge|startup_failure_format|stereo_surface|stereo_consistency|mcp_image_encode|mcp_application|package_documentation|package_documentation_open)$'
+ctest --test-dir "$work/build" --output-on-failure -R '^(companion_settings|update_checker|mcp_simulation_commands|mcp_history|mcp_connector_cancellation|mcp_connector_configuration|mcp_connector_protocol|native_mcp_game_bridge|startup_failure_format|stereo_surface|stereo_consistency|mcp_image_encode|mcp_application|package_documentation|package_documentation_open|linux_package_abi)$'
 ctest --test-dir "$work/build" --output-on-failure --no-tests=error -L '^native-regression$'
-python3 "$root/packaging/linux/build-package.py" --build "$work/build" --output "$work/packages"
-python3 - "$work/build/generated/simxr/Version.h" "$work/packages/VERSION" <<'PY'
-from pathlib import Path
-import re
-import sys
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r'Version\[\]\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', text)
-if not match:
-    raise SystemExit("Configured version not found")
-Path(sys.argv[2]).write_text(match.group(1) + "\n", encoding="ascii")
-PY
+version=$(cat "$work/build/VERSION")
+name=openxr-simulator-$version-linux-x64
+cmake --install "$work/build" --prefix "$work/stage/$name"
+cmake "-DSTAGE=$work/stage/$name" "-DVERSION=$version" -P "$root/packaging/linux/CheckPackage.cmake"
+mkdir "$work/packages"
+(cd "$work/stage" && cmake -E tar czf "$work/packages/$name.tar.gz" "$name")
+cpack --config "$work/build/CPackSourceConfig.cmake" -B "$work/packages"
+rm -rf "$work/packages/_CPack_Packages"
+cp "$work/build/VERSION" "$work/packages/VERSION"

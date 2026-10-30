@@ -64,9 +64,8 @@ jobs:
       - name: Test the extracted Linux package
         run: |
           mkdir out/ci-linux/extracted
-          tar -xzf out/ci-linux/packages/*.tar.gz -C out/ci-linux/extracted
+          tar -xzf out/ci-linux/packages/*-linux-x64.tar.gz -C out/ci-linux/extracted
           stage=$(find "$GITHUB_WORKSPACE/out/ci-linux/extracted" -mindepth 1 -maxdepth 1 -type d -print -quit)
-          python3 tests/packaging/test_linux_abi.py "$stage"
           xvfb-run -a python3 tests/packaging/test_linux_install.py "$stage"
           python3 tests/packaging/test_linux_portable.py "$stage" --skip-image
           if [ "${SIMXR_CI_DESKTOP_DRIVER:-}" = x11 ]; then
@@ -86,9 +85,39 @@ jobs:
         with:
           name: linux-package
           path: |
-            out/ci-linux/packages/*.tar.gz
+            out/ci-linux/packages/*-linux-x64.tar.gz
+            out/ci-linux/packages/*-source.tar.gz
             out/ci-linux/packages/VERSION
           if-no-files-found: error
+
+  linux-fedora:
+    needs: [linux]
+    runs-on: ubuntu-24.04
+    container: fedora:43
+    timeout-minutes: 20
+    steps:
+      - name: Install runtime dependencies
+        run: |
+          dnf install -y vulkan-loader mesa-vulkan-drivers vulkan-validation-layers openxr-libs \
+            libX11 libXext libXcursor libXi libXrandr libXfixes libxkbcommon /usr/bin/xvfb-run xorg-x11-xauth
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: linux-package
+          path: out/candidate
+      - name: Run the Ubuntu-built package on Fedora
+        run: |
+          mkdir out/extracted
+          tar -xzf out/candidate/*-linux-x64.tar.gz -C out/extracted
+          stage=$(find "$PWD/out/extracted" -mindepth 1 -maxdepth 1 -type d -print -quit)
+          for binary in "$stage"/bin/*; do
+            if [ -f "$binary" ] && ldd "$binary" 2>/dev/null | grep 'not found'; then
+              echo "$binary has unresolved libraries" >&2
+              exit 1
+            fi
+          done
+          SIMXR_DATA_DIR="$PWD/out/smoke-data" xvfb-run -a "$stage/bin/simxr_companion" --hidden --validation --smoke-frames 8
+          XR_RUNTIME_JSON="$stage/bin/openxr_simulator.json" SIMXR_DATA_DIR="$PWD/out/smoke-data" \
+            SIMXR_PROBE_FRAMES=8 "$stage/bin/xr_probe_linux"
 
   windows:
     needs: [release-context]
@@ -162,7 +191,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Installed package test failed.' }
 
   candidate:
-    needs: [linux, windows, python-packages, python-windows]
+    needs: [linux, linux-fedora, windows, python-packages, python-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
@@ -185,8 +214,8 @@ jobs:
         id: prepare
         run: |
           version=$(tr -d '\r\n' < out/candidate/VERSION)
-          python3 packaging/prepare-release.py --version "$version" --directory out/candidate \
-            --python-wheels out/python-wheels
+          cmake "-DVERSION=$version" -DDIRECTORY=out/candidate -DWHEELS=out/python-wheels \
+            -P packaging/PrepareRelease.cmake
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           rm out/candidate/VERSION
           (cd out/candidate && sha256sum -c SHA256SUMS)
