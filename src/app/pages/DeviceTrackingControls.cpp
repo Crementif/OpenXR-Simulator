@@ -225,6 +225,40 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeadset(bool supported)
 	// Headset fields keep their pending and rejected state apart from the device pages.
 	const auto scope = std::exchange(m_fieldScope, "headset/");
 	DrawOwner(ControlChannel::Views);
+	// A physical headset supplies its own eye views, which replace the model's field of view and IPD.
+	if (ready && m_observed->values.tracking.eyeViews)
+	{
+		constexpr float degrees = 180 / std::numbers::pi_v<float>;
+		const auto& eyes = *m_observed->values.tracking.eyeViews;
+		FieldLabel("Model");
+		ImGui::TextUnformatted("Physical headset");
+		ImGui::SetItemTooltip("The connected headset supplies each eye's position and field of view");
+		FieldLabel("IPD");
+		if ((eyes.poses[0].flags & eyes.poses[1].flags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0)
+		{
+			const auto& left = eyes.poses[0].pose.position;
+			const auto& right = eyes.poses[1].pose.position;
+			ImGui::Text("%.1f mm", std::hypot(right.x - left.x, right.y - left.y, right.z - left.z) * 1000);
+		}
+		else
+			ImGui::TextDisabled("Not tracked");
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			const auto& fov = eyes.fovs[eye];
+			FieldLabel(eye == 0 ? "Left eye" : "Right eye");
+			ImGui::Text("%.0f° x %.0f°", (fov.angleRight - fov.angleLeft) * degrees,
+						(fov.angleUp - fov.angleDown) * degrees);
+			ImGui::SetItemTooltip("Left %.1f°, right %.1f°, up %.1f°, down %.1f°", fov.angleLeft * degrees,
+								  fov.angleRight * degrees, fov.angleUp * degrees, fov.angleDown * degrees);
+		}
+		FieldLabel("Inset angle");
+		ImGui::Text("%.1f°", m_authoredViews.insetHalfAngle * degrees);
+		ImGui::SetItemTooltip("Half angle of the sharper inset view, for apps that use foveated views");
+		ImGui::TextDisabled("Renders %u x %u per eye, inset %u x %u", m_authoredViews.outerWidth,
+							m_authoredViews.outerHeight, m_authoredViews.insetWidth, m_authoredViews.insetHeight);
+		m_fieldScope = scope;
+		return std::exchange(m_edit, {});
+	}
 	ImGui::BeginDisabled(!supported || !ready || !CanControl(ControlChannel::Views));
 	const auto close = [](const XrFovf& a, const XrFovf& b) {
 		return std::abs(a.angleLeft - b.angleLeft) < 1e-4f && std::abs(a.angleRight - b.angleRight) < 1e-4f &&
