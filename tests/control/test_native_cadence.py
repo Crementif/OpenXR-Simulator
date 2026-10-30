@@ -26,7 +26,6 @@ def run(probe):
                            SIMXR_PROBE_GPU_INSPECTION='1', SIMXR_PROBE_RENDER_GATE='1',
                            SIMXR_PROBE_INTERACTIVE='1', SIMXR_PROBE_FRAMES='180',
                            SIMXR_APPLICATION_CADENCE='auto', SIMXR_PRESENTATION_POLICY='repeat')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
         with (data / 'probe.log').open('w+') as log:
             host = subprocess.Popen([probe], env=environment, stdout=log, stderr=subprocess.STDOUT)
             try:

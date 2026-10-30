@@ -15,11 +15,12 @@ from simxr_control import Client, ControlError
 
 def main():
     with tempfile.TemporaryDirectory(prefix='sx-game-') as temporary:
-        endpoint = Path(temporary) / 'control.sock'
-        environment = dict(os.environ, VK_DRIVER_FILES='/nonexistent/simxr-no-graphics-driver.json')
+        environment = dict(os.environ, SIMXR_DATA_DIR=temporary,
+                           VK_DRIVER_FILES='/nonexistent/simxr-no-graphics-driver.json')
         process = subprocess.Popen([sys.executable, str(ROOT / 'examples/cooperating-game.py'),
-                                    '--runtime', sys.argv[1], '--socket', str(endpoint)], env=environment,
+                                    '--runtime', sys.argv[1]], env=environment,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        endpoint = Path(temporary) / f'control.{process.pid}.sock'
         try:
             deadline = time.monotonic() + 10
             while not endpoint.exists():

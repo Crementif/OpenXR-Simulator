@@ -42,7 +42,7 @@ def main():
     for key in list(env):
         if key.startswith("SIMXR_"):
             del env[key]
-    env.update(SIMXR_DATA_DIR=str(data), SIMXR_CONTROL_SOCKET="",
+    env.update(SIMXR_DATA_DIR=str(data),
                SIMXR_LAUNCH_QA_DIRECTORY=str(data),
                SIMXR_LAUNCH_QA_EXECUTABLE=str(build / "bin/xr_probe_linux"),
                XR_RUNTIME_JSON=str(build / "bin/openxr_simulator.json"),

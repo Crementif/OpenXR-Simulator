@@ -6,6 +6,7 @@
 #include "ProbeEnvironment.h"
 #include "ProbeSession.h"
 #include "control/LocalControlClient.h"
+#include "control/RuntimeEndpoint.h"
 #include "control/ControlSchema.h"
 #include "control/ImageInspection.h"
 #include "control/SimulationControl.h"
@@ -981,11 +982,7 @@ static int RunProbe()
 	XR(xrEndFrame(session, &loadingEnd));
 	namespace wire = control;
 	namespace tag = control::tag;
-	const auto* selectedEndpoint = std::getenv("SIMXR_CONTROL_SOCKET");
-	const auto endpoint = selectedEndpoint && *selectedEndpoint
-							  ? std::string(selectedEndpoint)
-							  : (data / ("control." + std::to_string(getpid()) + ".sock")).string();
-	wire::LocalControlClient controls(endpoint);
+	wire::LocalControlClient controls(wire::RuntimeEndpoint(static_cast<std::uint64_t>(getpid()), data));
 	const auto exchange = [&](wire::OpCode operation, std::vector<wire::Field> fields = {}) {
 		wire::ControlPacket request;
 		request.message.opcode = static_cast<std::uint16_t>(operation);

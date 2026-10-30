@@ -140,10 +140,12 @@ target_link_libraries(simxr_control PUBLIC simxr_core)
 target_compile_features(simxr_control PUBLIC cxx_std_20)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(simxr_control PRIVATE src/platform/linux/LocalControlServer.cpp src/platform/linux/LocalControlClient.cpp
-        src/platform/linux/ControlFd.cpp src/platform/linux/RuntimeFiles.cpp)
+        src/platform/linux/ControlFd.cpp src/platform/linux/RuntimeFiles.cpp
+        src/platform/linux/RuntimeEndpoint.cpp)
 elseif(WIN32)
     target_sources(simxr_control PRIVATE src/platform/windows/LocalControlServer.cpp src/platform/windows/LocalControlClient.cpp
-        src/platform/windows/WindowsControl.cpp src/platform/windows/WindowsRuntimeInput.cpp)
+        src/platform/windows/WindowsControl.cpp src/platform/windows/WindowsRuntimeInput.cpp
+        src/platform/windows/RuntimeEndpoint.cpp)
     target_link_libraries(simxr_control PRIVATE advapi32 user32)
 endif()
 add_library(simxr_recording STATIC src/automation/Recording.cpp src/automation/RecordedRig.cpp src/automation/RecordingArchive.cpp src/automation/RecordingRange.cpp src/automation/RecordingEvidence.cpp)
@@ -175,6 +177,7 @@ else()
     target_sources(simxr_app_platform PRIVATE src/app/platform/RunningApps.cpp)
 endif()
 simxr_configure_target(simxr_app_platform)
+target_link_libraries(simxr_app_platform PRIVATE simxr_control)
 
 add_library(simxr_app_settings STATIC
     src/app/services/CompanionSettings.cpp
@@ -824,8 +827,7 @@ if(SIMXR_BUILD_PROBES)
                     elseif(probe_mode STREQUAL "native_admission")
                         list(APPEND probe_environment "SIMXR_PROBE_NATIVE_ADMISSION=1" "SIMXR_PROBE_GPU_INSPECTION=1")
                     elseif(probe_mode STREQUAL "creation_rollback")
-                        list(APPEND probe_environment "SIMXR_PROBE_CREATION_ROLLBACK=1"
-                            "SIMXR_CONTROL_SOCKET=${CMAKE_BINARY_DIR}/creation.sock")
+                        list(APPEND probe_environment "SIMXR_PROBE_CREATION_ROLLBACK=1")
                     elseif(probe_mode STREQUAL "devices")
                         list(APPEND probe_environment "SIMXR_PROBE_DEVICES=1")
                     elseif(probe_mode STREQUAL "body")
@@ -844,11 +846,6 @@ if(SIMXR_BUILD_PROBES)
                     add_test(NAME linux_vulkan_sequence COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_sequence.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_sequence PROPERTIES
-                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
-                        TIMEOUT 90 SKIP_RETURN_CODE 77)
-                    add_test(NAME linux_vulkan_startup_sequence COMMAND "${Python3_EXECUTABLE}"
-                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_sequence.py" "$<TARGET_FILE:xr_probe_linux>" --startup)
-                    set_tests_properties(linux_vulkan_startup_sequence PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_cadence COMMAND "${Python3_EXECUTABLE}"

@@ -1,6 +1,7 @@
 #include "platform/linux/ControlFd.h"
 #include "Pch.h"
 
+#include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -94,5 +95,33 @@ std::shared_ptr<TransferHandle> DuplicateControlFd(int fd)
 	if (duplicate < 0)
 		throw std::system_error(errno, std::generic_category(), "Duplicate control FD");
 	return OwnControlFd(duplicate);
+}
+
+ControlSocketAddress::ControlSocketAddress(const std::string& path)
+{
+	m_address.sun_family = AF_UNIX;
+	std::string target = path;
+	if (path.size() >= sizeof(m_address.sun_path))
+	{
+		const auto slash = path.rfind('/');
+		const auto directory = slash ? path.substr(0, slash) : std::string("/");
+		m_directory = open(directory.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (m_directory < 0)
+			throw std::system_error(errno, std::generic_category(), "Open control socket directory");
+		target = "/proc/self/fd/" + std::to_string(m_directory) + path.substr(slash);
+	}
+	if (target.size() >= sizeof(m_address.sun_path))
+	{
+		if (m_directory >= 0)
+			close(m_directory);
+		throw std::invalid_argument("Control socket name is too long");
+	}
+	std::memcpy(m_address.sun_path, target.c_str(), target.size() + 1);
+}
+
+ControlSocketAddress::~ControlSocketAddress()
+{
+	if (m_directory >= 0)
+		close(m_directory);
 }
 } // namespace simxr::control

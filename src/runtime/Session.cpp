@@ -56,8 +56,7 @@ XrResult Session::Ready(RuntimeTime time)
 	return XR_SUCCESS;
 }
 
-XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config, PresentationPolicy policy,
-						std::shared_ptr<const PoseSequence> startupSequence)
+XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config, PresentationPolicy policy)
 {
 	if (info.type != XR_TYPE_SESSION_BEGIN_INFO ||
 		(policy != PresentationPolicy::Repeat && policy != PresentationPolicy::Rotational))
@@ -87,8 +86,6 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	m_state.generation = m_history.StartGeneration(timing.epoch);
 	try
 	{
-		if (startupSequence && !Commands().StartPoseSequence(ApplicationAutomationSource, std::move(startupSequence)))
-			throw std::runtime_error("Cannot admit application startup sequence");
 		retiredHistory = m_captures.Start(m_state.generation);
 		m_scheduler.Start(timing, m_state.generation);
 		m_display.ConfigurePolicy(policy, [this](RuntimeTime time) {

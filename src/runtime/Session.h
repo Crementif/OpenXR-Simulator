@@ -58,8 +58,7 @@ public:
 
 	XrResult Ready(RuntimeTime time);
 	XrResult Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config,
-				   PresentationPolicy policy = PresentationPolicy::Repeat,
-				   std::shared_ptr<const PoseSequence> startupSequence = {});
+				   PresentationPolicy policy = PresentationPolicy::Repeat);
 	XrResult RequestExit(RuntimeTime time);
 	XrResult End(RuntimeTime time);
 	XrResult SetState(XrSessionState state, RuntimeTime time);

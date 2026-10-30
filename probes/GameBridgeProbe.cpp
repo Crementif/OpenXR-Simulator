@@ -39,19 +39,15 @@ int main(int argc, char** argv)
 	try
 	{
 		const auto timeoutSeconds = simxr::probe::EnvironmentCount("SIMXR_GAME_PROBE_SECONDS", 10, 1, 90);
-		if (argc != 4)
-			throw std::invalid_argument("Expected runtime library, endpoint and stop marker");
+		if (argc != 3)
+			throw std::invalid_argument("Expected runtime library and stop marker");
 #if defined(_WIN32)
-		if (!SetEnvironmentVariableW(L"SIMXR_CONTROL_SOCKET", argv[2]))
-			throw std::runtime_error("Set endpoint environment failed");
 		library = LoadLibraryW(argv[1]);
 		if (!library)
 			throw std::runtime_error("Cannot load runtime library: " + std::to_string(GetLastError()));
 		const auto getApi =
 			reinterpret_cast<PFN_simxrGetGameBridgeApi>(GetProcAddress(library, "simxrGetGameBridgeApi"));
 #else
-		if (setenv("SIMXR_CONTROL_SOCKET", argv[2], 1) != 0)
-			throw std::runtime_error("Set endpoint environment failed");
 		library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 		if (!library)
 			throw std::runtime_error(dlerror());
@@ -84,7 +80,7 @@ int main(int argc, char** argv)
 		if (!window)
 			throw std::runtime_error("Cannot create game probe window");
 #endif
-		while (!std::filesystem::exists(std::filesystem::path{argv[3]})
+		while (!std::filesystem::exists(std::filesystem::path{argv[2]})
 #if defined(_WIN32)
 			   && !s_closeRequested
 #endif

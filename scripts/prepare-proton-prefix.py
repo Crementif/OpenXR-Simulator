@@ -178,7 +178,7 @@ def main():
                     raise ValueError('--companion must identify a Windows executable')
         environment = dict(os.environ, STEAM_COMPAT_DATA_PATH=str(directory),
                            STEAM_COMPAT_CLIENT_INSTALL_PATH=str(steam))
-        for name in ('WINEPREFIX', 'XR_RUNTIME_JSON', 'SIMXR_CONTROL_SOCKET'):
+        for name in ('WINEPREFIX', 'XR_RUNTIME_JSON'):
             environment.pop(name, None)
         provision(directory, proton, environment, args.timeout)
         print(f'Private Proton prefix for the launch profile: {windows_path(directory / "pfx")}', flush=True)

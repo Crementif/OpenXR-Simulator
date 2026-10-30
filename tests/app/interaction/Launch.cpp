@@ -60,7 +60,7 @@ void CheckToolbarLaunch(const char* executable)
 		for (std::string argument; std::getline(lines, argument);)
 			profile.arguments.push_back(argument);
 	}
-	profile.environment = {{"SIMXR_DATA_DIR", PathText(directory)}, {"SIMXR_CONTROL_SOCKET", ""}};
+	profile.environment = {{"SIMXR_DATA_DIR", PathText(directory)}};
 #ifdef __linux__
 	if (std::getenv("SIMXR_SOAK_QA") || std::getenv("SIMXR_RESTART_QA"))
 	{

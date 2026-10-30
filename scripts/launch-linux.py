@@ -57,7 +57,6 @@ def main():
         else:
             directory = Path(tempfile.mkdtemp(prefix='simxr-launch-'))
         environment = dict(os.environ, XR_RUNTIME_JSON=str(manifest), SIMXR_DATA_DIR=str(directory))
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
         with (directory / 'application.log').open('wb') as log:
             app = subprocess.Popen(command, cwd=cwd, env=environment, stdout=log,
                                    stderr=subprocess.STDOUT, start_new_session=True)

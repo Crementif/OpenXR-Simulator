@@ -42,7 +42,6 @@ private:
 	friend class LinuxRuntime;
 
 	LegacyInput m_input;
-	const std::shared_ptr<const PoseSequence> m_startupSequence;
 	RuntimeLog m_log;
 };
 

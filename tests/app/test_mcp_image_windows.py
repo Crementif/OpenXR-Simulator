@@ -33,8 +33,7 @@ def main():
             assert abs(index["ipd"] - .063) < .0001, index
 
             test.discover()
-            endpoint = rf"\\.\pipe\SimXR.Control.mcp.image.{os.getpid()}"
-            probe_environment = {"SIMXR_CONTROL_SOCKET": endpoint,
+            probe_environment = {
                 "SIMXR_PROBE_FRAMES": "1800" if validate else "120000", "SIMXR_PROBE_SLEEP_MS": "1",
                 "SIMXR_PROBE_STEREO_TEXTURE": "1",
                 "DISABLE_XR_APILAYER_NOVENDOR_OBSMirror": "1",

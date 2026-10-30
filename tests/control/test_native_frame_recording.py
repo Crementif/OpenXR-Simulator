@@ -23,7 +23,6 @@ def run(probe, cancelled, failed=False, mode='controlled', overrun=False, hdr=Fa
             environment['SIMXR_PROBE_HDR32'] = '1'
         if mode == 'realtime':
             environment['SIMXR_PROBE_RECORDING'] = '1'
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
         host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True)
         thread = None

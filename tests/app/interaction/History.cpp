@@ -288,7 +288,7 @@ void CheckAppPicker(const char* executable)
 			"Picker QA directory must be new and absolute");
 	const auto settingsPath = directory / "companion.settings";
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
-	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 && ::unsetenv("SIMXR_CONTROL_SOCKET") == 0,
+	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0,
 			"Isolate the socket directory");
 	CompanionSettings settings;
 	settings.profiles.push_back({"Broken path", "/nonexistent/simxr-app"});

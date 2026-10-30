@@ -16,7 +16,6 @@ def main():
     with tempfile.TemporaryDirectory(prefix='simxr-native-control-') as temporary:
         data = Path(temporary)
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
         process = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True)
         try:

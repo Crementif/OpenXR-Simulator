@@ -23,9 +23,8 @@ def main():
         client.initialize('windows-screenshot-test')
 
         test.discover()
-        endpoint = rf'\\.\pipe\SimXR.Control.mcp.screenshot.{os.getpid()}'
         launched = client.tool('simulator_launch_application', {'executable': probe, 'runtime_manifest': manifest,
-            'environment': {'SIMXR_CONTROL_SOCKET': endpoint, 'SIMXR_PROBE_FRAMES': '120000',
+            'environment': {'SIMXR_PROBE_FRAMES': '120000',
             'SIMXR_PROBE_SLEEP_MS': '1', 'SIMXR_PROBE_PROJECTION_ONLY': '1',
             'DISABLE_XR_APILAYER_NOVENDOR_OBSMirror': '1',
             'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY': '1'}})

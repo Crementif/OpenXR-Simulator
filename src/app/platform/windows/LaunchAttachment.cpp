@@ -1,6 +1,7 @@
 #include "Pch.h"
 #include "app/services/LaunchAttachment.h"
 #include "app/services/RuntimeEndpoints.h"
+#include "control/RuntimeEndpoint.h"
 #include "app/platform/windows/RuntimeEndpoints.h"
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/services/Utf8Path.h"
@@ -40,34 +41,20 @@ std::optional<std::filesystem::path> LaunchRuntimeDataDirectory(const LaunchProf
 	}
 }
 
-std::string LaunchRuntimeEndpoint(const LaunchProfile& profile, std::uint64_t process)
+std::string LaunchRuntimeEndpoint(const LaunchProfile&, std::uint64_t process)
 {
-	if (const auto custom = Environment(profile, "SIMXR_CONTROL_SOCKET"); !custom.empty())
-	{
-		(void)LocalPipePath(custom);
-		return custom;
-	}
-	return std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process);
+	return control::RuntimeEndpoint(process);
 }
 
-void LaunchAttachment::Initialize(const LaunchProfile& profile)
+void LaunchAttachment::Initialize(const LaunchProfile&)
 {
-	m_customEndpoint = Environment(profile, "SIMXR_CONTROL_SOCKET");
-	for (const auto& endpoint : DiscoverRuntimeEndpoints(false))
+	for (const auto& endpoint : DiscoverRuntimeEndpoints())
 		m_previous.insert(endpoint);
-	if (!m_customEndpoint.empty())
-	{
-		(void)LocalPipePath(m_customEndpoint);
-		if (RuntimeEndpointExists(m_customEndpoint) && m_customEndpoint != m_replacedEndpoint)
-			throw std::runtime_error("Launch attachment requires a new local control endpoint");
-	}
 }
 
 std::string LaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
 {
-	if (!m_customEndpoint.empty())
-		return m_customEndpoint;
-	return std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process);
+	return control::RuntimeEndpoint(process);
 }
 
 bool LaunchAttachment::EndpointExists(const std::string& endpoint) const

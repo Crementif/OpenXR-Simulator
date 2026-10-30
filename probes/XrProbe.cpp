@@ -8,6 +8,7 @@
 #include "ProbeSession.h"
 #include "control/ControlSchema.h"
 #include "control/LocalControlClient.h"
+#include "control/RuntimeEndpoint.h"
 #include "control/SimulationControl.h"
 
 #include <cmath>
@@ -60,11 +61,7 @@ static void Step(const char* what)
 
 static std::unique_ptr<control::LocalControlClient> HoldControllerInputs()
 {
-	const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
-	const auto endpoint = selected && *selected
-							  ? std::string(selected)
-							  : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
-	auto client = std::make_unique<control::LocalControlClient>(endpoint);
+	auto client = std::make_unique<control::LocalControlClient>(control::RuntimeEndpoint(GetCurrentProcessId()));
 	const auto exchange = [&](control::OpCode operation, std::vector<control::Field> fields = {}) {
 		control::ControlPacket request;
 		request.message.opcode = static_cast<std::uint16_t>(operation);

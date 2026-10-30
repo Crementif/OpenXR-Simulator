@@ -14,10 +14,12 @@ from simxr_control import Client, ControlError
 
 def run():
     with tempfile.TemporaryDirectory(prefix='simxr-native-game-') as temporary:
-        path, stop = Path(temporary) / 'control.sock', Path(temporary) / 'stop'
-        environment = dict(os.environ, VK_DRIVER_FILES='/nonexistent/simxr-no-graphics-driver.json')
-        process = subprocess.Popen([sys.argv[1], sys.argv[2], str(path), str(stop)], stdout=subprocess.PIPE,
+        stop = Path(temporary) / 'stop'
+        environment = dict(os.environ, SIMXR_DATA_DIR=temporary,
+                           VK_DRIVER_FILES='/nonexistent/simxr-no-graphics-driver.json')
+        process = subprocess.Popen([sys.argv[1], sys.argv[2], str(stop)], stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, env=environment)
+        path = Path(temporary) / f'control.{process.pid}.sock'
         client = None
         try:
             deadline = time.monotonic() + 5

@@ -244,7 +244,15 @@ class PacketConnection:
                 info = os.stat(self.path)
                 if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
                     raise PermissionError('Control endpoint must be a private socket owned by this user')
-            self._socket.connect(self.path)
+            if os.name != 'nt' and len(os.fsencode(self.path)) >= 108:
+                # Socket paths longer than sun_path are reached through an open handle on their directory.
+                directory = os.open(os.path.dirname(self.path) or '/', os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+                try:
+                    self._socket.connect(f'/proc/self/fd/{directory}/{os.path.basename(self.path)}')
+                finally:
+                    os.close(directory)
+            else:
+                self._socket.connect(self.path)
         except BaseException:
             self._socket.close()
             self._closed = True

@@ -52,21 +52,20 @@ def main():
     probe, manifest = (str(Path(value).resolve()) for value in sys.argv[1:3])
     with tempfile.TemporaryDirectory(prefix='simxr-retained-windows-') as temporary:
         root = Path(temporary)
-        endpoint = rf'\\.\pipe\SimXR.Control.retained.{os.getpid()}'
         output = root / 'probe.log'
         settings = root / 'vk_layer_settings.txt'
         settings.write_text('khronos_validation.validate_sync = true\n'
                             'khronos_validation.debug_action = VK_DBG_LAYER_ACTION_LOG_MSG\n'
                             'khronos_validation.report_flags = error\n'
                             f'khronos_validation.log_filename = {(root / "validation.log").as_posix()}\n', encoding='utf-8')
-        environment = dict(os.environ, XR_RUNTIME_JSON=manifest, SIMXR_DATA_DIR=temporary,
-                           SIMXR_CONTROL_SOCKET=endpoint, SIMXR_VULKAN_VALIDATION='1',
+        environment = dict(os.environ, XR_RUNTIME_JSON=manifest, SIMXR_DATA_DIR=temporary, SIMXR_VULKAN_VALIDATION='1',
                            VK_LAYER_SETTINGS_PATH=str(root), SIMXR_PROBE_FRAMES='1200', SIMXR_PROBE_SLEEP_MS='5',
                            DISABLE_XR_APILAYER_NOVENDOR_OBSMirror='1',
                            DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY='1')
         with output.open('wb') as log:
             process = subprocess.Popen([probe, '--retain-inspection'], env=environment,
                                        stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
+            endpoint = rf'\\.\pipe\SimXR.Control.{process.pid}'
             try:
                 def connect():
                     try:

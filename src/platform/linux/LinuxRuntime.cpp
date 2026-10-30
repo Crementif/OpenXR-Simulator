@@ -5,6 +5,7 @@
 
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
+#include "control/RuntimeEndpoint.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
 #include "runtime/SimulationExtensions.h"
 #include "simulation/HeadsetProfiles.h"
@@ -28,9 +29,7 @@ static XrTime MonotonicTime()
 
 LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::filesystem::path& directory,
 							 ExecutionMode executionMode)
-	: core(std::move(instance)), mode(executionMode),
-	  m_startupSequence(LoadStartupSequence(std::getenv("SIMXR_SEQUENCE") ? std::getenv("SIMXR_SEQUENCE") : "")),
-	  m_log(directory)
+	: core(std::move(instance)), mode(executionMode), m_log(directory)
 {
 	auto views = m_input.Views();
 	if (const auto* name = std::getenv("SIMXR_HEADSET_PROFILE"))
@@ -316,7 +315,7 @@ XrResult LinuxRuntime::BeginSession(XrSession handle, const XrSessionBeginInfo* 
 	if (XR_FAILED(configured))
 		return configured;
 	lock.unlock();
-	return session->core->Begin(*info, config, policy, session->owner->m_startupSequence);
+	return session->core->Begin(*info, config, policy);
 }
 
 XrResult LinuxRuntime::EndSession(XrSession handle)
@@ -376,11 +375,8 @@ void LinuxRuntime::StartControlEndpoint()
 	m_endpointStarted = true;
 	try
 	{
-		const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
-		const auto path = selected && *selected
-							  ? std::string(selected)
-							  : (DataDirectory() / ("control." + std::to_string(getpid()) + ".sock")).string();
-		m_endpoint = std::make_unique<control::LocalControlServer>(*m_control, path);
+		m_endpoint = std::make_unique<control::LocalControlServer>(
+			*m_control, control::RuntimeEndpoint(static_cast<std::uint64_t>(getpid()), DataDirectory()));
 	}
 	catch (const std::exception& error)
 	{
@@ -408,21 +404,9 @@ void LinuxRuntime::CloseControlEndpoint() noexcept
 		m_control->Close();
 }
 
-static std::filesystem::path ReadDataDirectory()
-{
-	const char* explicitPath = std::getenv("SIMXR_DATA_DIR");
-	if (explicitPath && *explicitPath)
-		return explicitPath;
-	const char* base = std::getenv("XDG_DATA_HOME");
-	if (base && *base)
-		return std::filesystem::path(base) / "OpenXR-Simulator";
-	const char* home = std::getenv("HOME");
-	return std::filesystem::path(home ? home : ".") / ".local/share/OpenXR-Simulator";
-}
-
 const std::filesystem::path& LinuxRuntime::DataDirectory()
 {
-	std::call_once(m_dataDirectoryOnce, [this] { m_dataDirectory = ReadDataDirectory(); });
+	std::call_once(m_dataDirectoryOnce, [this] { m_dataDirectory = control::RuntimeDataDirectory(); });
 	return m_dataDirectory;
 }
 

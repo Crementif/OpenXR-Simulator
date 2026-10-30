@@ -96,7 +96,7 @@ struct LocalControlClient::State
 	State(std::string path, std::chrono::milliseconds timeout) : timeout(timeout)
 	{
 		if (timeout.count() <= 0 || timeout > std::chrono::hours{24} || path.empty() || path.front() != '/' ||
-			path.find('\0') != std::string::npos || path.size() >= sizeof(sockaddr_un::sun_path))
+			path.find('\0') != std::string::npos)
 			throw std::invalid_argument("Invalid local control path or timeout");
 		struct stat info{};
 		if (::lstat(path.c_str(), &info) != 0 || !S_ISSOCK(info.st_mode) || info.st_uid != ::geteuid() ||
@@ -108,10 +108,8 @@ struct LocalControlClient::State
 		socket.value = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 		if (socket.value < 0)
 			throw std::runtime_error("Create local control socket failed");
-		sockaddr_un address{};
-		address.sun_family = AF_UNIX;
-		std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-		if (::connect(socket.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
+		const ControlSocketAddress address{path};
+		if (::connect(socket.value, address.Get(), address.Size()) != 0)
 		{
 			if (errno != EINPROGRESS && errno != EAGAIN)
 				throw std::runtime_error("Connect local control socket failed");

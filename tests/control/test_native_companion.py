@@ -29,7 +29,6 @@ def check_multiple_gpu_tabs(probe, interaction, count=2, input_test=False, porta
                                    SIMXR_PROBE_RENDER_GATE='1')
                 if input_test:
                     environment.update(SIMXR_PROBE_FRAMES='12', SIMXR_PROBE_INTERACTIVE='1')
-                environment.pop('SIMXR_CONTROL_SOCKET', None)
                 host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True)
                 hosts.append((host, data))
@@ -62,7 +61,6 @@ def check_multiple_gpu_tabs(probe, interaction, count=2, input_test=False, porta
             if count == 4:
                 prefix = 'SIMXR_TABS_LIVE_' if portable else 'SIMXR_TABS_GPU_'
                 environment.update({prefix + 'THIRD': str(endpoints[2]), prefix + 'FOURTH': str(endpoints[3])})
-            environment.pop('SIMXR_CONTROL_SOCKET', None)
             result = subprocess.run([interaction], env=environment, capture_output=True, text=True,
                                     timeout=35 if budget_test else 30 if input_test else 18)
             output = result.stdout + result.stderr
@@ -155,7 +153,6 @@ def main():
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1')
         environment['SIMXR_CONTROL_TRACE'] = '1'
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
         if midtone:
             environment['SIMXR_PROBE_MIDTONE'] = '1'
         if srgb:

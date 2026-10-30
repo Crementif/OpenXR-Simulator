@@ -54,8 +54,7 @@ def main():
                 assert "libvulkan_lvp" not in maps and "libvulkan_radeon" not in maps
                 launched = client.tool("simulator_launch_application", {
                     "executable": probe, "environment": {"SIMXR_PROBE_FRAMES": "120000",
-                                                          "SIMXR_PROBE_INTERACTIVE": "1",
-                                                          "SIMXR_CONTROL_SOCKET": str(root / "custom.sock")}})
+                                                          "SIMXR_PROBE_INTERACTIVE": "1"}})
                 assert not launched["error"], launched
                 application_id = launched["data"]["application_id"]
 
@@ -263,7 +262,7 @@ def main():
                         chunk = client.tool("debug_read_export", {"connection": debug, "export": ticket, "length": 4096})
                         assert not chunk["error"] and len(base64.b64decode(chunk["data"]["bytes"], validate=True)) == 4096, chunk
                         assert not chunk["data"]["end"]
-                        with NativeClient(str(root / "custom.sock")) as observer:
+                        with NativeClient(state["endpoint"]) as observer:
                             native_session, = observer.sessions()
                             native_image = observer.retain_image(native_session, int(capture["capture_id"]))["image_reader_id"]
                             native_export = observer.start_export(native_image, layer=0)["export_id"]
@@ -787,7 +786,8 @@ while true do end
                 old_pid = child_pid
                 child_pid = int(replacement["process_id"])
                 assert not replacement["restart_pending"]
-                assert replacement["endpoint"] == state["endpoint"] == str(root / "custom.sock")
+                assert state["endpoint"] == str(root / f"control.{old_pid}.sock")
+                assert replacement["endpoint"] == str(root / f"control.{child_pid}.sock")
                 assert client.tool("debug_status", {"connection": debug})["error"]
                 stale = client.tool("simulator_restart_application", {"application_id": application_id,
                                     "process_id": str(old_pid)})

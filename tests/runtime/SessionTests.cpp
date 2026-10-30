@@ -19,58 +19,6 @@
 
 namespace
 {
-void TestStartupSequenceRestart()
-{
-	using namespace simxr;
-	Instance instance(reinterpret_cast<XrInstance>(904), {}, XR_MAKE_VERSION(1, 0, 27));
-	Session session(reinterpret_cast<XrSession>(905), instance);
-	FramePool pool(2);
-	Require(session.ConfigureCapturePool(pool) == XR_SUCCESS, "Configure startup captures");
-	FrameSchedulerConfig timing;
-	timing.mode = ExecutionMode::Deterministic;
-	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-	const auto program = std::make_shared<const PoseSequence>(PoseSequence::Parse(
-		R"({"frame":0,"head":{"x":2},"capture":true}
-{"frame":2,"head":{"x":4},"capture":true})",
-		false));
-	Require(session.Begin(begin, timing, PresentationPolicy::Repeat, program) == XR_ERROR_SESSION_NOT_READY,
-			"Startup bypassed session readiness");
-	SessionGeneration previous;
-	for (unsigned run = 0; run < 2; ++run)
-	{
-		Require(session.Ready(timing.epoch) == XR_SUCCESS &&
-					session.Begin(begin, timing, PresentationPolicy::Repeat, program) == XR_SUCCESS,
-				"Begin immutable startup program");
-		const auto generation = session.Snapshot().generation;
-		Require(generation != previous && session.Captures().Snapshot().captures.empty(),
-				"Restart reused startup generation or retained old capture tickets");
-		previous = generation;
-		for (unsigned index = 1; index <= 3; ++index)
-		{
-			FramePrediction frame;
-			Require(session.WaitFrame(frame) == XR_SUCCESS && frame.id.value == index, "Startup frame origin changed");
-			const auto record = session.History().Find({generation, frame.id});
-			Require(bool(record->sequenceCapture) == (index != 2) &&
-						session.Commands().At(frame.id)->configuration.tracking.head.pose.position.x ==
-							(index == 3 ? 4 : 2),
-					"Startup pose or capture missed its exact frame");
-			if (record->sequenceCapture)
-				Require(record->sequenceCapture->request.owner == ApplicationAutomationSource &&
-							record->sequenceCapture->reservation.result == SnapshotAdmission::Accepted,
-						"Startup capture did not use native application ownership");
-			Require(session.BeginFrame() == XR_SUCCESS && session.EndFrame(frame) == XR_SUCCESS,
-					"Submit startup frame");
-		}
-		const auto status = session.Commands().PoseSequenceStatusFor(ApplicationAutomationSource);
-		Require(status && status->origin == FrameId{1} && !status->active, "Startup did not finish from frame one");
-		Require(session.RequestExit(timing.epoch) == XR_SUCCESS && session.End(timing.epoch) == XR_SUCCESS &&
-					!session.Commands().PoseSequenceStatusFor(ApplicationAutomationSource)->active &&
-					session.Captures().Snapshot().captures.empty(),
-				"End did not cancel startup or retire its capture tickets");
-	}
-	session.Close();
-}
-
 void TestPresentationPolicyLifecycle()
 {
 	using namespace simxr;
@@ -1888,7 +1836,6 @@ int main()
 	Require(instance.Events().Poll(event) == XR_EVENT_UNAVAILABLE, "Closed session left queued handles");
 	Require(!instance.Events().Observe().empty(), "Teardown consumed observation history");
 	Require(session.Ready({Duration{40}}) == XR_ERROR_SESSION_LOST, "Closed session reactivated");
-	TestStartupSequenceRestart();
 	TestPresentationPolicyLifecycle();
 	TestConcurrentNativeControlSynchronization();
 	TestRetainedInstanceAndCpuOwnership();

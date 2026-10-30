@@ -2,6 +2,7 @@
 #include "Pch.h"
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/services/RuntimeEndpoints.h"
+#include "control/RuntimeEndpoint.h"
 
 #include <tlhelp32.h>
 
@@ -47,12 +48,9 @@ bool RuntimeEndpointExists(const std::string& endpoint)
 	return true;
 }
 
-std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
+std::vector<std::string> DiscoverRuntimeEndpoints()
 {
 	std::vector<std::string> result;
-	if (includeExplicit)
-		if (const auto path = windows::Environment("SIMXR_CONTROL_SOCKET"); !path.empty())
-			result.push_back(path);
 	WIN32_FIND_DATAW found{};
 	const auto search = FindFirstFileW(LR"(\\.\pipe\SimXR.Control.*)", &found);
 	const auto searchError = search == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
@@ -76,7 +74,7 @@ std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
 	}
 	else if (searchError == ERROR_NOT_SUPPORTED)
 	{
-		// Default endpoints contain the runtime PID; custom names remain explicitly addressable.
+		// Wine cannot enumerate pipes, but every endpoint is named after its runtime process.
 		const windows::Handle processes(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
 		if (processes.Get() == INVALID_HANDLE_VALUE)
 			throw std::runtime_error("Cannot discover runtime processes");
@@ -86,7 +84,7 @@ std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
 		{
 			do
 			{
-				const auto endpoint = std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process.th32ProcessID);
+				const auto endpoint = control::RuntimeEndpoint(process.th32ProcessID);
 				if (RuntimeEndpointExists(endpoint))
 					result.push_back(endpoint);
 				if (result.size() >= 4096)

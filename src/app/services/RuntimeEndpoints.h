@@ -5,5 +5,5 @@
 
 namespace simxr::app
 {
-std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit = true);
+std::vector<std::string> DiscoverRuntimeEndpoints();
 }

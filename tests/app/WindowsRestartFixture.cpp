@@ -1,6 +1,7 @@
 #include "Pch.h"
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
+#include "control/RuntimeEndpoint.h"
 #include "runtime/Runtime.h"
 
 #include <windows.h>
@@ -13,7 +14,7 @@ struct ControlFixture
 	simxr::control::ControlService service{runtime};
 	std::unique_ptr<simxr::control::LocalControlServer> server;
 
-	explicit ControlFixture(const char* endpoint)
+	ControlFixture()
 	{
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 		create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 27);
@@ -25,7 +26,8 @@ struct ControlFixture
 		XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 		if (session->Ready(timing.epoch) != XR_SUCCESS || session->Begin(begin, timing) != XR_SUCCESS)
 			throw std::runtime_error("Begin fixture runtime session failed");
-		server = std::make_unique<simxr::control::LocalControlServer>(service, endpoint);
+		server = std::make_unique<simxr::control::LocalControlServer>(
+			service, simxr::control::RuntimeEndpoint(GetCurrentProcessId()));
 	}
 };
 
@@ -52,9 +54,7 @@ int wmain(int argc, wchar_t** argv)
 										CW_USEDEFAULT, CW_USEDEFAULT, 240, 120, nullptr, nullptr, instance, nullptr);
 	if (!window)
 		return 2;
-	std::unique_ptr<ControlFixture> control;
-	if (const auto* endpoint = std::getenv("SIMXR_CONTROL_SOCKET"); endpoint && *endpoint)
-		control = std::make_unique<ControlFixture>(endpoint);
+	ControlFixture control;
 	if (argc > 1)
 	{
 		std::ofstream marker(std::filesystem::path(argv[1]), std::ios::app);

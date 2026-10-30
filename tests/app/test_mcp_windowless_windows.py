@@ -42,10 +42,8 @@ def main():
         child_handle = test.track(int(eventually(running)["process_id"]))
 
         marker = root / "fixture-ready"
-        endpoint = rf"\\.\pipe\SimXR.Control.mcp.restart.{os.getpid()}"
         launched_fixture = client.tool("simulator_launch_application", {"executable": fixture,
-            "runtime_manifest": str(manifest), "arguments": [str(marker)],
-            "environment": {"SIMXR_CONTROL_SOCKET": endpoint}})
+            "runtime_manifest": str(manifest), "arguments": [str(marker)]})
         assert not launched_fixture["error"], launched_fixture
         fixture_id = launched_fixture["data"]["application_id"]
 
@@ -57,7 +55,7 @@ def main():
             return status["data"] if status["data"]["session_running"] else None
 
         first = eventually(fixture_status)
-        assert first["endpoint"] == endpoint
+        assert first["endpoint"] == rf"\\.\pipe\SimXR.Control.{first['process_id']}"
         opened = client.tool("debug_connect", {"application_id": fixture_id})
         assert not opened["error"], opened
         debug = opened["data"]["connection"]
@@ -99,7 +97,7 @@ def main():
             return value if value and value["process_id"] != first["process_id"] else None
 
         second = eventually(replacement)
-        assert second["endpoint"] == endpoint
+        assert second["endpoint"] == rf"\\.\pipe\SimXR.Control.{second['process_id']}"
         assert client.tool("debug_status", {"connection": debug})["error"]
         test.track(int(second["process_id"]))
         assert kernel.WaitForSingleObject(first_handle, 10000) == 0

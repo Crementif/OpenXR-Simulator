@@ -3,6 +3,7 @@
 #include "Pch.h"
 #include "control/ControlSchema.h"
 #include "control/LocalControlClient.h"
+#include "control/RuntimeEndpoint.h"
 #include "control/backends/vulkan/VulkanImageConsumer.h"
 
 #include <cstdio>
@@ -29,8 +30,7 @@ static void Require(bool condition, const char* detail)
 
 static std::string ControlEndpoint(std::uint32_t process)
 {
-	const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
-	return selected && *selected ? selected : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process);
+	return control::RuntimeEndpoint(process);
 }
 
 static control::ControlPacket Exchange(control::LocalControlClient& client, control::OpCode operation,

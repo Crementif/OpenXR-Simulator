@@ -39,7 +39,7 @@ def main():
                    SIMXR_MCP_DISCOVERY_DIR=str(root / 'discovery'),
                    SIMXR_COMPANION_SETTINGS=str(root / 'settings'), SIMXR_DETERMINISTIC='0',
                    SDL_VIDEODRIVER='simxr-unavailable-video-driver')
-        for key in ('DISPLAY', 'WAYLAND_DISPLAY', 'XR_RUNTIME_JSON', 'SIMXR_CONTROL_SOCKET', 'SIMXR_MCP_TOKEN'):
+        for key in ('DISPLAY', 'WAYLAND_DISPLAY', 'XR_RUNTIME_JSON', 'SIMXR_MCP_TOKEN'):
             env.pop(key, None)
         connector = moved / 'bin/simxr_mcp_connector'
         printed = subprocess.run([str(connector), '--print-config', '--windowless'], env=env, cwd=root,

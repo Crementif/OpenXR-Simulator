@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 
 def probe_environment(data, **settings):
     environment = dict(os.environ, SIMXR_DATA_DIR=str(data), **settings)
-    environment.pop('SIMXR_CONTROL_SOCKET', None)
     return environment
 
 

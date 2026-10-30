@@ -65,14 +65,14 @@ def main():
     assert set(sys.argv[5:]) <= {'--visible', '--long-wait'}, sys.argv[5:]
     with tempfile.TemporaryDirectory(prefix='simxr-mcp-game-Ü-') as temporary:
         root = Path(temporary)
-        endpoint = (rf'\\.\pipe\SimXR.Control.mcp.game.{os.getpid()}.{secrets.token_hex(8)}'
-                    if os.name == 'nt' else str(root / 'game.sock'))
         stop = root / 'stop'
+
+        def runtime_endpoint(process):
+            return rf'\\.\pipe\SimXR.Control.{process}' if os.name == 'nt' else str(root / f'control.{process}.sock')
         env = dict(os.environ, SIMXR_MCP_DISCOVERY_DIR=str(root / 'discovery'), SIMXR_DATA_DIR=temporary,
                    SIMXR_COMPANION_SETTINGS=str(root / 'settings'))
         if not visible:
             env['VK_DRIVER_FILES'] = '/nonexistent/no-vulkan.json'
-        env.pop('SIMXR_CONTROL_SOCKET', None)
         env.pop('XR_RUNTIME_JSON', None)
         app_pid = game_pid = None
         handles = []
@@ -110,7 +110,7 @@ def main():
                 if os.name == 'nt':
                     handles.append(process_handle(app_pid))
                 launched = client.tool('simulator_launch_application', {'executable': probe,
-                    'arguments': [runtime, endpoint, str(stop)], 'environment': {'SIMXR_CONTROL_SOCKET': endpoint,
+                    'arguments': [runtime, str(stop)], 'environment': {
                     'VK_DRIVER_FILES': '/nonexistent/no-vulkan.json',
                     'SIMXR_GAME_PROBE_SECONDS': '60' if long_wait else '10'}})
                 assert not launched['error'], launched
@@ -119,14 +119,17 @@ def main():
                 def ready():
                     state = client.tool('simulator_application_status', {'application_id': application})
                     assert not state['error'], state
+                    if state['data']['launch_state'] != 'running':
+                        return None
+                    endpoint = runtime_endpoint(state['data']['process_id'])
                     present = bool(kernel.WaitNamedPipeW(endpoint, 0)) if os.name == 'nt' else Path(endpoint).exists()
-                    return state['data'] if state['data']['launch_state'] == 'running' and present else None
+                    return state['data'] if present else None
 
                 state = eventually(ready, timeout=8)
                 game_pid = int(state['process_id'])
                 if os.name == 'nt':
                     handles.append(process_handle(game_pid))
-                assert not state['session_running'] and state['launch_endpoint'] == endpoint, state
+                assert not state['session_running'] and state['launch_endpoint'] == runtime_endpoint(game_pid), state
                 if long_wait:
                     time.sleep(32)
                 opened = client.tool('game_bridge_connect', {'application_id': application})

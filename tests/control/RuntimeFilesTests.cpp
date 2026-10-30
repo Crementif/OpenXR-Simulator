@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace simxr::tests
@@ -25,41 +24,6 @@ void TestRuntimeFiles()
 			std::filesystem::remove_all(path, ignored);
 		}
 	} cleanup{directory};
-
-	const auto source = directory / "poses-画面.jsonl";
-	{
-		std::ofstream output(source);
-		output << R"({"frame":0,"head":{"x":2},"capture":true})" << '\n';
-	}
-	const auto program = LoadStartupSequence(source);
-	std::filesystem::remove(source);
-	Require(program && program->Size() == 1 && program->Steps()[0].capture &&
-				program->Steps()[0].head->position[0] == 2 && !program->Loops(),
-			"Startup program depends on its source file");
-	Require(!LoadStartupSequence({}), "Unset startup path created a program");
-	const auto reject = [](const auto& path) {
-		bool rejected = false;
-		try
-		{
-			LoadStartupSequence(path);
-		}
-		catch (const std::exception&)
-		{
-			rejected = true;
-		}
-		Require(rejected, "Invalid startup file was admitted");
-	};
-	reject(source);
-	reject(directory);
-	Require(mkfifo(source.c_str(), 0600) == 0, "Create startup FIFO");
-	reject(source);
-	std::filesystem::remove(source);
-	std::filesystem::create_symlink(directory, source);
-	reject(source);
-	std::filesystem::remove(source);
-	std::ofstream(source).close();
-	std::filesystem::resize_file(source, 16 * 1024 * 1024 + 1);
-	reject(source);
 
 	const auto output = directory / "données-画面";
 	RuntimeLog log(output);

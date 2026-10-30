@@ -4,8 +4,6 @@ import os
 
 
 def discover(directory=None):
-    if os.getenv('SIMXR_CONTROL_SOCKET'):
-        return [Path(os.environ['SIMXR_CONTROL_SOCKET'])]
     if os.name == 'nt':
         from .windows_transport import discover as discover_pipes
         return discover_pipes()

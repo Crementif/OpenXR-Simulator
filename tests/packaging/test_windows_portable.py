@@ -96,7 +96,7 @@ def main():
         env = dict(os.environ, PATH=str(Path(os.environ['SystemRoot']) / 'System32'),
                    SIMXR_DATA_DIR=str(root / 'data'), SIMXR_MCP_DISCOVERY_DIR=str(root / 'discovery'),
                    SIMXR_COMPANION_SETTINGS=str(root / 'settings'), SDL_VIDEODRIVER='simxr-unavailable-video-driver')
-        for key in ('SIMXR_MCP_TOKEN', 'SIMXR_CONTROL_SOCKET', 'XR_RUNTIME_JSON', 'PYTHONPATH'):
+        for key in ('SIMXR_MCP_TOKEN', 'XR_RUNTIME_JSON', 'PYTHONPATH'):
             env.pop(key, None)
         config = subprocess.run([str(connector), '--print-config', '--windowless'], env=env, cwd=root,
                                 capture_output=True, check=True, timeout=15)

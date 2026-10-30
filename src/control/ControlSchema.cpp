@@ -9,8 +9,8 @@ static constexpr std::array s_uploadSequence{tag::Session, tag::Generation, tag:
 											 tag::Offset,  tag::TotalBytes, tag::Bytes};
 static constexpr std::array s_startSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId, tag::Loop};
 static constexpr std::array s_sequence{tag::Session, tag::Generation, tag::SourceKind,		tag::SequenceId,
-									   tag::Offset,	 tag::Length,	  tag::ApplicationOwned};
-static constexpr std::array s_sequenceCapture{tag::Session, tag::Generation, tag::CaptureId, tag::ApplicationOwned};
+									   tag::Offset,	 tag::Length};
+static constexpr std::array s_sequenceCapture{tag::Session, tag::Generation, tag::CaptureId};
 static constexpr std::array s_simulation{tag::Session,	  tag::Generation, tag::TransactionId,
 										 tag::ApplyFrame, tag::ApplyTime,  tag::LatePolicy,
 										 tag::SourceKind, tag::Commands,   tag::ExpectedInputs};

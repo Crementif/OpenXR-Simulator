@@ -1,5 +1,6 @@
 #include "Pch.h"
 #include "app/services/LaunchAttachment.h"
+#include "control/RuntimeEndpoint.h"
 
 namespace simxr::app
 {
@@ -42,21 +43,14 @@ std::optional<std::filesystem::path> LaunchRuntimeDataDirectory(const LaunchProf
 
 std::string LaunchRuntimeEndpoint(const LaunchProfile& profile, std::uint64_t process)
 {
-	if (const auto custom = Environment(profile, "SIMXR_CONTROL_SOCKET"); !custom.empty())
-	{
-		if (!std::filesystem::path(custom).is_absolute())
-			throw std::invalid_argument("The launched runtime endpoint must be absolute");
-		return custom;
-	}
 	const auto directory = DataDirectory(profile);
 	if (!directory.is_absolute())
 		throw std::invalid_argument("The launched runtime data directory must be absolute");
-	return (directory / ("control." + std::to_string(process) + ".sock")).string();
+	return control::RuntimeEndpoint(process, directory);
 }
 
 void LaunchAttachment::Initialize(const LaunchProfile& profile)
 {
-	m_customEndpoint = Environment(profile, "SIMXR_CONTROL_SOCKET");
 	m_directory = DataDirectory(profile);
 	if (!m_directory.is_absolute())
 		throw std::runtime_error("The launched runtime data directory must be absolute");
@@ -70,17 +64,11 @@ void LaunchAttachment::Initialize(const LaunchProfile& profile)
 	}
 	if (error && error != std::errc::no_such_file_or_directory)
 		throw std::filesystem::filesystem_error("Cannot enumerate launch endpoints", m_directory, error);
-	if (!m_customEndpoint.empty() &&
-		(!std::filesystem::path(m_customEndpoint).is_absolute() ||
-		 (std::filesystem::exists(m_customEndpoint) && m_customEndpoint != m_replacedEndpoint)))
-		throw std::runtime_error("Launch attachment requires a new absolute local control endpoint");
 }
 
 std::string LaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
 {
-	if (!m_customEndpoint.empty())
-		return m_customEndpoint;
-	return (m_directory / ("control." + std::to_string(process) + ".sock")).string();
+	return control::RuntimeEndpoint(process, m_directory);
 }
 
 bool LaunchAttachment::EndpointExists(const std::string& endpoint) const

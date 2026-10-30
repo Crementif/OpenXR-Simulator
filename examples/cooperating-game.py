@@ -8,7 +8,6 @@ The model has no XR instance or GPU; real games use their own safe update point.
 import argparse
 import ctypes as c
 import json
-import os
 import signal
 import time
 
@@ -33,13 +32,10 @@ class BridgeApi(c.Structure):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', help='Absolute simulator runtime library path; optional')
-    parser.add_argument('--socket', help='Private control socket for this process')
     parser.add_argument('--duration', type=float, default=60, help='Run time in seconds (default: 60)')
     args = parser.parse_args()
     if not 0 < args.duration <= 3600:
         parser.error('--duration must be in (0, 3600]')
-    if args.socket:
-        os.environ['SIMXR_CONTROL_SOCKET'] = args.socket
     running = True
 
     def stop(_signal, _frame):

@@ -46,7 +46,7 @@ def main():
                    SIMXR_MCP_DISCOVERY_DIR=str(root / 'discovery'),
                    XDG_CONFIG_HOME=str(root / 'xdg-config'), XDG_DATA_HOME=str(root / 'xdg-data'),
                    SIMXR_DETERMINISTIC='0')
-        for key in ('XR_RUNTIME_JSON', 'SIMXR_CONTROL_SOCKET', 'SIMXR_MCP_TOKEN'):
+        for key in ('XR_RUNTIME_JSON', 'SIMXR_MCP_TOKEN'):
             env.pop(key, None)
         output = root / 'host.log'
         bridge_log = root / 'bridge.log'

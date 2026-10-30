@@ -43,35 +43,6 @@ private:
 	int m_descriptor;
 };
 
-static std::optional<std::string> ReadRegularFile(const std::filesystem::path& path, std::size_t limit)
-{
-	const auto descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
-	if (descriptor < 0 && errno == ENOENT)
-		return {};
-	RuntimeFileDescriptor file(descriptor);
-	struct stat information{};
-	if (fstat(file.Get(), &information) != 0)
-		throw std::system_error(errno, std::generic_category(), "Inspect startup sequence");
-	if (!S_ISREG(information.st_mode) || information.st_size < 0 ||
-		static_cast<std::uint64_t>(information.st_size) > limit)
-		throw std::invalid_argument("Startup sequence requires a bounded regular file");
-	std::string text(static_cast<std::size_t>(information.st_size), '\0');
-	std::size_t offset = 0;
-	while (offset < text.size())
-	{
-		const auto count = read(file.Get(), text.data() + offset, text.size() - offset);
-		if (count < 0 && errno == EINTR)
-			continue;
-		if (count < 0)
-			throw std::system_error(errno, std::generic_category(), "Read startup sequence");
-		if (count == 0)
-			throw std::runtime_error("Startup sequence changed while being read");
-		offset += static_cast<std::size_t>(count);
-	}
-	file.Close();
-	return text;
-}
-
 static void WriteBytes(int descriptor, std::span<const std::byte> bytes)
 {
 	while (!bytes.empty())
@@ -83,16 +54,6 @@ static void WriteBytes(int descriptor, std::span<const std::byte> bytes)
 			throw std::system_error(count < 0 ? errno : EIO, std::generic_category(), "Write runtime log");
 		bytes = bytes.subspan(static_cast<std::size_t>(count));
 	}
-}
-
-std::shared_ptr<const PoseSequence> LoadStartupSequence(const std::filesystem::path& path)
-{
-	if (path.empty())
-		return {};
-	const auto text = ReadRegularFile(path, 16 * 1024 * 1024);
-	if (!text)
-		throw std::runtime_error("Startup sequence does not exist: " + path.string());
-	return std::make_shared<const PoseSequence>(PoseSequence::Parse(*text, false));
 }
 
 RuntimeLog::RuntimeLog(std::filesystem::path directory) : m_directory(std::move(directory))

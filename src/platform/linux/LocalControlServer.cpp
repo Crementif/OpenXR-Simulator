@@ -223,7 +223,7 @@ struct LocalControlServer::State
 		: service(service), path(std::move(path)), capacity(capacity)
 	{
 		if (!capacity || capacity > 64 || this->path.empty() || this->path.front() != '/' ||
-			this->path.find('\0') != std::string::npos || this->path.size() >= sizeof(sockaddr_un::sun_path))
+			this->path.find('\0') != std::string::npos)
 			throw std::invalid_argument("Invalid local control socket path/capacity");
 		workers.reserve(capacity);
 	}
@@ -241,16 +241,14 @@ struct LocalControlServer::State
 		listener.value = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 		if (listener.value < 0)
 			throw std::runtime_error("Create local control socket failed");
-		sockaddr_un address{};
-		address.sun_family = AF_UNIX;
-		std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
+		const ControlSocketAddress address{path};
 		struct stat existing{};
 		if (lstat(path.c_str(), &existing) == 0)
 		{
 			if (!S_ISSOCK(existing.st_mode) || existing.st_uid != geteuid())
 				throw std::runtime_error("Local control path already exists and is not an owned socket");
 			Descriptor probe{socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)};
-			if (probe.value < 0 || connect(probe.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 ||
+			if (probe.value < 0 || connect(probe.value, address.Get(), address.Size()) == 0 ||
 				errno != ECONNREFUSED)
 				throw std::runtime_error("Local control socket already active");
 			struct stat current{};
@@ -258,7 +256,7 @@ struct LocalControlServer::State
 				current.st_ino != existing.st_ino || unlink(path.c_str()) != 0)
 				throw std::runtime_error("Cannot retire stale local control socket");
 		}
-		if (bind(listener.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
+		if (bind(listener.value, address.Get(), address.Size()) != 0)
 			throw std::runtime_error("Bind local control socket failed");
 		if (lstat(path.c_str(), &bound) != 0)
 			throw std::runtime_error("Inspect bound local control socket failed");

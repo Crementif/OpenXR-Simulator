@@ -19,6 +19,7 @@
 
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
+#include "control/RuntimeEndpoint.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
 #include "platform/windows/WindowsRuntimeStatus.h"
 #include "platform/windows/WindowsRuntimeFiles.h"
@@ -328,10 +329,7 @@ struct NativeControlEndpoint
 		try
 		{
 			simxr::windows::ModuleReference nextModule;
-			const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
-			const auto path = selected && *selected
-								  ? std::string(selected)
-								  : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
+			const auto path = simxr::control::RuntimeEndpoint(GetCurrentProcessId());
 			auto nextService = std::make_unique<simxr::control::ControlService>(
 				RuntimeState(), 16, simxr::control::CreateVulkanImageInspectionProvider([](XrSession handle) {
 					const auto native = rt::RetainNativeSession(handle);

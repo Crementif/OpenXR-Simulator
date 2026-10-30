@@ -88,7 +88,7 @@ def main():
         env = dict(os.environ, SIMXR_COMPANION_SETTINGS=str(root / 'settings'), SIMXR_PROFILE_FIXTURE_ROOT=str(root),
                    SIMXR_PROFILE_FIXTURE_APP=str(app), SIMXR_DATA_DIR=str(root / 'data'),
                    SIMXR_MCP_DISCOVERY_DIR=str(discovery), PATH=str(Path(os.environ['SystemRoot']) / 'System32'))
-        for key in ('SIMXR_MCP_TOKEN', 'SIMXR_CONTROL_SOCKET', 'XR_RUNTIME_JSON', 'PYTHONPATH'):
+        for key in ('SIMXR_MCP_TOKEN', 'XR_RUNTIME_JSON', 'PYTHONPATH'):
             env.pop(key, None)
         generated = subprocess.run([str(child), '--setup'], env=env, cwd=root, capture_output=True, check=True, timeout=10)
         command = generated.stdout.decode('utf-8')

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "simulation/PoseSequence.h"
-
 #include <cstdint>
 #include <string_view>
 #include <condition_variable>
@@ -13,8 +11,6 @@
 
 namespace simxr
 {
-std::shared_ptr<const PoseSequence> LoadStartupSequence(const std::filesystem::path& path);
-
 struct RuntimeLogStatus
 {
 	bool closed = false;

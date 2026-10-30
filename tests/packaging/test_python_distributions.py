@@ -26,7 +26,6 @@ def exercise(probe):
     with tempfile.TemporaryDirectory(prefix='simxr-sdk-installed-') as directory:
         env = dict(os.environ, SIMXR_DATA_DIR=directory)
         env.pop('PYTHONPATH', None)
-        env.pop('SIMXR_CONTROL_SOCKET', None)
         try:
             missing = rf'\\.\pipe\SimXR.Control.sdk.missing.{os.getpid()}' if os.name == 'nt' else Path(directory) / 'missing.sock'
             Client(missing)

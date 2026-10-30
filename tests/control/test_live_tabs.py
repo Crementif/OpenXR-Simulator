@@ -67,7 +67,7 @@ def main():
         environment['SIMXR_TABS_BUDGET_QA'] = '1'
     if args.replay_close:
         environment['SIMXR_TABS_PORTABLE_REPLAY_QA'] = '1'
-    for name in ('SIMXR_DETERMINISTIC', 'SIMXR_CONTROL_SOCKET', 'SIMXR_PROBE_REQUIRE_INPUT', 'SIMXR_PROBE_RESIZE'):
+    for name in ('SIMXR_DETERMINISTIC', 'SIMXR_PROBE_REQUIRE_INPUT', 'SIMXR_PROBE_RESIZE'):
         environment.pop(name, None)
     environment['PATH'] = os.pathsep.join((str(probe.parent), str(interaction.parent), str(runtime.parent),
                                           environment.get('PATH', '')))

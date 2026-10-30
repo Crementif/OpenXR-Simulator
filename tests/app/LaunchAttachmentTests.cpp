@@ -40,7 +40,7 @@ struct Directory
 	app::LaunchProfile Profile() const
 	{
 		app::LaunchProfile profile;
-		profile.environment = {{"SIMXR_DATA_DIR", path.string()}, {"SIMXR_CONTROL_SOCKET", ""}};
+		profile.environment = {{"SIMXR_DATA_DIR", path.string()}};
 		return profile;
 	}
 
@@ -157,9 +157,6 @@ void ExistingEndpointAndChangedProcess()
 	auto invalidDirectory = directory.Profile();
 	invalidDirectory.environment.front().second = directory.Endpoint();
 	Reject([&] { app::LaunchAttachment invalid{discovery, invalidDirectory}; }, "Cannot enumerate launch endpoints");
-	auto custom = directory.Profile();
-	custom.environment.back().second = directory.Endpoint();
-	Reject([&] { app::LaunchAttachment attachment{discovery, custom}; }, "new absolute local control endpoint");
 	app::LaunchAttachment attachment{discovery, directory.Profile()};
 	attachment.Observe(Running());
 	auto changed = Running();
@@ -270,10 +267,10 @@ void DiscoveryFailures()
 		const auto invalid = directory.path / "not-a-directory";
 		std::ofstream(invalid) << "file";
 		Require(::setenv("SIMXR_DATA_DIR", invalid.c_str(), 1) == 0, "Set discovery fixture");
-		Reject([] { app::DiscoverRuntimeEndpoints(false); }, "Cannot discover runtime endpoints");
+		Reject([] { app::DiscoverRuntimeEndpoints(); }, "Cannot discover runtime endpoints");
 		const auto missing = directory.path / "not-created";
 		Require(::setenv("SIMXR_DATA_DIR", missing.c_str(), 1) == 0, "Set missing discovery directory");
-		Require(app::DiscoverRuntimeEndpoints(false).empty(), "A fresh directory should have no runtimes");
+		Require(app::DiscoverRuntimeEndpoints().empty(), "A fresh directory should have no runtimes");
 	}
 	catch (...)
 	{

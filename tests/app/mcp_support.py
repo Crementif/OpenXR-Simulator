@@ -146,7 +146,7 @@ class McpTest:
         self.env = dict(os.environ, SIMXR_DATA_DIR=str(self.root),
                         SIMXR_MCP_DISCOVERY_DIR=str(self.root / "discovery"),
                         SIMXR_COMPANION_SETTINGS=str(self.root / "settings"))
-        for key in ("XR_RUNTIME_JSON", "SIMXR_MCP_TOKEN", "SIMXR_CONTROL_SOCKET"):
+        for key in ("XR_RUNTIME_JSON", "SIMXR_MCP_TOKEN"):
             self.env.pop(key, None)
         if windowless:
             self.env.update(SDL_VIDEODRIVER="simxr-unavailable-video-driver", SIMXR_DETERMINISTIC="0")

@@ -88,7 +88,7 @@ void CheckTabLaunches()
 	struct Cleanup
 	{
 		std::filesystem::path directory;
-		std::optional<std::string> settings, data, endpoint;
+		std::optional<std::string> settings, data;
 
 		~Cleanup()
 		{
@@ -123,15 +123,13 @@ void CheckTabLaunches()
 			};
 			restore("SIMXR_COMPANION_SETTINGS", settings);
 			restore("SIMXR_DATA_DIR", data);
-			restore("SIMXR_CONTROL_SOCKET", endpoint);
 			std::filesystem::remove_all(directory, ignored);
 		}
-	} cleanup{directory, saveEnvironment("SIMXR_COMPANION_SETTINGS"), saveEnvironment("SIMXR_DATA_DIR"),
-			  saveEnvironment("SIMXR_CONTROL_SOCKET")};
+	} cleanup{directory, saveEnvironment("SIMXR_COMPANION_SETTINGS"), saveEnvironment("SIMXR_DATA_DIR")};
 
 	const auto settingsPath = directory / "settings.json";
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0 &&
-				::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 && ::unsetenv("SIMXR_CONTROL_SOCKET") == 0,
+				::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0,
 			"Isolate launch fixture environment");
 	CompanionSettings settings;
 	LaunchProfile profile;
@@ -878,7 +876,7 @@ void CheckApplicationTabs()
 		std::unique_ptr<control::LocalControlServer> server;
 		std::string endpoint;
 
-		Fixture(const std::string& suffix)
+		explicit Fixture(const std::filesystem::path& path) : endpoint(path.string())
 		{
 			XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 			create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
@@ -893,10 +891,6 @@ void CheckApplicationTabs()
 			Require(session->Ready(configuration.epoch) == XR_SUCCESS &&
 						session->Begin(begin, configuration) == XR_SUCCESS,
 					"Start tab runtime");
-			endpoint = (std::filesystem::temp_directory_path() /
-						("simxr-tabs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-						 suffix + ".sock"))
-						   .string();
 			server = std::make_unique<control::LocalControlServer>(service, endpoint);
 		}
 
@@ -909,11 +903,6 @@ void CheckApplicationTabs()
 		}
 	};
 
-	Fixture first{"-one"}, second{"-two"}, third{"-three"}, fourth{"-four"};
-	first.Submit();
-	second.Submit();
-	third.Submit();
-	fourth.Submit();
 	const auto directory =
 		std::filesystem::temp_directory_path() /
 		("simxr-tabs-settings-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -922,15 +911,12 @@ void CheckApplicationTabs()
 	const std::optional<std::string> saved = previous ? std::optional<std::string>{previous} : std::nullopt;
 	const auto* previousData = std::getenv("SIMXR_DATA_DIR");
 	const std::optional<std::string> savedData = previousData ? std::optional<std::string>{previousData} : std::nullopt;
-	const auto* previousEndpoint = std::getenv("SIMXR_CONTROL_SOCKET");
-	const std::optional<std::string> savedEndpoint =
-		previousEndpoint ? std::optional<std::string>{previousEndpoint} : std::nullopt;
 
 	struct RestoreSettings
 	{
 		std::filesystem::path directory;
 		std::optional<std::string> previous;
-		std::optional<std::string> data, endpoint;
+		std::optional<std::string> data;
 
 		~RestoreSettings()
 		{
@@ -942,20 +928,22 @@ void CheckApplicationTabs()
 				::setenv("SIMXR_DATA_DIR", data->c_str(), 1);
 			else
 				::unsetenv("SIMXR_DATA_DIR");
-			if (endpoint)
-				::setenv("SIMXR_CONTROL_SOCKET", endpoint->c_str(), 1);
-			else
-				::unsetenv("SIMXR_CONTROL_SOCKET");
 			std::error_code ignored;
 			std::filesystem::remove_all(directory, ignored);
 		}
-	} restore{directory, saved, savedData, savedEndpoint};
+	} restore{directory, saved, savedData};
+
+	// Only the second fixture is named like a runtime endpoint, so discovery finds exactly that one.
+	Fixture first{directory / "one.sock"}, second{directory / "control.two.sock"}, third{directory / "three.sock"},
+		fourth{directory / "four.sock"};
+	first.Submit();
+	second.Submit();
+	third.Submit();
+	fourth.Submit();
 
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", (directory / "settings.json").c_str(), 1) == 0,
 			"Set isolated tab recording directory");
-	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 &&
-				::setenv("SIMXR_CONTROL_SOCKET", second.endpoint.c_str(), 1) == 0,
-			"Set isolated running-app discovery");
+	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0, "Set isolated running-app discovery");
 	Interaction test;
 	{
 		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};

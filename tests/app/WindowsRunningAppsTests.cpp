@@ -2,6 +2,7 @@
 #include "app/services/RunningApps.h"
 #include "app/platform/windows/RuntimeEndpoints.h"
 #include "app/platform/windows/LaunchSupport.h"
+#include "control/RuntimeEndpoint.h"
 #include <algorithm>
 #include <iostream>
 
@@ -11,14 +12,12 @@ int main()
 	using namespace std::chrono_literals;
 	try
 	{
-		const auto endpoint =
-			std::string(R"(\\.\pipe\SimXR.Control.DiscoveryTest.)") + std::to_string(GetCurrentProcessId());
+		const auto endpoint = simxr::control::RuntimeEndpoint(GetCurrentProcessId());
 		const auto path = windows::Wide(endpoint);
 		windows::Handle pipe(CreateNamedPipeW(
 			path.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
 			PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 1024, 1024, 0, nullptr));
 		Require(pipe.Get() != INVALID_HANDLE_VALUE, "Create discovery pipe");
-		Require(SetEnvironmentVariableW(L"SIMXR_CONTROL_SOCKET", path.c_str()), "Select fixture endpoint");
 		const auto apps = DiscoverRunningApps(25ms);
 		const auto found =
 			std::find_if(apps.begin(), apps.end(), [&](const auto& app) { return app.endpoint == endpoint; });
