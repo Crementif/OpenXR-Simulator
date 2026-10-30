@@ -58,7 +58,7 @@ endif()
 simxr_configure_target(simxr_mcp app/mcp/McpPch.h)
 target_include_directories(simxr_mcp SYSTEM PUBLIC "${simxr_httplib_SOURCE_DIR}"
     "${simxr_json_SOURCE_DIR}/single_include")
-target_include_directories(simxr_mcp PRIVATE "${SIMXR_VULKAN_INCLUDE_DIR}")
+target_link_libraries(simxr_mcp PRIVATE Vulkan::Headers)
 target_link_libraries(simxr_mcp PUBLIC Threads::Threads PRIVATE simxr_app_platform simxr_connection simxr_control simxr_graphics simxr_diagnostics)
 if(WIN32)
     target_link_libraries(simxr_mcp PRIVATE ws2_32 bcrypt advapi32)

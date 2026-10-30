@@ -23,46 +23,11 @@ function Run-Native {
     if ($LASTEXITCODE -ne 0) { throw "$Program failed ($LASTEXITCODE)." }
 }
 
-$deps = Join-Path $work 'deps'
-Run-Native 'python' @((Join-Path $root 'packaging\ci\fetch-deps.py'), '--platform', 'windows', '--output', $deps)
-$vulkan = Join-Path $work 'vulkan'
-$headersBuild = Join-Path $work 'headers-build'
-$loaderBuild = Join-Path $work 'vulkan-loader-build'
-Run-Native 'cmake' @('-S', (Join-Path $deps 'Vulkan-Headers'), '-B', $headersBuild, '-G', 'Ninja',
-    '-DCMAKE_BUILD_TYPE=Release', '-DVULKAN_HEADERS_ENABLE_TESTS=OFF', "-DCMAKE_INSTALL_PREFIX=$vulkan")
-Run-Native 'cmake' @('--install', $headersBuild, '--config', 'Release')
-Run-Native 'cmake' @('-S', (Join-Path $deps 'Vulkan-Loader'), '-B', $loaderBuild, '-G', 'Ninja',
-    '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTS=OFF', "-DCMAKE_PREFIX_PATH=$vulkan", "-DCMAKE_INSTALL_PREFIX=$vulkan")
-Run-Native 'cmake' @('--build', $loaderBuild, '--parallel', '4')
-Run-Native 'cmake' @('--install', $loaderBuild, '--config', 'Release')
-$vulkanLibrary = Join-Path $vulkan 'lib\vulkan-1.lib'
-if (-not (Test-Path -LiteralPath $vulkanLibrary -PathType Leaf)) { throw 'Vulkan import library was not installed.' }
-
-$openxr = Join-Path $work 'openxr'
-$openxrBuild = Join-Path $work 'openxr-build'
-Run-Native 'cmake' @('-S', (Join-Path $deps 'OpenXR-SDK'), '-B', $openxrBuild, '-G', 'Ninja',
-    '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded', '-DBUILD_TESTS=OFF',
-    '-DBUILD_CONFORMANCE_TESTS=OFF', '-DBUILD_API_LAYERS=OFF', '-DINSTALL_SYMBOLS=OFF', '-DDYNAMIC_LOADER=ON',
-    "-DCMAKE_PREFIX_PATH=$vulkan", "-DCMAKE_INSTALL_PREFIX=$openxr")
-Run-Native 'cmake' @('--build', $openxrBuild, '--parallel', '4')
-Run-Native 'cmake' @('--install', $openxrBuild, '--config', 'Release')
-$openxrLibrary = Join-Path $openxr 'lib\openxr_loader.lib'
-if (-not (Test-Path -LiteralPath $openxrLibrary -PathType Leaf) -or
-    -not (Test-Path -LiteralPath (Join-Path $openxr 'bin\openxr_loader.dll') -PathType Leaf)) {
-    throw 'OpenXR loader and its import library were not installed.'
-}
-$license = Join-Path $work 'openxr-licenses.txt'
-$licenseText = [System.IO.File]::ReadAllText((Join-Path $deps 'OpenXR-SDK\LICENSE')) + "`n`n" +
-    [System.IO.File]::ReadAllText((Join-Path $deps 'OpenXR-SDK\src\external\jsoncpp\LICENSE'))
-[System.IO.File]::WriteAllText($license, $licenseText, [System.Text.UTF8Encoding]::new($false))
-
 $build = Join-Path $work 'simulator-build'
 $packages = Join-Path $work 'packages'
 Run-Native 'cmake' @('--preset', 'release', '-S', $root, '-B', $build,
     '-DSIMXR_BUILD_PROBES=ON', '-DSIMXR_BUILD_HEADSET=ON',
-    "-DCMAKE_PREFIX_PATH=$openxr", '-DCMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP=TRUE',
-    "-DSIMXR_VULKAN_INCLUDE_DIR=$deps\Vulkan-Headers\include", "-DSIMXR_VULKAN_LIBRARY=$vulkanLibrary",
-    "-DSIMXR_OPENGL_INCLUDE_DIR=$deps\gl", "-DSIMXR_OPENXR_LOADER_LICENSE_FILE=$license",
+    '-DCMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP=TRUE',
     "-DSIMXR_RELEASE_REPOSITORY=$env:SIMXR_RELEASE_REPOSITORY")
 Run-Native 'cmake' @('--build', $build, '--parallel', '4', '--target', 'openxr_simulator', 'simxr_companion',
     'simxr_runner', 'simxr_headset_host', 'xr_probe_d3d11', 'xr_probe_d3d12', 'xr_probe_opengl', 'xr_probe_vk',

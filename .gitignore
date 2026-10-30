@@ -151,3 +151,4 @@ openxr_simulator.log
 .tmp.driveupload/14169
 
 !cmake/*.cmake
+!third_party/vcpkg_triplets/*.cmake

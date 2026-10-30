@@ -29,9 +29,7 @@ FetchContent_Declare(simxr_nanosvg
     SOURCE_SUBDIR simxr-source-only
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
 FetchContent_MakeAvailable(simxr_sdl simxr_imgui simxr_imguizmo simxr_nanosvg)
-find_path(SIMXR_VULKAN_INCLUDE_DIR vulkan/vulkan.h HINTS "$ENV{VULKAN_SDK}/include" REQUIRED)
 include(cmake/SimxrMcp.cmake)
-find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan vulkan-1 libvulkan.so.1 HINTS "$ENV{VULKAN_SDK}/lib" REQUIRED)
 
 add_library(simxr_imgui STATIC
     ${simxr_imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp
@@ -42,8 +40,8 @@ add_library(simxr_imgui STATIC
     ${simxr_imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
     ${simxr_imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
 target_compile_features(simxr_imgui PRIVATE cxx_std_20)
-target_include_directories(simxr_imgui SYSTEM PUBLIC ${simxr_imguizmo_SOURCE_DIR}/src ${simxr_imgui_SOURCE_DIR} ${simxr_imgui_SOURCE_DIR}/backends "${SIMXR_VULKAN_INCLUDE_DIR}")
-target_link_libraries(simxr_imgui PUBLIC SDL3::SDL3-static "${SIMXR_VULKAN_LIBRARY}")
+target_include_directories(simxr_imgui SYSTEM PUBLIC ${simxr_imguizmo_SOURCE_DIR}/src ${simxr_imgui_SOURCE_DIR} ${simxr_imgui_SOURCE_DIR}/backends)
+target_link_libraries(simxr_imgui PUBLIC SDL3::SDL3-static Vulkan::Vulkan)
 
 add_library(simxr_app STATIC
     src/app/mcp/McpApplication.cpp

@@ -10,10 +10,8 @@ if [ -e "$work" ]; then
 fi
 mkdir -p "$work"
 python3 "$root/tests/packaging/test_linux_abi.py"
-python3 "$root/packaging/ci/fetch-deps.py" --platform linux --output "$work/deps"
 cmake --preset release -S "$root" -B "$work/build" \
     -DSIMXR_BUILD_PROBES=ON -DSIMXR_BUILD_HEADSET=ON \
-    "-DSIMXR_VULKAN_INCLUDE_DIR=$work/deps/Vulkan-Headers/include" \
     "-DSIMXR_RELEASE_REPOSITORY=${SIMXR_RELEASE_REPOSITORY:-}"
 cmake --build "$work/build" --parallel "${SIMXR_CI_JOBS:-4}" --target \
     openxr_simulator simxr_companion simxr_runner simxr_headset_host xr_probe_linux game_bridge_probe \
