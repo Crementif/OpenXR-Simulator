@@ -208,23 +208,30 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 			elapsed += '0';
 		elapsed += std::to_string(seconds % 60);
 	}
-	const float right = ImGui::GetContentRegionMax().x;
 	const auto& style = ImGui::GetStyle();
+	const float right = ImGui::GetContentRegionMax().x - style.FramePadding.x;
 	const float button = ImGui::GetFrameHeight();
 	const float focus =
 		elapsed.empty() ? button : button + ImGui::CalcTextSize(elapsed.c_str()).x + style.FramePadding.x;
 	const float actions = button * 2 + focus + style.ItemSpacing.x * 2;
 	const float reserved =
 		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
-	ImGui::SetCursorPosY(std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2));
+	const float middle = std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2);
+	ImGui::SetCursorPosY(middle);
 	DrawAppPicker(runtime, snapshot, std::max(1.f, ImGui::GetContentRegionAvail().x - reserved), bool(m_tabBar));
 	if (m_tabBar)
 	{
+		// The tabs stand on the top bar's bottom rule. The bar's trailing spacing must not make them scroll.
 		ImGui::SameLine();
+		ImGui::SetCursorPosY(ImGui::GetWindowHeight() - button);
 		const float tabsWidth = std::max(1.f, ImGui::GetContentRegionAvail().x - reserved);
-		ImGui::BeginChild("Applications", {tabsWidth, button + style.ItemSpacing.y}, 0, ImGuiWindowFlags_NoScrollbar);
+		ImGui::BeginChild("Applications", {tabsWidth, button}, 0,
+						  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 		m_tabBar();
 		ImGui::EndChild();
+		ImGui::SameLine(0, 0);
+		ImGui::SetCursorPosY(middle);
+		ImGui::Dummy({});
 	}
 	if (m_shell.session.state == RunState::Failed && !m_shell.session.error.empty())
 	{

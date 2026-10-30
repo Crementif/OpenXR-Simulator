@@ -23,7 +23,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	const auto choose = [&](std::size_t index) {
 		const auto& frame = history.At(index);
 		runtime.LookAt(index);
-		shell.selection = FrameSel{frame.identity, frame.epoch};
+		// A device page shows the frame's recorded input in place; other pages open the frame.
+		if (!std::holds_alternative<DeviceSel>(shell.selection))
+			shell.selection = FrameSel{frame.identity, frame.epoch};
 		m_cursorSeconds = frame.seconds;
 		inspect = true;
 	};

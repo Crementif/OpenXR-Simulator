@@ -863,8 +863,7 @@ void RuntimePanels::DrawHeadsetControls()
 void RuntimePanels::DrawPastDevice(const Selection& selection)
 {
 	const auto* device = std::get_if<DeviceSel>(&selection);
-	if (!device ||
-		(device->page != DevicePage::Body && device->page != DevicePage::Gaze && device->page != DevicePage::Trackers))
+	if (!device || device->page == DevicePage::Player)
 		return;
 	const auto& history = m_session.History();
 	const auto index = history.Find(m_view.time.cursor, m_view.time.epoch);
@@ -874,7 +873,11 @@ void RuntimePanels::DrawPastDevice(const Selection& selection)
 		ImGui::TextDisabled("Input not kept for this frame");
 		return;
 	}
-	if (device->page == DevicePage::Body)
+	if (device->page == DevicePage::Head)
+		DrawPastHead(*sample);
+	else if (device->page == DevicePage::Left || device->page == DevicePage::Right)
+		DrawPastController(*sample, device->page == DevicePage::Left ? 0 : 1);
+	else if (device->page == DevicePage::Body)
 		DrawPastBody(*sample);
 	else if (device->page == DevicePage::Gaze)
 		DrawPastGaze(*sample);
