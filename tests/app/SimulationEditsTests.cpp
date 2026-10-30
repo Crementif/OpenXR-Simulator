@@ -227,7 +227,21 @@ void PreserveObservedConfiguration()
 
 void SourceKindRange()
 {
-	for (const auto kind : {std::uint64_t{4}, std::uint64_t{1} << 32, std::numeric_limits<std::uint64_t>::max()})
+	// A physical headset bridge owns channels as a device source.
+	CommandScheduler scheduler;
+	scheduler.Start();
+	CommandTransaction claim;
+	claim.id = 1;
+	claim.source = {CommandSourceKind::Device, 3};
+	claim.target.frame = FrameId{1};
+	claim.commands = {TakeControl{ControlChannel::Views}};
+	Require(scheduler.Submit(claim).result == CommandResult::Queued, "Queue device ownership");
+	Apply(scheduler, 1);
+	const auto owner =
+		app::ReadObservedSetup(Observation(scheduler)).owners[static_cast<std::size_t>(ControlChannel::Views)];
+	Require(owner && owner->kind == CommandSourceKind::Device && owner->id == 3,
+			"Observed setup accepts device owners");
+	for (const auto kind : {std::uint64_t{5}, std::uint64_t{1} << 32, std::numeric_limits<std::uint64_t>::max()})
 	{
 		wire::Message receipt;
 		receipt.fields.push_back(wire::Field::Bytes(

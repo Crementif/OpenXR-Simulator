@@ -161,8 +161,7 @@ std::optional<CommandSource> SimulationEditSource(const control::Message& receip
 	const auto source = FindMember(DecodeNode(document->value), "source");
 	if (!source)
 		return {};
-	return CommandSource{ReadEnum(Member(*source, "kind"), CommandSourceKind::Sequence),
-						 Unsigned(Member(*source, "id"))};
+	return CommandSource{ReadEnum(Member(*source, "kind"), CommandSourceKind::Device), Unsigned(Member(*source, "id"))};
 }
 
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state)
@@ -484,7 +483,7 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 		throw std::runtime_error("Unsupported ownership configuration");
 	for (std::size_t index = 0; index < owners.size(); ++index)
 		if (!Null(owners[index]))
-			result.owners[index] = CommandSource{ReadEnum(Member(owners[index], "kind"), CommandSourceKind::Sequence),
+			result.owners[index] = CommandSource{ReadEnum(Member(owners[index], "kind"), CommandSourceKind::Device),
 												 Unsigned(Member(owners[index], "id"))};
 	for (const auto& scenario : Elements(Member(root, "scenarios")))
 	{
