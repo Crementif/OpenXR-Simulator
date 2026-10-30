@@ -175,8 +175,18 @@ static void NeutralRestart(std::optional<BodyJointSet> bodySet = {}, bool forwar
 	}
 
 	bridge.Stop();
-	session->Commands().Apply({++frame}, {}, config.epoch, {});
-	const auto released = session->Commands().Snapshot().applied;
+	// The server releases the bridge's channels when it notices the closed connection, on its own thread.
+	std::shared_ptr<const AppliedCommandSnapshot> released;
+	const auto releaseDeadline = LiveInputClock::now() + std::chrono::seconds(3);
+	while (true)
+	{
+		session->Commands().Apply({++frame}, {}, config.epoch, {});
+		released = session->Commands().Snapshot().applied;
+		if (!released->owners[static_cast<std::size_t>(ControlChannel::Body)] ||
+			LiveInputClock::now() >= releaseDeadline)
+			break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 	Require(!released->owners[static_cast<std::size_t>(ControlChannel::Body)] &&
 				!released->configuration.tracking.bodyObservation,
 			"Stopping physical input must release Body and restore its authored baseline");
