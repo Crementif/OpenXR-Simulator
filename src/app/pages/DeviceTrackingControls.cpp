@@ -215,6 +215,17 @@ void DeviceControlPanel::DrawTrackers()
 	ImGui::EndDisabled();
 }
 
+// Apps pick their render size when they start, so this is the runtime's offer rather than what an app draws.
+static void DrawRecommendedSize(const ViewSettings& views)
+{
+	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+	ImGui::TextWrapped("Recommends %u x %u per eye to apps", views.outerWidth, views.outerHeight);
+	ImGui::PopStyleColor();
+	ImGui::SetItemTooltip("Apps choose their render size when they start. Apps with a sharper inset view are offered "
+						  "%u x %u for it.",
+						  views.insetWidth, views.insetHeight);
+}
+
 std::optional<SimulationEdit> DeviceControlPanel::DrawHeadset(bool supported)
 {
 	m_edit.reset();
@@ -254,8 +265,7 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeadset(bool supported)
 		FieldLabel("Inset angle");
 		ImGui::Text("%.1f°", m_authoredViews.insetHalfAngle * degrees);
 		ImGui::SetItemTooltip("Half angle of the sharper inset view, for apps that use foveated views");
-		ImGui::TextDisabled("Renders %u x %u per eye, inset %u x %u", m_authoredViews.outerWidth,
-							m_authoredViews.outerHeight, m_authoredViews.insetWidth, m_authoredViews.insetHeight);
+		DrawRecommendedSize(m_authoredViews);
 		m_fieldScope = scope;
 		return std::exchange(m_edit, {});
 	}
@@ -333,8 +343,7 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeadset(bool supported)
 	if (edited && !m_edit)
 		ApplyOwned(ControlChannel::Views, SetViewSettings{m_authoredViews});
 	ImGui::EndDisabled();
-	ImGui::TextDisabled("Renders %u x %u per eye, inset %u x %u", m_authoredViews.outerWidth,
-						m_authoredViews.outerHeight, m_authoredViews.insetWidth, m_authoredViews.insetHeight);
+	DrawRecommendedSize(m_authoredViews);
 	m_fieldScope = scope;
 	return std::exchange(m_edit, {});
 }

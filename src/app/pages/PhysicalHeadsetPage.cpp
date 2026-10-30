@@ -183,7 +183,7 @@ std::optional<HeadsetPageRequest> PhysicalHeadsetPage::Draw(const HeadsetHostSna
 	const auto line = ImGui::GetCursorScreenPos();
 	ImGui::GetWindowDrawList()->AddCircleFilled({line.x + 4 * unit, line.y + ImGui::GetTextLineHeight() / 2}, 4 * unit,
 												dot);
-	ImGui::Indent(14 * unit);
+	ImGui::Indent(20 * unit);
 	ImGui::TextUnformatted(state);
 	if (host.phase == HeadsetHostPhase::Running && !host.discovering)
 	{
@@ -193,6 +193,9 @@ std::optional<HeadsetPageRequest> PhysicalHeadsetPage::Draw(const HeadsetHostSna
 																			 : "Waiting for game output";
 		ImGui::TextDisabled("%s", output);
 		ImGui::SetItemTooltip("Paused or stale game output appears on a fixed inspection screen in the headset.");
+		if (host.recommendedEyes)
+			ImGui::TextDisabled("Headset recommends %u x %u per eye", (*host.recommendedEyes)[0].width,
+								(*host.recommendedEyes)[0].height);
 	}
 	else if (!active)
 	{
@@ -207,7 +210,7 @@ std::optional<HeadsetPageRequest> PhysicalHeadsetPage::Draw(const HeadsetHostSna
 		else if (host.connectedTrackers)
 			ImGui::TextDisabled("%u trackers connected", *host.connectedTrackers);
 	}
-	ImGui::Unindent(14 * unit);
+	ImGui::Unindent(20 * unit);
 
 	// Problems that block or change Connect stay visible while the options are folded.
 	const auto warn = [](const char* text) {
