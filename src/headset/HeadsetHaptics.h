@@ -34,7 +34,7 @@ private:
 	};
 
 	std::array<Hand, 2> m_hands;
-	std::uint64_t m_floor = 0;
+	std::uint64_t m_floor = 0, m_seen = 0;
 	std::int64_t m_time = 0;
 	Clock::time_point m_received;
 	bool m_initialized = false, m_failed = false;

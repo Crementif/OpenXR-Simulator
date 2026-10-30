@@ -42,10 +42,13 @@ static void Forwarding()
 	observation.events[0].status = HapticStatus::Active;
 	state.Observe(observation, now + 122ms, now + 122ms);
 	state.Consume(now + 122ms, true);
+	// A full history omits older events; the attachment survives while every omitted event was already seen.
 	observation.overflow = true;
+	Require(state.Observe(observation, now + 123ms, now + 123ms), "Omitting seen events keeps the attachment");
+	observation.events[0].sequence = 7;
 	Require(!state.Observe(observation, now + 123ms, now + 123ms) &&
 				state.Consume(now + 123ms, true)[0]->amplitude == 0,
-			"Overflow suspends and stops output");
+			"Omitting an unseen event suspends and stops output");
 	observation.overflow = false;
 	Require(!state.Observe(observation, now + 124ms, now + 124ms), "Failed attachment cannot silently resume");
 }

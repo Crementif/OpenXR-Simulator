@@ -6,7 +6,11 @@ namespace simxr::headset
 bool HeadsetHaptics::Observe(const control::HapticObservation& observation, Clock::time_point requested,
 							 Clock::time_point received, bool enabled)
 {
-	if (m_failed || observation.overflow || requested > received || observation.time < m_time ||
+	// An overflowing observation omits only its oldest events, which were already seen unless the oldest one returned
+	// skips past the last sequence observed.
+	const bool lost = observation.overflow && m_initialized &&
+					  (observation.events.empty() || observation.events.front().sequence > m_seen + 1);
+	if (m_failed || lost || requested > received || observation.time < m_time ||
 		(m_initialized && received < m_received))
 	{
 		m_failed = true;
@@ -14,6 +18,8 @@ bool HeadsetHaptics::Observe(const control::HapticObservation& observation, Cloc
 	}
 	m_time = observation.time;
 	m_received = received;
+	for (const auto& event : observation.events)
+		m_seen = std::max(m_seen, event.sequence);
 	if (!m_initialized)
 	{
 		for (const auto& event : observation.events)
