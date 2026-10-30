@@ -13,22 +13,18 @@ if(NOT simxr_luau_POPULATED)
     FetchContent_Populate(simxr_luau)
     add_subdirectory("${simxr_luau_SOURCE_DIR}" "${simxr_luau_BINARY_DIR}" EXCLUDE_FROM_ALL)
 endif()
-file(READ "${PROJECT_SOURCE_DIR}/src/automation/Monitor.luau" SIMXR_MONITOR_SOURCE)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/automation/Monitor.luau")
-configure_file(src/automation/MonitorSource.h.in generated/automation/MonitorSource.h @ONLY)
 add_library(simxr_automation STATIC
-    src/automation/MonitorReport.cpp
     src/automation/RigRunner.cpp
     src/automation/RecordingPlayback.cpp
     src/automation/RigProgress.cpp
     src/automation/RigRuntime.cpp
     src/automation/RigReport.cpp
     src/automation/ScriptEngine.cpp
-    src/automation/ScriptAnalysis.cpp
+    src/automation/ScriptImageSample.cpp
     src/automation/ScriptValues.cpp)
 simxr_configure_target(simxr_automation)
-target_link_libraries(simxr_automation PUBLIC simxr_control simxr_recording PRIVATE simxr_diagnostics Luau.Compiler Luau.VM)
-add_library(simxr_rig_controller STATIC src/app/services/RigController.cpp src/app/services/LuauAutomation.cpp src/app/services/MonitorController.cpp)
+target_link_libraries(simxr_automation PUBLIC simxr_control simxr_recording PRIVATE Luau.Compiler Luau.VM)
+add_library(simxr_rig_controller STATIC src/app/services/RigController.cpp src/app/services/LuauAutomation.cpp)
 target_include_directories(simxr_rig_controller PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 simxr_configure_target(simxr_rig_controller)
 target_link_libraries(simxr_rig_controller PUBLIC simxr_automation simxr_connection PRIVATE simxr_app_platform)

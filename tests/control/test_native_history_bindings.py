@@ -79,20 +79,16 @@ def main():
     until ready
     assert(document.entries[1].frame_id == "7" and document.entries[22].frame_id == "28")
     simxr.export_window_image(window, "7", "window.rgba", SLICE)
-    local analysis = simxr.analyze_image_window(window)
-    if options.target == "quad_layers" then
-        assert(analysis.frames_analyzed == 0 and analysis.frames_skipped == 22 and analysis.temporal_pairs == 0)
-        assert(#analysis.skipped_frames == 22 and not analysis.detected)
-        for _, skipped in analysis.skipped_frames do assert(skipped.reason == "missing_eye") end
-    else
-        assert(analysis.frames_analyzed == 22 and analysis.frames_skipped == 0 and analysis.temporal_pairs == 21)
-        assert(#analysis.skipped_frames == 0)
+    local sample = simxr.sample_window_image(window, "7")
+    assert(sample.width == 320 and sample.height == 90 and buffer.len(sample.pixels) == 320 * 90 * 4)
+    for _, eye in sample.eyes do
+        assert(eye.width > 0 and eye.width <= 160 and eye.height > 0 and eye.height <= 90)
+        local offset = ((eye.y + eye.height // 2) * 320 + eye.x + eye.width // 2) * 4
+        assert(buffer.readu8(sample.pixels, offset + 3) == 255)
     end
-    assert(analysis.frame_gaps == 0 and type(analysis.detected) == "boolean")
-    for _, event in analysis.events do
-        assert(not simxr.frame_before(event.frame_id, "7") and not simxr.frame_before("28", event.frame_id))
-        assert(type(event.reason) == "string" and #event.reason > 0)
-    end
+    local cropped = simxr.sample_window_image(window, "7", {rectangles = {
+        {x = 0, y = 0, width = 8, height = 8}, {x = 0, y = 0, width = 0, height = 0}}})
+    assert(cropped.eyes[1].width == 8 and cropped.eyes[1].height == 8 and cropped.eyes[2].width == 0)
     simxr.release_image_window(window)
     simxr.checkpoint("Exact historical window exported", true)
     '''.replace('TARGET', luau_target).replace('SLICE', '1' if ui else '0'))

@@ -231,47 +231,6 @@ def main():
                 value = client.tool("debug_image_history", {"connection": connection, "target": "composed_eyes", "count": 1})
                 return not value["error"] and bool(value["data"]["document"]["entries"])
             eventually(history_ready, timeout=20)
-            monitor = {"monitor_id": "windows-monitor", "application_id": application,
-                       "target": "composed", "timeout": 25}
-            started_monitor = client.tool("start_flicker_monitor", monitor)
-            assert not started_monitor["error"], started_monitor
-
-            def monitor_ready():
-                status = client.tool("get_flicker_status", {"application_id": application})
-                assert not status["error"] and status["data"]["phase"] != "failed", status
-                return status["data"] if status["data"]["windows"] else None
-
-            monitor_status = eventually(monitor_ready, timeout=40)
-            assert monitor_status["generation"] == state["generation"] and monitor_status["frames_observed"] >= 2
-            assert not client.tool("stop_flicker_monitor", {"application_id": application, "monitor_id": "windows-monitor"})["error"]
-            for incident_tool in ("capture_flicker_window", "capture_ui_flicker_window"):
-                incident_dir = root / ("bewijs ü " + incident_tool)
-                arguments = {"application_id": application, "timeout": 30, "max_frames": 4, "analyze": True}
-                if incident_tool == "capture_flicker_window":
-                    arguments["directory"] = str(incident_dir)
-                def capture_incident():
-                    value = client.rpc("tools/call", {"name": incident_tool, "arguments": arguments})["result"]
-                    if value["isError"] and "Incident contains unavailable frame" in value["content"][0]["text"]:
-                        return None
-                    return value
-                incident = eventually(capture_incident, timeout=45)
-                assert not incident["isError"], incident
-                incident_info = json.loads(incident["content"][0]["text"])
-                assert incident_info["generation"] == state["generation"] and len(incident_info["selected_frames"]) == 4, incident
-                assert incident_info["window"]["post_count"] == 12
-                analysis = incident_info["analysis"]
-                assert analysis["frames_analyzed"] + analysis["frames_skipped"] == len(incident_info["window"]["entries"])
-                if "directory" in arguments:
-                    assert json.loads((incident_dir / "manifest.json").read_text(encoding="utf-8")) == incident_info
-                    assert len(incident_info["saved_frames"]) == len(incident_info["window"]["entries"])
-                    assert (incident_dir / "contact.jpg").read_bytes() == base64.b64decode(incident["content"][1]["data"], validate=True)
-                    for frame in incident_info["saved_frames"]:
-                        with Image.open(incident_dir / frame["file"]) as decoded_frame:
-                            assert decoded_frame.size == (320, 104) and decoded_frame.format == "PNG"
-                            decoded_frame.load()
-                with Image.open(BytesIO(base64.b64decode(incident["content"][1]["data"], validate=True))) as decoded:
-                    assert decoded.size == (640, 208), decoded.size
-                    decoded.load()
             acquired = client.tool("debug_acquire", {"connection": connection})
             assert not acquired["error"], acquired
             lease = acquired["data"]["lease"]

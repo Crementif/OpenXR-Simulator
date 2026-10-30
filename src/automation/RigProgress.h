@@ -31,12 +31,6 @@ public:
 	void Checkpoint(RigCheckpoint checkpoint);
 	void Print(std::string line);
 
-	void ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed, std::uint64_t skipped,
-					   std::uint64_t pairs, std::uint64_t gaps);
-	void MissedCadences(std::uint64_t count);
-	void BeginObservation();
-	void EndObservation();
-
 	RigPhase Phase() const;
 	RigSnapshot Snapshot() const;
 
@@ -44,11 +38,9 @@ private:
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::atomic<bool> m_cancelled{false};
-	bool m_paused = false, m_background = false;
-	std::chrono::milliseconds m_observationTimeout{30000};
+	bool m_paused = false;
 	std::size_t m_permits = 0;
 	std::chrono::steady_clock::time_point m_deadline;
 	RigSnapshot m_result;
-	MonitorCoverage m_coverage;
 };
 } // namespace simxr::automation

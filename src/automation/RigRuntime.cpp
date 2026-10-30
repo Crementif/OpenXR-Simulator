@@ -4,7 +4,7 @@
 #include "automation/RigProgress.h"
 #include "control/ControlSchema.h"
 #include "control/ExportReader.h"
-#include "control/IncidentSample.h"
+#include "control/ImageSample.h"
 #include "control/DebugProtocol.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
@@ -406,7 +406,7 @@ void RigRuntime::ExportWindowImage(std::uint64_t window, std::uint64_t frame, co
 	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
 }
 
-control::IncidentSample RigRuntime::SampleWindowImage(std::uint64_t window, std::uint64_t frame,
+control::ImageSample RigRuntime::SampleWindowImage(std::uint64_t window, std::uint64_t frame,
 													  std::optional<std::array<XrRect2Di, 2>> rectangles)
 {
 	const auto image =
@@ -416,7 +416,7 @@ control::IncidentSample RigRuntime::SampleWindowImage(std::uint64_t window, std:
 	return SampleImage(image, rectangles);
 }
 
-std::optional<control::IncidentSample>
+std::optional<control::ImageSample>
 RigRuntime::SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
 							   std::optional<std::array<XrRect2Di, 2>> rectangles)
 {
@@ -640,22 +640,22 @@ ScriptStep RigRuntime::CaptureStep(control::CommandKind kind, Fields fields)
 	return step;
 }
 
-control::IncidentSample RigRuntime::SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles)
+control::ImageSample RigRuntime::SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles)
 {
 	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
 	const auto info = Call(control::OpCode::ImageInfo, {control::Field::U64(tag::ImageReaderId, image, true)});
 	const auto* descriptor = info.Find(tag::ImageDescriptor);
 	if (!descriptor)
-		throw std::runtime_error("Runtime omitted the incident image description");
+		throw std::runtime_error("Runtime omitted the sampled image description");
 	const auto description = control::DecodeImageDescription(*descriptor);
 	if (!rectangles)
 	{
 		if (description.width > INT32_MAX || description.height > INT32_MAX)
-			throw std::runtime_error("Incident image exceeds native coordinates");
+			throw std::runtime_error("Sampled image exceeds native coordinates");
 		const XrRect2Di full{{0, 0}, {static_cast<int>(description.width), static_cast<int>(description.height)}};
 		rectangles = std::array{full, full};
 	}
-	return control::ReadIncidentSample(
+	return control::ReadImageSample(
 		[&](auto opcode, auto fields) {
 			return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields))
 															: Call(opcode, std::move(fields));

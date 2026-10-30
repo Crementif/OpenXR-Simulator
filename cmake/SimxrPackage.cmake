@@ -21,7 +21,7 @@ install(DIRECTORY "${PROJECT_SOURCE_DIR}/sdk/python/" DESTINATION share/simxr/sd
     PATTERN "build" EXCLUDE PATTERN "dist" EXCLUDE)
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/examples/" DESTINATION share/simxr/examples
     FILES_MATCHING PATTERN "*.py" PATTERN "*.luau" PATTERN "__pycache__" EXCLUDE)
-install(FILES "${PROJECT_SOURCE_DIR}/docs/BUILDING.md" DESTINATION share/doc/simxr)
+install(FILES "${PROJECT_SOURCE_DIR}/docs/AUTOMATION.md" DESTINATION share/doc/simxr)
 if(UNIX)
     install(PROGRAMS "${PROJECT_SOURCE_DIR}/scripts/launch-linux.py" DESTINATION bin)
     install(PROGRAMS "${PROJECT_SOURCE_DIR}/packaging/linux/install.sh"

@@ -111,7 +111,7 @@ endif()
 add_library(simxr_control STATIC
     src/control/VideoExport.cpp
     src/control/ExportReader.cpp
-    src/control/IncidentSample.cpp
+    src/control/ImageSample.cpp
     src/control/legacy/LegacyInput.cpp
     src/platform/windows/WindowsRuntimeFiles.cpp
     src/platform/windows/WindowsRuntimeStatus.cpp
@@ -351,7 +351,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_B
         src/control/backends/vulkan/VulkanControlHandle.cpp
         src/control/backends/vulkan/VulkanImageConsumer.cpp)
     simxr_configure_target(simxr_vulkan_control)
-    target_link_libraries(simxr_vulkan_control PUBLIC simxr_control simxr_vulkan simxr_diagnostics)
+    target_link_libraries(simxr_vulkan_control PUBLIC simxr_control simxr_vulkan)
 
     if(SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR TARGET d3d11_compositor_tests)
         add_library(simxr_probe_vulkan STATIC probes/VulkanProbeInstance.cpp)
@@ -369,18 +369,6 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_B
     endif()
 endif()
 
-add_library(simxr_diagnostics STATIC
-    src/diagnostics/FlickerDetector.cpp
-    src/diagnostics/FlickerSample.cpp
-    src/diagnostics/FlickerMonitors.cpp
-    src/diagnostics/IncidentAnalysis.cpp
-    src/diagnostics/platform/ArtifactFile.cpp
-    src/diagnostics/platform/RenderDocCapture.cpp
-    src/diagnostics/FlickerArtifacts.cpp)
-simxr_configure_target(simxr_diagnostics)
-target_include_directories(simxr_diagnostics PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(simxr_diagnostics PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
-
 if(SIMXR_BUILD_RUNTIME)
     if(WIN32)
         set(SIMXR_RUNTIME_SOURCE src/RuntimeWindows.cpp)
@@ -393,7 +381,7 @@ if(SIMXR_BUILD_RUNTIME)
     simxr_configure_target(openxr_simulator)
     simxr_set_output_directory(openxr_simulator)
     target_link_libraries(openxr_simulator PRIVATE Vulkan::Headers)
-    target_link_libraries(openxr_simulator PRIVATE simxr_core simxr_graphics simxr_control simxr_diagnostics Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(openxr_simulator PRIVATE simxr_core simxr_graphics simxr_control Threads::Threads ${CMAKE_DL_LIBS})
     if(WIN32)
         target_link_libraries(openxr_simulator PRIVATE simxr_windows_graphics)
         target_link_libraries(openxr_simulator PRIVATE simxr_vulkan simxr_vulkan_control)
@@ -597,8 +585,6 @@ if(BUILD_TESTING)
     target_link_libraries(runtime_tests PRIVATE simxr_core)
     simxr_add_test(windows_runtime_files_tests tests/platform/WindowsRuntimeFilesTests.cpp windows_runtime_files)
     target_link_libraries(windows_runtime_files_tests PRIVATE simxr_control)
-    simxr_add_test(flicker_diagnostics_tests tests/diagnostics/FlickerDiagnosticsTests.cpp flicker_diagnostics)
-    target_link_libraries(flicker_diagnostics_tests PRIVATE simxr_diagnostics simxr_core)
     simxr_add_test(legacy_input_tests tests/control/LegacyInputTests.cpp legacy_input)
     target_link_libraries(legacy_input_tests PRIVATE simxr_control)
     simxr_add_test(automation_lifecycle_tests tests/runtime/AutomationLifecycleTests.cpp automation_lifecycle)

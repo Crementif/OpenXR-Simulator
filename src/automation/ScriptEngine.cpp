@@ -36,7 +36,6 @@ void ScriptEngine::Execute()
 	};
 	bind("wait", Binding<&ScriptEngine::Wait>);
 	bind("monotonic_time", Binding<&ScriptEngine::MonotonicTime>);
-	bind("monitor_cadence", Binding<&ScriptEngine::MonitorCadence>);
 	bind("frame_add", Binding<&ScriptEngine::FrameAdd>);
 	bind("frame_before", Binding<&ScriptEngine::FrameBefore>);
 	bind("step_display", Binding<&ScriptEngine::StepDisplay>);
@@ -59,8 +58,8 @@ void ScriptEngine::Execute()
 	bind("export_history", Binding<&ScriptEngine::ExportHistory>);
 	bind("begin_image_window", Binding<&ScriptEngine::BeginImageWindow>);
 	bind("image_window", Binding<&ScriptEngine::ImageWindow>);
-	bind("analyze_image_window", Binding<&ScriptEngine::AnalyzeImageWindow>);
-	bind("analyze_image_history", Binding<&ScriptEngine::AnalyzeImageHistory>);
+	bind("sample_window_image", Binding<&ScriptEngine::SampleWindowImage>);
+	bind("sample_history_image", Binding<&ScriptEngine::SampleHistoryImage>);
 	bind("export_window_image", Binding<&ScriptEngine::ExportWindowImage>);
 	bind("release_image_window", Binding<&ScriptEngine::ReleaseImageWindow>);
 	bind("revision", Binding<&ScriptEngine::Revision>);
@@ -162,12 +161,6 @@ int ScriptEngine::Wait(lua_State* state)
 	if (milliseconds > 3600000)
 		throw std::invalid_argument("Rig wait must be between zero and 3600000 milliseconds");
 	m_runtime.Wait(std::chrono::milliseconds{milliseconds});
-	return 0;
-}
-
-int ScriptEngine::MonitorCadence(lua_State* state)
-{
-	m_progress.MissedCadences(Integer(state, 1));
 	return 0;
 }
 

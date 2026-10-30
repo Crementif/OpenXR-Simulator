@@ -1,7 +1,6 @@
 #include "app/UiPch.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpCredentials.h"
-#include "app/mcp/McpMonitoring.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 #include <exception>
@@ -113,9 +112,6 @@ static std::uint64_t ProcessIdentifier(const std::string& value)
 static Json Execute(ApplicationCatalog& tabs, const std::string& instanceId, const std::string& name,
 					const Json& arguments, const std::shared_ptr<AutomationOwner>& owner)
 {
-	if (HandlesMonitor(name))
-		return ToolResult(
-			CallMonitor(tabs, Identifier(Text(arguments, "application_id", true), instanceId), name, arguments));
 #ifdef SIMXR_COMPANION_AUTOMATION
 	if (name == "simulator_luau_run" || name == "simulator_luau_status" || name == "simulator_luau_pause" ||
 		name == "simulator_luau_resume" || name == "simulator_luau_step" || name == "simulator_luau_cancel")

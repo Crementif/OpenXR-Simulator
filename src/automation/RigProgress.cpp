@@ -10,13 +10,9 @@ void RigProgress::Start(const RigOptions& options)
 	m_paused = false;
 	m_permits = 0;
 	m_result = {};
-	m_coverage = {};
-	m_background = options.background;
-	m_observationTimeout = options.deadline;
 	m_result.phase = RigPhase::Running;
 	m_result.seed = options.seed;
-	m_deadline = options.background ? std::chrono::steady_clock::time_point::max()
-									: std::chrono::steady_clock::now() + options.deadline;
+	m_deadline = std::chrono::steady_clock::now() + options.deadline;
 }
 
 void RigProgress::Pause()
@@ -142,37 +138,6 @@ void RigProgress::Print(std::string line)
 	if (m_result.output.size() == 256)
 		throw std::length_error("Rig output capacity exhausted");
 	m_result.output.push_back(std::move(line));
-}
-
-void RigProgress::ObserveWindow(const std::vector<MonitorFrame>& frames, std::uint64_t analyzed, std::uint64_t skipped,
-								std::uint64_t pairs, std::uint64_t gaps)
-{
-	std::lock_guard lock(m_mutex);
-	m_coverage.Add(frames);
-	m_coverage.report.lastAnalyzed = analyzed;
-	m_coverage.report.lastSkipped = skipped;
-	m_coverage.report.lastPairs = pairs;
-	m_coverage.report.lastGaps = gaps;
-	m_result.monitor = m_coverage.report;
-}
-
-void RigProgress::MissedCadences(std::uint64_t count)
-{
-	std::lock_guard lock(m_mutex);
-	m_coverage.report.missedCadences += count;
-	m_result.monitor.missedCadences = m_coverage.report.missedCadences;
-}
-
-void RigProgress::BeginObservation()
-{
-	if (m_background && m_deadline == std::chrono::steady_clock::time_point::max())
-		m_deadline = std::chrono::steady_clock::now() + m_observationTimeout;
-}
-
-void RigProgress::EndObservation()
-{
-	if (m_background)
-		m_deadline = std::chrono::steady_clock::time_point::max();
 }
 
 RigPhase RigProgress::Phase() const

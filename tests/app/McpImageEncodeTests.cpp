@@ -1,7 +1,5 @@
 #include "Pch.h"
 #include "app/mcp/McpImage.h"
-#include "app/mcp/McpIncident.h"
-#include "app/mcp/McpIncidentSave.h"
 #include "app/mcp/McpImageCache.h"
 #include "app/services/ImageExport.h"
 #include "app/mcp/McpStereoAnalysis.h"
@@ -16,48 +14,6 @@ int main(int argc, char** argv)
 	using namespace simxr;
 	using namespace simxr::app;
 	using namespace simxr::app::mcp;
-	Require(IncidentIdentifier("18446744073709551615", "frame") == UINT64_MAX,
-			"Incident frame identifiers retain full uint64 precision");
-	for (const auto& invalid : {std::string("01"), std::string(100000, '0') + "1", std::string("18446744073709551616")})
-	{
-		bool rejected = false;
-		try
-		{
-			(void)IncidentIdentifier(invalid, "frame");
-		}
-		catch (const std::runtime_error&)
-		{
-			rejected = true;
-		}
-		Require(rejected, "Incident rejected an oversized, noncanonical or overflowing frame identifier");
-	}
-	{
-		const auto root =
-			std::filesystem::temp_directory_path() /
-			("simxr-incident-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-		Require(std::filesystem::create_directory(root), "Create isolated incident test directory");
-		nlohmann::json metadata = {{"window",
-									{{"entries", nlohmann::json::array({{{"frame_id", "1"}, {"phase", "ready"}},
-																		{{"frame_id", "2"}, {"phase", "clear"}}})}}}};
-		const std::vector<std::vector<std::byte>> frames(2, std::vector<std::byte>(320 * 104 * 4));
-		const std::vector<std::byte> jpeg(4);
-		unsigned checks = 0;
-		bool interrupted = false;
-		try
-		{
-			SaveIncident(root / "interrupted", metadata, jpeg, frames, 320, 104, [&] {
-				if (++checks == 6)
-					throw std::runtime_error("cancelled");
-			});
-		}
-		catch (const std::runtime_error&)
-		{
-			interrupted = true;
-		}
-		Require(interrupted && !std::filesystem::exists(root / "interrupted"),
-				"Interrupted incident save must remove its own partial output");
-		std::filesystem::remove(root);
-	}
 	Require(CacheableImageSource(static_cast<unsigned>(control::TargetKind::LayerView), false, false),
 			"A captured layer without a display tick can be reused");
 	Require(!CacheableImageSource(static_cast<unsigned>(control::TargetKind::VirtualDisplay), false, false) &&

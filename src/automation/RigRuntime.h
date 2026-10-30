@@ -14,7 +14,7 @@
 
 namespace simxr::control
 {
-struct IncidentSample;
+struct ImageSample;
 }
 
 namespace simxr::automation
@@ -107,9 +107,9 @@ public:
 	std::vector<std::byte> ImageWindow(std::uint64_t window);
 	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
 						   std::optional<std::uint32_t> arraySlice);
-	control::IncidentSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
+	control::ImageSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
 											  std::optional<std::array<XrRect2Di, 2>> rectangles);
-	std::optional<control::IncidentSample> SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
+	std::optional<control::ImageSample> SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
 															  std::optional<std::array<XrRect2Di, 2>> rectangles);
 	void ReleaseImageWindow(std::uint64_t window);
 
@@ -136,7 +136,7 @@ private:
 	control::Message Exchange(control::OpCode opcode, Fields fields);
 	control::Message Debug(control::CommandKind kind, Fields fields = {});
 	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
-	control::IncidentSample SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles);
+	control::ImageSample SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles);
 	void ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
 	void RenewLease();
 	void PollAgain();

@@ -81,7 +81,6 @@ add_library(simxr_app STATIC
 
     src/app/services/HeadsetHost.cpp
     src/app/services/HeadlessApplications.cpp
-    src/app/services/ApplicationCatalog.cpp
     src/app/services/RangeExportTask.cpp
     src/app/services/RuntimeSession.cpp
     src/app/services/RuntimeSessionFrames.cpp
@@ -326,13 +325,6 @@ if(BUILD_TESTING)
                 "$<TARGET_FILE_DIR:openxr_simulator>/openxr_simulator.json")
             set_tests_properties(windows_mcp_image PROPERTIES TIMEOUT 90
                 ENVIRONMENT "SIMXR_EXPECT_MCP_LUAU=$<BOOL:${SIMXR_BUILD_AUTOMATION}>")
-            if(SIMXR_BUILD_AUTOMATION)
-                add_test(NAME windows_mcp_flicker_monitor COMMAND "${Python3_EXECUTABLE}"
-                    "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_flicker_monitor.py" "$<TARGET_FILE:simxr_companion>"
-                    "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_vk>"
-                    "$<TARGET_FILE_DIR:openxr_simulator>/openxr_simulator.json")
-                set_tests_properties(windows_mcp_flicker_monitor PROPERTIES TIMEOUT 180)
-            endif()
             add_test(NAME windows_mcp_screenshot COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_screenshot_windows.py" "$<TARGET_FILE:simxr_companion>"
                 "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_vk>"
@@ -434,14 +426,6 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_logs.py" "$<TARGET_FILE:simxr_companion>"
             "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_linux>")
         set_tests_properties(companion_mcp_logs PROPERTIES TIMEOUT 90)
-        add_test(NAME companion_mcp_incident COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_incident.py" "$<TARGET_FILE:simxr_companion>"
-            "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_linux>")
-        set_tests_properties(companion_mcp_incident PROPERTIES TIMEOUT 120)
-        add_test(NAME companion_mcp_flicker_monitor COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_flicker_monitor.py" "$<TARGET_FILE:simxr_companion>"
-            "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_linux>")
-        set_tests_properties(companion_mcp_flicker_monitor PROPERTIES TIMEOUT 120)
         add_test(NAME companion_mcp_controls COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_controls.py" "$<TARGET_FILE:simxr_companion>"
             "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_linux>")

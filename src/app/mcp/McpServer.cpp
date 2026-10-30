@@ -2,7 +2,6 @@
 #include "app/mcp/McpServer.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/mcp/McpDebug.h"
-#include "app/mcp/McpMonitoring.h"
 #include "app/mcp/McpSequenceJobs.h"
 #include "app/mcp/McpSocket.h"
 #include "app/services/AutomationOwner.h"
@@ -189,8 +188,6 @@ static Json Tools(bool windowless)
 		}
 		tools.push_back(std::move(definition));
 	}
-	for (auto& definition : MonitorDefinitions())
-		tools.push_back(std::move(definition));
 	for (auto& definition : McpSequenceJobs::Definitions())
 		tools.push_back(std::move(definition));
 	return tools;
@@ -621,7 +618,6 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 			{
 				callResult = McpSequenceJobs::Handles(name) ? session->sequenceJobs.Call(m_application, session->debug,
 																						 name, arguments, cancellation)
-							 : HandlesMonitor(name)			? m_application.Call(name, arguments, cancellation)
 							 : McpDebug::Handles(name)
 								 ? session->debug.Call(m_application, name, arguments, cancellation)
 								 : m_application.Call(name, arguments, cancellation, session->automationOwner);

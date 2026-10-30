@@ -1,6 +1,0 @@
-#pragma once
-#include <string_view>
-namespace simxr::automation
-{
-inline constexpr std::string_view MonitorSource = R"luau(@SIMXR_MONITOR_SOURCE@)luau";
-}

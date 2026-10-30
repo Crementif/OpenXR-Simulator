@@ -1,6 +1,5 @@
 #include "Pch.h"
 #include "app/mcp/McpHistory.h"
-#include "app/mcp/McpIncidentSave.h"
 #include "app/mcp/McpSequence.h"
 #include "app/mcp/McpSimulation.h"
 #include "control/ControlSchema.h"
@@ -15,47 +14,8 @@ using Json = nlohmann::json;
 namespace wire = simxr::control;
 namespace tag = simxr::control::tag;
 
-static void IncidentArchiveRollback()
-{
-	const auto root =
-		std::filesystem::temp_directory_path() /
-		("simxr-incident-rollback-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-	std::filesystem::create_directory(root);
-	try
-	{
-		for (const unsigned stop : {3u, 5u})
-		{
-			const auto archive = root / std::to_string(stop);
-			Json metadata = {{"window", {{"entries", Json::array({{{"frame_id", "1"}, {"phase", "ready"}}})}}}};
-			const std::vector<std::vector<std::byte>> frames{std::vector<std::byte>(320 * 104 * 4)};
-			unsigned checks = 0;
-			bool cancelled = false;
-			try
-			{
-				app::mcp::SaveIncident(archive, metadata, {}, frames, 320, 104, [&] {
-					if (++checks == stop)
-						throw std::runtime_error("cancel archive");
-				});
-			}
-			catch (const std::runtime_error& error)
-			{
-				cancelled = std::string_view(error.what()) == "cancel archive";
-			}
-			Require(cancelled && !std::filesystem::exists(archive),
-					"Cancelled incident retained published files or temporary output");
-		}
-	}
-	catch (...)
-	{
-		std::filesystem::remove_all(root);
-		throw;
-	}
-	std::filesystem::remove(root);
-}
-
 int main()
 {
-	IncidentArchiveRollback();
 	const auto sequenceId = UINT64_MAX;
 	wire::Message sequenceResponse;
 	sequenceResponse.fields = {

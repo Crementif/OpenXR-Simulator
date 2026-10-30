@@ -23,7 +23,6 @@
 #include "platform/windows/WindowsRuntimeStatus.h"
 #include "platform/windows/WindowsRuntimeFiles.h"
 #include "control/legacy/WindowsRuntimeSettings.h"
-#include "diagnostics/FlickerDetector.h"
 #include "graphics/LayerBuilder.h"
 #include "graphics/SwapchainAccess.h"
 #include "graphics/SwapchainWaits.h"
@@ -118,7 +117,6 @@ struct Instance
 	std::shared_ptr<simxr::windows::WindowsRuntimeInput> input;
 	std::shared_ptr<simxr::windows::WindowsRuntimeFiles> runtimeFiles;
 	std::shared_ptr<simxr::windows::WindowsRuntimeStatus> runtimeStatus;
-	std::shared_ptr<flicker::Diagnostics> diagnostics;
 	bool closing = false;
 };
 
@@ -159,7 +157,6 @@ struct Session
 	std::shared_ptr<simxr::windows::WindowsRuntimeInput> input;
 	std::shared_ptr<simxr::windows::WindowsRuntimeFiles> runtimeFiles;
 	std::shared_ptr<simxr::windows::WindowsRuntimeStatus> runtimeStatus;
-	std::shared_ptr<flicker::Diagnostics> diagnostics;
 	std::optional<simxr::windows::WindowsLibrary> dxgiLibrary;
 	std::optional<simxr::windows::WindowsLibrary> d3dLibrary;
 	ComPtr<ID3D11Device> d3d11Device;
@@ -724,7 +721,6 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
 		settings::SetHeadsetProfile(static_cast<settings::HeadsetProfile>(index));
 	}
 	const auto directory = simxr::windows::RuntimeDataDirectory();
-	native->diagnostics = std::make_shared<flicker::Diagnostics>(directory);
 	native->runtimeFiles = std::make_shared<simxr::windows::WindowsRuntimeFiles>(directory);
 	native->runtimeStatus = std::make_shared<simxr::windows::WindowsRuntimeStatus>(native->runtimeFiles);
 	ControlEndpoint().Start();
@@ -771,7 +767,6 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance)
 	if (!RuntimeState().Game().Snapshot().game)
 		ControlEndpoint().Close();
 	native->runtimeFiles->Close();
-	native->diagnostics->Close();
 	simxr::StopVulkanImageDelivery();
 	const auto result = RuntimeState().DestroyInstance(instance);
 	if (XR_FAILED(result))
@@ -1025,7 +1020,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 	native.input = owner->input;
 	native.runtimeFiles = owner->runtimeFiles;
 	native.runtimeStatus = owner->runtimeStatus;
-	native.diagnostics = owner->diagnostics;
 	std::optional<simxr::VulkanBinding> vulkanBinding;
 	auto publish = [&]() -> XrResult {
 		XrResult result;
@@ -1736,11 +1730,6 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 			if (XR_SUCCEEDED(result))
 			{
 				const auto snapshot = core->Snapshot();
-				std::uint32_t projections = 0;
-				for (std::uint32_t layer = 0; layer < info->layerCount; ++layer)
-					if (info->layers[layer]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
-						++projections;
-				native->diagnostics->ObserveSubmission(snapshot.lastSubmitted.value, projections, info->layerCount);
 				const auto views = core->ViewsAt(simxr::RuntimeTime{simxr::Duration{info->displayTime}});
 				const auto width = views.views.empty() ? 0u : views.views.front().description.width * 2;
 				const auto height = views.views.empty() ? 0u : views.views.front().description.height;

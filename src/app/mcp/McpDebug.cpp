@@ -6,7 +6,6 @@
 #include "app/mcp/McpDiagnostics.h"
 #include "app/mcp/McpGame.h"
 #include "app/mcp/McpHistory.h"
-#include "app/mcp/McpIncident.h"
 #include "app/mcp/McpLogs.h"
 #include "app/mcp/McpImage.h"
 #include "app/mcp/McpImageCache.h"
@@ -381,8 +380,6 @@ Json McpDebug::Definitions()
 	tools.push_back(mcp::ImageSaveDefinition());
 	for (auto& definition : mcp::DiagnosticsDefinitions())
 		tools.push_back(std::move(definition));
-	for (auto& definition : mcp::IncidentDefinitions())
-		tools.push_back(std::move(definition));
 	for (auto& definition : mcp::ControlsDefinitions())
 		tools.push_back(std::move(definition));
 	for (auto& definition : mcp::SequenceDefinitions())
@@ -422,7 +419,7 @@ bool McpDebug::Handles(const std::string& name)
 											 "debug_configure_snapshots"};
 	return name == "read_logs" || name == "clear_logs" || name == "capture_screenshot" || name == "validate_stereo" ||
 		   name == "analyze_stereo_consistency" || name == "debug_save_video" || name == "debug_save_image" ||
-		   name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) || mcp::IncidentHandles(name) ||
+		   name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) ||
 		   mcp::ControlsHandles(name) || mcp::SequenceHandles(name) || names.contains(name) ||
 		   mcp::SimulationHandles(name) || mcp::ImageHandles(name) || mcp::GameHandles(name) ||
 		   mcp::HistoryHandles(name);
@@ -760,8 +757,6 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		}
 		if (mcp::DiagnosticsHandles(name))
 			return mcp::RunDiagnostics(application, name, arguments, cancellation);
-		if (mcp::IncidentHandles(name))
-			return mcp::CaptureIncident(application, name, arguments, cancellation);
 		if (name == "debug_connect" || name == "game_bridge_connect")
 		{
 			Keys(arguments, {"application_id"});

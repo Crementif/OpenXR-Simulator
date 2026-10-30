@@ -11,7 +11,7 @@ set(required
     bin/simxr_companion bin/simxr_mcp_connector bin/simxr_runner
     bin/libopenxr_simulator.so bin/fonts/AdwaitaSans-Regular.ttf
     share/simxr/branding/openxr-simulator.png share/simxr/rigs/pose_sweep.luau
-    include/simxr/game_bridge.h share/doc/simxr/BUILDING.md
+    include/simxr/game_bridge.h share/doc/simxr/AUTOMATION.md
     share/simxr/sdk/python/pyproject.toml share/simxr/sdk/python/simxr_control/client.py)
 set(licenses
     simxr/LICENSE simxr_runner/Luau.txt simxr_companion/SDL3.txt simxr_companion/ImGui.txt
