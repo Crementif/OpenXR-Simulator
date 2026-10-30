@@ -84,7 +84,7 @@ std::optional<std::chrono::nanoseconds> HeadsetImages::Age(std::chrono::steady_c
 	return std::chrono::milliseconds(7);
 }
 
-bool HeadsetImages::Fresh(std::chrono::nanoseconds) const
+bool HeadsetImages::Fresh() const
 {
 	return tests::s_state.waits != 5;
 }

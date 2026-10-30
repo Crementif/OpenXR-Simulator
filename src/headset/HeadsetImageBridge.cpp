@@ -20,16 +20,13 @@ std::optional<std::chrono::nanoseconds> HeadsetImageAge(const HeadsetImagePacket
 	return *packet.sourceAge + elapsed;
 }
 
-bool FreshHeadsetImage(const HeadsetImagePacket& packet, std::chrono::nanoseconds period,
-					   std::chrono::steady_clock::time_point now)
+bool FreshHeadsetImage(const HeadsetImagePacket& packet, std::chrono::steady_clock::time_point now)
 {
 	using namespace std::chrono;
+	// Bounds a paused or hung source, not reprojection quality: the age includes the
+	// game's frame interval plus several physical frames of request, share and copy.
 	const auto age = HeadsetImageAge(packet, now);
-	if (!age || period <= nanoseconds::zero())
-		return false;
-	// Provisional four-period bound; clamp before multiplying the display period.
-	const auto limit = std::clamp(period, nanoseconds(milliseconds(1)), nanoseconds(milliseconds(50))) * 4;
-	return *age < limit;
+	return age && *age < milliseconds(250);
 }
 
 static std::uint64_t ImageId(const wire::Message& message, std::uint16_t tag)
@@ -58,10 +55,12 @@ bool HeadsetImageBridge::Request(wire::ImageDeviceIdentity identity, std::shared
 	if (!completion)
 		throw std::invalid_argument("Live image request requires a consumer completion handle");
 	std::lock_guard lock(m_mutex);
-	if (m_phase != Phase::Idle)
+	// A request may queue behind the previous delivery's release.
+	if ((m_phase != Phase::Idle && m_phase != Phase::ReleaseRequested) || m_offer)
 		return false;
 	m_offer = Offer{identity, std::move(completion), afterImageTick, completionKind};
-	m_phase = Phase::Requested;
+	if (m_phase == Phase::Idle)
+		m_phase = Phase::Requested;
 	m_changed.notify_all();
 	return true;
 }
@@ -175,16 +174,18 @@ void HeadsetImageBridge::Run(std::stop_token stop) noexcept
 				reader = delivery = 0;
 				std::lock_guard lock(m_mutex);
 				m_delivery = 0;
-				m_phase = Phase::Idle;
+				m_phase = m_offer ? Phase::Requested : Phase::Idle;
 				continue;
 			}
-			const auto requestedAt = std::chrono::steady_clock::now();
+			// The runtime holds this reply until it selects an image newer than ours.
 			auto retained = call(wire::OpCode::RetainPreview,
 								 {wire::Field::U64(wire::tag::Session, m_source.session),
-								  wire::Field::U64(wire::tag::Generation, m_source.generation)},
+								  wire::Field::U64(wire::tag::Generation, m_source.generation),
+								  wire::Field::U64(wire::tag::ImageTick, offer->afterImageTick)},
 								 {}, true);
 			HeadsetImagePacket packet;
-			packet.requestedAt = requestedAt;
+			// Source age is measured when the reply is built, not when a long poll began.
+			packet.requestedAt = std::chrono::steady_clock::now();
 			const auto* age = retained.message.Find(wire::tag::SourceAge);
 			if (age && age->AsI64() && *age->AsI64() >= 0)
 				packet.sourceAge = std::chrono::nanoseconds(*age->AsI64());
@@ -214,7 +215,13 @@ void HeadsetImageBridge::Run(std::stop_token stop) noexcept
 					reader = ImageId(retained.message, wire::tag::ImageReaderId);
 					packet.imageTick = ImageId(retained.message, wire::tag::ImageTick);
 					packet.kind = HeadsetImageKind::Unchanged;
-					if (packet.imageTick != offer->afterImageTick)
+					const auto* retainedDescription = retained.message.Find(wire::tag::ImageDescriptor);
+					if (!retainedDescription)
+						throw std::runtime_error("Live image omitted its retained description");
+					packet.description = wire::DecodeImageDescription(*retainedDescription);
+					if (packet.description.completionKind != offer->completionKind)
+						packet.kind = HeadsetImageKind::CompletionChanged;
+					if (packet.kind != HeadsetImageKind::CompletionChanged && packet.imageTick != offer->afterImageTick)
 					{
 						auto shared = call(wire::OpCode::ShareImage,
 										   {wire::Field::U64(wire::tag::ImageReaderId, reader),

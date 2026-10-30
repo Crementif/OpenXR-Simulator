@@ -2,7 +2,9 @@
 #include "control/ConnectionImages.h"
 #include "graphics/SnapshotBudget.h"
 
+#include <chrono>
 #include <iostream>
+#include <thread>
 
 namespace
 {
@@ -247,6 +249,53 @@ void ReaderReleasePreservesImageTick()
 			"A selected clear retained an image identity");
 }
 
+void LongPollWaitsForNextImage()
+{
+	using namespace std::chrono;
+	wire::test::Fixture fixture;
+	Client client(fixture.service);
+	Through(fixture, fixture.session->Captures().Read(fixture.capture)->metadata->prediction.displayTick);
+	const auto release = [&](const wire::ControlPacket& preview) {
+		client.Call(wire::OpCode::ReleaseImage,
+					{wire::Field::U64(tag::ImageReaderId, Id(preview.message, tag::ImageReaderId))});
+	};
+	const auto timed = [&](std::uint64_t after) {
+		const auto started = steady_clock::now();
+		auto response = client.Preview({wire::Field::U64(tag::ImageTick, after)});
+		return std::pair{std::move(response), steady_clock::now() - started};
+	};
+	const auto first = client.Preview();
+	const auto imageTick = Id(first.message, tag::ImageTick);
+	release(first);
+
+	const auto [stale, staleWait] = timed(0);
+	Require(Error(stale) == wire::ErrorCode::Ok && Id(stale.message, tag::ImageTick) == imageTick &&
+				staleWait < milliseconds(50),
+			"A consumer without the selected image waited for another");
+	release(stale);
+	const auto [unchanged, unchangedWait] = timed(imageTick);
+	Require(Error(unchanged) == wire::ErrorCode::Ok && Id(unchanged.message, tag::ImageTick) == imageTick &&
+				unchangedWait >= milliseconds(90),
+			"Long poll returned before its bound without a new image");
+	release(unchanged);
+
+	// A selection made during the wait wakes it.
+	const auto output = NewOutput(fixture, CompletionStatus::Pending);
+	std::thread producer([&] {
+		std::this_thread::sleep_for(milliseconds(10));
+		const auto submitted = Submit(fixture, output);
+		std::this_thread::sleep_for(milliseconds(10));
+		output->status = CompletionStatus::Complete;
+		Through(fixture, submitted.displayTick);
+	});
+	const auto [woken, wokenWait] = timed(imageTick);
+	producer.join();
+	Require(Error(woken) == wire::ErrorCode::Ok && Id(woken.message, tag::ImageTick) > imageTick &&
+				wokenWait < milliseconds(90),
+			"Long poll did not return the newly selected GPU-ready image");
+	release(woken);
+}
+
 void SelectionLifetimeAndNoAdmission()
 {
 	wire::test::Fixture fixture;
@@ -427,6 +476,7 @@ int main()
 	{
 		DistinctDisplayImagesFromOneFrame();
 		ReaderReleasePreservesImageTick();
+		LongPollWaitsForNextImage();
 		SelectionLifetimeAndNoAdmission();
 		CompleteSelectionAndClear();
 		SourceAge();

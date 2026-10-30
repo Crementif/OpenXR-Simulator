@@ -37,7 +37,7 @@ public:
 	bool Close();
 
 	std::shared_ptr<const HeadsetImageFrame> Current() const;
-	bool Fresh(std::chrono::nanoseconds period) const;
+	bool Fresh() const;
 	std::optional<std::chrono::nanoseconds> Age(std::chrono::steady_clock::time_point now) const;
 
 	HeadsetImageTiming Timing() const
@@ -48,6 +48,8 @@ public:
 	}
 
 private:
+	// Advances one request, delivery or copy stage; false when it must wait.
+	bool Step();
 	void RetireUnused();
 
 	HeadsetGraphics& m_graphics;
@@ -60,8 +62,10 @@ private:
 	std::chrono::steady_clock::time_point m_deadline;
 	std::uint64_t m_imageTick = 0;
 	HeadsetImageTiming m_timing;
+	ImageCompletionKind m_completionKind = ImageCompletionKind::Timeline;
 	std::chrono::steady_clock::time_point m_requestedAt{}, m_copyStarted{};
 	bool m_requested = false, m_closed = false, m_retired = false, m_presentationAvailable = false;
 	static constexpr std::size_t s_capacity = 3;
+	static constexpr unsigned s_stepsPerTick = 8;
 };
 } // namespace simxr::headset

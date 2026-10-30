@@ -8,8 +8,8 @@ namespace simxr::control
 static constexpr std::array s_uploadSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId,
 											 tag::Offset,  tag::TotalBytes, tag::Bytes};
 static constexpr std::array s_startSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId, tag::Loop};
-static constexpr std::array s_sequence{tag::Session, tag::Generation, tag::SourceKind,		tag::SequenceId,
-									   tag::Offset,	 tag::Length};
+static constexpr std::array s_sequence{tag::Session,	tag::Generation, tag::SourceKind,
+									   tag::SequenceId, tag::Offset,	 tag::Length};
 static constexpr std::array s_sequenceCapture{tag::Session, tag::Generation, tag::CaptureId};
 static constexpr std::array s_simulation{tag::Session,	  tag::Generation, tag::TransactionId,
 										 tag::ApplyFrame, tag::ApplyTime,  tag::LatePolicy,
@@ -32,7 +32,7 @@ static constexpr std::array s_ackRecording{tag::Session, tag::Generation, tag::R
 static constexpr std::array s_recording{tag::Session, tag::Generation, tag::SourceKind, tag::Offset, tag::Length};
 static constexpr std::array s_previewBudget{tag::Session, tag::Generation, tag::PreviewBudget, tag::PreviewRamBudget};
 static constexpr std::array s_video{tag::Session, tag::Generation, tag::FirstFrame, tag::LastFrame};
-static constexpr std::array s_preview{tag::Session, tag::Generation, tag::FrameId};
+static constexpr std::array s_preview{tag::Session, tag::Generation, tag::FrameId, tag::ImageTick};
 static constexpr std::array s_liveInput{
 	tag::Session,		 tag::Generation,	  tag::AttachmentId, tag::SampleSequence, tag::ObservedTime,
 	tag::PredictionTime, tag::MaxSampleAgeMs, tag::Commands,	 tag::ClockRevision,  tag::Enabled};

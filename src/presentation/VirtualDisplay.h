@@ -58,6 +58,7 @@ public:
 	std::optional<PresentationTick> Advance(RuntimeTime time);
 	void AdvanceFromFrame(SessionGeneration generation, RuntimeTime time) noexcept;
 	PresentationSnapshot Snapshot() const;
+	void WaitForImage(std::optional<DisplayTick> after, std::chrono::steady_clock::time_point deadline) const;
 	bool Faulted() const noexcept;
 	std::size_t PollRetired();
 

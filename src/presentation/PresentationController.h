@@ -3,6 +3,8 @@
 #include "graphics/RotationalSource.h"
 #include "presentation/DisplayTimeline.h"
 
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -128,6 +130,8 @@ public:
 	std::size_t PollRetired();
 	PresentationSnapshot Snapshot() const;
 	std::vector<PresentationSubmission> Retain() const;
+	// Returns once the selected image differs from `after`, presentation stops or the deadline passes.
+	void WaitForImage(std::optional<DisplayTick> after, std::chrono::steady_clock::time_point deadline) const;
 
 private:
 	std::optional<PresentationTick> AdvanceAt(RuntimeTime now, std::optional<SessionGeneration> generation,
@@ -152,6 +156,7 @@ private:
 	FrameHistory* const m_history;
 	const CompletionObserver m_completed;
 	mutable std::mutex m_mutex;
+	mutable std::condition_variable m_published;
 	bool m_running = false;
 	std::uint64_t m_revision = 0;
 	SessionGeneration m_generation;

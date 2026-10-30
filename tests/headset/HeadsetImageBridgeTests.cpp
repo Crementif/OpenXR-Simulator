@@ -24,22 +24,21 @@ static void Freshness()
 	using namespace std::chrono;
 	HeadsetImagePacket packet;
 	packet.requestedAt = steady_clock::time_point{} + seconds(1);
-	Require(!FreshHeadsetImage(packet, milliseconds(10), packet.requestedAt), "Unknown source age is fresh");
+	Require(!FreshHeadsetImage(packet, packet.requestedAt), "Unknown source age is fresh");
 	packet.sourceAge = milliseconds(5);
 	Require(HeadsetImageAge(packet, packet.requestedAt + milliseconds(3)) == milliseconds(8),
 			"Source age must include elapsed delivery time");
-	Require(FreshHeadsetImage(packet, milliseconds(10), packet.requestedAt + milliseconds(34)),
-			"Fresh source rejected before four display periods");
-	Require(!FreshHeadsetImage(packet, milliseconds(10), packet.requestedAt + milliseconds(35)),
+	Require(FreshHeadsetImage(packet, packet.requestedAt + milliseconds(60)),
+			"A slow game frame plus copy latency was treated as stale");
+	Require(!FreshHeadsetImage(packet, packet.requestedAt + milliseconds(245)),
 			"Transport/copy delay was omitted from source age");
-	packet.sourceAge = milliseconds(50);
-	Require(!FreshHeadsetImage(packet, milliseconds(10), packet.requestedAt), "Old reprojected frame became fresh");
+	packet.sourceAge = milliseconds(300);
+	Require(!FreshHeadsetImage(packet, packet.requestedAt), "Old reprojected frame became fresh");
 	packet.sourceAge = nanoseconds::max();
 	Require(!HeadsetImageAge(packet, packet.requestedAt + nanoseconds(1)), "Overflowed source age must remain unknown");
-	Require(!FreshHeadsetImage(packet, nanoseconds::max(), packet.requestedAt), "Source-age arithmetic overflowed");
+	Require(!FreshHeadsetImage(packet, packet.requestedAt), "Source-age arithmetic overflowed");
 	packet.sourceAge = nanoseconds::zero();
-	Require(!FreshHeadsetImage(packet, milliseconds(10), packet.requestedAt - milliseconds(1)),
-			"Future request time was accepted");
+	Require(!FreshHeadsetImage(packet, packet.requestedAt - milliseconds(1)), "Future request time was accepted");
 }
 
 static void DeliveryLifecycle()
@@ -126,7 +125,15 @@ static void DeliveryLifecycle()
 	const auto newest = fixture.Submit();
 	select(newest);
 	Require(incompatible.Request(control::test::Description().identity, completion), "Queue incompatible primitive");
-	Until([&] { return !incompatible.Error().empty(); });
+	std::optional<HeadsetImagePacket> negotiation;
+	Until([&] {
+		Require(incompatible.Error().empty(), incompatible.Error().c_str());
+		negotiation = incompatible.Take();
+		return negotiation.has_value();
+	});
+	Require(negotiation->kind == HeadsetImageKind::CompletionChanged &&
+				negotiation->description.completionKind == ImageCompletionKind::Fence && negotiation->handles.empty(),
+			"Completion mismatch did not negotiate before sharing handles");
 	Require(fixture.state->shares == 2, "Incompatible completion primitive exposed native handles");
 
 	HeadsetImageBridge pending(source);

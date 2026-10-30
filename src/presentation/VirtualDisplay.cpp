@@ -286,6 +286,12 @@ PresentationSnapshot VirtualDisplay::Snapshot() const
 	return m_controller.Snapshot();
 }
 
+void VirtualDisplay::WaitForImage(std::optional<DisplayTick> after,
+								  std::chrono::steady_clock::time_point deadline) const
+{
+	m_controller.WaitForImage(after, deadline);
+}
+
 bool VirtualDisplay::Faulted() const noexcept
 {
 	return m_faulted.load();

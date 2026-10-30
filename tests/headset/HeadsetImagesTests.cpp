@@ -38,15 +38,17 @@ namespace simxr::control
 struct VulkanImageConsumer::State
 {
 	ImageDescription description;
+	ImageCompletionKind completionKind;
 	std::shared_ptr<TransferHandle> completion;
 	bool submitted = false, idle = true;
 };
 
 VulkanImageConsumer::VulkanImageConsumer(std::shared_ptr<VulkanDevice>, std::span<const char* const>, std::uint32_t,
-										 ImageCompletionKind, bool, bool)
+										 ImageCompletionKind completionKind, bool, bool)
 	: m_state(std::make_unique<State>())
 {
 	headset::tests::OnFrameThread();
+	m_state->completionKind = completionKind;
 	headset::tests::s_peak = std::max(headset::tests::s_peak, ++headset::tests::s_alive);
 }
 
@@ -74,6 +76,7 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 {
 	headset::tests::OnFrameThread();
 	Require(handles.size() == 2, "Missing image handles");
+	Require(description.completionKind == m_state->completionKind, "Consumer completion kind was not negotiated");
 	m_state->description = description;
 }
 
@@ -170,11 +173,12 @@ static void Until(HeadsetImages& images, const std::function<bool()>& done)
 	}
 }
 
-static void Ownership()
+static void Ownership(ImageCompletionKind completionKind)
 {
+	s_alive = s_peak = s_submits = 0;
 	s_frameThread = std::this_thread::get_id();
 	control::test::Fixture fixture;
-	fixture.state->completionKind = ImageCompletionKind::Timeline;
+	fixture.state->completionKind = completionKind;
 	fixture.state->consumerPhase = CompletionStatus::Complete;
 	fixture.state->views.resize(2);
 	for (auto& view : fixture.state->views)
@@ -199,11 +203,16 @@ static void Ownership()
 	s_complete = false;
 	Until(images, [&] { return s_submits == 1; });
 	Require(!images.Current(), "Published pixels before copy completion");
-	Require(images.Timing().copies == 0 && images.Timing().requests == 1, "Pending GPU copy was counted as completed");
+	Require(images.Timing().copies == 0 &&
+				images.Timing().requests == (completionKind == ImageCompletionKind::Fence ? 2 : 1),
+			"Pending GPU copy was counted as completed");
+	const auto requested = images.Timing().requests;
 	s_complete = true;
 	Until(images, [&] { return images.Current() != nullptr; });
 	Require(images.Timing().copies == 1 && images.Timing().maximumCopyObservation.count() >= 0,
 			"Completed private copy was not observed");
+	Require(images.Timing().requests == requested + 1,
+			"Completed copy waited for another physical frame before the next request");
 	auto first = images.Current();
 	Require(first->metadata.description.views[0].fov.angleLeft == -.7f && first->metadata.handles.empty(),
 			"Private copy lost source view metadata or retained transfer handles");
@@ -218,13 +227,15 @@ static void Ownership()
 	auto third = images.Current();
 	Require(s_alive == 3 && s_peak == 3, "Private image capacity is not bounded");
 	const auto submissions = s_submits;
+	const auto capacityWaits = images.Timing().capacityWaits;
 	select(fixture.Submit());
 	for (unsigned index = 0; index < 10; ++index)
 		images.Tick();
 	Require(images.Current() == third && s_submits == submissions,
 			"Overwrote an image held by a presenter or exceeded the copy pool");
 	const auto timing = images.Timing();
-	Require(timing.copies == 3 && timing.retained == 3 && timing.maximumRetained == 3 && timing.capacityWaits == 10,
+	Require(timing.copies == 3 && timing.retained == 3 && timing.maximumRetained == 3 &&
+				timing.capacityWaits == capacityWaits + 10,
 			"Retained-reader backpressure was not measured independently of copies");
 	first.reset();
 	Until(images, [&] { return images.Current() != third; });
@@ -265,7 +276,8 @@ int main()
 {
 	try
 	{
-		simxr::headset::tests::Ownership();
+		simxr::headset::tests::Ownership(simxr::ImageCompletionKind::Fence);
+		simxr::headset::tests::Ownership(simxr::ImageCompletionKind::Timeline);
 		std::cout << "PASS private headset image ownership; mock GPU consumer\n";
 		return 0;
 	}

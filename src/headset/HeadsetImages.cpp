@@ -31,20 +31,28 @@ void HeadsetImages::Tick()
 	if (!error.empty())
 		throw std::runtime_error(error);
 	RetireUnused();
+	// Take every step already finished, so a reply or completed copy does not wait
+	// another physical frame before the next request.
+	for (unsigned step = 0; step < s_stepsPerTick && Step(); ++step)
+	{}
+}
+
+bool HeadsetImages::Step()
+{
 	if (!m_pending)
 	{
 		if (m_frames.size() == s_capacity)
 		{
 			++m_timing.capacityWaits;
-			return;
+			return false;
 		}
-		m_pending = std::make_unique<control::VulkanImageConsumer>(
-			m_device, m_graphics.Extensions(), m_graphics.ApiVersion(), ImageCompletionKind::Timeline, true);
+		m_pending = std::make_unique<control::VulkanImageConsumer>(m_device, m_graphics.Extensions(),
+																   m_graphics.ApiVersion(), m_completionKind, true);
 	}
 	if (!m_requested)
 	{
-		if (!m_bridge.Request(m_pending->Identity(), m_pending->ConsumerFence(), m_imageTick))
-			return;
+		if (!m_bridge.Request(m_pending->Identity(), m_pending->ConsumerFence(), m_imageTick, m_completionKind))
+			return false;
 		m_requested = true;
 		++m_timing.requests;
 		m_requestedAt = std::chrono::steady_clock::now();
@@ -57,17 +65,22 @@ void HeadsetImages::Tick()
 		{
 			if (std::chrono::steady_clock::now() >= m_deadline)
 				throw std::runtime_error("Headset image delivery timed out");
-			return;
+			return false;
 		}
 		m_timing.maximumDelivery = std::max(
 			m_timing.maximumDelivery,
 			std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - m_requestedAt));
 		if (packet->kind != HeadsetImageKind::Image)
 		{
+			if (packet->kind == HeadsetImageKind::CompletionChanged)
+				m_completionKind = packet->description.completionKind;
 			m_timing.unchanged += packet->kind == HeadsetImageKind::Unchanged;
 			m_timing.clears += packet->kind == HeadsetImageKind::Clear;
-			m_presentationAvailable = packet->kind == HeadsetImageKind::Unchanged && packet->sourceAge.has_value() &&
-									  m_current && m_current->metadata.imageTick == packet->imageTick;
+			// A busy source or completion renegotiation says nothing about the current image.
+			if (packet->kind == HeadsetImageKind::Unchanged || packet->kind == HeadsetImageKind::Clear)
+				m_presentationAvailable = packet->kind == HeadsetImageKind::Unchanged &&
+										  packet->sourceAge.has_value() && m_current &&
+										  m_current->metadata.imageTick == packet->imageTick;
 			// The worker never offered this completion handle to ShareImage.
 			m_pending->AbandonUnsent();
 			m_pending.reset();
@@ -78,7 +91,7 @@ void HeadsetImages::Tick()
 				m_imageTick = 0;
 				RetireUnused();
 			}
-			return;
+			return true;
 		}
 		m_packet.emplace(std::move(*packet));
 		if (m_packet->description.views.size() != 2 || m_packet->description.arrayLayers != 2)
@@ -92,7 +105,7 @@ void HeadsetImages::Tick()
 	{
 		if (std::chrono::steady_clock::now() >= m_deadline)
 			throw std::runtime_error("Headset image copy timed out");
-		return;
+		return false;
 	}
 	if (status != CompletionStatus::Complete)
 		throw std::runtime_error("Headset image copy failed");
@@ -115,6 +128,7 @@ void HeadsetImages::Tick()
 	m_packet.reset();
 	m_requested = false;
 	RetireUnused();
+	return true;
 }
 
 bool HeadsetImages::Close()
@@ -161,10 +175,10 @@ std::shared_ptr<const HeadsetImageFrame> HeadsetImages::Current() const
 	return m_current;
 }
 
-bool HeadsetImages::Fresh(std::chrono::nanoseconds period) const
+bool HeadsetImages::Fresh() const
 {
 	return m_presentationAvailable && m_current &&
-		   FreshHeadsetImage(m_current->metadata, period, std::chrono::steady_clock::now());
+		   FreshHeadsetImage(m_current->metadata, std::chrono::steady_clock::now());
 }
 
 std::optional<std::chrono::nanoseconds> HeadsetImages::Age(std::chrono::steady_clock::time_point now) const

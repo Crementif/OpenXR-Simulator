@@ -20,6 +20,7 @@ enum class HeadsetImageKind
 	Image,
 	Clear,
 	Unchanged,
+	CompletionChanged,
 	Unavailable
 };
 
@@ -37,8 +38,7 @@ struct HeadsetImagePacket
 
 std::optional<std::chrono::nanoseconds> HeadsetImageAge(const HeadsetImagePacket& packet,
 														std::chrono::steady_clock::time_point now);
-bool FreshHeadsetImage(const HeadsetImagePacket& packet, std::chrono::nanoseconds period,
-					   std::chrono::steady_clock::time_point now);
+bool FreshHeadsetImage(const HeadsetImagePacket& packet, std::chrono::steady_clock::time_point now);
 
 // Transport only. The physical frame thread owns imports, GPU submissions and
 // completion. One delivery remains retained until that owner acknowledges it.

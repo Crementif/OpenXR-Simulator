@@ -297,7 +297,7 @@ bool HeadsetSession::Frame(bool render, const std::function<void(const HeadsetIn
 	{
 		m_output->Poll();
 		m_images->Tick();
-		if (eligible && m_worldFromInitial && m_images->Fresh(std::chrono::nanoseconds(state.predictedDisplayPeriod)))
+		if (eligible && m_worldFromInitial && m_images->Fresh())
 		{
 			m_inspectionAnchor.reset();
 			const auto worldFromCurrent = Compose(*m_worldFromInitial, space.initialFromCurrent);

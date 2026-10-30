@@ -667,7 +667,25 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 								 false);
 			return response;
 		}
-		held.display = session->Display().Snapshot();
+		if (request.Find(tag::ImageTick))
+		{
+			// Live consumers long-poll: hold the reply until another image is selected and
+			// GPU-ready, bounded well inside client exchange timeouts.
+			const auto after = RequireRequestU64(request, tag::ImageTick);
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+			session->Display().WaitForImage(after ? std::optional{DisplayTick{after}} : std::nullopt, deadline);
+			while (true)
+			{
+				held.display = session->Display().Snapshot();
+				const auto& latest = held.display->latest;
+				if (!latest || !latest->output || latest->output->PollCompletion() != CompletionStatus::Pending ||
+					std::chrono::steady_clock::now() >= deadline)
+					break;
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+		}
+		else
+			held.display = session->Display().Snapshot();
 		const auto& display = *held.display;
 		if (display.generation.value != RequireRequestU64(request, tag::Generation))
 			throw ControlRequestError{ErrorCode::StaleGeneration, "Display generation differs from the requested run"};

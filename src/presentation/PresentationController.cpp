@@ -37,6 +37,7 @@ void PresentationController::Start(SessionGeneration generation, const DisplayTi
 		m_running = true;
 		++m_revision;
 	}
+	m_published.notify_all();
 }
 
 PresentationAdmission PresentationController::Submit(PresentationSubmission submission,
@@ -153,6 +154,7 @@ void PresentationController::Stop() noexcept
 		releasedClear = std::move(m_liveClear);
 		m_liveClear.reset();
 	}
+	m_published.notify_all();
 }
 
 std::size_t PresentationController::PollRetired()
@@ -362,11 +364,20 @@ std::optional<PresentationTick> PresentationController::AdvanceAt(RuntimeTime no
 							 FrameDiagnosticCategory::Timing, next.tick.value, detail);
 		}
 	}
+	m_published.notify_all();
 	if (m_completed)
 		for (const auto& value : observed)
 			if (value.reportCompletion)
 				m_completed(value.submission.key, value.submission.metadata->prediction, time);
 	return next;
+}
+
+void PresentationController::WaitForImage(std::optional<DisplayTick> after,
+										  std::chrono::steady_clock::time_point deadline) const
+{
+	std::unique_lock lock(m_mutex);
+	m_published.wait_until(lock, deadline,
+						   [&] { return !m_running || (m_latest ? m_latest->imageTick : std::nullopt) != after; });
 }
 
 } // namespace simxr

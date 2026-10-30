@@ -130,6 +130,14 @@ void HeadsetGraphics::Open(OpenXrRuntime& runtime, bool validation)
 #else
 	m_extensions = {VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME};
 #endif
+#ifdef _WIN32
+	constexpr auto fenceExtension = VK_KHR_EXTERNAL_FENCE_WIN32_EXTENSION_NAME;
+#else
+	constexpr auto fenceExtension = VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME;
+#endif
+	if (std::any_of(extensions.begin(), extensions.end(),
+					[&](const auto& entry) { return std::strcmp(entry.extensionName, fenceExtension) == 0; }))
+		m_extensions.push_back(fenceExtension);
 	if (m_apiVersion < VK_API_VERSION_1_2)
 		m_extensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
 	for (const auto* name : m_extensions)
