@@ -20,11 +20,11 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	const auto& state = runtime.View();
 	const auto& history = runtime.History();
 	bool inspect = false;
-	const auto choose = [&](std::size_t index) {
+	const auto choose = [&](std::size_t index, bool open = false) {
 		const auto& frame = history.At(index);
 		runtime.LookAt(index);
-		// A device page shows the frame's recorded input in place; other pages open the frame.
-		if (!std::holds_alternative<DeviceSel>(shell.selection))
+		// A device page shows the frame's recorded input in place; other pages, and thumbnails, open the frame.
+		if (open || !std::holds_alternative<DeviceSel>(shell.selection))
 			shell.selection = FrameSel{frame.identity, frame.epoch};
 		m_cursorSeconds = frame.seconds;
 		inspect = true;
@@ -304,7 +304,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	};
 	if (gesture.first)
 	{
-		choose(*gesture.first);
+		choose(*gesture.first, gesture.open);
 		if (gesture.last)
 			selectRange(*gesture.first, *gesture.last);
 	}

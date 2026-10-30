@@ -285,12 +285,14 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	result.hovered = snapshotHit ? snapshotHit : markerHit;
 	if (m_framePress && clicked)
 	{
-		if (const auto hit = snapshotHit ? snapshotHit : markerHit)
+		if (const auto hit = snapshotHit ? snapshotHit : markerHit ? markerHit : m_imageHit)
 		{
 			const auto& frame = history.At(*hit);
 			m_framePress->frame = frame.identity;
 			m_framePress->epoch = frame.epoch;
-			m_framePress->target = snapshotHit ? FrameTarget::Snapshot : FrameTarget::Marker;
+			m_framePress->target = snapshotHit ? FrameTarget::Snapshot
+								   : markerHit ? FrameTarget::Marker
+											   : FrameTarget::Image;
 		}
 		result.stopFollowing = m_framePress->target != FrameTarget::Snapshot;
 	}
@@ -312,6 +314,16 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 			if (snapshotHit == start &&
 				io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < io.MouseDragThreshold * io.MouseDragThreshold)
 				result.pin = start;
+		}
+		else if (start && press.target == FrameTarget::Image)
+		{
+			if (m_imageHit == start &&
+				io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < io.MouseDragThreshold * io.MouseDragThreshold)
+			{
+				result.first = start;
+				result.open = true;
+				result.stopFollowing = true;
+			}
 		}
 		else if (start && (press.target == FrameTarget::Frame || markerHit == start))
 		{
@@ -393,6 +405,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop)
 {
 	previews.BeginThumbnails();
+	m_imageHit.reset();
 	if (m_lanes <= Images || !history.Size())
 		return;
 	const float scale = ImGui::GetFontSize() / 16;
@@ -424,6 +437,12 @@ void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory&
 		const float shownHeight = std::min(height, width * shotAspect), shownWidth = shownHeight / shotAspect;
 		const float y = LaneY(Images) + (m_lane - shownHeight) / 2;
 		previews.DrawThumbnail(*shot, {x, y}, {x + shownWidth, y + shownHeight}, crop);
+		// A thumbnail opens the frame that rendered it, which can differ from the frame nearest the click.
+		if (m_hovered && ImGui::IsMouseHoveringRect({x, y}, {x + shownWidth, y + shownHeight}))
+		{
+			m_imageHit = source;
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+		}
 		// A light veil and hairline keep bright app images from outshouting the frame bars.
 		draw->AddRectFilled({x, y}, {x + shownWidth, y + shownHeight}, theme::Fade(theme::Bg, .3f));
 		draw->AddRect({x, y}, {x + shownWidth, y + shownHeight}, theme::Line);

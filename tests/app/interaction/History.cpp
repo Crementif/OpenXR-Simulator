@@ -136,12 +136,14 @@ void CheckPreviewHistory(Interaction& test)
 		"Timeline thumbnails did not load across retained history");
 	TimelineCanvas overview;
 	overview.Fit();
+	std::optional<TimelineGesture> opened;
 	test.extraDraw = [&] {
 		ImGui::SetNextWindowPos({20, 480}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({1200, 280}, ImGuiCond_Always);
 		ImGui::Begin("Retained timeline thumbnails");
 		overview.Begin(100, 0);
-		overview.Draw(history, test.runtime.KeptPreviews(), {0, 0, 1, 1}, false);
+		if (auto gesture = overview.Draw(history, test.runtime.KeptPreviews(), {0, 0, 1, 1}, false); gesture.open)
+			opened = gesture;
 		ImGui::End();
 	};
 	test.Frame();
@@ -151,6 +153,13 @@ void CheckPreviewHistory(Interaction& test)
 			return !test.runtime.KeptPreviews().MissingThumbnail();
 		},
 		"Fitted timeline thumbnails did not finish loading");
+	// Clicking a thumbnail opens the frame that rendered that image.
+	const auto lane = overview.ImageRect();
+	Require(lane.height > 0, "Fitted timeline has no image lane");
+	test.Click({lane.x + 4, lane.y + lane.height / 2});
+	test.Frame();
+	Require(opened && opened->first && (history.At(*opened->first).flags & HistoryPreview),
+			"Clicking a timeline thumbnail did not open its rendered frame");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "timeline-thumbnails.bmp");
@@ -288,8 +297,7 @@ void CheckAppPicker(const char* executable)
 			"Picker QA directory must be new and absolute");
 	const auto settingsPath = directory / "companion.settings";
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
-	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0,
-			"Isolate the socket directory");
+	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0, "Isolate the socket directory");
 	CompanionSettings settings;
 	settings.profiles.push_back({"Broken path", "/nonexistent/simxr-app"});
 	settings.activeProfile = "Broken path";

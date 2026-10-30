@@ -16,7 +16,8 @@ namespace simxr::app
 struct TimelineGesture
 {
 	std::optional<std::size_t> first, last, marker, hovered, pin;
-	bool stopFollowing = false, goLive = false;
+	// Set when a thumbnail was clicked, which opens its frame even from a device page.
+	bool stopFollowing = false, goLive = false, open = false;
 };
 enum class ClipHit
 {
@@ -82,6 +83,12 @@ public:
 		return m_transport;
 	}
 
+	// The lane of image thumbnails, empty when the timeline is too short to show it.
+	ShellRect ImageRect() const noexcept
+	{
+		return m_lanes > Images ? ShellRect{m_bounds.x, m_laneY[Images], m_bounds.width, m_lane} : ShellRect{};
+	}
+
 	ShellRect LiveRect() const noexcept
 	{
 		return {m_bounds.x + m_bounds.width, m_transport.y, m_live, m_transport.height};
@@ -105,7 +112,8 @@ private:
 	{
 		Frame,
 		Snapshot,
-		Marker
+		Marker,
+		Image
 	};
 
 	struct FramePress
@@ -146,6 +154,7 @@ private:
 	std::string m_inputDetail;
 	std::vector<std::pair<float, std::string>> m_runLabels;
 	std::optional<FramePress> m_framePress;
+	std::optional<std::size_t> m_imageHit;
 	int m_drawnFrame = -1;
 	bool m_hovered = false;
 	std::optional<ClipPress> m_clipPress;
