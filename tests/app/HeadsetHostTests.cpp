@@ -21,6 +21,15 @@
 
 using namespace simxr::app;
 
+// The host's output as it printed it: facts as key=value lines, then the log.
+static std::string Output(const HeadsetHostSnapshot& state)
+{
+	std::string text;
+	for (const auto& [key, value] : state.details)
+		text += key + '=' + value + '\n';
+	return text + state.diagnostics;
+}
+
 static HeadsetHostSnapshot Wait(HeadsetHost& host, bool terminal)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -28,7 +37,7 @@ static HeadsetHostSnapshot Wait(HeadsetHost& host, bool terminal)
 	{
 		auto state = host.Snapshot();
 		if (terminal ? state.phase == HeadsetHostPhase::Exited || state.phase == HeadsetHostPhase::Failed
-					 : state.diagnostics.find("ready") != std::string::npos)
+					 : Output(state).find("ready") != std::string::npos)
 			return state;
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
@@ -360,7 +369,7 @@ int main(int argc, char** argv)
 		realignOptions.takeOver = true;
 		host.Start(realignOptions);
 		Wait(host, false);
-		Require(host.Snapshot().diagnostics.find("takeover=1") != std::string::npos,
+		Require(Output(host.Snapshot()).find("takeover=1") != std::string::npos,
 				"Initial connection retains explicit takeover");
 		host.Realign({9, 2, .5f, 0});
 		const auto realignDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -372,8 +381,8 @@ int main(int argc, char** argv)
 		Require(!host.Restarting(), "Clean exit must finish the queued reconnect");
 		Wait(host, false);
 		Require(host.Snapshot().phase == HeadsetHostPhase::Running &&
-					host.Snapshot().diagnostics.find("alignment_x=9") != std::string::npos &&
-					host.Snapshot().diagnostics.find("takeover=0") != std::string::npos,
+					Output(host.Snapshot()).find("alignment_x=9") != std::string::npos &&
+					Output(host.Snapshot()).find("takeover=0") != std::string::npos,
 				"Re-alignment starts a fresh child with the captured pose and without reusing takeover");
 		host.Realign({10, 0, 0, 0});
 		host.ObserveTarget("different-target", 1, 1, 0);
@@ -416,7 +425,7 @@ int main(int argc, char** argv)
 		host.Stop();
 		auto state = Wait(host, true);
 		Require(state.phase == HeadsetHostPhase::Exited && !state.forcedStop &&
-					state.diagnostics.find("closed") != std::string::npos,
+					Output(state).find("closed") != std::string::npos,
 				"Pipe closure requests graceful shutdown and captures stderr");
 		for (unsigned change = 0; change < 5; ++change)
 		{
@@ -479,7 +488,7 @@ int main(int argc, char** argv)
 						host.ObserveTarget("connected-from-discovery", 8, 9, 0);
 						const auto state = host.Snapshot();
 						return !host.Restarting() && !state.discovering && state.phase == HeadsetHostPhase::Running &&
-							   state.diagnostics.find("ready") != std::string::npos;
+							   Output(state).find("ready") != std::string::npos;
 					},
 					"Discovery did not transition to the explicit simulator target");
 				host.Stop();
@@ -523,7 +532,7 @@ int main(int argc, char** argv)
 		host.Start({executable, {}, "flood", 1, 1});
 		state = Wait(host, true);
 		Require(state.phase == HeadsetHostPhase::Failed && state.exitCode == 7 && state.diagnostics.size() <= 65536 &&
-					state.diagnostics.find("tail-marker") != std::string::npos,
+					Output(state).find("tail-marker") != std::string::npos,
 				"Bound diagnostics without deadlocking child or losing final output");
 		host.Start({executable, {}, "stalled", 1, 1});
 		Wait(host, false);

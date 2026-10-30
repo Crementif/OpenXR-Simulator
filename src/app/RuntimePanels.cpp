@@ -224,13 +224,11 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 {
 	if (!m_view.connected)
 	{
-		// Device edits need an application; headset discovery remains available.
+		// Device edits need an application.
 		ImGui::BeginDisabled();
 		m_devices.DrawHeader(shell.selection, false);
 		ImGui::EndDisabled();
 		ImGui::TextDisabled("Values appear once an app connects");
-		if (const auto* device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Head)
-			DrawHeadsetControls();
 		return;
 	}
 	ImGui::BeginDisabled(m_headsetPreparation.has_value() || m_replayPreparation.has_value() ||
@@ -252,8 +250,6 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 		DrawPastDevice(shell.selection);
 		return;
 	}
-	if (const auto* device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Head)
-		DrawHeadsetControls();
 	const auto placement = [&] {
 		m_spatial.DrawPlacement(shell.selection);
 	};
@@ -275,6 +271,17 @@ void RuntimePanels::DrawSessionMenu()
 	if (auto edit = m_devices.DrawSessionMenu())
 		SubmitEdit(*edit);
 	ImGui::EndDisabled();
+}
+
+void RuntimePanels::DrawHeadsetMenu()
+{
+	SectionLabel("Simulated headset");
+	if (!m_view.connected)
+		ImGui::TextDisabled("Settings apply once an app connects");
+	else if (auto edit = m_devices.DrawHeadset(!m_headsetPreparation && !m_replayPreparation && m_view.time.following &&
+											   m_session.SupportsEdits()))
+		SubmitEdit(*edit);
+	DrawHeadsetControls();
 }
 
 void RuntimePanels::DrawRecordingPopovers()

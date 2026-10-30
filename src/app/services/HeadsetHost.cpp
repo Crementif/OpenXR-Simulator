@@ -65,6 +65,48 @@ static std::optional<std::uint32_t> ParseTrackerCount(std::string_view line)
 	return count;
 }
 
+static void RecordHostLine(HeadsetHostSnapshot& result, std::string line)
+{
+	if (!line.empty() && line.back() == '\r')
+		line.pop_back();
+	if (line.empty() || line.starts_with("simxr_host_") || line.starts_with("body_support_"))
+		return;
+	for (const std::string_view prefix : {"available_extension=", "available_layer="})
+		if (line.starts_with(prefix))
+		{
+			if (result.extensions.size() < 1024)
+				result.extensions.push_back(line.substr(prefix.size()) +
+											(prefix == "available_layer=" ? " (layer)" : ""));
+			return;
+		}
+	const auto equals = line.find('=');
+	if (equals != std::string::npos && equals > 0 &&
+		std::ranges::all_of(std::string_view(line).substr(0, equals), [](char character) {
+			return std::islower(static_cast<unsigned char>(character)) ||
+				   std::isdigit(static_cast<unsigned char>(character)) || character == '_';
+		}))
+	{
+		auto key = line.substr(0, equals), value = line.substr(equals + 1);
+		// Per-eye lines read "eye=0 recommended=WxH".
+		if (key == "eye")
+		{
+			const auto space = value.find(' ');
+			key += ' ' + value.substr(0, space);
+			value = space == std::string::npos ? std::string{} : value.substr(space + 1);
+		}
+		const auto existing = std::ranges::find(result.details, key, &std::pair<std::string, std::string>::first);
+		if (existing != result.details.end())
+			existing->second = std::move(value);
+		else if (result.details.size() < 256)
+			result.details.emplace_back(std::move(key), std::move(value));
+		return;
+	}
+	result.diagnostics += line;
+	result.diagnostics += '\n';
+	if (result.diagnostics.size() > 65536)
+		result.diagnostics.erase(0, result.diagnostics.size() - 65536);
+}
+
 static void CheckProcess(bool result)
 {
 	if (!result)
@@ -266,7 +308,7 @@ void HeadsetHost::Run(std::stop_token stop, HeadsetHostOptions options)
 		auto* input = SDL_GetProcessInput(process.get());
 		CheckProcess(output && input);
 		result.phase = HeadsetHostPhase::Running;
-		std::string statusLine;
+		std::string statusLine, line;
 		bool discardLine = false;
 		auto statusDeadline = std::chrono::steady_clock::time_point{};
 		auto outputDeadline = std::chrono::steady_clock::time_point{};
@@ -348,18 +390,22 @@ void HeadsetHost::Run(std::stop_token stop, HeadsetHostOptions options)
 						}
 						statusLine.clear();
 						discardLine = false;
+						RecordHostLine(result, std::exchange(line, {}));
 					}
-					else if (!discardLine)
+					else
 					{
+						// An overlong line keeps its end, where a failure usually says what happened.
+						if (line.size() == 4096)
+							line.erase(0, 2048);
+						line.push_back(byte);
+						if (discardLine)
+							continue;
 						if (statusLine.size() == 128)
 							discardLine = true;
 						else
 							statusLine.push_back(byte);
 					}
 				}
-				result.diagnostics.append(bytes.data(), count);
-				if (result.diagnostics.size() > 65536)
-					result.diagnostics.erase(0, result.diagnostics.size() - 65536);
 			}
 			if (std::chrono::steady_clock::now() >= statusDeadline)
 				result.input = HeadsetInputState::Waiting;
@@ -369,6 +415,8 @@ void HeadsetHost::Run(std::stop_token stop, HeadsetHostOptions options)
 				result.connectedTrackers.reset();
 			if (exited)
 			{
+				// Keep a last line the host ended without a newline, such as a failure message.
+				RecordHostLine(result, std::exchange(line, {}));
 				result.phase =
 					result.exitCode == 0 && !result.forcedStop ? HeadsetHostPhase::Exited : HeadsetHostPhase::Failed;
 				break;

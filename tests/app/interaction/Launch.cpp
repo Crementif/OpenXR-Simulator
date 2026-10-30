@@ -601,6 +601,8 @@ void CheckPhysicalHeadsetPage()
 		ImGui::ActivateItemByID(ImHashStr(label, 0, ImHashStr("physical-headset", 0, window->ID)));
 		test.Frame();
 	};
+	// Runtime, tracker, body and height settings are folded under Options.
+	activate("Options");
 	activate("Connect");
 	Require(request && request->connect && request->options.runtimeManifest.empty() && !request->options.localEyeHeight,
 			"Connect defaults to the system runtime without fabricating LOCAL calibration");

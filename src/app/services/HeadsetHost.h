@@ -68,6 +68,11 @@ struct HeadsetEyeSize
 struct HeadsetHostSnapshot
 {
 	HeadsetHostPhase phase = HeadsetHostPhase::Idle;
+	// The host's report, without the status lines that drive this snapshot: key=value
+	// facts with their latest values in first-seen order, runtime extensions and
+	// layers, and the remaining log lines.
+	std::vector<std::pair<std::string, std::string>> details;
+	std::vector<std::string> extensions;
 	std::string diagnostics;
 	std::string error;
 	int exitCode = 0;

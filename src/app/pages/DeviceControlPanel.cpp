@@ -47,7 +47,6 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 				break;
 			case DevicePage::Head:
 				DrawHead();
-				DrawViews();
 				break;
 			case DevicePage::Left:
 			case DevicePage::Right:

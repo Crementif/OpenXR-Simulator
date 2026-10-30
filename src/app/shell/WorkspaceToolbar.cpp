@@ -179,6 +179,39 @@ void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
 	ImGui::EndPopup();
 }
 
+void WorkspacePanels::DrawHeadset(RuntimePanels& runtime)
+{
+	const auto host = runtime.HeadsetStatus();
+	const ImU32 dot =
+		host.phase == HeadsetHostPhase::Failed ? theme::Record
+		: host.phase == HeadsetHostPhase::Running && !host.discovering && host.input == HeadsetInputState::Ready
+			? theme::Ok
+		: host.phase == HeadsetHostPhase::Starting || host.phase == HeadsetHostPhase::Running ||
+				host.phase == HeadsetHostPhase::Stopping
+			? theme::Warn
+			: 0;
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
+	const bool pressed = IconButton("Headset", Icon::Headset, "Headset: simulated profile and physical headset",
+									ImGui::IsPopupOpen("Headset"));
+	ImGui::PopStyleColor();
+	const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
+	if (dot)
+	{
+		const float radius = ImGui::GetFrameHeight() * .12f;
+		ImGui::GetWindowDrawList()->AddCircleFilled({maximum.x - radius * 1.6f, maximum.y - radius * 1.6f}, radius,
+													dot);
+	}
+	if (pressed)
+		ImGui::OpenPopup("Headset");
+	const float scale = m_settings.scale;
+	ImGui::SetNextWindowPos({minimum.x, maximum.y + 2 * scale});
+	ImGui::SetNextWindowSize({320 * scale, 0});
+	if (!ImGui::BeginPopup("Headset"))
+		return;
+	runtime.DrawHeadsetMenu();
+	ImGui::EndPopup();
+}
+
 void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 {
 	const auto& snapshot = runtime.View();
@@ -218,6 +251,9 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
 	const float middle = std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2);
 	ImGui::SetCursorPosY(middle);
+	// The headset sits outside the apps, so it comes before them.
+	DrawHeadset(runtime);
+	ImGui::SameLine(0, 0);
 	DrawAppPicker(runtime, snapshot, std::max(1.f, ImGui::GetContentRegionAvail().x - reserved), bool(m_tabBar));
 	if (m_tabBar)
 	{

@@ -831,6 +831,11 @@ void ConfigureObservedDevices()
 		{
 			const auto headerEdit = panel.DrawHeader(selection, showState);
 			edit = headerOnly ? std::optional<SimulationEdit>{} : panel.Draw(supported, &selection);
+			// The headset menu holds the display fields the Head page used to show.
+			if (const auto* device = std::get_if<DeviceSel>(&selection);
+				!headerOnly && device && device->page == DevicePage::Head)
+				if (auto headset = panel.DrawHeadset(supported); headset && !edit)
+					edit = headset;
 			if (headerEdit)
 				edit = headerEdit;
 		}
@@ -903,7 +908,7 @@ void ConfigureObservedDevices()
 		frame();
 		return changed;
 	};
-	auto transaction = typeValue("##IPD", "0.075");
+	auto transaction = typeValue("##IPD", "75");
 	const auto views = std::get<simxr::SetViewSettings>(transaction.commands.back()).value;
 	Require(std::abs(views.ipd - .075f) < .0001f && views.outerWidth == 1760,
 			"Live view edit overwrote unrelated observed configuration");
@@ -1003,7 +1008,7 @@ void ConfigureObservedDevices()
 	frame();
 	selection = DeviceSel{DevicePage::Head};
 	frame();
-	transaction = typeValue("##IPD", "0.063");
+	transaction = typeValue("##IPD", "63");
 	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - .063f) < .0001f,
 			"Reconnected field did not send the new value");
 	{
@@ -1185,6 +1190,14 @@ void ConfigureObservedDevices()
 		panelSize.x = 400;
 		profileScreenshot = false;
 		window->StateStorage.SetInt(window->GetID("Connection and profile"), 0);
+		const auto previous = std::exchange(selection, DeviceSel{DevicePage::Head});
+		profileScreenshot = true;
+		frame();
+		frame();
+		test.renderer.RequestScreenshot(directory / "headset-display.bmp");
+		frame();
+		profileScreenshot = false;
+		selection = previous;
 		ImGui::SetScrollY(window, 0);
 		frame();
 	}
@@ -1289,7 +1302,7 @@ void ConfigureObservedDevices()
 			"View release fixture retained its owner");
 	selection = DeviceSel{DevicePage::Head};
 	frame();
-	beginValue("##IPD", "0.069");
+	beginValue("##IPD", "69");
 	Require(panel.Active(), "Takeover fixture did not retain its numeric edit");
 	ImGui::ActivateItemByID(ImHashStr("Take over", 0, window->GetID(static_cast<int>(simxr::ControlChannel::Head))));
 	frame();
@@ -1305,7 +1318,7 @@ void ConfigureObservedDevices()
 	observe(1);
 	selection = DeviceSel{DevicePage::Head};
 	frame();
-	beginValue("##IPD", "0.068");
+	beginValue("##IPD", "68");
 	Require(panel.Active(), "Numeric field fixture did not retain its active edit");
 	supported = false;
 	frame();

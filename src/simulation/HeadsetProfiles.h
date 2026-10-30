@@ -22,7 +22,10 @@ struct HeadsetSpec
 	const wchar_t* menuLabel;
 	std::uint32_t panelWidth;
 	std::uint32_t panelHeight;
-	int ipdMm;			  // nominal default, not the database's per-session value
+	int ipdMm; // nominal default, not the database's per-session value
+	// The headset's adjustable lens range. The Quest 2 steps between 58, 63 and 68 mm;
+	// a Bigscreen Beyond is built for one IPD in this range.
+	int ipdMinMm, ipdMaxMm;
 	HeadsetEyeFov eye[2]; // [0] = left, [1] = right
 };
 
@@ -34,6 +37,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 1440,
 	 1440,
 	 64,
+	 50,
+	 80,
 	 {{0.00f, 0.00f, 0.00f, 0.00f}, {0.00f, 0.00f, 0.00f, 0.00f}}},
 	{"quest2",
 	 L"Quest 2",
@@ -41,6 +46,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 1832,
 	 1920,
 	 64,
+	 58,
+	 68,
 	 {{-52.00f, 45.00f, 48.00f, -50.00f}, {-45.00f, 52.00f, 48.00f, -50.00f}}},
 	{"quest3",
 	 L"Quest 3",
@@ -48,6 +55,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 2064,
 	 2208,
 	 64,
+	 53,
+	 75,
 	 {{-54.00f, 40.00f, 43.98f, -54.27f}, {-40.00f, 54.00f, 43.98f, -54.27f}}},
 	{"questpro",
 	 L"Quest Pro",
@@ -55,6 +64,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 1800,
 	 1920,
 	 64,
+	 55,
+	 75,
 	 {{-54.00f, 39.86f, 42.00f, -53.57f}, {-39.86f, 54.00f, 42.00f, -53.57f}}},
 	{"index",
 	 L"Index",
@@ -62,6 +73,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 1440,
 	 1600,
 	 63,
+	 58,
+	 70,
 	 {{-54.00f, 42.98f, 54.63f, -54.52f}, {-42.95f, 54.06f, 54.66f, -54.50f}}},
 	{"vivepro2",
 	 L"Vive Pro 2",
@@ -69,6 +82,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 2448,
 	 2448,
 	 63,
+	 57,
+	 70,
 	 {{-58.26f, 39.94f, 48.21f, -48.11f}, {-39.89f, 58.26f, 48.44f, -48.20f}}},
 	{"reverbg2",
 	 L"Reverb G2",
@@ -76,6 +91,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 2160,
 	 2160,
 	 64,
+	 60,
+	 68,
 	 {{-49.37f, 42.14f, 45.53f, -45.35f}, {-42.17f, 49.48f, 45.78f, -45.05f}}},
 	{"psvr2",
 	 L"PS VR2",
@@ -83,6 +100,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 2000,
 	 2040,
 	 64,
+	 59,
+	 71,
 	 {{-61.50f, 43.45f, 53.04f, -53.04f}, {-43.45f, 61.50f, 53.04f, -53.04f}}},
 	{"pico4",
 	 L"PICO 4",
@@ -90,6 +109,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 2160,
 	 2160,
 	 64,
+	 62,
+	 72,
 	 {{-52.00f, 52.00f, 52.00f, -52.00f}, {-52.00f, 52.00f, 52.00f, -52.00f}}},
 	{"beyond",
 	 L"Beyond",
@@ -97,6 +118,8 @@ inline constexpr HeadsetSpec HeadsetProfileTable[] = {
 	 2560,
 	 2560,
 	 64,
+	 58,
+	 72,
 	 {{-48.97f, 39.58f, 38.01f, -50.52f}, {-40.02f, 48.56f, 38.13f, -50.43f}}},
 };
 

@@ -141,6 +141,7 @@ private:
 	void DrawToolbar(RuntimePanels& runtime);
 	void DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view, float maximumWidth, bool compact = false);
 	void DrawHistory(RuntimePanels& runtime);
+	void DrawHeadset(RuntimePanels& runtime);
 	void DrawInspectorPanel(RuntimePanels& runtime, bool rail);
 	void DrawLibrary(RuntimePanels& runtime);
 	void DrawInspector(RuntimePanels& runtime);

@@ -27,6 +27,8 @@ public:
 									   const std::function<void()>& placement = {});
 	std::optional<SimulationEdit> DrawAdvanced();
 	std::optional<SimulationEdit> DrawSessionMenu();
+	// The simulated headset's model, IPD and inset view.
+	std::optional<SimulationEdit> DrawHeadset(bool supported);
 	std::optional<SimulationEdit> DrawHeader(const Selection& selection, bool showState = true);
 
 	void ObserveState(const control::Message& state);
@@ -86,7 +88,6 @@ private:
 	void DrawBody();
 	void DrawGaze();
 	void DrawTrackers();
-	void DrawViews();
 
 	PlayerRig& m_playerRig;
 	std::optional<CommandSource> m_manualSource;

@@ -68,6 +68,8 @@ public:
 	void DrawAdvancedPage();
 	void DrawDevicePage(ShellState& shell);
 	void DrawSessionMenu();
+	// The simulated headset profile and the physical headset bridge.
+	void DrawHeadsetMenu();
 	void DrawRecordingPopovers();
 	void DrawConnection(bool* open = nullptr);
 	void DrawWindows();

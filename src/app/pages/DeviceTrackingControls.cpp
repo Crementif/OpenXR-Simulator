@@ -6,6 +6,7 @@
 #include "app/widgets/Theme.h"
 #include "math/Math.h"
 #include "simulation/BodyModel.h"
+#include "simulation/HeadsetProfiles.h"
 
 namespace simxr::app
 {
@@ -214,31 +215,93 @@ void DeviceControlPanel::DrawTrackers()
 	ImGui::EndDisabled();
 }
 
-void DeviceControlPanel::DrawViews()
+std::optional<SimulationEdit> DeviceControlPanel::DrawHeadset(bool supported)
 {
-	SectionLabel("Display");
+	m_edit.reset();
+	m_continuousEdit = false;
+	const bool ready = m_observed && m_configurationLoaded;
+	if (ready && !m_pending && !Active())
+		LoadObservedSettings();
+	// Headset fields keep their pending and rejected state apart from the device pages.
+	const auto scope = std::exchange(m_fieldScope, "headset/");
 	DrawOwner(ControlChannel::Views);
-	ImGui::BeginDisabled(!CanControl(ControlChannel::Views));
+	ImGui::BeginDisabled(!supported || !ready || !CanControl(ControlChannel::Views));
+	const auto close = [](const XrFovf& a, const XrFovf& b) {
+		return std::abs(a.angleLeft - b.angleLeft) < 1e-4f && std::abs(a.angleRight - b.angleRight) < 1e-4f &&
+			   std::abs(a.angleUp - b.angleUp) < 1e-4f && std::abs(a.angleDown - b.angleDown) < 1e-4f;
+	};
+	const auto name = [](const HeadsetSpec& profile) {
+		std::string label;
+		for (const wchar_t* character = profile.menuLabel; *character; ++character)
+			if (*character != L'&')
+				label += static_cast<char>(*character);
+		return label;
+	};
+	// The model is recognised by its field of view, so a changed IPD keeps it selected.
+	const HeadsetSpec* model = nullptr;
+	for (const auto& profile : HeadsetProfiles())
+	{
+		const auto views = ProfileViews(profile);
+		if (close(views.outerFov[0], m_authoredViews.outerFov[0]) &&
+			close(views.outerFov[1], m_authoredViews.outerFov[1]))
+			model = &profile;
+	}
+	FieldLabel("Model");
+	ImGui::SetNextItemWidth(-1);
+	if (ImGui::BeginCombo("##Headset model", model ? name(*model).c_str() : "Custom"))
+	{
+		for (const auto& profile : HeadsetProfiles())
+			if (ImGui::Selectable(name(profile).c_str(), &profile == model) && &profile != model)
+			{
+				const auto views = ProfileViews(profile);
+				m_authoredViews.outerFov = views.outerFov;
+				m_authoredViews.ipd =
+					std::clamp(m_authoredViews.ipd, profile.ipdMinMm / 1000.f, profile.ipdMaxMm / 1000.f);
+				// The inset must stay inside the narrower field of view.
+				for (const auto& fov : views.outerFov)
+					m_authoredViews.insetHalfAngle =
+						std::min({m_authoredViews.insetHalfAngle, (fov.angleRight - fov.angleLeft) / 2,
+								  (fov.angleUp - fov.angleDown) / 2});
+				ApplyOwned(ControlChannel::Views, SetViewSettings{m_authoredViews});
+			}
+		ImGui::EndCombo();
+	}
+	ImGui::SetItemTooltip("Sets the field of view. Launch profiles set the render size");
 	FieldLabel("IPD");
 	const ViewSettings defaults;
-	bool edited = Field("##IPD", ImGui::SliderFloat("##IPD", &m_authoredViews.ipd, 0.04f, 0.09f, "%.4f m"), true,
-						NumberValue(m_authoredViews.ipd, defaults.ipd, .001f, .04f, .09f, "%.4f"));
+	const float minimum = model ? model->ipdMinMm / 1000.f : .04f, maximum = model ? model->ipdMaxMm / 1000.f : .09f;
+	float millimetres = m_authoredViews.ipd * 1000;
+	ImGui::SetNextItemWidth(-1);
+	const bool slid = ImGui::SliderFloat("##IPD", &millimetres, minimum * 1000, maximum * 1000, "%.1f mm");
+	if (slid)
+		m_authoredViews.ipd = millimetres / 1000;
+	bool edited = Field(
+		"##IPD", slid, true,
+		NumberValue(m_authoredViews.ipd, std::clamp(defaults.ipd, minimum, maximum), .001f, minimum, maximum, "%.4f"));
+	if (model)
+		ImGui::SetItemTooltip("%s lenses adjust from %d to %d mm", name(*model).c_str(), model->ipdMinMm,
+							  model->ipdMaxMm);
 	FieldLabel("Inset angle");
-	float maximum = std::numbers::pi_v<float> / 2;
+	float insetMaximum = std::numbers::pi_v<float> / 2;
 	for (const auto& fov : m_authoredViews.outerFov)
-		maximum = std::min({maximum, (fov.angleRight - fov.angleLeft) / 2, (fov.angleUp - fov.angleDown) / 2});
-	const float maximumDegrees = maximum * 180 / std::numbers::pi_v<float>;
+		insetMaximum =
+			std::min({insetMaximum, (fov.angleRight - fov.angleLeft) / 2, (fov.angleUp - fov.angleDown) / 2});
+	const float maximumDegrees = insetMaximum * 180 / std::numbers::pi_v<float>;
 	const float minimumDegrees = std::min(.1f, maximumDegrees);
+	ImGui::SetNextItemWidth(-1);
 	edited |= Field("##Inset half angle",
 					ImGui::SliderAngle("##Inset half angle", &m_authoredViews.insetHalfAngle, minimumDegrees,
 									   maximumDegrees, "%.1f°"),
 					true,
-					AngleValue(m_authoredViews.insetHalfAngle, std::min(defaults.insetHalfAngle, maximum),
+					AngleValue(m_authoredViews.insetHalfAngle, std::min(defaults.insetHalfAngle, insetMaximum),
 							   minimumDegrees, maximumDegrees));
+	ImGui::SetItemTooltip("Half angle of the sharper inset view, for apps that use foveated views");
 	if (edited && !m_edit)
 		ApplyOwned(ControlChannel::Views, SetViewSettings{m_authoredViews});
 	ImGui::EndDisabled();
-	ImGui::Text("View size: %u x %u. Inset: %u x %u", m_authoredViews.outerWidth, m_authoredViews.outerHeight,
-				m_authoredViews.insetWidth, m_authoredViews.insetHeight);
+	ImGui::TextDisabled("Renders %u x %u per eye, inset %u x %u", m_authoredViews.outerWidth,
+						m_authoredViews.outerHeight, m_authoredViews.insetWidth, m_authoredViews.insetHeight);
+	m_fieldScope = scope;
+	return std::exchange(m_edit, {});
 }
 } // namespace simxr::app

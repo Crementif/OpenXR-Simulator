@@ -186,6 +186,9 @@ void DeviceControlPanel::DrawOwner(ControlChannel channel, bool takeover)
 	case CommandSourceKind::Sequence:
 		name = "Replay";
 		break;
+	case CommandSourceKind::Device:
+		name = "Physical headset";
+		break;
 	}
 	ImGui::TextColored(theme::Vec(theme::Head), "Driven by %s", name);
 	ImGui::SetItemTooltip("Input source %llu controls this input.", static_cast<unsigned long long>(owner->id));

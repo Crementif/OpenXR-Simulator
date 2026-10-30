@@ -923,12 +923,25 @@ void CheckShell()
 					std::abs(toolbar->Pos.y - viewport->WorkPos.y) < 1 &&
 					std::abs(toolbar->Pos.x + toolbar->Size.x - viewport->WorkPos.x - viewport->WorkSize.x) < 1,
 				"Top bar does not reach the window edges");
-		for (const char* action : {"History", "Settings", "##App picker"})
+		for (const char* action : {"Headset", "History", "Settings", "##App picker"})
 		{
 			ImGui::ActivateItemByID(toolbar->GetID(action));
 			test.Frame();
 			test.Frame();
-			Require(!ImGui::GetCurrentContext()->OpenPopupStack.empty(), "Top-bar action did not open its popup");
+			const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+			Require(!popups.empty(), "Top-bar action did not open its popup");
+			if (std::string_view(action) == "Headset")
+			{
+				const auto* menu = popups.back().Window;
+				Require(menu && !menu->ScrollbarX && menu->ContentSize.x <= menu->Size.x + 1,
+						"Headset menu overflows its width");
+				if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+				{
+					std::filesystem::create_directories(directory);
+					test.renderer.RequestScreenshot(directory / "shell-headset.bmp");
+					test.Frame();
+				}
+			}
 			ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
 			test.Frame();
 			ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false);
