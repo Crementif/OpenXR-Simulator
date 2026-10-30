@@ -586,6 +586,60 @@ static void IdentityAndRecording()
 	fixture.scheduler.Close();
 	Require(fixture.Send() == CommandResult::Closed, "Closed scheduler rejects live input");
 }
+
+static void ConnectedHands()
+{
+	LiveFixture fixture;
+	CommandTransaction claim;
+	claim.id = 2;
+	claim.source = s_device;
+	claim.target.frame = FrameId{fixture.frame + 1};
+	claim.commands = {TakeControl{ControlChannel::RightPose}};
+	Require(fixture.scheduler.Submit(claim).result == CommandResult::Queued, "Queue right pose ownership");
+	fixture.Tick();
+	// The headset reports its controllers before their actions become active.
+	for (std::size_t hand = 0; hand < 2; ++hand)
+		fixture.sample.hands[hand].connected = fixture.sample.controls[hand].connected = false;
+	Require(fixture.Send() == CommandResult::Queued, "Queue inactive physical hands");
+	Require(!fixture.Tick()->configuration.input.controllers[0].connected, "Inactive physical hands disconnect");
+	fixture.scheduler.AcknowledgeLiveInput();
+	for (auto& hand : fixture.sample.hands)
+	{
+		hand.connected = true;
+		hand.pose.flags = TrackedPoseFlags;
+	}
+	for (auto& controls : fixture.sample.controls)
+		controls.connected = true;
+	for (auto& controls : fixture.sample.controls)
+		controls.physicalProfile = "/interaction_profiles/khr/simple_controller";
+	fixture.sample.controls[0].primary = true;
+	Require(fixture.Send() == CommandResult::Queued, "Queue connected physical hands");
+	const auto applied = fixture.Tick();
+	for (std::size_t hand = 0; hand < 2; ++hand)
+		Require(applied->configuration.tracking.controllers[hand].connected &&
+					applied->configuration.input.controllers[hand].connected,
+				"Tracked physical hands stay connected");
+	Require(applied->configuration.input.controllers[0].primary, "Physical button reaches the simulation");
+	fixture.scheduler.AcknowledgeLiveInput();
+	fixture.now += std::chrono::milliseconds(60);
+	fixture.Tick();
+	fixture.scheduler.ExpireLiveInput(fixture.now);
+	fixture.Tick();
+	claim.id = 3;
+	claim.target.frame = FrameId{fixture.frame + 1};
+	claim.commands = {TakeControl{ControlChannel::Views},		 TakeControl{ControlChannel::Head},
+					  TakeControl{ControlChannel::LeftPose},	 TakeControl{ControlChannel::RightPose},
+					  TakeControl{ControlChannel::LeftControls}, TakeControl{ControlChannel::RightControls}};
+	Require(fixture.scheduler.Submit(claim).result == CommandResult::Queued, "Queue the bridge's renewed claim");
+	fixture.Tick();
+	fixture.sample.connection = 24;
+	Require(fixture.Send() == CommandResult::Queued, "Queue hands after the bridge reattaches");
+	const auto recovered = fixture.Tick();
+	for (std::size_t hand = 0; hand < 2; ++hand)
+		Require(recovered->configuration.tracking.controllers[hand].connected &&
+					recovered->configuration.input.controllers[hand].connected,
+				"Physical hands reconnect after a late sample");
+}
 } // namespace simxr::tests
 
 int main()
@@ -606,6 +660,7 @@ int main()
 		simxr::tests::PausedExpiry();
 		simxr::tests::IdentityAndRecording();
 		simxr::tests::ClockRevision();
+		simxr::tests::ConnectedHands();
 		std::cout << "Live input scheduler checks passed\n";
 	}
 	catch (const std::exception& error)

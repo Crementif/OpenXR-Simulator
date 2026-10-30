@@ -370,18 +370,19 @@ CommandConfiguration CommandState::MergeOverrides(const CommandConfiguration& ba
 	if (overrides[Index(ControlChannel::Profiles)])
 		result.input.preferredProfiles = values.input.preferredProfiles;
 	result.referenceSpaces = values.referenceSpaces;
-	// Device connection is observable consistently through pose and action input.
-	for (std::size_t hand = 0; hand < 2; ++hand)
-	{
-		const bool connected = result.input.controllers[hand].connected && result.tracking.controllers[hand].connected;
-		result.input.controllers[hand].connected = connected;
-		result.tracking.controllers[hand].connected = connected;
-	}
 	return result;
 }
 
 void CommandState::ApplyScenarios(CommandConfiguration& config) const
 {
+	// Device connection is observable consistently through pose and action input. Only the effective view joins
+	// them: stored values keep each channel's own flag so a later pose or controls command can reconnect the hand.
+	for (std::size_t hand = 0; hand < 2; ++hand)
+	{
+		const bool connected = config.input.controllers[hand].connected && config.tracking.controllers[hand].connected;
+		config.input.controllers[hand].connected = connected;
+		config.tracking.controllers[hand].connected = connected;
+	}
 	if (m_scenarios[Index(FailureScenario::HeadUntracked)])
 		config.tracking.head.flags &= ValidPoseFlags;
 	if (m_scenarios[Index(FailureScenario::HeadUnavailable)])
