@@ -24,7 +24,7 @@ sudo dnf install gcc-c++ cmake ninja-build git curl zip unzip tar pkgconf vulkan
 Windows needs Visual Studio 2022 with the C++ workload. Then clone and build:
 
 ```sh
-git clone --recursive https://github.com/Crementif/OpenXR-Simulator
+git clone --recursive --branch rework https://github.com/Crementif/OpenXR-Simulator
 cd OpenXR-Simulator
 cmake --preset release
 cmake --build --preset release
