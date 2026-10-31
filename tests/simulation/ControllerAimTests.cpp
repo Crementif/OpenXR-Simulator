@@ -5,6 +5,8 @@
 #include "control/SimulationControl.h"
 #include "runtime/SessionPublication.h"
 #include "simulation/TrackingSystem.h"
+#include "simulation/ControllerPoses.h"
+#include "math/Math.h"
 
 #include <iostream>
 
@@ -81,7 +83,7 @@ static void ControllerAim()
 	Require(rejected, "Invalid independent aim pose must be rejected");
 }
 
-static void ActionPoses()
+static void ActionPoses(const char* profile)
 {
 	Instance instance(reinterpret_cast<XrInstance>(951), {}, XR_MAKE_VERSION(1, 0, 0));
 	auto& registry = instance.Actions();
@@ -111,13 +113,12 @@ static void ActionPoses()
 	const std::array bindings{XrActionSuggestedBinding{actions[0], path("/user/hand/left/input/grip/pose")},
 							  XrActionSuggestedBinding{actions[1], path("/user/hand/left/input/aim/pose")}};
 	const XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr,
-														 path("/interaction_profiles/khr/simple_controller"), 2,
-														 bindings.data()};
+														 path(profile), 2, bindings.data()};
 	Require(registry.SuggestBindings(suggested) == XR_SUCCESS, "Suggest independent controller bindings");
 	ActionSyncState sync(registry);
 	SessionPublication publication(instance, sync);
 	InputSnapshot input;
-	input.preferredProfiles[0] = "/interaction_profiles/khr/simple_controller";
+	input.preferredProfiles[0] = profile;
 	Require(publication.PublishInput(input) == XR_SUCCESS, "Set controller profile");
 	const XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO, nullptr, 1, &set};
 	Require(sync.Attach(attach, input) == XR_SUCCESS, "Attach pose action set");
@@ -142,9 +143,36 @@ static void ActionPoses()
 			"Invalid aim must not fall back to valid grip");
 	state.controllers[0].aim.reset();
 	publication.PublishTracking({Duration{300}}, state, {}, true);
-	Require(publication.ActionPose(actions[1], hand, {Duration{300}}).pose.position.x == 1,
-			"Legacy controller action retains grip-as-aim behavior");
+	const auto aim = publication.ActionPose(actions[1], hand, {Duration{300}});
+	Require(publication.ActionPose(actions[0], hand, {Duration{300}}).pose.position.x == 1,
+			"Derived aim changed the supplied grip pose");
+	if (std::string_view(profile) == "/interaction_profiles/khr/simple_controller")
+		Require(aim.pose.position.x == 1, "Unknown offset changed the simple controller pose");
+	else
+		Require(std::abs(aim.pose.orientation.x - state.controllers[0].pose.pose.orientation.x) > 0.1f,
+				"Profile offset did not reach the aim action");
 }
+
+static void Offsets()
+{
+	PoseSample grip{IdentityPose(), TrackedPoseFlags, {Duration{123}}};
+	const auto touch = ControllerAimFromGrip(grip, "/interaction_profiles/oculus/touch_controller", true);
+	const auto ray = Rotate(touch.pose.orientation, {0, 0, -1});
+	Require(std::abs(ray.y + 0.8660254f) < 0.0001f && std::abs(ray.z + 0.5f) < 0.0001f,
+			"Touch aim offset was applied in the wrong direction");
+	Require(touch.flags == grip.flags && touch.sampleTime == grip.sampleTime,
+			"Aim offset lost tracking state or sample time");
+	const auto left = ControllerAimFromGrip(grip, "/interaction_profiles/valve/index_controller", true);
+	const auto right = ControllerAimFromGrip(grip, "/interaction_profiles/valve/index_controller", false);
+	Require(std::abs(left.pose.position.x + right.pose.position.x) < 0.0001f &&
+				std::abs(left.pose.position.x) > 0.001f &&
+				std::abs(left.pose.orientation.y + right.pose.orientation.y) < 0.0001f,
+			"Index offset did not mirror between hands");
+	grip.flags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	Require(ControllerAimFromGrip(grip, "/interaction_profiles/oculus/touch_controller", true).flags == 0,
+			"Translated aim invented a position without grip orientation");
+}
+
 } // namespace simxr::tests
 
 int main()
@@ -152,7 +180,10 @@ int main()
 	try
 	{
 		simxr::tests::ControllerAim();
-		simxr::tests::ActionPoses();
+		simxr::tests::ActionPoses("/interaction_profiles/khr/simple_controller");
+		simxr::tests::ActionPoses("/interaction_profiles/oculus/touch_controller");
+		simxr::tests::ActionPoses("/interaction_profiles/valve/index_controller");
+		simxr::tests::Offsets();
 		std::cout << "Independent controller aim checks passed\n";
 	}
 	catch (const std::exception& error)

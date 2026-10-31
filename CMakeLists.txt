@@ -80,6 +80,7 @@ add_library(simxr_core STATIC
     src/simulation/PoseHistory.cpp
     src/simulation/TrackerSourcePath.cpp
     src/simulation/TrackingSystem.cpp
+    src/simulation/ControllerPoses.cpp
     src/simulation/BodyObservation.cpp
     src/simulation/SpaceSystem.cpp
     src/simulation/ReferenceSpaceState.cpp

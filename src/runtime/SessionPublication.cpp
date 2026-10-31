@@ -1,5 +1,6 @@
 #include "runtime/SessionPublication.h"
 #include "Pch.h"
+#include "simulation/ControllerPoses.h"
 
 namespace simxr
 {
@@ -304,8 +305,13 @@ PoseSample SessionPublication::ActionPose(XrAction action, XrPath subaction, Run
 			if (source.device.value < sample->controllers.size())
 			{
 				const auto& controller = sample->controllers[source.device.value];
-				return source.binding.component == "/input/aim/pose" && controller.aim ? *controller.aim
-																					   : controller.pose;
+				if (source.binding.component != "/input/aim/pose")
+					return controller.pose;
+				if (controller.aim)
+					return *controller.aim;
+				return ControllerAimFromGrip(controller.pose,
+											 m_instance.Actions().PathString(source.binding.profile).value_or(""),
+											 source.device.value == 0);
 			}
 			break;
 		case InputDeviceKind::EyeGaze:

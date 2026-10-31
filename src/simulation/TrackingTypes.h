@@ -39,7 +39,7 @@ struct ControllerPose
 {
 	PoseSample pose;
 	bool connected = true;
-	// Absence preserves legacy grip-as-aim input; a present invalid sample is tracking loss.
+	// Absence derives aim from the profile's grip offset; a present invalid sample is tracking loss.
 	std::optional<PoseSample> aim;
 };
 
