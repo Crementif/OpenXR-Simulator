@@ -152,7 +152,7 @@ void VulkanSubmission::EndTiming()
 void VulkanSubmission::ObserveTiming() const noexcept
 {
 	const auto& resources = *m_resources;
-	if (!resources.timing || resources.timing->compositorNanoseconds.load() >= 0)
+	if (!resources.timing || resources.timing->compositorNanoseconds.Load() >= 0)
 		return;
 	std::array<std::uint64_t, 2> values{};
 	const auto result = vkGetQueryPoolResults(resources.device->binding.device, resources.commands->timestamps, 0, 2,
@@ -163,7 +163,7 @@ void VulkanSubmission::ObserveTiming() const noexcept
 	const auto mask = bits >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1;
 	const long double ns = static_cast<long double>((values[1] - values[0]) & mask) * resources.device->timestampPeriod;
 	if (ns >= 0 && ns < static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
-		resources.timing->compositorNanoseconds.store(static_cast<std::int64_t>(ns));
+		resources.timing->compositorNanoseconds.Store(static_cast<std::int64_t>(ns));
 }
 
 CompletionStatus VulkanFrame::PollCompletion() const noexcept

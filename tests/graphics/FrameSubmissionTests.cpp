@@ -91,8 +91,9 @@ static void CapacityRecovery(bool reserveExhausted, bool exact, XrResult pressur
 	auto describe = [](XrSwapchain) -> std::optional<SwapchainDescription> {
 		return SwapchainDescription{32, 32, 1, true};
 	};
+	const auto applicationTiming = GpuDuration::Create();
 	{
-		FrameSubmission submission(session, backend);
+		FrameSubmission submission(session, backend, applicationTiming);
 		Require(submission.Execute(end, describe) ==
 					(exact || pressure != XR_ERROR_LIMIT_REACHED ? pressure : XR_SUCCESS),
 				"Capacity pressure violated live/exact submission contract");
@@ -112,6 +113,9 @@ static void CapacityRecovery(bool reserveExhausted, bool exact, XrResult pressur
 	}
 	const FrameKey key{session.Snapshot().generation, frame.id};
 	const auto record = session.History().Find(key);
+	applicationTiming.Store(123);
+	Require(record->submission->gpuTiming && record->submission->gpuTiming->applicationNanoseconds.Load() == 123,
+			"Dropped composition lost delayed application GPU timing");
 	Require(record->submission->dropReason == FrameDropReason::NativeCapacity &&
 				!session.PreviewHistory().Find(key).output,
 			"Live drop lost its reason or fabricated preview pixels");
@@ -120,8 +124,14 @@ static void CapacityRecovery(bool reserveExhausted, bool exact, XrResult pressur
 	Require(session.WaitFrame(frame) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
 			"Frame did not recover after pressure");
 	end.displayTime = frame.displayTime.value.count();
-	FrameSubmission recovery(session, backend);
+	const auto recoveredTiming = GpuDuration::Create();
+	FrameSubmission recovery(session, backend, recoveredTiming);
 	Require(recovery.Execute(end, describe) == XR_SUCCESS && backend.submitted, "Recovered frame did not submit");
+	recoveredTiming.Store(456);
+	Require(session.History()
+					.Find({session.Snapshot().generation, frame.id})
+					->submission->gpuTiming->applicationNanoseconds.Load() == 456,
+			"Submitted frame lost delayed application GPU timing");
 	std::vector<std::shared_ptr<FrameReservation>> historyReaders;
 	while (auto held = session.PreviewHistory().Budget().Reserve())
 		historyReaders.push_back(std::move(held));

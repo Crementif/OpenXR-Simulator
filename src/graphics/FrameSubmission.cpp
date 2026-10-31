@@ -11,8 +11,8 @@ bool FrameCaptureRequest::IgnoreFailure(XrResult result) const noexcept
 		   (image && (result == XR_ERROR_FEATURE_UNSUPPORTED || result == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED));
 }
 
-FrameSubmission::FrameSubmission(Session& session, FrameSubmissionBackend& backend)
-	: m_session(session), m_backend(backend)
+FrameSubmission::FrameSubmission(Session& session, FrameSubmissionBackend& backend, GpuDuration applicationTiming)
+	: m_applicationTiming(std::move(applicationTiming)), m_session(session), m_backend(backend)
 {}
 
 FrameSubmission::~FrameSubmission()
@@ -58,9 +58,11 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 		trace("composition_prepared");
 		auto dropLive = [&] {
 			m_prepared = {};
+			auto timing = std::make_shared<FrameGpuTiming>();
+			timing->applicationNanoseconds = m_applicationTiming;
 			FramePrediction prediction;
-			const auto result =
-				m_session.EndFrame(prediction, &info, m_composition.layers, {}, {}, {}, FrameSubmissionPolicy::Live);
+			const auto result = m_session.EndFrame(prediction, &info, m_composition.layers, {}, {}, {},
+												   FrameSubmissionPolicy::Live, {}, timing);
 			if (XR_SUCCEEDED(result))
 				m_session.PreviewHistory().Append(m_key, {}, false);
 			return result;
@@ -91,6 +93,10 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			if (XR_FAILED(result))
 				return result;
 		}
+		auto timing = m_prepared.timing ? std::make_shared<FrameGpuTiming>(*m_prepared.timing)
+										: std::make_shared<FrameGpuTiming>();
+		timing->applicationNanoseconds = m_applicationTiming;
+		m_prepared.timing = std::move(timing);
 		trace("graphics_prepared");
 		std::function<XrResult()> submit;
 		if (m_prepared.producer && m_prepared.output)

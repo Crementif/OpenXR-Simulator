@@ -127,6 +127,11 @@ int main()
 		frame->submission.emplace();
 		frame->submission->displayTime = frame->prediction.displayTime;
 		frame->submission->commands = applied;
+		auto gpuTiming = std::make_shared<FrameGpuTiming>();
+		gpuTiming->applicationNanoseconds = GpuDuration::Create();
+		if (!index)
+			gpuTiming->applicationNanoseconds.Store(9007199254740993LL);
+		frame->submission->gpuTiming = std::move(gpuTiming);
 		history.frames.push_back(std::move(frame));
 	}
 	wire::Message response;
@@ -139,6 +144,9 @@ int main()
 				data.at("frames").size() == 2,
 			"Frame cursor and time preserve full-width precision");
 	const auto& first = data.at("frames").at(0);
+	Require(first.at("application_gpu_time_ns") == "9007199254740993" &&
+				!data.at("frames").at(1).contains("application_gpu_time_ns"),
+			"GPU timing lost precision or exposed a pending measurement");
 	Require(first.at("prediction").at("tick") == "9007199254740995" &&
 				first.at("prediction").at("time_ns") == "9007199254740997",
 			"Prediction identity and time remain exact");

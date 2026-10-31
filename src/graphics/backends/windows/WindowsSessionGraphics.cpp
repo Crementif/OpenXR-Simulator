@@ -1,5 +1,6 @@
 #include "graphics/backends/windows/WindowsSessionGraphics.h"
 #include "Pch.h"
+#include "graphics/backends/windows/WindowsApplicationGpuTimer.h"
 #include "graphics/FrameSubmission.h"
 #include "graphics/backends/d3d11/D3D11VulkanImport.h"
 #include "graphics/backends/d3d12/D3D12VulkanImport.h"
@@ -453,6 +454,7 @@ WindowsSessionGraphics::WindowsSessionGraphics(ID3D11Device* device, std::shared
 	: m_session(std::move(session)), m_native(std::make_unique<D3D11Backend>(device))
 {
 	Configure(AdapterIdentity(AdapterLuid(device)));
+	m_applicationTimer = CreateApplicationGpuTimer(device);
 }
 
 WindowsSessionGraphics::WindowsSessionGraphics(ID3D12Device* device, ID3D12CommandQueue* queue,
@@ -460,6 +462,7 @@ WindowsSessionGraphics::WindowsSessionGraphics(ID3D12Device* device, ID3D12Comma
 	: m_session(std::move(session)), m_native(std::make_unique<D3D12Backend>(device, queue))
 {
 	Configure(AdapterIdentity(device->GetAdapterLuid()));
+	m_applicationTimer = CreateApplicationGpuTimer(device, queue);
 }
 
 WindowsSessionGraphics::WindowsSessionGraphics(HDC device, HGLRC context, std::shared_ptr<Session> session)
@@ -467,6 +470,7 @@ WindowsSessionGraphics::WindowsSessionGraphics(HDC device, HGLRC context, std::s
 {
 	Configure(OpenGLBackend::Identity(device, context));
 	m_native = std::make_unique<OpenGLBackend>(device, context, m_device->Device(), m_device->EnabledExtensions());
+	m_applicationTimer = CreateApplicationGpuTimer(device, context);
 }
 
 WindowsSessionGraphics::~WindowsSessionGraphics() = default;
@@ -477,6 +481,8 @@ XrResult WindowsSessionGraphics::Close()
 	{
 		std::lock_guard submission(m_submissionMutex);
 		m_closing = true;
+		if (m_applicationTimer)
+			m_applicationTimer->End();
 	}
 	const auto drained = m_delivery->Drain(5000000000ULL);
 	if (drained != VK_SUCCESS && drained != VK_ERROR_DEVICE_LOST)
@@ -484,12 +490,22 @@ XrResult WindowsSessionGraphics::Close()
 	const auto inspected = m_inspection->Close();
 	if (inspected != VK_SUCCESS && inspected != VK_ERROR_DEVICE_LOST)
 		return VulkanGraphicsFailure(inspected);
+	if (m_applicationTimer && !m_applicationTimer->Drain(5000000000ULL))
+		return XR_ERROR_RUNTIME_FAILURE;
+	m_applicationTimer.reset();
 	return m_delivery->Close();
 }
 
 control::ImageCapabilities WindowsSessionGraphics::Capabilities() const noexcept
 {
 	return {m_inspection->CanShare(), true, true};
+}
+
+void WindowsSessionGraphics::BeginFrame()
+{
+	std::lock_guard submission(m_submissionMutex);
+	if (!m_closing && m_applicationTimer)
+		m_applicationTimer->Begin();
 }
 
 XrResult WindowsSessionGraphics::EndFrame(const XrFrameEndInfo& info, const SwapchainDescriptionResolver& describe,
@@ -502,7 +518,10 @@ XrResult WindowsSessionGraphics::EndFrame(const XrFrameEndInfo& info, const Swap
 		[&](auto& native) {
 			WindowsFrameSubmission backend(*native, *m_delivery, *m_inspection, resolve, sourceUsed,
 										   m_session->Display().Policy() == PresentationPolicy::Rotational);
-			FrameSubmission submission(*m_session, backend);
+			FrameSubmission submission(*m_session, backend,
+									   m_applicationTimer ? m_applicationTimer->End() : GpuDuration{});
+			if (m_applicationTimer)
+				m_applicationTimer->Collect();
 			return submission.Execute(info, describe);
 		},
 		m_native);

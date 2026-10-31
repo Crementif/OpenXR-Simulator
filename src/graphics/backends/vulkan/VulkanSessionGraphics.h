@@ -15,6 +15,7 @@
 namespace simxr
 {
 class Session;
+class ApplicationGpuTimer;
 class VulkanBackend;
 class VulkanInspection;
 class VulkanSwapchain;
@@ -49,6 +50,7 @@ public:
 	void DestroySwapchain(const SwapchainRef& swapchain);
 	XrResult Acquire(VulkanSwapchain& swapchain, std::uint32_t& index);
 	std::optional<SwapchainWaits::Registration> EnterWait();
+	void BeginFrame();
 	XrResult EndFrame(const XrFrameEndInfo& info);
 
 private:
@@ -67,6 +69,7 @@ private:
 
 	const std::shared_ptr<Session> m_session;
 	std::unique_ptr<VulkanBackend> m_backend;
+	std::unique_ptr<ApplicationGpuTimer> m_applicationTimer;
 	HandleRegistry<XrSwapchain, VulkanSwapchain, const Session*> m_swapchains;
 	std::shared_ptr<VulkanInspectionValidation> m_validation;
 	std::unique_ptr<VulkanInspection> m_inspection;

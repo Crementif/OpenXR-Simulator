@@ -231,8 +231,9 @@ static Json AppliedInput(const wire::Field& field)
 static Json Frame(const wire::Field& field, std::uint64_t generation, std::uint64_t after)
 {
 	const auto frame = Nested(&field);
-	static constexpr std::array known{tag::Generation, tag::FrameId,	  tag::Prediction,		  tag::Stage,
-									  tag::Submission, tag::CpuFrameTime, tag::CompositorGpuTime, tag::AppliedInput};
+	static constexpr std::array known{
+		tag::Generation,   tag::FrameId,		   tag::Prediction,			tag::Stage,		  tag::Submission,
+		tag::CpuFrameTime, tag::CompositorGpuTime, tag::ApplicationGpuTime, tag::AppliedInput};
 	if (frame.ValidateFields(known))
 		throw std::runtime_error("Runtime returned an unsupported required historical frame field");
 	const auto identity = U64(frame, tag::FrameId);
@@ -264,8 +265,9 @@ static Json Frame(const wire::Field& field, std::uint64_t generation, std::uint6
 							   {"output_disposition", Text(submission, tag::OutputDisposition)},
 							   {"drop_reason", Text(submission, tag::DropReason)}};
 	}
-	for (const auto& [tagValue, name] :
-		 {std::pair{tag::CpuFrameTime, "cpu_frame_time_ns"}, {tag::CompositorGpuTime, "compositor_gpu_time_ns"}})
+	for (const auto& [tagValue, name] : {std::pair{tag::CpuFrameTime, "cpu_frame_time_ns"},
+										 {tag::CompositorGpuTime, "compositor_gpu_time_ns"},
+										 {tag::ApplicationGpuTime, "application_gpu_time_ns"}})
 		if (frame.Find(tagValue))
 			value[name] = std::to_string(I64(frame, tagValue));
 	if (const auto* input = frame.Find(tag::AppliedInput))

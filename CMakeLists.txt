@@ -252,6 +252,7 @@ add_library(simxr_graphics STATIC
     src/graphics/SwapchainWaits.cpp
     src/graphics/LayerBuilder.cpp
     src/graphics/Compositor.cpp
+    src/graphics/ApplicationGpuTimer.cpp
     src/graphics/FrameSubmission.cpp
     src/graphics/SessionComposition.cpp
     src/graphics/RotationalReprojection.cpp
@@ -308,6 +309,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_B
         src/graphics/backends/vulkan/VulkanImagePool.cpp
         src/graphics/backends/vulkan/VulkanBackend.cpp)
     target_sources(simxr_vulkan PRIVATE src/graphics/backends/vulkan/VulkanSwapchain.cpp
+        src/graphics/backends/vulkan/VulkanApplicationGpuTimer.cpp
         src/graphics/backends/vulkan/VulkanSessionGraphics.cpp
         src/graphics/backends/vulkan/VulkanInstanceGraphics.cpp
         src/graphics/backends/vulkan/VulkanFrameSubmission.cpp)
@@ -342,6 +344,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_B
         target_sources(simxr_d3d11 PRIVATE src/graphics/backends/d3d11/D3D11VulkanImport.cpp)
         target_link_libraries(simxr_d3d11 PUBLIC simxr_vulkan)
         add_library(simxr_windows_graphics STATIC src/graphics/backends/windows/WindowsSessionGraphics.cpp
+            src/graphics/backends/windows/WindowsApplicationGpuTimer.cpp
             src/graphics/backends/windows/WindowsGraphicsCapabilities.cpp)
         simxr_configure_target(simxr_windows_graphics)
         target_link_libraries(simxr_windows_graphics PUBLIC simxr_d3d11 simxr_d3d12 simxr_opengl)
@@ -599,6 +602,8 @@ if(BUILD_TESTING)
     target_link_libraries(automation_lifecycle_tests PRIVATE simxr_core)
     simxr_add_test(session_tests tests/runtime/SessionTests.cpp session)
     target_link_libraries(session_tests PRIVATE simxr_core)
+    simxr_add_test(application_gpu_timer_tests tests/graphics/ApplicationGpuTimerTests.cpp application_gpu_timer)
+    target_link_libraries(application_gpu_timer_tests PRIVATE simxr_graphics)
     simxr_add_test(frame_submission_tests tests/graphics/FrameSubmissionTests.cpp frame_submission)
     target_link_libraries(frame_submission_tests PRIVATE simxr_graphics)
     simxr_add_test(session_failure_tests tests/runtime/SessionFailureTests.cpp session_failure)

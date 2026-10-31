@@ -1,4 +1,5 @@
 #include "Pch.h"
+#include "graphics/backends/vulkan/VulkanApplicationGpuTimer.h"
 #include "VulkanProbeInstance.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanReadbackBatch.h"
@@ -960,6 +961,18 @@ public:
 			auto output = Render(Frame({Projection(m_sources[0]), cylinder}), target, plan);
 			if (m_verify)
 				Verify(m_device, *output, plan, Colors(), "cylinder-rotated-alpha");
+		}
+		{
+			auto timer = CreateVulkanApplicationGpuTimer(m_backend.Device());
+			if (m_backend.Device()->timestampBits)
+			{
+				Require(timer != nullptr, "Create application GPU timer");
+				timer->Begin();
+				Paint(m_device, m_sources[0]);
+				const auto duration = timer->End();
+				Require(timer->Drain(s_timeout), "Drain application timestamp markers");
+				Require(duration.Load() > 0, "Application GPU timestamps did not resolve");
+			}
 		}
 		ReservedPreparation();
 		PendingProducerReservation();

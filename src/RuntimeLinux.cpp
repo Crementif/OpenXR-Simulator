@@ -416,7 +416,10 @@ static XrResult XRAPI_PTR RunXrBeginFrame(XrSession sHandle, const XrFrameBeginI
 		return XR_ERROR_HANDLE_INVALID;
 	if (info && info->type != XR_TYPE_FRAME_BEGIN_INFO)
 		return XR_ERROR_VALIDATION_FAILURE;
-	return s->core->BeginFrame();
+	const auto result = s->core->BeginFrame();
+	if (XR_SUCCEEDED(result) && s->graphics)
+		s->graphics->BeginFrame();
+	return result;
 }
 
 static XrResult XRAPI_PTR RunXrLocateViews(XrSession handle, const XrViewLocateInfo* info, XrViewState* state,

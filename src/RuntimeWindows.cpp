@@ -1658,7 +1658,21 @@ static XrResult XRAPI_PTR xrBeginFrame_runtime(XrSession session, const XrFrameB
 		return XR_ERROR_HANDLE_INVALID;
 	if (info && info->type != XR_TYPE_FRAME_BEGIN_INFO)
 		return XR_ERROR_VALIDATION_FAILURE;
-	return core->BeginFrame();
+	const auto native = rt::RetainNativeSession(session);
+	if (!native)
+		return XR_ERROR_HANDLE_INVALID;
+	std::lock_guard lock(native->graphicsMutex);
+	if (native->nativeClosing)
+		return XR_ERROR_SESSION_LOST;
+	const auto result = core->BeginFrame();
+	if (XR_SUCCEEDED(result))
+	{
+		if (native->nativeGraphics)
+			native->nativeGraphics->BeginFrame();
+		if (native->vulkan)
+			native->vulkan->BeginFrame();
+	}
+	return result;
 }
 
 static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEndInfo* info)

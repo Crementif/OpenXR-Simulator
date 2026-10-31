@@ -60,7 +60,7 @@ public:
 class FrameSubmission final
 {
 public:
-	FrameSubmission(Session& session, FrameSubmissionBackend& backend);
+	FrameSubmission(Session& session, FrameSubmissionBackend& backend, GpuDuration applicationTiming = {});
 	~FrameSubmission();
 	FrameSubmission(const FrameSubmission&) = delete;
 	FrameSubmission& operator=(const FrameSubmission&) = delete;
@@ -73,6 +73,7 @@ private:
 	void PrepareQuadHistory();
 	void PreparePreviewHistory();
 
+	GpuDuration m_applicationTiming;
 	Session& m_session;
 	FrameSubmissionBackend& m_backend;
 	FrameKey m_key{};

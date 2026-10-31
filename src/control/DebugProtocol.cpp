@@ -406,9 +406,12 @@ static Field EncodeFrameMetadata(const FrameRecord& frame, bool trackerCollectio
 			fields.push_back(Field::I64(tag::CpuFrameTime, cpu->count()));
 		if (submission.gpuTiming)
 		{
-			const auto gpu = submission.gpuTiming->compositorNanoseconds.load();
+			const auto gpu = submission.gpuTiming->compositorNanoseconds.Load();
 			if (gpu >= 0)
 				fields.push_back(Field::I64(tag::CompositorGpuTime, gpu));
+			const auto application = submission.gpuTiming->applicationNanoseconds.Load();
+			if (application >= 0)
+				fields.push_back(Field::I64(tag::ApplicationGpuTime, application));
 		}
 		if (submission.commands && submission.commands->configurationAvailable)
 			fields.push_back(EncodeAppliedInput(submission, trackerCollections, bodyObservations));

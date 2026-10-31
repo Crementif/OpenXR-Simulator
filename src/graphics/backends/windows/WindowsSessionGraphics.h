@@ -15,6 +15,7 @@
 namespace simxr
 {
 class Session;
+class ApplicationGpuTimer;
 class VulkanBackend;
 class VulkanInspection;
 class VulkanInspectionDevice;
@@ -33,6 +34,7 @@ public:
 	~WindowsSessionGraphics();
 
 	XrResult Close();
+	void BeginFrame();
 
 	control::ImageCapabilities Capabilities() const noexcept;
 
@@ -44,6 +46,7 @@ private:
 
 	const std::shared_ptr<Session> m_session;
 	std::variant<std::unique_ptr<D3D11Backend>, std::unique_ptr<D3D12Backend>, std::unique_ptr<OpenGLBackend>> m_native;
+	std::unique_ptr<ApplicationGpuTimer> m_applicationTimer;
 	std::unique_ptr<VulkanInspectionDevice> m_device;
 	std::unique_ptr<VulkanBackend> m_delivery;
 	std::unique_ptr<VulkanInspection> m_inspection;

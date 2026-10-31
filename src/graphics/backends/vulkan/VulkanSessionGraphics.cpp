@@ -1,5 +1,6 @@
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
 #include "Pch.h"
+#include "graphics/backends/vulkan/VulkanApplicationGpuTimer.h"
 
 #include "graphics/backends/vulkan/VulkanFrameSubmission.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
@@ -82,6 +83,8 @@ VulkanSessionGraphics::~VulkanSessionGraphics() = default;
 void VulkanSessionGraphics::BeginClose()
 {
 	m_closing = true;
+	if (m_applicationTimer)
+		m_applicationTimer->End();
 	m_waits.Close();
 	for (const auto handle : m_swapchains.Children(m_session.get()))
 		FindSwapchain(handle)->Close();
@@ -116,6 +119,8 @@ XrResult VulkanSessionGraphics::Drain(std::chrono::nanoseconds timeout)
 		if (m_validation && m_validation->errors.load())
 			return XR_ERROR_RUNTIME_FAILURE;
 	}
+	if (m_applicationTimer && !m_applicationTimer->Drain(static_cast<std::uint64_t>(remaining().count())))
+		return XR_ERROR_RUNTIME_FAILURE;
 	m_closeStage = CloseStage::Drained;
 	return XR_SUCCESS;
 }
@@ -135,6 +140,7 @@ XrResult VulkanSessionGraphics::FinishClose()
 	const auto validation = m_validation;
 	m_inspection.reset();
 	m_validation.reset();
+	m_applicationTimer.reset();
 	m_backend.reset();
 	m_closeStage = CloseStage::Closed;
 	if (validation && validation->errors.load())
@@ -208,6 +214,12 @@ std::optional<SwapchainWaits::Registration> VulkanSessionGraphics::EnterWait()
 	return m_waits.Enter();
 }
 
+void VulkanSessionGraphics::BeginFrame()
+{
+	if (!m_closing && m_applicationTimer)
+		m_applicationTimer->Begin();
+}
+
 XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 {
 	if (m_closing)
@@ -215,7 +227,9 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 	const FrameBindings bindings(*this);
 	VulkanFrameSubmission backend(*m_session, *m_backend, m_inspection.get(), bindings,
 								  m_session->Display().Policy() == PresentationPolicy::Rotational);
-	FrameSubmission submission(*m_session, backend);
+	FrameSubmission submission(*m_session, backend, m_applicationTimer ? m_applicationTimer->End() : GpuDuration{});
+	if (m_applicationTimer)
+		m_applicationTimer->Collect();
 	const auto result =
 		submission.Execute(info, [&bindings](XrSwapchain swapchain) { return bindings.Describe(swapchain); });
 	return result;
@@ -240,6 +254,7 @@ VulkanSessionGraphics::VulkanSessionGraphics(const VulkanBinding& binding, std::
 		 !vkGetDeviceProcAddr(binding.device, semaphoreCommand) || !vkGetDeviceProcAddr(binding.device, importCommand)))
 		throw std::invalid_argument("Vulkan sharing extensions were not enabled on the device");
 	m_backend = std::make_unique<VulkanBackend>(binding, 0, sharing, VK_API_VERSION_1_1);
+	m_applicationTimer = CreateVulkanApplicationGpuTimer(m_backend->Device());
 	if (m_backend->Sharing())
 	{
 		VulkanExternalDevice external(m_backend->Device(), sharing, VK_API_VERSION_1_1);
