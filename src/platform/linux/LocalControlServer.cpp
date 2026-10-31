@@ -248,8 +248,7 @@ struct LocalControlServer::State
 			if (!S_ISSOCK(existing.st_mode) || existing.st_uid != geteuid())
 				throw std::runtime_error("Local control path already exists and is not an owned socket");
 			Descriptor probe{socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)};
-			if (probe.value < 0 || connect(probe.value, address.Get(), address.Size()) == 0 ||
-				errno != ECONNREFUSED)
+			if (probe.value < 0 || connect(probe.value, address.Get(), address.Size()) == 0 || errno != ECONNREFUSED)
 				throw std::runtime_error("Local control socket already active");
 			struct stat current{};
 			if (lstat(path.c_str(), &current) != 0 || current.st_dev != existing.st_dev ||

@@ -583,9 +583,13 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 			draw->AddRectFilled({x, sparkBottom - bar}, {x + std::max(1.f, step - scale), sparkBottom}, tone);
 		}
 		const float middle = sparkBottom - height / 2;
-		for (float dash = area.x; dash < area.x + area.width; dash += 6 * scale)
+		const int dashCount = static_cast<int>(std::ceil(area.width / (6 * scale)));
+		for (int index = 0; index < dashCount; ++index)
+		{
+			const float dash = area.x + index * 6 * scale;
 			draw->AddLine({dash, middle}, {std::min(area.x + area.width, dash + 3 * scale), middle},
 						  theme::Fade(theme::TextDim, .7f), scale);
+		}
 	}
 	if (ImGui::IsMouseHoveringRect(hoverMin, hoverMax) && ImGui::IsWindowHovered())
 	{

@@ -1494,7 +1494,7 @@ void CheckInputPad(Interaction& test)
 						  << pointerPosition.y << " mouse=" << io.MousePos.x << ',' << io.MousePos.y
 						  << " leftDown=" << io.MouseDown[ImGuiMouseButton_Left]
 						  << " rightDown=" << io.MouseDown[ImGuiMouseButton_Right] << " active=" << g.ActiveId
-						  << " activeButton=" << g.ActiveIdMouseButton
+						  << " activeButton=" << static_cast<int>(g.ActiveIdMouseButton)
 						  << " hovered=" << (g.HoveredWindow ? g.HoveredWindow->Name : "none")
 						  << " trigger=" << controls.trigger << " grip=" << controls.grip << '\n';
 				if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))

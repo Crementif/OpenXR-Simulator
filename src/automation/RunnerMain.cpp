@@ -93,8 +93,9 @@ int simxr::automation::RunRunner(int argc, char** argv)
 						  "[--seed N] [--deadline-ms N] [--json PATH] [--junit PATH]");
 				return 0;
 			}
-			if (flag != "--pid" && flag != "--socket" && flag != "--rig" && flag != "--session" && flag != "--generation" &&
-				flag != "--seed" && flag != "--deadline-ms" && flag != "--json" && flag != "--junit")
+			if (flag != "--pid" && flag != "--socket" && flag != "--rig" && flag != "--session" &&
+				flag != "--generation" && flag != "--seed" && flag != "--deadline-ms" && flag != "--json" &&
+				flag != "--junit")
 				throw std::invalid_argument("Unknown option: " + std::string{flag});
 			if (i + 1 == argc || !argv[i + 1][0] || std::string_view{argv[i + 1]}.starts_with("--"))
 				throw std::invalid_argument("Missing nonempty value for " + std::string{flag});
@@ -189,10 +190,11 @@ int simxr::automation::RunRunner(int argc, char** argv)
 				wait("the runtime endpoint");
 				continue;
 			}
-			const auto hello = exchange(
-				wire::OpCode::Hello, {wire::Field::Text(wire::tag::ClientName, "simxr_runner"),
-									  wire::Field::U64(wire::tag::RequiredCapabilities,
-													   static_cast<std::uint64_t>(wire::Capability::SimulationCommands))});
+			const auto hello =
+				exchange(wire::OpCode::Hello,
+						 {wire::Field::Text(wire::tag::ClientName, "simxr_runner"),
+						  wire::Field::U64(wire::tag::RequiredCapabilities,
+										   static_cast<std::uint64_t>(wire::Capability::SimulationCommands))});
 			const auto* helloError = hello.Find(wire::tag::Error);
 			if (!helloError || helloError->AsU32() != 0)
 				throw std::runtime_error("Runtime does not support simulator commands");

@@ -28,7 +28,7 @@ static std::string ImageLabel(const PreviewImageSummary& image)
 
 static std::string ZoomLabel(bool fit, bool cropped, float zoom)
 {
-	return fit && !cropped ? std::string{"Fit"} : std::to_string(static_cast<int>(zoom * 100 + .5f)) + "%";
+	return fit && !cropped ? std::string{"Fit"} : std::to_string(std::lround(zoom * 100)) + "%";
 }
 
 static bool SameRect(ImVec4 first, ImVec4 second)

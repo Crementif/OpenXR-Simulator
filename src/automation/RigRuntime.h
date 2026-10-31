@@ -108,9 +108,9 @@ public:
 	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
 						   std::optional<std::uint32_t> arraySlice);
 	control::ImageSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
-											  std::optional<std::array<XrRect2Di, 2>> rectangles);
+										   std::optional<std::array<XrRect2Di, 2>> rectangles);
 	std::optional<control::ImageSample> SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
-															  std::optional<std::array<XrRect2Di, 2>> rectangles);
+														   std::optional<std::array<XrRect2Di, 2>> rectangles);
 	void ReleaseImageWindow(std::uint64_t window);
 
 	std::vector<std::byte> Revision(std::uint64_t revision);

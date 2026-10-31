@@ -419,10 +419,9 @@ bool McpDebug::Handles(const std::string& name)
 											 "debug_configure_snapshots"};
 	return name == "read_logs" || name == "clear_logs" || name == "capture_screenshot" || name == "validate_stereo" ||
 		   name == "analyze_stereo_consistency" || name == "debug_save_video" || name == "debug_save_image" ||
-		   name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) ||
-		   mcp::ControlsHandles(name) || mcp::SequenceHandles(name) || names.contains(name) ||
-		   mcp::SimulationHandles(name) || mcp::ImageHandles(name) || mcp::GameHandles(name) ||
-		   mcp::HistoryHandles(name);
+		   name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) || mcp::ControlsHandles(name) ||
+		   mcp::SequenceHandles(name) || names.contains(name) || mcp::SimulationHandles(name) ||
+		   mcp::ImageHandles(name) || mcp::GameHandles(name) || mcp::HistoryHandles(name);
 }
 
 Json McpDebug::Document(const wire::Message& message, bool metadataOnly)

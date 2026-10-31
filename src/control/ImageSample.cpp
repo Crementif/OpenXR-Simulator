@@ -6,8 +6,8 @@
 namespace simxr::control
 {
 ImageSample ReadImageSample(const ExportReader::Exchange& exchange, const std::function<void()>& wait,
-								  std::uint64_t image, const ImageDescription& description,
-								  const std::array<XrRect2Di, 2>& rectangles)
+							std::uint64_t image, const ImageDescription& description,
+							const std::array<XrRect2Di, 2>& rectangles)
 {
 	if (!description.width || !description.height || description.arrayLayers < 2)
 		throw std::runtime_error("Sampled image is not stereo");

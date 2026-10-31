@@ -973,27 +973,29 @@ void CheckConnectedPreview(const char* endpoint)
 	}
 	else
 #endif
-		if (std::getenv("SIMXR_RETURN_IMAGE_QA"))
-		CheckReturnToImage(test);
-	else if (std::getenv("SIMXR_CROP_QA"))
-		CheckCrop(test);
-	else if (std::getenv("SIMXR_VIDEO_QA"))
-		CheckVideoExport(test);
-	else if (std::getenv("SIMXR_HISTORY_QA"))
-		CheckPreviewHistory(test);
-#ifdef __linux__
-	else if (std::getenv("SIMXR_SPATIAL_QA"))
-		CheckSpatialEditing(test);
-	else
-		CheckPreviewPilot(test);
-#else
-	else
 	{
-		Require(!std::getenv("SIMXR_LAYOUT_QA") && !std::getenv("SIMXR_SPATIAL_QA"),
-				"Connected layout/spatial fixtures are not enabled on this platform");
-		CheckPreviewPilot(test);
-	}
+		if (std::getenv("SIMXR_RETURN_IMAGE_QA"))
+			CheckReturnToImage(test);
+		else if (std::getenv("SIMXR_CROP_QA"))
+			CheckCrop(test);
+		else if (std::getenv("SIMXR_VIDEO_QA"))
+			CheckVideoExport(test);
+		else if (std::getenv("SIMXR_HISTORY_QA"))
+			CheckPreviewHistory(test);
+#ifdef __linux__
+		else if (std::getenv("SIMXR_SPATIAL_QA"))
+			CheckSpatialEditing(test);
+		else
+			CheckPreviewPilot(test);
+#else
+		else
+		{
+			Require(!std::getenv("SIMXR_LAYOUT_QA") && !std::getenv("SIMXR_SPATIAL_QA"),
+					"Connected layout/spatial fixtures are not enabled on this platform");
+			CheckPreviewPilot(test);
+		}
 #endif
+	}
 	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
 		test.renderer.RequestScreenshot(directory / "application-gameplay.bmp");

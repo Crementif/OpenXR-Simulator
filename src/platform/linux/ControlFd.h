@@ -23,8 +23,15 @@ public:
 	ControlSocketAddress(const ControlSocketAddress&) = delete;
 	ControlSocketAddress& operator=(const ControlSocketAddress&) = delete;
 
-	const sockaddr* Get() const { return reinterpret_cast<const sockaddr*>(&m_address); }
-	socklen_t Size() const { return sizeof(m_address); }
+	const sockaddr* Get() const
+	{
+		return reinterpret_cast<const sockaddr*>(&m_address);
+	}
+
+	socklen_t Size() const
+	{
+		return sizeof(m_address);
+	}
 
 private:
 	sockaddr_un m_address{};

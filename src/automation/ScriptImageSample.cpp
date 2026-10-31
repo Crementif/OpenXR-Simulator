@@ -90,7 +90,8 @@ int ScriptEngine::SampleHistoryImage(lua_State* state)
 
 int ScriptEngine::SampleWindowImage(lua_State* state)
 {
-	PushImageSample(state, m_runtime.SampleWindowImage(Integer(state, 1), Integer(state, 2), SampleRectangles(state, 3)));
+	PushImageSample(state,
+					m_runtime.SampleWindowImage(Integer(state, 1), Integer(state, 2), SampleRectangles(state, 3)));
 	return 1;
 }
 }

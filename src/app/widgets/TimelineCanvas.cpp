@@ -205,8 +205,12 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	// The budget line: frames under it made their display time.
 	{
 		const float y = framesBottom - (m_lane - 2) / 2;
-		for (float dash = left; dash < right; dash += 8 * scale)
+		const int dashCount = static_cast<int>(std::ceil(pixels / (8 * scale)));
+		for (int index = 0; index < dashCount; ++index)
+		{
+			const float dash = left + index * 8 * scale;
 			draw->AddLine({dash, y}, {std::min(right, dash + 4 * scale), y}, theme::Fade(theme::TextDim, .5f), scale);
+		}
 	}
 	const float markerY = m_compact ? top + 5 * scale : top + ruler - 5 * scale;
 	for (int column = 0; column < int(pixels); ++column)
@@ -360,8 +364,11 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	else if (!m_compact)
 	{
 		// Labels sample runtime-relative time, never the artificial inter-run offset.
-		for (float x = left; x < right; x += std::max(80 * scale, pixels / 8))
+		const float spacing = std::max(80 * scale, pixels / 8);
+		const int labelCount = static_cast<int>(std::ceil(pixels / spacing));
+		for (int labelIndex = 0; labelIndex < labelCount; ++labelIndex)
 		{
+			const float x = left + labelIndex * spacing;
 			const auto index = history.Nearest(timeAt(x));
 			if (!index || timeAt(x) < first || timeAt(x) > latest)
 				continue;
@@ -416,8 +423,11 @@ void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory&
 	const float width = std::clamp(height / aspect, 16 * scale, 96 * scale);
 	auto* draw = ImGui::GetWindowDrawList();
 	draw->PushClipRect({m_bounds.x, LaneY(Images)}, {m_bounds.x + m_bounds.width, LaneY(Images) + m_lane}, true);
-	for (float x = m_bounds.x; x + width <= m_bounds.x + m_bounds.width; x += width + 3 * scale)
+	const float spacing = width + 3 * scale;
+	const int thumbnailCount = m_bounds.width < width ? 0 : 1 + static_cast<int>((m_bounds.width - width) / spacing);
+	for (int thumbnail = 0; thumbnail < thumbnailCount; ++thumbnail)
 	{
+		const float x = m_bounds.x + thumbnail * spacing;
 		const auto index = history.Nearest(m_start + (x + width / 2 - m_bounds.x) * m_span / m_bounds.width);
 		if (!index)
 			continue;

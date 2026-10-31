@@ -407,7 +407,7 @@ void RigRuntime::ExportWindowImage(std::uint64_t window, std::uint64_t frame, co
 }
 
 control::ImageSample RigRuntime::SampleWindowImage(std::uint64_t window, std::uint64_t frame,
-													  std::optional<std::array<XrRect2Di, 2>> rectangles)
+												   std::optional<std::array<XrRect2Di, 2>> rectangles)
 {
 	const auto image =
 		Number(Call(control::OpCode::RetainWindowImage, {control::Field::U64(tag::ImageWindowId, window, true),
@@ -416,9 +416,8 @@ control::ImageSample RigRuntime::SampleWindowImage(std::uint64_t window, std::ui
 	return SampleImage(image, rectangles);
 }
 
-std::optional<control::ImageSample>
-RigRuntime::SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
-							   std::optional<std::array<XrRect2Di, 2>> rectangles)
+std::optional<control::ImageSample> RigRuntime::SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
+																   std::optional<std::array<XrRect2Di, 2>> rectangles)
 {
 	m_progress.Check();
 	RenewLease();

@@ -13,6 +13,6 @@ struct ImageSample
 };
 
 ImageSample ReadImageSample(const ExportReader::Exchange& exchange, const std::function<void()>& wait,
-								  std::uint64_t image, const ImageDescription& description,
-								  const std::array<XrRect2Di, 2>& rectangles);
+							std::uint64_t image, const ImageDescription& description,
+							const std::array<XrRect2Di, 2>& rectangles);
 }
