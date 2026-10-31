@@ -9,7 +9,7 @@ endif()
 set(required
     README.txt install.sh launch-desktop.sh bin/openxr_simulator.json
     bin/simxr_companion bin/simxr_mcp_connector bin/simxr_runner
-    bin/libopenxr_simulator.so bin/fonts/AdwaitaSans-Regular.ttf
+    bin/libopenxr_simulator.so
     share/simxr/branding/openxr-simulator.png share/simxr/rigs/pose_sweep.luau
     include/simxr/game_bridge.h share/doc/simxr/AUTOMATION.md
     share/simxr/sdk/python/pyproject.toml share/simxr/sdk/python/simxr_control/client.py)

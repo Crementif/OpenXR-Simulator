@@ -3,13 +3,16 @@
 #include "app/platform/Window.h"
 #include "app/render/UiRenderResources.h"
 #include "app/render/UiRenderer.h"
-#include "app/services/Utf8Path.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 #include <SDL3/SDL_vulkan.h>
 #include <imgui_impl_sdl3.h>
 
 namespace simxr::app
 {
+static constexpr unsigned char s_adwaitaSans[]{
+#include "AdwaitaSans.inc"
+};
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL Report(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 											 VkDebugUtilsMessageTypeFlagsEXT,
 											 const VkDebugUtilsMessengerCallbackDataEXT* data, void* user)
@@ -204,25 +207,23 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 	gpu.context = ImGui::CreateContext();
 	ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	ImGui::GetIO().IniFilename = nullptr;
-	if (const auto base = SDL_GetBasePath())
-	{
-		const auto font = Utf8Path(base) / "fonts/AdwaitaSans-Regular.ttf";
-		if (std::filesystem::exists(font))
-		{
-			// Adwaita Sans (an Inter fork) has proportional digits; they merge back at one width so live
-			// numbers do not jitter. Clamped glyphs are centred in their advance.
-			static constexpr ImWchar digits[]{'0', '9', 0};
-			ImFontConfig text;
-			text.GlyphExcludeRanges = digits;
-			auto& fonts = *ImGui::GetIO().Fonts;
-			fonts.AddFontFromFileTTF(PathText(font).c_str(), 17, &text);
-			ImFontConfig figures;
-			figures.MergeMode = true;
-			figures.GlyphRanges = digits;
-			figures.GlyphMinAdvanceX = figures.GlyphMaxAdvanceX = 17 * .6f;
-			fonts.AddFontFromFileTTF(PathText(font).c_str(), 17, &figures);
-		}
-	}
+	// Adwaita Sans (an Inter fork) has proportional digits; they merge back at one width so live
+	// numbers do not jitter. Clamped glyphs are centred in their advance.
+	static constexpr ImWchar digits[]{'0', '9', 0};
+	ImFontConfig text;
+	text.GlyphExcludeRanges = digits;
+	text.FontDataOwnedByAtlas = false;
+	std::snprintf(text.Name, sizeof(text.Name), "Adwaita Sans");
+	auto& fonts = *ImGui::GetIO().Fonts;
+	// ImGui accepts a mutable pointer but only reads font data with ownership disabled.
+	auto* font = const_cast<unsigned char*>(s_adwaitaSans);
+	fonts.AddFontFromMemoryTTF(font, static_cast<int>(sizeof(s_adwaitaSans)), 17, &text);
+	ImFontConfig figures;
+	figures.MergeMode = true;
+	figures.GlyphRanges = digits;
+	figures.GlyphMinAdvanceX = figures.GlyphMaxAdvanceX = 17 * .6f;
+	figures.FontDataOwnedByAtlas = false;
+	fonts.AddFontFromMemoryTTF(font, static_cast<int>(sizeof(s_adwaitaSans)), 17, &figures);
 	auto& style = ImGui::GetStyle();
 	theme::Apply(style);
 	style.FontSizeBase = 17;
