@@ -266,8 +266,6 @@ static const char* SessionStateName(XrSessionState state)
 	}
 }
 
-static constexpr XrVersion s_supportedApiVersion = XR_MAKE_VERSION(1, 0, 27);
-
 static const simxr::ExtensionRegistry& Extensions()
 {
 	static constexpr std::array<std::string_view, 1> s_d3d11Commands{"xrGetD3D11GraphicsRequirementsKHR"};
@@ -468,12 +466,13 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNeg
 			runtimeRequest->structSize != sizeof(*runtimeRequest) ||
 			loaderInfo->minInterfaceVersion > XR_CURRENT_LOADER_RUNTIME_VERSION ||
 			loaderInfo->maxInterfaceVersion < XR_CURRENT_LOADER_RUNTIME_VERSION ||
-			loaderInfo->maxApiVersion < XR_MAKE_VERSION(1, 0, 0) || loaderInfo->minApiVersion > s_supportedApiVersion)
+			!simxr::NegotiateApiVersion(loaderInfo->minApiVersion, loaderInfo->maxApiVersion))
 			return XR_ERROR_INITIALIZATION_FAILED;
 
 		runtimeRequest->runtimeInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION;
 		runtimeRequest->getInstanceProcAddr = simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke;
-		runtimeRequest->runtimeApiVersion = std::min(loaderInfo->maxApiVersion, s_supportedApiVersion);
+		runtimeRequest->runtimeApiVersion =
+			simxr::NegotiateApiVersion(loaderInfo->minApiVersion, loaderInfo->maxApiVersion);
 
 		Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: SUCCESS - runtimeApiVersion=0x%llX",
 			 static_cast<unsigned long long>(runtimeRequest->runtimeApiVersion));
@@ -814,6 +813,17 @@ static XrResult XRAPI_PTR xrGetSystem_runtime(XrInstance instance, const XrSyste
 	return XR_SUCCESS;
 }
 
+static std::uint32_t MaxSwapchainDimension(const simxr::EnabledExtensions& extensions)
+{
+	const bool direct3D = extensions.Contains(XR_KHR_D3D11_ENABLE_EXTENSION_NAME) ||
+						  extensions.Contains(XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
+	const bool otherGraphics = extensions.Contains(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME) ||
+							   extensions.Contains(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME) ||
+							   extensions.Contains(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+	// D3D feature level 11.0 guarantees this extent; other bindings retain their conservative limit.
+	return direct3D && !otherGraphics ? 16384u : 4096u;
+}
+
 static XrResult XRAPI_PTR xrGetSystemProperties_runtime(XrInstance instance, XrSystemId system,
 														XrSystemProperties* props)
 {
@@ -828,7 +838,8 @@ static XrResult XRAPI_PTR xrGetSystemProperties_runtime(XrInstance instance, XrS
 	std::strcpy(props->systemName, "OpenXR Simulator");
 	props->systemId = 1;
 	props->vendorId = 0;
-	props->graphicsProperties = {4096, 4096, 16};
+	const auto maxDimension = MaxSwapchainDimension(core->Extensions());
+	props->graphicsProperties = {maxDimension, maxDimension, 16};
 	props->trackingProperties = {XR_TRUE, XR_TRUE};
 	return XR_SUCCESS;
 }
@@ -937,6 +948,7 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance i
 	const auto samplesResult = GetMaxSwapchainSampleCount(core->Extensions(), maxSamples);
 	if (XR_FAILED(samplesResult))
 		return samplesResult;
+	const auto maxDimension = MaxSwapchainDimension(core->Extensions());
 	simxr::ViewSettings viewSettings;
 	settings::GetRenderResolution(viewSettings.outerWidth, viewSettings.outerHeight);
 	for (std::uint32_t index = 0; index < *count; ++index)
@@ -944,8 +956,8 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance i
 		views[index].recommendedImageRectWidth = index < 2 ? viewSettings.outerWidth : viewSettings.insetWidth;
 		views[index].recommendedImageRectHeight = index < 2 ? viewSettings.outerHeight : viewSettings.insetHeight;
 		views[index].recommendedSwapchainSampleCount = 1;
-		views[index].maxImageRectWidth = settings::kMaxRenderExtent;
-		views[index].maxImageRectHeight = settings::kMaxRenderExtent;
+		views[index].maxImageRectWidth = maxDimension;
+		views[index].maxImageRectHeight = maxDimension;
 		views[index].maxSwapchainSampleCount = maxSamples;
 	}
 	return XR_SUCCESS;
@@ -1312,6 +1324,9 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 		return XR_ERROR_HANDLE_INVALID;
 	std::lock_guard lock(native->graphicsMutex);
 	if (!info || !output)
+		return XR_ERROR_VALIDATION_FAILURE;
+	const auto maxDimension = MaxSwapchainDimension(native->core->Extensions());
+	if (info->width > maxDimension || info->height > maxDimension)
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (native->vulkan)
 		return native->vulkan->CreateSwapchain(*info, *output);

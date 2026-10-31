@@ -35,7 +35,7 @@ XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction act
 {
 	if (vibration.type != XR_TYPE_HAPTIC_VIBRATION || !std::isfinite(vibration.amplitude) || vibration.amplitude < 0 ||
 		vibration.amplitude > 1 || !std::isfinite(vibration.frequency) || vibration.frequency < 0 ||
-		(vibration.duration < 0 && vibration.duration != XR_MIN_HAPTIC_DURATION) || time.value.count() < 0)
+		(vibration.duration <= 0 && vibration.duration != XR_MIN_HAPTIC_DURATION) || time.value.count() < 0)
 		return XR_ERROR_VALIDATION_FAILURE;
 	std::vector<InputDeviceId> unique;
 	for (auto device : devices)

@@ -54,6 +54,26 @@ XrInstanceCreateInfo InstanceInfo()
 	return info;
 }
 
+void ApiVersions()
+{
+	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 99), XR_MAKE_VERSION(1, 0, 99)) == SupportedApiVersion,
+			"Newer loader patch revision rejected a compatible runtime");
+	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 0, 1)) == SupportedApiVersion,
+			"Older loader patch revision changed the reported runtime API");
+	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 1, 0)) == SupportedApiVersion,
+			"Loader supporting multiple minor versions could not select core 1.0");
+	Require(!NegotiateApiVersion(XR_MAKE_VERSION(1, 1, 0), XR_MAKE_VERSION(1, 1, 99)) &&
+				!NegotiateApiVersion(0, XR_MAKE_VERSION(0, 9, 99)) &&
+				!NegotiateApiVersion(XR_MAKE_VERSION(2, 0, 0), XR_MAKE_VERSION(2, 0, 99)),
+			"Loader without a compatible interface version was accepted");
+	Runtime runtime{ExtensionRegistry{SimulationExtensions()}};
+	auto info = InstanceInfo();
+	info.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 99);
+	Runtime::InstanceRef instance;
+	Require(runtime.CreateInstance(&info, instance) == XR_SUCCESS,
+			"Instance creation disagreed with loader patch compatibility");
+}
+
 void EnumNames()
 {
 	struct ResultCase
@@ -515,6 +535,7 @@ void DebuggerLifetime()
 
 int main()
 {
+	ApiVersions();
 	EnumNames();
 	AllocationFreeShutdown();
 	GameBridgeLifetime();

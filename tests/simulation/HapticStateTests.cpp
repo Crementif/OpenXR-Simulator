@@ -22,6 +22,13 @@ int main()
 	auto saved = state.Snapshot({Duration{120}});
 	Require(saved.size() == 1 && saved[0].end->value.count() == 150 && saved[0].status == HapticStatus::Active,
 			"Effective duration");
+	vibration.duration = 0;
+	Require(state.Apply(left, otherAction, 3, vibration, {Duration{120}}, true) == XR_ERROR_VALIDATION_FAILURE,
+			"Zero-duration pulse was accepted");
+	const auto afterInvalid = state.Snapshot({Duration{120}});
+	Require(afterInvalid.size() == 1 && afterInvalid[0].action == action &&
+				afterInvalid[0].status == HapticStatus::Active,
+			"Invalid pulse changed existing feedback");
 	Require(state.Snapshot({Duration{150}})[0].status == HapticStatus::Expired, "Exact expiration");
 	Require(saved[0].status == HapticStatus::Active, "Retained snapshot changed");
 	vibration.duration = XR_INFINITE_DURATION;

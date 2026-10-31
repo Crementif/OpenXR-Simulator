@@ -1123,12 +1123,10 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loader, XrNegotia
 		runtime->structType != XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST ||
 		runtime->structVersion != XR_RUNTIME_INFO_STRUCT_VERSION || runtime->structSize != sizeof(*runtime) ||
 		loader->minInterfaceVersion > 1 || loader->maxInterfaceVersion < 1 ||
-		loader->maxApiVersion < XR_MAKE_VERSION(1, 0, 0))
+		!simxr::NegotiateApiVersion(loader->minApiVersion, loader->maxApiVersion))
 		return XR_ERROR_INITIALIZATION_FAILED;
 	runtime->runtimeInterfaceVersion = 1;
-	if (loader->minApiVersion > XR_MAKE_VERSION(1, 0, 27))
-		return XR_ERROR_INITIALIZATION_FAILED;
-	runtime->runtimeApiVersion = std::min<XrVersion>(loader->maxApiVersion, XR_MAKE_VERSION(1, 0, 27));
+	runtime->runtimeApiVersion = simxr::NegotiateApiVersion(loader->minApiVersion, loader->maxApiVersion);
 	runtime->getInstanceProcAddr = simxr::AbiBoundary<RunXrGetInstanceProcAddr>::Invoke;
 	return XR_SUCCESS;
 }

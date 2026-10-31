@@ -439,6 +439,19 @@ static int Run(std::span<const std::string> arguments)
 		Check(xrEnumerateViewConfigurationViews(instance, system, viewType, viewCount, &recommendedCount,
 												recommended.data()),
 			  "Enumerate views");
+		XrSystemProperties systemProperties{XR_TYPE_SYSTEM_PROPERTIES};
+		Check(xrGetSystemProperties(instance, system, &systemProperties), "Get swapchain limits");
+#ifdef SIMXR_PROBE_OPENGL
+		constexpr std::uint32_t expectedMaxDimension = 4096;
+#else
+		constexpr std::uint32_t expectedMaxDimension = 16384;
+#endif
+		if (systemProperties.graphicsProperties.maxSwapchainImageWidth != expectedMaxDimension ||
+			systemProperties.graphicsProperties.maxSwapchainImageHeight != expectedMaxDimension)
+			throw std::runtime_error("System reported an incorrect swapchain size limit");
+		for (const auto& view : recommended)
+			if (view.maxImageRectWidth != expectedMaxDimension || view.maxImageRectHeight != expectedMaxDimension)
+				throw std::runtime_error("View and system swapchain limits disagree");
 		const auto maximumSamples = recommended.front().maxSwapchainSampleCount;
 		for (const auto& view : recommended)
 		{
@@ -642,7 +655,17 @@ static int Run(std::span<const std::string> arguments)
 				swapchainInfo.height = 256;
 				swapchainInfo.faceCount = swapchainInfo.mipCount = 1;
 				swapchainInfo.arraySize = viewCount;
-				for (unsigned invalidField = 0; invalidField < 5; ++invalidField)
+				for (bool wide : {false, true})
+				{
+					auto boundary = swapchainInfo;
+					boundary.width = wide ? expectedMaxDimension : 1;
+					boundary.height = wide ? 1 : expectedMaxDimension;
+					boundary.sampleCount = boundary.arraySize = 1;
+					XrSwapchain limitSwapchain = XR_NULL_HANDLE;
+					Check(xrCreateSwapchain(session, &boundary, &limitSwapchain), "Create swapchain at reported limit");
+					Check(xrDestroySwapchain(limitSwapchain), "Destroy boundary swapchain");
+				}
+				for (unsigned invalidField = 0; invalidField < 7; ++invalidField)
 				{
 					auto invalid = swapchainInfo;
 					if (invalidField == 0)
@@ -655,6 +678,10 @@ static int Run(std::span<const std::string> arguments)
 						invalid.sampleCount = 0;
 					if (invalidField == 4)
 						invalid.usageFlags = 0;
+					if (invalidField == 5)
+						invalid.width = expectedMaxDimension + 1;
+					if (invalidField == 6)
+						invalid.height = expectedMaxDimension + 1;
 					XrSwapchain rejected = XR_NULL_HANDLE;
 					if (xrCreateSwapchain(session, &invalid, &rejected) != XR_ERROR_VALIDATION_FAILURE || rejected)
 						throw std::runtime_error("Malformed swapchain description was accepted");

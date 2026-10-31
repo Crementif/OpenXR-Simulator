@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/Clock.h"
+#include "runtime/ApiVersion.h"
 #include "presentation/DebugController.h"
 #include "runtime/ExtensionRegistry.h"
 #include "runtime/HandleRegistry.h"
@@ -19,7 +20,7 @@ namespace simxr
 {
 struct RuntimeConfiguration
 {
-	XrVersion apiVersion = XR_MAKE_VERSION(1, 0, 27);
+	XrVersion apiVersion = SupportedApiVersion;
 	std::size_t maxInstances = 1;
 	std::size_t maxSessionsPerInstance = 1;
 };
