@@ -80,6 +80,19 @@ float4 PSMain(VertexOutput input) : SV_Target
         uv = float2((tangent.x - layer.sourceTangents.x) / (layer.sourceTangents.y - layer.sourceTangents.x),
             (layer.sourceTangents.z - tangent.y) / (layer.sourceTangents.z - layer.sourceTangents.w));
     }
+    else if (layer.control.x == 3)
+    {
+        float3 origin = layer.sourceFromEyePosition.xyz * layer.quadParameters.x;
+        float a = dot(ray.xz, ray.xz);
+        float b = dot(origin.xz, ray.xz);
+        float c = dot(origin.xz, origin.xz) - 1;
+        float discriminant = b * b - a * c;
+        float distance = (-b + sqrt(max(discriminant, 0))) / max(a, 1e-20);
+        float3 hit = origin + distance * ray;
+        visible = a > 0 && discriminant > 0 && distance > 0;
+        uv = float2(0.5 + atan2(hit.x, -hit.z) * layer.quadParameters.y,
+            0.5 - hit.y * layer.quadParameters.z);
+    }
     else
     {
         visible = visible && layer.sourceFromEyePosition.z > 0;

@@ -185,7 +185,13 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanInspection& inspection, co
 			}
 			else
 			{
-				const auto result = retain(std::get<QuadLayerDescription>(layer).color);
+				const auto result = std::visit(
+					[&](auto& surface) -> XrResult {
+						if constexpr (!std::is_same_v<std::decay_t<decltype(surface)>, ProjectionLayerDescription>)
+							return retain(surface.color);
+						return XR_SUCCESS;
+					},
+					layer);
 				if (XR_FAILED(result))
 					return result;
 			}

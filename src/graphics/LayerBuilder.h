@@ -63,7 +63,19 @@ struct QuadLayerDescription
 	LayerImageDescription color;
 };
 
-using LayerDescription = std::variant<ProjectionLayerDescription, QuadLayerDescription>;
+struct CylinderLayerDescription
+{
+	LayerSpaceDescription space;
+	XrEyeVisibility eyes;
+	XrPosef poseInSpace;
+	PoseSample worldPose;
+	float radius;
+	float centralAngle;
+	float aspectRatio;
+	LayerImageDescription color;
+};
+
+using LayerDescription = std::variant<ProjectionLayerDescription, QuadLayerDescription, CylinderLayerDescription>;
 
 // All data is copied. Source handles are diagnostic identities, not owners of
 // swapchain images, spaces, native resources, or application memory.

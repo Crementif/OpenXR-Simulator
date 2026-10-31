@@ -61,6 +61,13 @@ XrResult BuildLayers(const XrFrameEndInfo& info, const LayerValidationContext& v
 			}
 			descriptions.emplace_back(std::move(description));
 		}
+		else if (layer.type == XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR)
+		{
+			const auto& cylinder = reinterpret_cast<const XrCompositionLayerCylinderKHR&>(layer);
+			descriptions.emplace_back(CylinderLayerDescription{
+				space, cylinder.eyeVisibility, cylinder.pose, Offset(space.worldPose, cylinder.pose), cylinder.radius,
+				cylinder.centralAngle, cylinder.aspectRatio, Image(cylinder.subImage)});
+		}
 		else
 		{
 			const auto& quad = reinterpret_cast<const XrCompositionLayerQuad&>(layer);
@@ -86,6 +93,8 @@ std::optional<LayerImageDescription> FindLayerImage(const FrameLayers& frame, st
 	}
 	if (const auto* quad = std::get_if<QuadLayerDescription>(&frame.layers[layer]); quad && !view)
 		return quad->color;
+	if (const auto* cylinder = std::get_if<CylinderLayerDescription>(&frame.layers[layer]); cylinder && !view)
+		return cylinder->color;
 	return {};
 }
 

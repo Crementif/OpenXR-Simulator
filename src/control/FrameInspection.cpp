@@ -785,6 +785,19 @@ private:
 			 {"color", Image(value.color)}});
 	}
 
+	InspectionValue Layer(const CylinderLayerDescription& value)
+	{
+		return InspectionValue::Object({{"kind", InspectionValue::Text("cylinder")},
+										{"space", Space(value.space)},
+										{"eyes", InspectionValue::Signed(value.eyes)},
+										{"pose_in_space", InspectPose(value.poseInSpace)},
+										{"world_pose", InspectPoseSample(value.worldPose)},
+										{"radius", InspectionValue::Float(value.radius)},
+										{"central_angle", InspectionValue::Float(value.centralAngle)},
+										{"aspect_ratio", InspectionValue::Float(value.aspectRatio)},
+										{"color", Image(value.color)}});
+	}
+
 private:
 	std::vector<XrSwapchain> m_sources;
 	std::vector<XrSpace> m_spaces;

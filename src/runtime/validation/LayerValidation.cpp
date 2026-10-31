@@ -119,6 +119,19 @@ XrResult ValidateLayers(const XrFrameEndInfo& info, const LayerValidationContext
 				return XR_ERROR_LAYER_INVALID;
 			result = ValidateImage(quad.subImage, context);
 		}
+		else if (layer->type == XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR && context.cylinderEnabled)
+		{
+			const auto& cylinder = *reinterpret_cast<const XrCompositionLayerCylinderKHR*>(layer);
+			if (!ValidPose(cylinder.pose))
+				return XR_ERROR_POSE_INVALID;
+			if (std::isnan(cylinder.radius) || cylinder.radius < 0 || !std::isfinite(cylinder.centralAngle) ||
+				cylinder.centralAngle < 0 || cylinder.centralAngle >= 2 * std::numbers::pi_v<float> ||
+				!std::isfinite(cylinder.aspectRatio) || cylinder.aspectRatio <= 0 ||
+				(cylinder.eyeVisibility != XR_EYE_VISIBILITY_BOTH && cylinder.eyeVisibility != XR_EYE_VISIBILITY_LEFT &&
+				 cylinder.eyeVisibility != XR_EYE_VISIBILITY_RIGHT))
+				return XR_ERROR_LAYER_INVALID;
+			result = ValidateImage(cylinder.subImage, context);
+		}
 		else
 			return XR_ERROR_LAYER_INVALID;
 		if (XR_FAILED(result))

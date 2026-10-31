@@ -143,7 +143,7 @@ XrResult FrameSubmission::PrepareCaptures()
 			request.composition = m_composition.plan;
 			const bool projection = target.kind == CaptureKind::ProjectionLayers;
 			std::erase_if(request.composition->draws, [projection](const CompositionDraw& draw) {
-				return (draw.constants.control[0] == 0) != projection;
+				return draw.constants.control[0] != (projection ? 0U : 1U);
 			});
 			if (request.composition->draws.empty())
 				continue;

@@ -287,6 +287,7 @@ static const simxr::ExtensionRegistry& Extensions()
 			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, s_vulkanCommands},
 			{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, s_vulkan2Commands},
 			{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
+			{XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME, XR_KHR_composition_layer_cylinder_SPEC_VERSION, {}},
 			{XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME,
 			 XR_KHR_win32_convert_performance_counter_time_SPEC_VERSION, s_timeCommands}};
 		const auto simulation = simxr::SimulationExtensions({true, true});

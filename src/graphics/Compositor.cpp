@@ -152,6 +152,44 @@ XrResult PrepareComposition(const FrameLayers& frame, const CompositionTarget& t
 				plan.draws.push_back(draw);
 			}
 		}
+		else if (const auto* cylinder = std::get_if<CylinderLayerDescription>(&layer))
+		{
+			if (!ValidLayerFlags(cylinder->space.flags) || std::isnan(cylinder->radius) || cylinder->radius < 0 ||
+				!std::isfinite(cylinder->centralAngle) || cylinder->centralAngle < 0 ||
+				cylinder->centralAngle >= 2 * std::numbers::pi_v<float> || !std::isfinite(cylinder->aspectRatio) ||
+				cylinder->aspectRatio <= 0 ||
+				(cylinder->eyes != XR_EYE_VISIBILITY_BOTH && cylinder->eyes != XR_EYE_VISIBILITY_LEFT &&
+				 cylinder->eyes != XR_EYE_VISIBILITY_RIGHT))
+				return XR_ERROR_LAYER_INVALID;
+			if (!NormalizedPose(cylinder->worldPose.pose))
+				return XR_ERROR_POSE_INVALID;
+			for (std::uint32_t eye = 0; eye < 2; ++eye)
+			{
+				CompositionDraw draw{cylinder->color, eye, {}};
+				auto result = ImageConstants(cylinder->color, resolve, draw.constants);
+				if (XR_FAILED(result))
+					return result;
+				const auto required = cylinder->radius == 0 || std::isinf(cylinder->radius)
+										  ? XR_SPACE_LOCATION_ORIENTATION_VALID_BIT
+										  : ValidPoseFlags;
+				if ((cylinder->eyes == XR_EYE_VISIBILITY_LEFT && eye != 0) ||
+					(cylinder->eyes == XR_EYE_VISIBILITY_RIGHT && eye != 1) || cylinder->centralAngle == 0 ||
+					EmptyImage(cylinder->color) || (cylinder->worldPose.flags & required) != required ||
+					(target.eyes[eye].worldPose.flags & required) != required)
+					continue;
+				draw.constants.eyeTangents = eyeTangents[eye];
+				if (!SourceFromEye(cylinder->worldPose, target.eyes[eye].worldPose, draw.constants))
+					return XR_ERROR_POSE_INVALID;
+				draw.constants.quadParameters = {cylinder->radius == 0 ? 0 : 1 / cylinder->radius,
+												 1 / cylinder->centralAngle,
+												 cylinder->aspectRatio / cylinder->centralAngle, 0};
+				if (!std::all_of(draw.constants.quadParameters.begin(), draw.constants.quadParameters.end(),
+								 [](float value) { return std::isfinite(value); }))
+					return XR_ERROR_LAYER_INVALID;
+				draw.constants.control = {3, AlphaFlags(cylinder->space.flags), 0, 0};
+				plan.draws.push_back(draw);
+			}
+		}
 		else
 		{
 			const auto& quad = std::get<QuadLayerDescription>(layer);
@@ -222,6 +260,25 @@ std::optional<XrVector2f> EvaluateCompositionSample(const LayerConstants& consta
 		const auto distance = -position[2] / ray.z;
 		sourceUV = {(position[0] + distance * ray.x) * constants.quadParameters[0] + 0.5f,
 					0.5f - (position[1] + distance * ray.y) * constants.quadParameters[1]};
+	}
+	else if (constants.control[0] == 3)
+	{
+		// Work on a unit cylinder. Zero inverse radius removes translation for an infinite cylinder.
+		const auto& parameters = constants.quadParameters;
+		const auto& position = constants.sourceFromEyePosition;
+		const XrVector3f origin{position[0] * parameters[0], position[1] * parameters[0], position[2] * parameters[0]};
+		const float a = ray.x * ray.x + ray.z * ray.z;
+		const float b = origin.x * ray.x + origin.z * ray.z;
+		const float c = origin.x * origin.x + origin.z * origin.z - 1;
+		const float discriminant = b * b - a * c;
+		if (a <= 0 || discriminant <= 0)
+			return {};
+		// The exit intersection is the inward-facing surface, even when the eye is outside.
+		const float distance = (-b + std::sqrt(discriminant)) / a;
+		if (distance <= 0)
+			return {};
+		const XrVector3f hit{origin.x + distance * ray.x, origin.y + distance * ray.y, origin.z + distance * ray.z};
+		sourceUV = {0.5f + std::atan2(hit.x, -hit.z) * parameters[1], 0.5f - hit.y * parameters[2]};
 	}
 	else
 		return {};

@@ -946,6 +946,21 @@ public:
 					"Known cyan/magenta inset anchors lost");
 			std::puts("case=four-view-outer-inset producer=complete PASS");
 		}
+		for (float radius : {2.0f, 0.0f, std::numeric_limits<float>::infinity()})
+		{
+			const auto quad = Quad(m_sources[1],
+								   XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+									   XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT,
+								   XR_EYE_VISIBILITY_LEFT);
+			CylinderLayerDescription cylinder{quad.space, quad.eyes, IdentityPose(), Pose(),
+											  radius,	  1.3f,		 1.7f,			 quad.color};
+			cylinder.worldPose.pose.orientation = EulerAngles(0.2f, 0.08f, 0.1f);
+			auto target = Target();
+			target.eyes[0].worldPose.pose.position = {0.4f, 0.1f, 0.2f};
+			auto output = Render(Frame({Projection(m_sources[0]), cylinder}), target, plan);
+			if (m_verify)
+				Verify(m_device, *output, plan, Colors(), "cylinder-rotated-alpha");
+		}
 		ReservedPreparation();
 		PendingProducerReservation();
 		SessionWorker();

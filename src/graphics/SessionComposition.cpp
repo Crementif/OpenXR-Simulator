@@ -11,6 +11,7 @@ XrResult PrepareSessionComposition(Session& session, const XrFrameEndInfo& info,
 	LayerValidationContext validation;
 	validation.viewCount = session.ActiveViewCount();
 	validation.depthEnabled = session.Extensions().Contains(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
+	validation.cylinderEnabled = session.Extensions().Contains(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
 	validation.validSpace = [&session](XrSpace space) {
 		return session.Spaces().Owns(space);
 	};

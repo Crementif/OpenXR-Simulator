@@ -93,6 +93,7 @@ const ExtensionRegistry& LinuxRuntime::Extensions()
 		std::vector<ExtensionDefinition> result{
 			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, s_vulkanCommands},
 			{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
+			{XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME, XR_KHR_composition_layer_cylinder_SPEC_VERSION, {}},
 			{XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME, XR_KHR_convert_timespec_time_SPEC_VERSION, s_timeCommands}};
 		const auto simulation = SimulationExtensions({true, true});
 		result.insert(result.end(), simulation.begin(), simulation.end());

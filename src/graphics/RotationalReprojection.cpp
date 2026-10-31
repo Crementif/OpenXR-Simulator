@@ -53,9 +53,13 @@ XrResult PrepareRotationalComposition(const FrameLayers& layers, const Compositi
 		}
 		else
 		{
-			auto& quad = std::get<QuadLayerDescription>(layer);
-			if (quad.space.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW)
-				quad.worldPose.pose = Compose(quad.space.worldPose.pose, quad.poseInSpace);
+			std::visit(
+				[](auto& surface) {
+					if constexpr (!std::is_same_v<std::decay_t<decltype(surface)>, ProjectionLayerDescription>)
+						if (surface.space.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW)
+							surface.worldPose.pose = Compose(surface.space.worldPose.pose, surface.poseInSpace);
+				},
+				layer);
 		}
 	}
 	return PrepareComposition(FrameLayers{layers.displayTime, layers.blendMode, std::move(descriptions)}, target,

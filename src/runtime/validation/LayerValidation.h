@@ -22,6 +22,7 @@ struct LayerValidationContext
 	bool depthEnabled = false;
 	std::function<bool(XrSpace)> validSpace;
 	std::function<std::optional<SwapchainDescription>(XrSwapchain)> swapchain;
+	bool cylinderEnabled = false;
 };
 
 XrResult ValidateLayers(const XrFrameEndInfo& info, const LayerValidationContext& context);
