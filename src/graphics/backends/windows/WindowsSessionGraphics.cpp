@@ -470,7 +470,7 @@ WindowsSessionGraphics::WindowsSessionGraphics(HDC device, HGLRC context, std::s
 {
 	Configure(OpenGLBackend::Identity(device, context));
 	m_native = std::make_unique<OpenGLBackend>(device, context, m_device->Device(), m_device->EnabledExtensions());
-	m_applicationTimer = CreateApplicationGpuTimer(device, context);
+	m_applicationTimer = std::get<std::unique_ptr<OpenGLBackend>>(m_native)->CreateApplicationTimer();
 }
 
 WindowsSessionGraphics::~WindowsSessionGraphics() = default;

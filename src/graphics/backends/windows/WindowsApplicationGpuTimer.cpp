@@ -2,8 +2,8 @@
 #include "Pch.h"
 #include "graphics/FramePool.h"
 #include "platform/windows/ModuleReference.h"
-#include "platform/windows/OpenGLLibrary.h"
-#include "platform/windows/OpenGLContextScope.h"
+#include "platform/windows/WindowsLibrary.h"
+#include <d3d11_4.h>
 #include <wrl/client.h>
 
 namespace simxr
@@ -29,7 +29,12 @@ class D3D11ApplicationTimer final : public ApplicationGpuTimer
 public:
 	explicit D3D11ApplicationTimer(ID3D11Device* device)
 	{
+		if (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED)
+			throw std::runtime_error("Asynchronous timing requires a multithreaded D3D11 device");
 		device->GetImmediateContext(&m_context);
+		ComPtr<ID3D11Multithread> threading;
+		CheckTimer(m_context.As(&threading));
+		threading->SetMultithreadProtected(TRUE);
 		const D3D11_QUERY_DESC disjoint{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
 		const D3D11_QUERY_DESC timestamp{D3D11_QUERY_TIMESTAMP, 0};
 		for (auto& slot : m_queries)
@@ -42,6 +47,7 @@ public:
 
 	~D3D11ApplicationTimer() override
 	{
+		StopCollecting();
 		End();
 		Collect();
 	}
@@ -54,6 +60,7 @@ private:
 		{
 			m_context->End(slot.end.Get());
 			m_context->End(slot.disjoint.Get());
+			m_context->Flush();
 		}
 		else
 		{
@@ -187,6 +194,7 @@ public:
 
 	~D3D12ApplicationTimer() override
 	{
+		StopCollecting();
 		Collect();
 		const auto& r = *m_resources;
 		if (SUCCEEDED(r.device->GetDeviceRemovedReason()) &&
@@ -225,86 +233,14 @@ private:
 	UINT64 m_frequency = 0;
 };
 
-class OpenGLApplicationTimer final : public ApplicationGpuTimer
-{
-public:
-	OpenGLApplicationTimer(HDC device, HGLRC context) : m_device(device), m_context(context)
-	{
-		windows::OpenGLContextScope current(m_gl, device, context);
-		if (!current.Current())
-			throw std::runtime_error("Application GL context unavailable");
-		m_counter = Procedure<Counter>("glQueryCounter");
-		m_result = Procedure<Result>("glGetQueryObjectui64v");
-		m_available = Procedure<Available>("glGetQueryObjectiv");
-		m_delete = Procedure<Delete>("glDeleteQueries");
-		Procedure<Generate>("glGenQueries")(static_cast<int>(m_queries.size()), m_queries.data());
-	}
-
-	~OpenGLApplicationTimer() override
-	{
-		Collect();
-		windows::OpenGLContextScope current(m_gl, m_device, m_context);
-		if (current.Current())
-			m_delete(static_cast<int>(m_queries.size()), m_queries.data());
-		// If the application context has gone away, it owns the remaining query cleanup.
-	}
-
-private:
-	using Counter = void(APIENTRY*)(unsigned, unsigned);
-	using Result = void(APIENTRY*)(unsigned, unsigned, std::uint64_t*);
-	using Available = void(APIENTRY*)(unsigned, unsigned, int*);
-	using Delete = void(APIENTRY*)(int, const unsigned*);
-	using Generate = void(APIENTRY*)(int, unsigned*);
-
-	template<class T>
-	T Procedure(const char* name)
-	{
-		const auto value = m_gl.GetProcAddress(name);
-		if (!value || reinterpret_cast<std::intptr_t>(value) == -1 || reinterpret_cast<std::uintptr_t>(value) <= 3)
-			throw std::runtime_error("GL timestamps unavailable");
-		return std::bit_cast<T>(value);
-	}
-
-	bool Write(std::size_t slot, bool end) override
-	{
-		windows::OpenGLContextScope current(m_gl, m_device, m_context);
-		if (!current.Current())
-			return false;
-		m_counter(m_queries[slot * 2 + static_cast<std::size_t>(end)], 0x8E28); // GL_TIMESTAMP
-		return true;
-	}
-
-	bool Read(std::size_t slot, std::int64_t& nanoseconds) override
-	{
-		windows::OpenGLContextScope current(m_gl, m_device, m_context);
-		if (!current.Current())
-			return false;
-		int available = 0;
-		m_available(m_queries[slot * 2 + 1], 0x8867, &available); // GL_QUERY_RESULT_AVAILABLE
-		if (!available)
-			return false;
-		std::uint64_t begin = 0, end = 0;
-		m_result(m_queries[slot * 2], 0x8866, &begin);
-		m_result(m_queries[slot * 2 + 1], 0x8866, &end);
-		nanoseconds = Nanoseconds(begin, end, 1000000000);
-		return true;
-	}
-
-	windows::OpenGLLibrary m_gl;
-	HDC m_device;
-	HGLRC m_context;
-	Counter m_counter = nullptr;
-	Result m_result = nullptr;
-	Available m_available = nullptr;
-	Delete m_delete = nullptr;
-	std::array<unsigned, SlotCount * 2> m_queries{};
-};
-
 std::unique_ptr<ApplicationGpuTimer> CreateApplicationGpuTimer(ID3D11Device* device)
 {
 	try
 	{
-		return std::make_unique<D3D11ApplicationTimer>(device);
+		auto timer = std::make_unique<D3D11ApplicationTimer>(device);
+		if (!timer->StartCollecting())
+			return {};
+		return timer;
 	}
 	catch (const std::runtime_error&)
 	{
@@ -316,7 +252,10 @@ std::unique_ptr<ApplicationGpuTimer> CreateApplicationGpuTimer(ID3D12Device* dev
 {
 	try
 	{
-		return std::make_unique<D3D12ApplicationTimer>(device, queue);
+		auto timer = std::make_unique<D3D12ApplicationTimer>(device, queue);
+		if (!timer->StartCollecting())
+			return {};
+		return timer;
 	}
 	catch (const std::runtime_error&)
 	{
@@ -324,15 +263,4 @@ std::unique_ptr<ApplicationGpuTimer> CreateApplicationGpuTimer(ID3D12Device* dev
 	}
 }
 
-std::unique_ptr<ApplicationGpuTimer> CreateApplicationGpuTimer(HDC device, HGLRC context)
-{
-	try
-	{
-		return std::make_unique<OpenGLApplicationTimer>(device, context);
-	}
-	catch (const std::runtime_error&)
-	{
-		return {};
-	}
-}
 }

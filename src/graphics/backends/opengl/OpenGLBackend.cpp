@@ -2,6 +2,7 @@
 #include "Pch.h"
 
 #include "CompositorGlsl.h"
+#include "graphics/ApplicationGpuTimer.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "platform/windows/ModuleReference.h"
 #include "platform/windows/OpenGLContextScope.h"
@@ -328,6 +329,130 @@ private:
 	PFNWGLDESTROYPBUFFERARBPROC m_destroy = nullptr;
 };
 
+class OpenGLApplicationTimer final : public ApplicationGpuTimer
+{
+public:
+	OpenGLApplicationTimer(HDC device, HGLRC application, std::shared_ptr<OpenGLContext> context)
+		: m_device(device), m_application(application), m_context(std::move(context))
+	{}
+
+	void Initialize()
+	{
+		const auto& gl = m_context->m_gl;
+		std::lock_guard lock(m_context->m_mutex);
+		windows::OpenGLContextScope current(gl, m_device, m_application);
+		if (!current.Current())
+			throw std::runtime_error("Application GL context unavailable");
+		GLint major = 0, minor = 0, count = 0;
+		gl.GetIntegerv(GL_MAJOR_VERSION, &major);
+		gl.GetIntegerv(GL_MINOR_VERSION, &minor);
+		gl.GetIntegerv(GL_NUM_EXTENSIONS, &count);
+		bool queryBuffers = major > 4 || (major == 4 && minor >= 4);
+		const auto getString = Procedure<PFNGLGETSTRINGIPROC>(gl, "glGetStringi");
+		for (GLint index = 0; !queryBuffers && index < count; ++index)
+		{
+			const auto extension = getString(GL_EXTENSIONS, index);
+			queryBuffers =
+				extension && std::string_view(reinterpret_cast<const char*>(extension)) == "GL_ARB_query_buffer_object";
+		}
+		if (!queryBuffers)
+			throw std::runtime_error("Asynchronous GL timing requires query buffers");
+		m_counter = Procedure<PFNGLQUERYCOUNTERPROC>(gl, "glQueryCounter");
+		m_copy = Procedure<PFNGLGETQUERYBUFFEROBJECTUI64VPROC>(gl, "glGetQueryBufferObjectui64v");
+		m_read = Procedure<PFNGLGETNAMEDBUFFERSUBDATAPROC>(gl, "glGetNamedBufferSubData");
+		m_deleteQueries = Procedure<PFNGLDELETEQUERIESPROC>(gl, "glDeleteQueries");
+		m_deleteBuffers = Procedure<PFNGLDELETEBUFFERSPROC>(gl, "glDeleteBuffers");
+		m_fence = Procedure<PFNGLFENCESYNCPROC>(gl, "glFenceSync");
+		Procedure<PFNGLGENQUERIESPROC>(gl, "glGenQueries")(static_cast<GLsizei>(m_queries.size()), m_queries.data());
+		Procedure<PFNGLCREATEBUFFERSPROC>(gl, "glCreateBuffers")(static_cast<GLsizei>(m_buffers.size()),
+																 m_buffers.data());
+		const auto allocate = Procedure<PFNGLNAMEDBUFFERDATAPROC>(gl, "glNamedBufferData");
+		for (const auto buffer : m_buffers)
+			allocate(buffer, 2 * sizeof(GLuint64), nullptr, GL_DYNAMIC_READ);
+		CheckGL(gl, "Cannot initialize application GPU timing");
+	}
+
+	~OpenGLApplicationTimer() override
+	{
+		StopCollecting();
+		const auto& gl = m_context->m_gl;
+		std::lock_guard lock(m_context->m_mutex);
+		{
+			windows::OpenGLContextScope application(gl, m_device, m_application);
+			if (application.Current() && m_deleteQueries)
+				m_deleteQueries(static_cast<GLsizei>(m_queries.size()), m_queries.data());
+		}
+		windows::OpenGLContextScope current(gl, m_context->m_device, m_context->m_handle);
+		if (current.Current())
+		{
+			for (const auto fence : m_completed)
+				if (fence)
+					m_context->m_deleteSync(fence);
+			if (m_deleteBuffers)
+				m_deleteBuffers(static_cast<GLsizei>(m_buffers.size()), m_buffers.data());
+		}
+	}
+
+private:
+	bool Write(std::size_t slot, bool end) override
+	{
+		const auto& gl = m_context->m_gl;
+		std::lock_guard lock(m_context->m_mutex);
+		windows::OpenGLContextScope current(gl, m_device, m_application);
+		if (!current.Current())
+			return false;
+		m_counter(m_queries[slot * 2 + static_cast<std::size_t>(end)], GL_TIMESTAMP);
+		if (end)
+		{
+			// Queue result copies in the application context; only the shared buffer
+			// and fence are observed later from the runtime's private context.
+			for (std::size_t index = slot * 2; index < slot * 2 + 2; ++index)
+				m_copy(m_queries[index], m_buffers[slot], GL_QUERY_RESULT,
+					   static_cast<GLintptr>((index % 2) * sizeof(GLuint64)));
+			m_completed[slot] = m_fence(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+			gl.Flush();
+			if (!m_completed[slot])
+				return false;
+		}
+		CheckGL(gl, "Cannot write application GPU timing");
+		return true;
+	}
+
+	bool Read(std::size_t slot, std::int64_t& nanoseconds) override
+	{
+		const auto& gl = m_context->m_gl;
+		std::lock_guard lock(m_context->m_mutex);
+		windows::OpenGLContextScope current(gl, m_context->m_device, m_context->m_handle);
+		if (!current.Current())
+			return false;
+		const auto status = m_context->m_wait(m_completed[slot], 0, 0);
+		if (status == GL_WAIT_FAILED)
+			throw std::runtime_error("Cannot observe application timing fence");
+		if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
+			return false;
+		std::array<GLuint64, 2> ticks{};
+		m_read(m_buffers[slot], 0, sizeof(ticks), ticks.data());
+		CheckGL(gl, "Cannot read application GPU timing");
+		m_context->m_deleteSync(std::exchange(m_completed[slot], nullptr));
+		if (ticks[1] >= ticks[0] && ticks[1] - ticks[0] <= static_cast<GLuint64>(INT64_MAX))
+			nanoseconds = static_cast<std::int64_t>(ticks[1] - ticks[0]);
+		return true;
+	}
+
+	const HDC m_device;
+	const HGLRC m_application;
+	const std::shared_ptr<OpenGLContext> m_context;
+	PFNGLQUERYCOUNTERPROC m_counter = nullptr;
+	PFNGLGETQUERYBUFFEROBJECTUI64VPROC m_copy = nullptr;
+	PFNGLGETNAMEDBUFFERSUBDATAPROC m_read = nullptr;
+	PFNGLDELETEQUERIESPROC m_deleteQueries = nullptr;
+	PFNGLDELETEBUFFERSPROC m_deleteBuffers = nullptr;
+	PFNGLFENCESYNCPROC m_fence = nullptr;
+	std::array<GLuint, SlotCount * 2> m_queries{};
+	std::array<GLsync, SlotCount> m_completed{};
+	std::array<GLuint, SlotCount> m_buffers{};
+};
+
 class OpenGLSharedImage final
 {
 public:
@@ -524,6 +649,22 @@ VulkanExternalIdentity OpenGLBackend::Identity(HDC device, HGLRC context)
 	if (!current.Restore())
 		throw std::runtime_error("Cannot restore OpenGL context after device identification");
 	return identity;
+}
+
+std::unique_ptr<ApplicationGpuTimer> OpenGLBackend::CreateApplicationTimer()
+{
+	try
+	{
+		auto timer = std::make_unique<OpenGLApplicationTimer>(m_applicationDevice, m_applicationContext, m_context);
+		timer->Initialize();
+		if (!timer->StartCollecting())
+			return {};
+		return timer;
+	}
+	catch (const std::runtime_error&)
+	{
+		return {};
+	}
 }
 
 XrResult OpenGLBackend::Prepare(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,

@@ -7,5 +7,4 @@ namespace simxr
 {
 std::unique_ptr<ApplicationGpuTimer> CreateApplicationGpuTimer(ID3D11Device* device);
 std::unique_ptr<ApplicationGpuTimer> CreateApplicationGpuTimer(ID3D12Device* device, ID3D12CommandQueue* queue);
-std::unique_ptr<ApplicationGpuTimer> CreateApplicationGpuTimer(HDC device, HGLRC context);
 }

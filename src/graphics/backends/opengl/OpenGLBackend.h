@@ -22,6 +22,7 @@ struct OpenGLCompositionSource
 	std::uint32_t width = 0, height = 0, layers = 1, mipLevels = 1, samples = 1;
 };
 
+class ApplicationGpuTimer;
 class OpenGLContext;
 class OpenGLSharedImage;
 
@@ -57,6 +58,7 @@ public:
 
 	// Validate application features before allocating the native delivery device.
 	static VulkanExternalIdentity Identity(HDC device, HGLRC context);
+	std::unique_ptr<ApplicationGpuTimer> CreateApplicationTimer();
 	XrResult Prepare(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
 					 std::shared_ptr<OpenGLFrame>& output, std::uint32_t outputLayers = 2);
 	XrResult PrepareCapture(const LayerImageDescription& image, OpenGLCompositionSource source,

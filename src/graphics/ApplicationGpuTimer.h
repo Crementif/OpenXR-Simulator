@@ -3,17 +3,24 @@
 #include "graphics/FrameGpuTiming.h"
 #include <array>
 #include <cstddef>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 namespace simxr
 {
-// Called under the native adapter's submission gate. A full ring skips timing;
-// querying never waits or flushes the application queue.
+// Frame markers require the native adapter's submission gate. Collection is
+// serialized internally; asynchronous readers must be safe alongside application rendering.
 class ApplicationGpuTimer
 {
 public:
-	virtual ~ApplicationGpuTimer() = default;
+	virtual ~ApplicationGpuTimer();
+	bool StartCollecting() noexcept;
+	// Derived destructors must stop collection before releasing native resources.
+	void StopCollecting() noexcept;
 	void Begin() noexcept;
+	// Repeated submission attempts retain the same result until the next Begin.
 	GpuDuration End() noexcept;
 	void Collect() noexcept;
 
@@ -43,7 +50,15 @@ private:
 		GpuDuration duration;
 	};
 
+	GpuDuration EndLocked() noexcept;
+	void CollectLocked() noexcept;
+	bool Pending() const noexcept;
+
+	std::mutex m_mutex;
+	std::condition_variable_any m_changed;
 	std::array<Slot, SlotCount> m_slots;
 	std::size_t m_open = SlotCount;
+	GpuDuration m_ended;
+	std::jthread m_collector;
 };
 }

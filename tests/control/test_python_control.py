@@ -111,6 +111,17 @@ class FrameRecordingTests(unittest.TestCase):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_application_gpu_timing_in_frame_history(self):
+        duration = 2**53 + 1
+        frames = Field.nested(Tag.FRAMES, [
+            Field.nested(1, [Field.u64(Tag.FRAME_ID, 3), Field.i64(237, duration)]),
+            Field.nested(2, [Field.u64(Tag.FRAME_ID, 4)]),
+            Field.nested(3, [Field.u64(Tag.FRAME_ID, 5), Field.i64(237, -1)])])
+        decoded = to_dict(decode_fields(encode_fields([frames])).values())['frames']
+        self.assertEqual(decoded[0]['application_gpu_time'], duration)
+        self.assertNotIn('application_gpu_time', decoded[1])
+        self.assertEqual(decoded[2]['application_gpu_time'], -1)
+
     def test_explicit_game_id_advances_automatic_ids(self):
         client = object.__new__(Client)
         client._lock = threading.Lock()

@@ -47,6 +47,7 @@ public:
 
 	~VulkanApplicationGpuTimer() override
 	{
+		StopCollecting();
 		Collect();
 		if (!m_resources->device->lost.load())
 			for (std::size_t index = 0; index < m_resources->commands.size(); ++index)
@@ -128,7 +129,10 @@ std::unique_ptr<ApplicationGpuTimer> CreateVulkanApplicationGpuTimer(std::shared
 		return {};
 	try
 	{
-		return std::make_unique<VulkanApplicationGpuTimer>(std::move(device));
+		auto timer = std::make_unique<VulkanApplicationGpuTimer>(std::move(device));
+		if (!timer->StartCollecting())
+			return {};
+		return timer;
 	}
 	catch (const VulkanError&)
 	{

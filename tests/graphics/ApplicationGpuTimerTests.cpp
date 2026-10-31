@@ -1,5 +1,8 @@
 #include "../TestSupport.h"
 #include "graphics/ApplicationGpuTimer.h"
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <vector>
 
 namespace simxr::tests
@@ -7,7 +10,14 @@ namespace simxr::tests
 class Timer final : public ApplicationGpuTimer
 {
 public:
-	bool ready = false, fail = false;
+	std::atomic<bool> ready = false;
+	bool fail = false;
+
+	~Timer() override
+	{
+		StopCollecting();
+	}
+
 	std::vector<std::pair<std::size_t, bool>> markers;
 
 private:
@@ -64,9 +74,34 @@ static void Ring()
 	first.compositorNanoseconds.Store(31);
 	Require(second->compositorNanoseconds.Load() == 31, "Copied history lost late compositor timing");
 }
+
+static void BackgroundCollection()
+{
+	Timer timer;
+	Require(timer.StartCollecting(), "Could not start timing collector");
+	timer.Begin();
+	const auto duration = timer.End();
+	const auto retry = timer.End();
+	Require(timer.markers.size() == 2, "Retry submitted another end marker");
+	Require(duration.Load() == -1 && retry.Load() == -1, "Pending timing was reported as complete");
+	timer.ready = true;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (duration.Load() < 0 && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	Require(duration.Load() == 17, "Timing required another frame call to complete");
+	Require(retry.Load() == 17 && timer.End().Load() == 17, "Submission retry lost the frame's timing");
+	timer.ready = false;
+	timer.Begin();
+	const auto next = timer.End();
+	Require(next.Load() == -1 && duration.Load() == 17, "Next frame reused a historical timing result");
+	timer.StopCollecting();
+	Require(next.Load() == -1, "Stopping collection fabricated a duration");
+}
+
 }
 
 int main()
 {
 	simxr::tests::Ring();
+	simxr::tests::BackgroundCollection();
 }
