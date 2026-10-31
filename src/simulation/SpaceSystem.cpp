@@ -10,6 +10,13 @@ static bool IsSupportedReferenceSpace(XrReferenceSpaceType type)
 		   type == XR_REFERENCE_SPACE_TYPE_STAGE;
 }
 
+static XrPosef FloorOrigin(XrPosef local, XrPosef stage)
+{
+	const auto forward = Rotate(local.orientation, {0, 0, -1});
+	return {EulerAngles(std::atan2(-forward.x, -forward.z), 0, 0),
+			{local.position.x, stage.position.y, local.position.z}};
+}
+
 static bool HasFlags(XrSpaceLocationFlags flags, XrSpaceLocationFlags bits)
 {
 	return (flags & bits) == bits;
@@ -28,9 +35,10 @@ static PoseSample ApplyPoseOffset(PoseSample source, XrPosef offset)
 }
 
 SpaceSystem::SpaceSystem(XrSession owner, const TrackingSystem& tracking, ActionSource source,
-						 ActionValidator validator, EventQueue* events, bool combinedEye)
+						 ActionValidator validator, EventQueue* events, bool combinedEye, bool localFloor)
 	: m_ownerSession(owner), m_tracking(tracking), m_actionSource(std::move(source)),
-	  m_actionValidator(std::move(validator)), m_eventQueue(events), m_combinedEye(combinedEye)
+	  m_actionValidator(std::move(validator)), m_eventQueue(events), m_combinedEye(combinedEye),
+	  m_localFloor(localFloor)
 {
 	if (owner == XR_NULL_HANDLE)
 		throw std::invalid_argument("Missing space owner");
@@ -40,7 +48,8 @@ SpaceSystem::SpaceSystem(XrSession owner, const TrackingSystem& tracking, Action
 
 XrResult SpaceSystem::CreateReferenceSpace(XrReferenceSpaceType type, XrPosef offset, XrSpace& output)
 {
-	if (!IsSupportedReferenceSpace(type) && !(m_combinedEye && type == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO))
+	if (!IsSupportedReferenceSpace(type) && !(m_localFloor && type == XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR) &&
+		!(m_combinedEye && type == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO))
 		return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;
 	const auto normalized = NormalizedPose(offset);
 	if (!normalized)
@@ -178,7 +187,8 @@ XrResult SpaceSystem::Locate(XrSpace space, XrSpace base, RuntimeTime time, Spac
 
 XrResult SpaceSystem::Bounds(XrReferenceSpaceType type, XrExtent2Df& output) const
 {
-	if (!IsSupportedReferenceSpace(type) && !(m_combinedEye && type == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO))
+	if (!IsSupportedReferenceSpace(type) && !(m_localFloor && type == XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR) &&
+		!(m_combinedEye && type == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO))
 		return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;
 	std::lock_guard lock(m_mutex);
 	output = {};
@@ -267,7 +277,10 @@ PoseSample SpaceSystem::Resolve(const SpaceRecord& record, RuntimeTime time, con
 		result.eyeGazeSampleTime.reset();
 	}
 	else if (origin)
-		result = {record.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL ? origin->local : origin->stage,
+		result = {record.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR
+					  ? FloorOrigin(origin->local, origin->stage)
+				  : record.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL ? origin->local
+																		  : origin->stage,
 				  TrackedPoseFlags, time};
 	return ApplyPoseOffset(result, record.poseOffset);
 }
@@ -333,6 +346,13 @@ XrResult SpaceSystem::ApplyOrigin(RuntimeTime time, const ReferenceSpaceState& s
 	{
 		const auto localDelta = RelativePose(next.local, previous.local);
 		const auto stageDelta = RelativePose(next.stage, previous.stage);
+		if (m_localFloor)
+		{
+			const auto delta =
+				RelativePose(FloorOrigin(next.local, next.stage), FloorOrigin(previous.local, previous.stage));
+			m_eventQueue->Push(ReferenceSpaceEvent{m_ownerSession, XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR, time,
+												   IsFinite(delta.position), delta});
+		}
 		m_eventQueue->Push(ReferenceSpaceEvent{m_ownerSession, XR_REFERENCE_SPACE_TYPE_LOCAL, time,
 											   IsFinite(localDelta.position), localDelta});
 		m_eventQueue->Push(ReferenceSpaceEvent{m_ownerSession, XR_REFERENCE_SPACE_TYPE_STAGE, time,

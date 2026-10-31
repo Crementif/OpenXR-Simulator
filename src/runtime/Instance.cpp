@@ -6,7 +6,7 @@
 namespace simxr
 {
 Instance::Instance(XrInstance handle, std::span<const char* const> extensions, XrVersion apiVersion)
-	: m_handle(handle), m_apiVersion(apiVersion), m_extensions(extensions), m_actions(handle, m_extensions),
+	: m_handle(handle), m_apiVersion(apiVersion), m_extensions(extensions, apiVersion), m_actions(handle, m_extensions),
 	  m_trackers(m_actions, m_extensions, m_events)
 {
 	if (handle == XR_NULL_HANDLE)

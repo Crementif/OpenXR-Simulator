@@ -36,6 +36,36 @@ XrResult LocateSpace(SpaceSystem& spaces, XrSpace space, XrSpace base, XrTime ti
 	return XR_SUCCESS;
 }
 
+XrResult LocateSpaces(SpaceSystem& spaces, const XrSpacesLocateInfo* info, XrSpaceLocations* locations)
+{
+	if (!info || info->type != XR_TYPE_SPACES_LOCATE_INFO || !info->spaceCount || !info->spaces || !locations ||
+		locations->type != XR_TYPE_SPACE_LOCATIONS || locations->locationCount != info->spaceCount ||
+		!locations->locations)
+		return XR_ERROR_VALIDATION_FAILURE;
+	const StructureChain chain(locations->next);
+	const std::array known{XR_TYPE_SPACE_VELOCITIES};
+	if (XR_FAILED(StructureChain(info->next).Validate({})) || XR_FAILED(chain.Validate(known)))
+		return XR_ERROR_VALIDATION_FAILURE;
+	auto* velocities = const_cast<XrSpaceVelocities*>(chain.Find<XrSpaceVelocities>(XR_TYPE_SPACE_VELOCITIES));
+	if (velocities && (velocities->velocityCount != info->spaceCount || !velocities->velocities))
+		return XR_ERROR_VALIDATION_FAILURE;
+	std::vector<SpaceLocation> samples(info->spaceCount);
+	for (std::uint32_t index = 0; index < info->spaceCount; ++index)
+	{
+		const auto result = spaces.Locate(info->spaces[index], info->baseSpace, {Duration{info->time}}, samples[index]);
+		if (XR_FAILED(result))
+			return result;
+	}
+	for (std::uint32_t index = 0; index < info->spaceCount; ++index)
+	{
+		const auto& sample = samples[index];
+		locations->locations[index] = {sample.pose.flags, sample.pose.pose};
+		if (velocities)
+			velocities->velocities[index] = {sample.velocityFlags, sample.linearVelocity, sample.angularVelocity};
+	}
+	return XR_SUCCESS;
+}
+
 XrResult LocateViews(SpaceSystem& spaces, const ViewConfiguration& configuration, const TrackingSnapshot& snapshot,
 					 const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count,
 					 XrView* views, const EnabledExtensions* enabled, ViewQuerySnapshot* query)

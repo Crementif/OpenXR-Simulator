@@ -17,7 +17,7 @@ XrResult DispatchTable::Resolve(std::string_view name, const EnabledExtensions* 
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	if (!enabled && !entry->global)
 		return XR_ERROR_HANDLE_INVALID;
-	if (enabled && !m_extensions.CommandEnabled(name, *enabled))
+	if (enabled && ((entry->core11 && !enabled->Core11()) || !m_extensions.CommandEnabled(name, *enabled)))
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	function = entry->function;
 	return XR_SUCCESS;

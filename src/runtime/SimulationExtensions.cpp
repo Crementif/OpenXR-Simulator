@@ -18,7 +18,8 @@ std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCap
 	static constexpr std::array s_coreDependency{ExtensionDependency{{}, XR_MAKE_VERSION(1, 0, 0)}};
 	static constexpr std::array s_dependsFB{DependencyClause{s_fbDependency}};
 	static constexpr std::array s_dependsFidelity{DependencyClause{s_fbDependency}, DependencyClause{s_coreDependency}};
-	static constexpr std::array s_quadDependency{ExtensionDependency{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME}};
+	static constexpr std::array s_quadDependency{ExtensionDependency{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME},
+												 ExtensionDependency{{}, XR_MAKE_VERSION(1, 1, 0)}};
 	static constexpr std::array s_dependsQuad{DependencyClause{s_quadDependency}};
 	static const std::array s_definitions{
 		ExtensionDefinition{XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME, XR_EXT_eye_gaze_interaction_SPEC_VERSION, {}},

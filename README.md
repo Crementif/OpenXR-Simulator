@@ -41,7 +41,7 @@ See [automation and debugging](docs/AUTOMATION.md) for setup and examples, or br
 
 ## Compatibility
 
-This is a development preview implementing OpenXR 1.0. Application compatibility depends on the graphics binding and extensions the application requires.
+This is a development preview implementing OpenXR 1.1. Application compatibility depends on the graphics binding and extensions the application requires.
 
 | Platform | Application graphics bindings |
 | --- | --- |

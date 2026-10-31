@@ -13,6 +13,7 @@ struct DispatchEntry
 	std::string_view name;
 	PFN_xrVoidFunction function;
 	bool global = false;
+	bool core11 = false;
 };
 
 // Entries and the extension registry are borrowed for the table lifetime.

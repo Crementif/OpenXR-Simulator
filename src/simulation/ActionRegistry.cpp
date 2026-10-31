@@ -15,11 +15,18 @@ struct ProfileComponent
 	std::string_view component;
 	XrActionType type;
 	bool system;
+	XrVersion coreVersion;
 };
 
 static constexpr ProfileComponent s_components[]{
 #include "simulation/InteractionProfiles.inc"
 };
+
+static bool ComponentEnabled(const ProfileComponent& component, const EnabledExtensions& enabled)
+{
+	return (component.coreVersion && (component.coreVersion < XR_MAKE_VERSION(1, 1, 0) || enabled.Core11())) ||
+		   (!component.extension.empty() && enabled.Contains(component.extension));
+}
 
 static bool ValidName(std::string_view name)
 {
@@ -104,9 +111,8 @@ static bool UserAllowed(std::string_view path, const EnabledExtensions& enabled)
 		return true;
 	if (PersistentTrackerPath(path))
 		return enabled.Contains(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
-	return std::any_of(std::begin(s_components), std::end(s_components), [&](const auto& entry) {
-		return entry.user == path && (entry.extension.empty() || enabled.Contains(entry.extension));
-	});
+	return std::any_of(std::begin(s_components), std::end(s_components),
+					   [&](const auto& entry) { return entry.user == path && ComponentEnabled(entry, enabled); });
 }
 
 struct DeviceView
@@ -186,7 +192,7 @@ static ActionStateValue ReadSource(const ControllerControls& input, const Action
 	if (path.starts_with("/input/trigger"))
 	{
 		value.scalar = input.trigger;
-		value.boolean = path.ends_with("/touch")   ? input.triggerTouch
+		value.boolean = (path.ends_with("/touch") || path.ends_with("/proximity")) ? input.triggerTouch
 						: path.ends_with("/click") ? input.triggerClick.value_or(input.trigger > 0.5f)
 												   : input.trigger > 0.5f;
 	}
@@ -217,10 +223,11 @@ static ActionStateValue ReadSource(const ControllerControls& input, const Action
 		value.boolean = input.menu;
 	else if (path == "/input/back/click")
 		value.boolean = input.back;
-	else if (path == "/input/thumbrest/touch")
+	else if (path == "/input/thumbrest/touch" || path == "/input/thumb_resting_surfaces/proximity")
 		value.boolean = input.thumbrestTouch;
-	else if (path != "/input/grip/pose" && path != "/input/aim/pose" && path != "/input/gaze_ext/pose" &&
-			 path != "/output/haptic")
+	else if (path != "/input/grip/pose" && path != "/input/grip_surface/pose" && path != "/input/aim/pose" &&
+			 path != "/input/gaze_ext/pose" && path != "/output/haptic" && path != "/output/haptic_trigger" &&
+			 path != "/output/haptic_thumb")
 	{
 		value.active = false;
 		value.inactiveReason = InactiveReason::Unbound;
@@ -620,8 +627,7 @@ XrResult ActionRegistry::SuggestBindings(const XrInteractionProfileSuggestedBind
 		return XR_ERROR_PATH_INVALID;
 	auto component = std::find_if(std::begin(s_components), std::end(s_components),
 								  [&](const auto& entry) { return entry.profile == *profileText; });
-	if (component == std::end(s_components) ||
-		(!component->extension.empty() && !m_enabled.Contains(component->extension)))
+	if (component == std::end(s_components) || !ComponentEnabled(*component, m_enabled))
 		return XR_ERROR_PATH_UNSUPPORTED;
 	std::vector<ActionBinding> prepared;
 	for (std::uint32_t index = 0; index < info.countSuggestedBindings; ++index)
@@ -642,7 +648,7 @@ XrResult ActionRegistry::SuggestBindings(const XrInteractionProfileSuggestedBind
 		std::string_view componentPath;
 		for (const auto& entry : s_components)
 		{
-			if (entry.profile != *profileText)
+			if (entry.profile != *profileText || !ComponentEnabled(entry, m_enabled))
 				continue;
 			if (path->size() == entry.user.size() + entry.component.size() && path->starts_with(entry.user) &&
 				std::string_view(*path).substr(entry.user.size()) == entry.component)
@@ -663,7 +669,8 @@ XrResult ActionRegistry::SuggestBindings(const XrInteractionProfileSuggestedBind
 			}
 		}
 		auto match = std::find_if(std::begin(s_components), std::end(s_components), [&](const auto& entry) {
-			return entry.profile == *profileText && entry.component == componentPath;
+			return entry.profile == *profileText && entry.component == componentPath &&
+				   ComponentEnabled(entry, m_enabled);
 		});
 		if (user.empty() || match == std::end(s_components) || !Compatible(action->type, match->type))
 			return XR_ERROR_PATH_UNSUPPORTED;

@@ -31,6 +31,7 @@ XrResult PrepareRotationalComposition(const FrameLayers& layers, const Compositi
 			[&](auto& description) -> XrResult {
 				auto& space = description.space;
 				if (space.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL ||
+					space.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR ||
 					space.referenceType == XR_REFERENCE_SPACE_TYPE_STAGE)
 					return XR_SUCCESS;
 				if (space.referenceType != XR_REFERENCE_SPACE_TYPE_VIEW)

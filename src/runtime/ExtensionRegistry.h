@@ -31,11 +31,14 @@ struct ExtensionDefinition
 class EnabledExtensions
 {
 public:
-	explicit EnabledExtensions(std::span<const char* const> requested = {});
+	explicit EnabledExtensions(std::span<const char* const> requested = {},
+							   XrVersion apiVersion = XR_MAKE_VERSION(1, 0, 0));
 	bool Contains(std::string_view name) const;
+	bool Core11() const noexcept;
 
 private:
 	std::vector<std::string> m_names;
+	XrVersion m_apiVersion;
 };
 
 // Immutable view: definition names, commands and dependencies must outlive this registry and its copies.

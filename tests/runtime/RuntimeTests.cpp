@@ -56,13 +56,13 @@ XrInstanceCreateInfo InstanceInfo()
 
 void ApiVersions()
 {
-	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 99), XR_MAKE_VERSION(1, 0, 99)) == SupportedApiVersion,
+	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 99), XR_MAKE_VERSION(1, 0, 99)) == XR_MAKE_VERSION(1, 0, 27),
 			"Newer loader patch revision rejected a compatible runtime");
-	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 0, 1)) == SupportedApiVersion,
+	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 0, 1)) == XR_MAKE_VERSION(1, 0, 27),
 			"Older loader patch revision changed the reported runtime API");
 	Require(NegotiateApiVersion(XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 1, 0)) == SupportedApiVersion,
-			"Loader supporting multiple minor versions could not select core 1.0");
-	Require(!NegotiateApiVersion(XR_MAKE_VERSION(1, 1, 0), XR_MAKE_VERSION(1, 1, 99)) &&
+			"Loader supporting multiple minor versions could not select core 1.1");
+	Require(!NegotiateApiVersion(XR_MAKE_VERSION(1, 2, 0), XR_MAKE_VERSION(1, 2, 99)) &&
 				!NegotiateApiVersion(0, XR_MAKE_VERSION(0, 9, 99)) &&
 				!NegotiateApiVersion(XR_MAKE_VERSION(2, 0, 0), XR_MAKE_VERSION(2, 0, 99)),
 			"Loader without a compatible interface version was accepted");
@@ -223,7 +223,7 @@ void Lifecycle()
 	info.applicationInfo.applicationName[0] = 0;
 	Require(runtime.CreateInstance(&info, first) == XR_ERROR_NAME_INVALID, "Missing application name");
 	info = InstanceInfo();
-	info.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 1, 0);
+	info.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 2, 0);
 	Require(runtime.CreateInstance(&info, first) == XR_ERROR_API_VERSION_UNSUPPORTED, "Unsupported core version");
 	info = InstanceInfo();
 	info.createFlags = 1;

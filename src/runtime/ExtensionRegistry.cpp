@@ -3,7 +3,8 @@
 
 namespace simxr
 {
-EnabledExtensions::EnabledExtensions(std::span<const char* const> requested)
+EnabledExtensions::EnabledExtensions(std::span<const char* const> requested, XrVersion apiVersion)
+	: m_apiVersion(apiVersion)
 {
 	m_names.reserve(requested.size());
 	for (auto name : requested)
@@ -12,6 +13,11 @@ EnabledExtensions::EnabledExtensions(std::span<const char* const> requested)
 			throw std::invalid_argument("Null extension name");
 		m_names.emplace_back(name);
 	}
+}
+
+bool EnabledExtensions::Core11() const noexcept
+{
+	return m_apiVersion >= XR_MAKE_VERSION(1, 1, 0);
 }
 
 bool EnabledExtensions::Contains(std::string_view name) const
@@ -81,7 +87,8 @@ XrResult ExtensionRegistry::Validate(std::span<const char* const> requested, XrV
 						   (dependency.coreVersion && coreVersion >= dependency.coreVersion);
 				});
 			if (!satisfied)
-				return XR_ERROR_EXTENSION_NOT_PRESENT;
+				return coreVersion >= XR_MAKE_VERSION(1, 1, 0) ? XR_ERROR_EXTENSION_DEPENDENCY_NOT_ENABLED
+															   : XR_ERROR_EXTENSION_NOT_PRESENT;
 		}
 	}
 	return XR_SUCCESS;

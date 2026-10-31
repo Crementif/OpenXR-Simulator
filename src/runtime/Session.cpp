@@ -26,7 +26,8 @@ Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> cl
 			  return m_publication.ActionPose(action, path, time);
 		  },
 		  [this](XrAction action, XrPath path) { return m_publication.ValidatePoseAction(action, path); },
-		  &instance.Events(), instance.Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME)),
+		  &instance.Events(), instance.Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME),
+		  instance.Extensions().Core11()),
 	  m_body(handle, m_publication.Tracking(), m_spaces, instance.Extensions())
 {
 	if (handle == XR_NULL_HANDLE)
@@ -63,7 +64,7 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (info.primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO &&
 		(info.primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO ||
-		 !m_instance.Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME)))
+		 !(m_instance.Extensions().Core11() || m_instance.Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME))))
 		return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
 	FrameImageHistory::Retired retiredHistory;
 	std::lock_guard lifecycle(m_lifecycleMutex);
@@ -784,7 +785,7 @@ XrResult Session::LocateViews(const XrViewLocateInfo& info, XrViewState* state, 
 {
 	if (info.viewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO &&
 		(info.viewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO ||
-		 !m_instance.Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME)))
+		 !(m_instance.Extensions().Core11() || m_instance.Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME))))
 		return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
 	std::lock_guard lock(m_mutex);
 	if (m_state.closed)

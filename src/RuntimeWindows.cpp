@@ -849,8 +849,9 @@ static XrResult ValidateViewConfiguration(const simxr::EnabledExtensions& extens
 {
 	if (system != 1)
 		return XR_ERROR_SYSTEM_INVALID;
-	if (type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO || (type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO &&
-															  extensions.Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME)))
+	if (type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO ||
+		(type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO &&
+		 (extensions.Core11() || extensions.Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME))))
 		return XR_SUCCESS;
 	return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
 }
@@ -866,7 +867,8 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(XrInstance insta
 		return XR_ERROR_SYSTEM_INVALID;
 	if (!count || (capacity && !types))
 		return XR_ERROR_VALIDATION_FAILURE;
-	const bool quadViews = core->Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
+	const bool quadViews =
+		(core->Extensions().Core11() || core->Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME));
 	*count = quadViews ? 2 : 1;
 	if (!capacity)
 		return XR_SUCCESS;
@@ -1795,6 +1797,17 @@ static XrResult XRAPI_PTR xrLocateSpace_runtime(XrSpace space, XrSpace base, XrT
 	return simxr::LocateSpace(core->Spaces(), space, base, time, location, &core->Extensions());
 }
 
+static XrResult XRAPI_PTR xrLocateSpaces_runtime(XrSession handle, const XrSpacesLocateInfo* info,
+												 XrSpaceLocations* locations)
+{
+	const auto core = rt::RetainSession(handle);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	if (!core->Extensions().Core11())
+		return XR_ERROR_FUNCTION_UNSUPPORTED;
+	return simxr::LocateSpaces(core->Spaces(), info, locations);
+}
+
 static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession handle, std::uint32_t capacity,
 															 std::uint32_t* count, XrReferenceSpaceType* spaces)
 {
@@ -1804,7 +1817,8 @@ static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession handle, s
 	if (!count || (capacity && !spaces))
 		return XR_ERROR_VALIDATION_FAILURE;
 	const bool foveationEnabled = core->Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
-	*count = foveationEnabled ? 4 : 3;
+	const bool localFloor = core->Extensions().Core11();
+	*count = 3 + static_cast<std::uint32_t>(foveationEnabled) + static_cast<std::uint32_t>(localFloor);
 	if (!capacity)
 		return XR_SUCCESS;
 	if (capacity < *count)
@@ -1812,8 +1826,10 @@ static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession handle, s
 	spaces[0] = XR_REFERENCE_SPACE_TYPE_VIEW;
 	spaces[1] = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	spaces[2] = XR_REFERENCE_SPACE_TYPE_STAGE;
+	if (localFloor)
+		spaces[3] = XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR;
 	if (foveationEnabled)
-		spaces[3] = XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO;
+		spaces[localFloor ? 4 : 3] = XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO;
 	return XR_SUCCESS;
 }
 
@@ -2334,6 +2350,8 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateReferenceSpace_runtime>::Invoke)},
 	{"xrDestroySpace", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroySpace_runtime>::Invoke)},
 	{"xrLocateSpace", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrLocateSpace_runtime>::Invoke)},
+	{"xrLocateSpaces", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrLocateSpaces_runtime>::Invoke), false,
+	 true},
 	{"xrEnumerateReferenceSpaces",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateReferenceSpaces_runtime>::Invoke)},
 	{"xrCreateActionSpace",

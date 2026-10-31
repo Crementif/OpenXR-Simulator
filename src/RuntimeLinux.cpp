@@ -129,7 +129,8 @@ static XrResult ValidateViewConfiguration(const simxr::LinuxRuntime::InstanceRef
 		return XR_ERROR_SYSTEM_INVALID;
 	if (type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO ||
 		(type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO &&
-		 instance->core->Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME)))
+		 (instance->core->Extensions().Core11() ||
+		  instance->core->Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME))))
 		return XR_SUCCESS;
 	return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
 }
@@ -143,7 +144,8 @@ static XrResult XRAPI_PTR RunXrEnumerateViewConfigurations(XrInstance handle, Xr
 	if (XR_FAILED(validation))
 		return validation;
 	std::vector<XrViewConfigurationType> types{XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-	if (instance->core->Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME))
+	if (instance->core->Extensions().Core11() ||
+		instance->core->Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME))
 		types.push_back(XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO);
 	return Enumerate(c, n, p, types);
 }
@@ -582,6 +584,8 @@ static XrResult XRAPI_PTR RunXrEnumerateReferenceSpaces(XrSession sHandle, std::
 		return XR_ERROR_HANDLE_INVALID;
 	std::vector<XrReferenceSpaceType> types{XR_REFERENCE_SPACE_TYPE_VIEW, XR_REFERENCE_SPACE_TYPE_LOCAL,
 											XR_REFERENCE_SPACE_TYPE_STAGE};
+	if (s->core->Extensions().Core11())
+		types.push_back(XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR);
 	if (s->core->Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME))
 		types.push_back(XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO);
 	return Enumerate(c, n, p, types);
@@ -616,6 +620,18 @@ static XrResult XRAPI_PTR RunXrLocateSpace(XrSpace space, XrSpace base, XrTime t
 		return XR_ERROR_HANDLE_INVALID;
 	return simxr::LocateSpace(Host().CurrentSession()->core->Spaces(), space, base, time, location,
 							  &Host().CurrentSession()->core->Extensions());
+}
+
+static XrResult XRAPI_PTR RunXrLocateSpaces(XrSession handle, const XrSpacesLocateInfo* info,
+											XrSpaceLocations* locations)
+{
+	auto session = Host().FindSession(handle);
+	std::lock_guard<std::recursive_mutex> apiLock(Host().Mutex());
+	if (!Valid(session))
+		return XR_ERROR_HANDLE_INVALID;
+	if (!session->core->Extensions().Core11())
+		return XR_ERROR_FUNCTION_UNSUPPORTED;
+	return simxr::LocateSpaces(session->core->Spaces(), info, locations);
 }
 
 static XrResult XRAPI_PTR RunXrDestroySpace(XrSpace space)
@@ -1081,6 +1097,8 @@ static XrResult XRAPI_PTR RunXrGetInstanceProcAddr(XrInstance iHandle, const cha
 		ENTRY(CreateReferenceSpace),
 		ENTRY(GetReferenceSpaceBoundsRect),
 		ENTRY(LocateSpace),
+		{"xrLocateSpaces", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<RunXrLocateSpaces>::Invoke), false,
+		 true},
 		ENTRY(DestroySpace),
 		ENTRY(StringToPath),
 		ENTRY(PathToString),
