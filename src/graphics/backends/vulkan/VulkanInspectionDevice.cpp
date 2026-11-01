@@ -125,7 +125,7 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 		create.enabledExtensionCount = 1;
 		create.ppEnabledExtensionNames = &debugExtension;
 	}
-	CheckVulkan(vkCreateInstance(&create, nullptr, &owner->instance), "Create owned inspection instance");
+	CheckVulkan(CreateRuntimeVulkanInstance(create, &owner->instance), "Create owned inspection instance");
 	if (owner->validation)
 	{
 		auto make = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(

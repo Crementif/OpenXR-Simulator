@@ -1,5 +1,6 @@
 #include "graphics/backends/windows/WindowsGraphicsCapabilities.h"
 #include "Pch.h"
+#include "graphics/backends/vulkan/VulkanDevice.h"
 #include "platform/windows/WindowsLibrary.h"
 
 #include <d3d11.h>
@@ -51,7 +52,7 @@ static XrResult FindAdapter(const WindowsLibrary& dxgi, ComPtr<IDXGIAdapter1>& o
 	application.apiVersion = VK_API_VERSION_1_1;
 	VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
 	info.pApplicationInfo = &application;
-	if (vkCreateInstance(&info, nullptr, &instance.handle) != VK_SUCCESS)
+	if (CreateRuntimeVulkanInstance(info, &instance.handle) != VK_SUCCESS)
 		return XR_ERROR_RUNTIME_FAILURE;
 	std::uint32_t count = 0;
 	if (vkEnumeratePhysicalDevices(instance.handle, &count, nullptr) != VK_SUCCESS)

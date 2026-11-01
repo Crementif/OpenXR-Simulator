@@ -42,7 +42,7 @@ static VulkanExternalIdentity AdapterIdentity(LUID adapter)
 	application.apiVersion = VK_API_VERSION_1_1;
 	VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
 	create.pApplicationInfo = &application;
-	CheckVulkan(vkCreateInstance(&create, nullptr, &instance.handle), "Create Direct3D sharing instance");
+	CheckVulkan(CreateRuntimeVulkanInstance(create, &instance.handle), "Create Direct3D sharing instance");
 	std::vector<VkPhysicalDevice> devices;
 	for (std::uint32_t attempt = 0; attempt < 4; ++attempt)
 	{

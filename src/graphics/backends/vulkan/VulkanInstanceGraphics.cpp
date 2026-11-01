@@ -61,7 +61,7 @@ public:
 		application.apiVersion = VK_API_VERSION_1_1;
 		VkInstanceCreateInfo creation{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
 		creation.pApplicationInfo = &application;
-		CheckVulkan(vkCreateInstance(&creation, nullptr, &m_instance), "Create Vulkan capability query instance");
+		CheckVulkan(CreateRuntimeVulkanInstance(creation, &m_instance), "Create Vulkan capability query instance");
 	}
 
 	~VulkanProbeInstance()

@@ -3,6 +3,16 @@
 #include "Pch.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace simxr
 {
 VulkanError::VulkanError(VkResult result, const char* operation)
@@ -18,6 +28,45 @@ void CheckVulkan(VkResult result, const char* operation)
 {
 	if (result != VK_SUCCESS)
 		throw VulkanError(result, operation);
+}
+
+static std::optional<std::string> ReadEnvironment(const char* name)
+{
+#ifdef _WIN32
+	const DWORD size = GetEnvironmentVariableA(name, nullptr, 0);
+	if (!size)
+		return std::nullopt;
+	std::string value(size, '\0');
+	value.resize(GetEnvironmentVariableA(name, value.data(), size));
+	return value;
+#else
+	const char* value = std::getenv(name);
+	return value ? std::optional<std::string>(value) : std::nullopt;
+#endif
+}
+
+static void WriteEnvironment(const char* name, const std::optional<std::string>& value)
+{
+#ifdef _WIN32
+	SetEnvironmentVariableA(name, value ? value->c_str() : nullptr);
+#else
+	if (value)
+		setenv(name, value->c_str(), 1);
+	else
+		unsetenv(name);
+#endif
+}
+
+VkResult CreateRuntimeVulkanInstance(const VkInstanceCreateInfo& create, VkInstance* instance)
+{
+	static std::mutex mutex;
+	static constexpr const char* filter = "VK_LOADER_LAYERS_DISABLE";
+	std::scoped_lock lock(mutex);
+	const auto previous = ReadEnvironment(filter);
+	WriteEnvironment(filter, previous && !previous->empty() ? *previous + ",~implicit~" : std::string("~implicit~"));
+	const auto result = vkCreateInstance(&create, nullptr, instance);
+	WriteEnvironment(filter, previous);
+	return result;
 }
 
 VulkanDevice::VulkanDevice(const VulkanBinding& value, std::shared_ptr<const void> owner)

@@ -24,6 +24,10 @@ private:
 
 void CheckVulkan(VkResult result, const char* operation);
 
+// The runtime shares the application's process, so its own instances must not load
+// the implicit layers the application enabled (overlays, capture or mod layers).
+VkResult CreateRuntimeVulkanInstance(const VkInstanceCreateInfo& create, VkInstance* instance);
+
 struct VulkanBinding
 {
 	VkInstance instance;
