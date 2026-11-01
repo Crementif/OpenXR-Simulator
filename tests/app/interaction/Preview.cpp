@@ -16,6 +16,9 @@
 #ifdef __linux__
 #include <unistd.h>
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace simxr::tests
 {

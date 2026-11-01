@@ -235,7 +235,7 @@ void DiscoveryTests()
 		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 1024, 1024, 0, nullptr));
 	Require(pipe.Get() != INVALID_HANDLE_VALUE, "Create local discovery fixture");
 	Require(RuntimeEndpointExists(endpoint), "Exact local named pipe must be discoverable");
-	const auto endpoints = DiscoverRuntimeEndpoints(false);
+	const auto endpoints = DiscoverRuntimeEndpoints();
 	Require(std::find(endpoints.begin(), endpoints.end(), endpoint) != endpoints.end(),
 			"Runtime discovery must include actual native pipe paths");
 	const windows::Handle client(
