@@ -1553,6 +1553,15 @@ static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession handle, const XrSessi
 		if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
 			return XR_ERROR_VALIDATION_FAILURE;
 	}
+	if (const auto* text = std::getenv("SIMXR_REFRESH_RATE"))
+	{
+		const std::string_view value{text};
+		double hertz = 0;
+		const auto parsed = std::from_chars(value.data(), value.data() + value.size(), hertz);
+		if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || !(hertz >= 10 && hertz <= 1000))
+			return XR_ERROR_VALIDATION_FAILURE;
+		config.period = simxr::Duration{std::llround(1e9 / hertz)};
+	}
 	if (const auto* deterministic = std::getenv("SIMXR_DETERMINISTIC");
 		deterministic && std::strcmp(deterministic, "0") != 0)
 	{

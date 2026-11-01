@@ -115,6 +115,7 @@ Set these in the application's environment, or in a companion launch profile.
 | `SIMXR_HEADSET_PROFILE` | A name from `get_headset_profiles` |
 | `SIMXR_WIDTH`, `SIMXR_HEIGHT` | Eye resolution |
 | `SIMXR_DETERMINISTIC` | `1`: simulated time instead of wall-clock |
+| `SIMXR_REFRESH_RATE` | Display refresh rate in Hz, 10 to 1000 (default 90) |
 | `SIMXR_APPLICATION_CADENCE` | `1`, `2` display frames per app frame, or `auto` |
 | `SIMXR_PRESENTATION_POLICY` | `repeat` (default) or `rotational` reprojection of missed frames |
 | `SIMXR_SEED` | Simulation seed, used by recorded rigs |
