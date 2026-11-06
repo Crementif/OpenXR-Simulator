@@ -2,6 +2,7 @@
 #include "app/services/PlayerRig.h"
 #include "app/widgets/SpatialEditor.h"
 #include "app/widgets/Theme.h"
+#include "math/Math.h"
 
 namespace simxr::app
 {
@@ -48,14 +49,22 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 			const auto projected = ProjectPoint(camera, scene.devices[device].position);
 			ImVec2 position{minimum.x + projected.uv.x * (maximum.x - minimum.x),
 							minimum.y + projected.uv.y * (maximum.y - minimum.y)};
+			// A hand resting just inside the bottom edge would hide under the preview toolbar; it gets an arrow too.
 			const bool outside = projected.behind || position.x < visibleMin.x + radius ||
 								 position.x > visibleMax.x - radius || position.y < visibleMin.y + radius ||
-								 position.y > std::min(maximum.y, clipMaximum.y) - radius;
+								 position.y > visibleMax.y - radius;
 			ImVec2 direction{};
 			if (outside)
 			{
 				const ImVec2 center{(visibleMin.x + visibleMax.x) / 2, (visibleMin.y + visibleMax.y) / 2};
 				direction = {position.x - center.x, position.y - center.y};
+				// A projection through the eye mirrors a point beside or behind it, so point where it really is.
+				if (projected.behind)
+				{
+					const auto local =
+						RelativePose({{0, 0, 0, 1}, scene.devices[device].position}, camera.pose).position;
+					direction = {local.x, -local.y};
+				}
 				if (std::hypot(direction.x, direction.y) < .001f)
 					direction = {0, 1};
 				const float edge =
@@ -97,22 +106,22 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 			if (!m_markerRects[device].width)
 				m_markerRects[device] = {position.x - radius, position.y - radius, radius * 2, radius * 2};
 			const auto color = DeviceColor(device);
+			// Off screen, the same marker grows a pointer toward the device; a bare triangle read as pointing
+			// backwards.
 			if (outside)
-				draw->AddTriangleFilled({position.x + direction.x * radius, position.y + direction.y * radius},
-										{position.x - direction.x * radius - direction.y * radius,
-										 position.y - direction.y * radius + direction.x * radius},
-										{position.x - direction.x * radius + direction.y * radius,
-										 position.y - direction.y * radius - direction.x * radius},
-										color);
-			else
-				draw->AddCircleFilled(position, radius, color);
+			{
+				const auto along = [&](float forward, float side) {
+					return ImVec2{position.x + direction.x * forward * radius - direction.y * side * radius,
+								  position.y + direction.y * forward * radius + direction.x * side * radius};
+				};
+				draw->AddTriangleFilled(along(1.8f, 0), along(.5f, .75f), along(.5f, -.75f), color);
+			}
+			draw->AddCircleFilled(position, radius, color);
 			if (device == selected)
 				draw->AddCircle(position, radius + 3 * scale, color, 32, 2 * scale);
 			const char label[2]{scene.labels[device], 0};
 			const auto letter = ImGui::CalcTextSize(label);
-			const float back = outside ? radius / 3 : 0;
-			const ImVec2 middle{position.x - direction.x * back, position.y - direction.y * back};
-			draw->AddText({std::round(middle.x - letter.x / 2), std::round(middle.y - letter.y / 2)}, theme::Ink,
+			draw->AddText({std::round(position.x - letter.x / 2), std::round(position.y - letter.y / 2)}, theme::Ink,
 						  label);
 			ImGui::SetCursorScreenPos({position.x - radius, position.y - radius});
 			ImGui::PushID(device);
