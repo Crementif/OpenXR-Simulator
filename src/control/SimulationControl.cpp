@@ -211,6 +211,8 @@ const char* SimulationResultName(CommandResult result)
 		return "released";
 	case CommandResult::NotFound:
 		return "not_found";
+	case CommandResult::TooFar:
+		return "too_far";
 	}
 	return "invalid";
 }
@@ -331,6 +333,7 @@ static InspectionValue Rejections(const CommandRejections& rejections)
 									{"conflict", InspectionValue::Unsigned(rejections.conflict)},
 									{"invalid", InspectionValue::Unsigned(rejections.invalid)},
 									{"capacity", InspectionValue::Unsigned(rejections.capacity)},
+									{"too_far", InspectionValue::Unsigned(rejections.tooFar)},
 									{"closed", InspectionValue::Unsigned(rejections.closed)},
 									{"last", std::move(last)}});
 }

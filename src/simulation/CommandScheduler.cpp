@@ -693,6 +693,9 @@ void CommandScheduler::NoteRejection(const CommandOutcome& outcome) noexcept
 	case CommandResult::Capacity:
 		++m_rejections.capacity;
 		break;
+	case CommandResult::TooFar:
+		++m_rejections.tooFar;
+		break;
 	case CommandResult::Closed:
 		++m_rejections.closed;
 		break;
@@ -765,6 +768,17 @@ CommandOutcome CommandScheduler::SubmitLocked(CommandTransaction transaction)
 	if (cursor != m_sources.end() && (cursor->source != request.source || cursor->last >= request.id))
 	{
 		outcome.result = CommandResult::Conflict;
+		return outcome;
+	}
+	// Targets the client could not have meant, typically a time from another clock,
+	// would otherwise hold a queue slot forever.
+	const auto lastFrame = m_applied.empty() ? FrameId{} : m_applied.back()->frame;
+	if ((request.target.frame && *request.target.frame > lastFrame &&
+		 request.target.frame->value - lastFrame.value > MaxFrameLead) ||
+		(request.target.time && !m_applied.empty() && *request.target.time > m_applied.back()->time &&
+		 request.target.time->value - m_applied.back()->time.value > MaxTimeLead))
+	{
+		outcome.result = CommandResult::TooFar;
 		return outcome;
 	}
 	if ((cursor == m_sources.end() && m_sources.size() == 64) || m_pending.size() == m_pendingCapacity)

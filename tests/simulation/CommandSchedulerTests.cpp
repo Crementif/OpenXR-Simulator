@@ -1004,6 +1004,14 @@ void TimeLateCancelBounds()
 			"Status did not report the full queue, its earliest targets or the rejected submission");
 	scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}}));
 	Require(scheduler.Snapshot().rejections.late == 1, "Retrying a late request counted another rejection");
+	auto distant = Request(4, 2 + CommandScheduler::MaxFrameLead, {SetGaze{{}}});
+	Require(scheduler.Submit(distant).result == CommandResult::TooFar, "Accepted a frame beyond the lead limit");
+	distant.target = {{}, RuntimeTime{Duration{11} + CommandScheduler::MaxTimeLead}};
+	Require(scheduler.Submit(distant).result == CommandResult::TooFar &&
+				scheduler.Snapshot().rejections.tooFar == 2 &&
+				scheduler.Submit(Request(4, 1 + CommandScheduler::MaxFrameLead, {SetGaze{{}}})).result ==
+					CommandResult::Capacity,
+			"Lead limit rejected the wrong targets or consumed the request ID");
 	Require(Tick(scheduler, 2)->configuration.tracking.gaze.yaw == 0.8f, "Rescheduled applies at explicit next frame");
 	Require(Tick(scheduler, 3)->configuration.tracking.gaze.yaw == 0.2f, "Time target first eligible boundary");
 	Require(scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}})).result == CommandResult::Conflict,

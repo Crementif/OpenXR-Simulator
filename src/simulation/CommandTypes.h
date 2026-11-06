@@ -203,6 +203,7 @@ enum class CommandResult
 	Capacity,
 	Closed,
 	NotFound,
+	TooFar,
 	Released
 };
 
@@ -276,7 +277,7 @@ struct CommandRejections
 		CommandTarget target;
 	};
 
-	std::uint64_t late = 0, conflict = 0, invalid = 0, capacity = 0, closed = 0;
+	std::uint64_t late = 0, conflict = 0, invalid = 0, capacity = 0, tooFar = 0, closed = 0;
 	std::optional<Last> last;
 };
 

@@ -444,7 +444,7 @@ class Client:
         while True:
             result = self.simulation_status(session, transaction, source=source)
             phase = result.get('phase')
-            if phase in ('applied', 'late', 'conflict', 'cancelled', 'invalid', 'capacity', 'closed', 'not_found'):
+            if phase in ('applied', 'late', 'conflict', 'cancelled', 'invalid', 'capacity', 'closed', 'not_found', 'too_far'):
                 return result
             if phase not in ('queued', 'rescheduled'):
                 raise ProtocolError(f'Unknown simulation transaction phase: {phase!r}')

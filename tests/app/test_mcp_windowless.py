@@ -136,7 +136,7 @@ def main():
                 conflict = client.tool("simulation_schedule", changed_tx)
                 assert not conflict["error"] and conflict["data"]["phase"] == "conflict", conflict
                 isolated = other.tool("simulation_schedule", {"connection": other_debug,
-                                      "transaction_id": transaction["transaction_id"], "frame": "999999",
+                                      "transaction_id": transaction["transaction_id"], "frame": "5000",
                                       "commands": [{"kind": "take_control", "channel": "gaze"}]})
                 assert not isolated["error"] and isolated["data"]["phase"] == "queued", isolated
                 assert not other.tool("simulation_cancel", {"connection": other_debug,
@@ -549,13 +549,13 @@ def main():
                                    "recording_id": recording_id, "offset": "0"})["error"]
                 canonical = next(record for record in records if record["phase"] == "applied")["commands"]
                 assert len(canonical) == 12 and all(item["encoding"] == "simxr-command-v1-hex" for item in canonical)
-                invalid_canonical = {"connection": debug, "transaction_id": "9007199254741001", "frame": "999999",
+                invalid_canonical = {"connection": debug, "transaction_id": "9007199254741001", "frame": "5000",
                                      "commands": [{"encoding": "simxr-command-v1-hex", "data": "ff0"}]}
                 assert client.tool("simulation_schedule", invalid_canonical)["error"]
                 invalid_canonical["commands"][0]["data"] = "00" * 131073
                 assert client.tool("simulation_schedule", invalid_canonical)["error"]
                 replay = client.tool("simulation_schedule", {"connection": debug, "transaction_id": "9007199254741001",
-                                     "frame": "999999", "commands": canonical})
+                                     "frame": "5000", "commands": canonical})
                 assert not replay["error"] and replay["data"]["phase"] == "queued", replay
                 cancelled = client.tool("simulation_cancel", {"connection": debug, "transaction_id": "9007199254741001"})
                 assert not cancelled["error"] and cancelled["data"]["phase"] == "cancelled", cancelled

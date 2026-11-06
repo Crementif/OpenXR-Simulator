@@ -68,7 +68,7 @@ def main():
         started_recording = client.tool("simulation_start_recording", {"connection": debug, "drain": True})
         assert not started_recording["error"], started_recording
         recording_id = started_recording["data"]["document"]["recording_id"]
-        transaction = {"connection": debug, "transaction_id": "9007199254740997", "frame": "999999",
+        transaction = {"connection": debug, "transaction_id": "9007199254740997", "frame": "5000",
                        "commands": [{"kind": "take_control", "channel": "gaze"},
                                     {"kind": "gaze", "yaw": 0.5}]}
         queued = client.tool("simulation_schedule", transaction)

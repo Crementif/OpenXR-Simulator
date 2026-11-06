@@ -20,6 +20,10 @@ namespace simxr
 class CommandScheduler
 {
 public:
+	// Submissions further ahead of the last applied frame are rejected as TooFar.
+	static constexpr std::uint64_t MaxFrameLead = 10000;
+	static constexpr Duration MaxTimeLead = std::chrono::seconds(60);
+
 	explicit CommandScheduler(std::size_t pendingCapacity = 128, std::size_t historyCapacity = 256);
 
 	void Start(std::uint64_t seed = 0, std::optional<CommandConfiguration> initial = {});

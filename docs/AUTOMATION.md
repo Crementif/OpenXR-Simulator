@@ -101,7 +101,7 @@ with Client() as client:  # finds the only running endpoint, or pass its path
 
 Every time in the control API is a predicted display time in nanoseconds, the `XrTime` the application sees. `schedule(time_ns=...)` applies at the first frame displayed at or after `time_ns`; `status()['pipeline']['waited']['time']` and `['period']` give the latest frame's display time and the frame period to count from, and `simulation_status` reports the display `time` of the last frame input was applied to.
 
-`simulation_status` also reports the queue: `pending`, `pending_capacity`, the earliest `next_pending_frame` and `next_pending_time`, and `rejected`, which counts `late`, `conflict`, `invalid`, `capacity` and `closed` submissions and describes the `last` one.
+A target more than 10000 frames or 60 seconds past the last applied frame is rejected with phase `too_far`, since it is almost always a value from another clock. `simulation_status` also reports the queue: `pending`, `pending_capacity`, the earliest `next_pending_frame` and `next_pending_time`, and `rejected`, which counts `late`, `conflict`, `invalid`, `capacity`, `too_far` and `closed` submissions and describes the `last` one.
 
 ### Pose sequences
 
