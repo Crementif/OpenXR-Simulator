@@ -125,6 +125,8 @@ client.run_sequence(session, [{'time': 30, 'head': {'yaw': math.radians(360)}}])
 
 `examples/timed-head-turn.py` turns the head this way.
 
+A finished sequence holds its last values, and controllers it placed relative to the head keep following it. The client that started it takes those channels back with a plain `take_control`; other clients need `replace`.
+
 ### MCP
 
 Start with `simulator_list_applications`; application tools take its `application_id`. `debug_connect` binds to one session and fails rather than follow a restart. Setters take a `transaction_id`, and repeating one returns the original receipt. IDs above 2^53−1 must be strings.

@@ -440,6 +440,8 @@ public:
 					outcome.effectiveTarget = CommandTarget{frame, {}};
 			}
 			if (outcome.result == CommandResult::Applied)
+				ReclaimFinishedSequence(outcome.transaction);
+			if (outcome.result == CommandResult::Applied)
 				outcome.result = ExpectedInputsMatch(m_state, baseline, time, outcome.transaction.expected)
 									 ? m_state.Apply(outcome.transaction, baseline, time)
 									 : CommandResult::Conflict;
@@ -542,13 +544,28 @@ private:
 		AppendHistory(std::move(*outcome));
 	}
 
+	// A finished sequence holds its last values for its owner, who takes the channels back without replace.
+	void ReclaimFinishedSequence(CommandTransaction& transaction) const
+	{
+		if (!m_sequence || !m_sequence->CanPrepare() || m_sequence->Status().active ||
+			m_sequence->Status().owner != transaction.source)
+			return;
+		const auto held = m_state.OwnedChannels(m_sequence->Source());
+		for (auto& command : transaction.commands)
+			if (auto* take = std::get_if<TakeControl>(&command); take && held[static_cast<std::size_t>(take->channel)])
+				take->replace = true;
+	}
+
 	void ApplySequence(FrameId frame, RuntimeTime time, const CommandConfiguration& baseline)
 	{
 		if (!m_sequence || !m_sequence->CanPrepare())
 			return;
 		if (m_sequence->Status().origin.value && !m_sequence->HasControl(m_state.OwnedChannels(m_sequence->Source())))
 		{
-			m_sequence->Accept(frame, time, CommandResult::Conflict);
+			if (m_sequence->Status().active)
+				m_sequence->Accept(frame, time, CommandResult::Conflict);
+			else
+				m_sequence->Retire();
 			ReleaseSource(m_sequence->Source());
 			return;
 		}

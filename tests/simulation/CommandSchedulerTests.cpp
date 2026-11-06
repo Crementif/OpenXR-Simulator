@@ -476,9 +476,34 @@ void SequenceLocalControllerFollowing()
 					.result == CommandResult::Queued,
 			"Sequence history consumed a caller transaction identity");
 	const auto takeover = Tick(scheduler, 3, baseline);
-	Require(scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Conflict &&
+	Require(scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Applied &&
 				takeover->owners[2] == CommandSource{CommandSourceKind::Manual, admitted->id} && !takeover->owners[4],
-			"Explicit takeover left the sequence's other channels held");
+			"Explicit takeover left the finished sequence's other channels held or changed its result");
+}
+
+void SequenceHandsBackChannels()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	const auto baseline = SequenceBaseline();
+	PoseSequenceStep step;
+	step.head = HeadPosePatch{};
+	step.head->position[0] = 4;
+	scheduler.StartPoseSequence(Mcp, std::make_shared<const PoseSequence>(std::vector{step}, false));
+	Require(Tick(scheduler, 1, baseline)->configuration.tracking.head.pose.position.x == 4 &&
+				!scheduler.PoseSequenceStatusFor(Mcp)->active,
+			"One-row sequence did not finish at its first frame");
+	scheduler.Submit(Request(1, 2, {TakeControl{ControlChannel::Head}}, Manual));
+	scheduler.Submit(Request(2, 2, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(7)}}, Mcp));
+	const auto reclaimed = Tick(scheduler, 2, baseline);
+	Require(reclaimed->outcomes[0].result == CommandResult::Conflict &&
+				reclaimed->outcomes[1].result == CommandResult::Applied && reclaimed->owners[0] == Mcp &&
+				reclaimed->configuration.tracking.head.pose.position.x == 7 &&
+				scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Applied,
+			"A finished sequence's owner could not take its channels back without replace");
+	scheduler.StartPoseSequence(Manual, SequenceProgram());
+	Require(Tick(scheduler, 3, baseline)->owners[0] == Mcp,
+			"Another client's sequence took the reclaimed head without replace");
 }
 
 void SequenceTransfersCallerChannels()
@@ -1672,6 +1697,7 @@ int main()
 		ScheduledPoseSequence();
 		TimedPoseSequence();
 		HeadVelocity();
+		SequenceHandsBackChannels();
 		SequenceLocalControllerFollowing();
 		SequenceSparseControls();
 		SequenceCaptureIssueRollback();

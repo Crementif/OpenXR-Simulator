@@ -37,6 +37,8 @@ public:
 	PoseSequenceFrame Prepare(FrameId frame, RuntimeTime time, const CommandConfiguration& initial);
 	void Accept(FrameId frame, RuntimeTime time, CommandResult result) noexcept;
 	void Cancel() noexcept;
+	// Stops a finished sequence that lost its channels without changing its result.
+	void Retire() noexcept;
 
 	bool CanPrepare() const noexcept;
 	bool HasControl(const std::array<bool, ControlChannelCount>& owned) const noexcept;
@@ -65,5 +67,6 @@ private:
 	std::size_t m_nextStep = 0;
 	PoseSequenceTrackValues m_cycleStart;
 	bool m_finished = false;
+	bool m_retired = false;
 };
 } // namespace simxr

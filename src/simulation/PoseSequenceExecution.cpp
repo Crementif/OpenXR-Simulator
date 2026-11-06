@@ -38,8 +38,7 @@ PoseSequenceExecution::PoseSequenceExecution(std::uint64_t id, CommandSource own
 		m_channels[index] = inherited[index] || m_program->Channels()[index];
 }
 
-PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, RuntimeTime time,
-												 const CommandConfiguration& initial)
+PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, RuntimeTime time, const CommandConfiguration& initial)
 {
 	PoseSequenceFrame result;
 	if (!CanPrepare())
@@ -108,9 +107,14 @@ void PoseSequenceExecution::Cancel() noexcept
 	m_playback = {};
 }
 
+void PoseSequenceExecution::Retire() noexcept
+{
+	m_retired = true;
+}
+
 bool PoseSequenceExecution::CanPrepare() const noexcept
 {
-	return m_status.result == CommandResult::Queued || m_status.result == CommandResult::Applied;
+	return !m_retired && m_status.result == CommandResult::Queued || m_status.result == CommandResult::Applied;
 }
 
 bool PoseSequenceExecution::HasControl(const std::array<bool, ControlChannelCount>& owned) const noexcept
