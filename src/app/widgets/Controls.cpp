@@ -150,6 +150,34 @@ float RailKeyLimit()
 	return 48 * ImGui::GetFontSize() / 17;
 }
 
+static float KeycapFontSize()
+{
+	return ImGui::GetFontSize() * .7f;
+}
+
+ImVec2 KeycapSize(const char* key)
+{
+	const float unit = ImGui::GetFontSize() / 17, height = 14 * unit;
+	const float text = ImGui::GetFont()->CalcTextSizeA(KeycapFontSize(), FLT_MAX, 0, key).x;
+	return {std::max(height, text + 6 * unit), height};
+}
+
+void DrawKeycap(ImDrawList* draw, ImVec2 minimum, const char* key)
+{
+	const float unit = ImGui::GetFontSize() / 17, radius = 3 * unit;
+	const auto size = KeycapSize(key);
+	const ImVec2 maximum{minimum.x + size.x, minimum.y + size.y};
+	// A darker lip under the cap reads as a physical key.
+	draw->AddRectFilled(minimum, maximum, ImGui::GetColorU32(theme::Line), radius);
+	draw->AddRectFilled(minimum, {maximum.x, maximum.y - 1.5f * unit},
+						ImGui::GetColorU32(theme::Mix(theme::Surface, theme::Text, .1f)), radius);
+	const float font = KeycapFontSize();
+	const float text = ImGui::GetFont()->CalcTextSizeA(font, FLT_MAX, 0, key).x;
+	draw->AddText(ImGui::GetFont(), font,
+				  {minimum.x + (size.x - text) / 2, minimum.y + (size.y - 1.5f * unit - font) / 2},
+				  ImGui::GetColorU32(theme::TextDim), key);
+}
+
 static ImU32 IconColor(const RailStatus& status, bool selected)
 {
 	if (status.tint)
@@ -207,9 +235,8 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 	if (named)
 		draw->AddText({textX, minimum.y + (height - ImGui::GetFontSize()) / 2},
 					  ImGui::GetColorU32(selected ? theme::Text : theme::TextDim), label);
-	else if (status.key && ImGui::CalcTextSize(status.key).x <= RailKeyLimit())
-		draw->AddText({minimum.x + RailKeyX(), minimum.y + (height - ImGui::GetFontSize()) / 2},
-					  ImGui::GetColorU32(theme::TextDim), status.key);
+	else if (status.key && KeycapSize(status.key).x <= RailKeyLimit())
+		DrawKeycap(draw, {minimum.x + RailKeyX(), minimum.y + (height - KeycapSize(status.key).y) / 2}, status.key);
 	float right = maximum.x - 6 * unit;
 	const float textEnd = textX + ImGui::CalcTextSize(label).x + 6 * unit;
 	for (const auto& [text, color] : {std::pair{status.key, theme::TextDim}, {status.badge, status.badgeColor}})

@@ -32,6 +32,9 @@ struct RailStatus
 // Where an icon-only rail row draws its shortcut, and the widest shortcut it draws rather than leave to the tooltip.
 float RailKeyX();
 float RailKeyLimit();
+// A small key label drawn as a keyboard key.
+ImVec2 KeycapSize(const char* key);
+void DrawKeycap(ImDrawList* draw, ImVec2 minimum, const char* key);
 bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& status, float height = 0);
 bool DeviceTab(const char* label, Icon icon, bool selected, const RailStatus& status, ImVec2 size, bool named);
 } // namespace simxr::app

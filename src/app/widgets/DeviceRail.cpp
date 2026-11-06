@@ -163,15 +163,14 @@ static bool IsSelected(std::size_t index, const Selection& selection)
 
 float RailWidth(const CompanionSettings& settings)
 {
-	// The icon column, widened to fit the longest target shortcut drawn beside its icon.
+	// The icon column, widened to fit the widest target shortcut drawn beside its icon.
 	const float unit = ImGui::GetFontSize() / 17;
 	float keys = 0;
 	for (const auto& row : s_rows)
 		if (row.key)
-			keys = std::max(keys,
-							ImGui::CalcTextSize(
-								PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]).c_str())
-								.x);
+			keys = std::max(
+				keys,
+				KeycapSize(PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]).c_str()).x);
 	return std::max(34 * unit, RailKeyX() + std::min(keys, RailKeyLimit()) + 8 * unit);
 }
 
