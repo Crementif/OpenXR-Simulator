@@ -194,7 +194,8 @@ static void TabTooltip(const char* label, const RailStatus& status)
 	if (status.badge)
 		ImGui::TextDisabled("Driven by %s", status.badge);
 	if (status.key)
-		ImGui::TextDisabled(status.pilotKey ? "Pilot with %s" : "%s", status.key);
+		ImGui::TextDisabled(status.pilotKey ? "%s shows this, or pilots it while piloting" : "%s shows this",
+							status.key);
 	ImGui::EndTooltip();
 }
 

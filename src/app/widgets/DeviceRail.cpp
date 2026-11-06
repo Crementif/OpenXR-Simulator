@@ -22,9 +22,9 @@ static constexpr std::array<DeviceRow, 7> s_rows{{
 	{"Head", Icon::Head, ControlChannel::Head, PilotAction::TargetHead, 0},
 	{"Left", Icon::HandLeft, ControlChannel::LeftPose, PilotAction::TargetLeft, theme::Left},
 	{"Right", Icon::HandRight, ControlChannel::RightPose, PilotAction::TargetRight, theme::Right},
-	{"Body", Icon::Body, ControlChannel::Body, {}, 0},
-	{"Gaze", Icon::Eye, ControlChannel::Gaze, {}, 0},
-	{"Trackers", Icon::Tracker, ControlChannel::Trackers, {}, 0},
+	{"Body", Icon::Body, ControlChannel::Body, PilotAction::TargetBody, 0},
+	{"Gaze", Icon::Eye, ControlChannel::Gaze, PilotAction::TargetGaze, 0},
+	{"Trackers", Icon::Tracker, ControlChannel::Trackers, PilotAction::TargetTrackers, 0},
 }};
 
 static bool IsTracked(const PoseSample& pose)
@@ -132,6 +132,7 @@ static DeviceTabStatus ReadTabStatus(std::size_t index, const RuntimeView& view,
 	const auto& row = s_rows[index];
 	if (row.key)
 		result.key = PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]);
+	result.status.pilotKey = index <= static_cast<std::size_t>(DevicePage::Right);
 	if (view.setup && view.connected)
 	{
 		const char* tooltip = nullptr;
@@ -159,6 +160,24 @@ static bool IsSelected(std::size_t index, const Selection& selection)
 {
 	const auto device = std::get_if<DeviceSel>(&selection);
 	return device && index == static_cast<std::size_t>(device->page);
+}
+
+std::optional<DevicePage> DeviceShortcut(const CompanionSettings& settings)
+{
+	const auto& io = ImGui::GetIO();
+	const unsigned held =
+		(io.KeyCtrl ? 1u : 0u) | (io.KeyShift ? 2u : 0u) | (io.KeyAlt ? 4u : 0u) | (io.KeySuper ? 8u : 0u);
+	for (std::size_t index = 0; index < s_rows.size(); ++index)
+	{
+		const auto& binding = settings.pilotBindings[static_cast<std::size_t>(*s_rows[index].key)];
+		if (binding.modifiers != held)
+			continue;
+		for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
+			if (binding.key == ImGui::GetKeyName(static_cast<ImGuiKey>(key)) &&
+				ImGui::IsKeyPressed(static_cast<ImGuiKey>(key), false))
+				return static_cast<DevicePage>(index);
+	}
+	return {};
 }
 
 float RailWidth(const CompanionSettings& settings)

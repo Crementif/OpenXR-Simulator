@@ -238,6 +238,31 @@ void SessionPreference()
 	Require(LoadSettings(file) == settings, "Earlier settings open new apps in tabs");
 }
 
+void DeviceKeys()
+{
+	Directory directory;
+	const auto file = directory.path / "settings";
+	const auto key = [](CompanionSettings& settings, PilotAction action) -> PilotBinding& {
+		return settings.pilotBindings[static_cast<std::size_t>(action)];
+	};
+	CompanionSettings settings;
+	settings.mcpEnabled = true;
+	key(settings, PilotAction::TargetPlayer) = {"0"};
+	key(settings, PilotAction::TargetHead) = {"1"};
+	key(settings, PilotAction::TargetLeft) = {"2"};
+	key(settings, PilotAction::TargetRight) = {"3"};
+	SaveSettings(file, settings);
+	auto loaded = LoadSettings(file);
+	Require(key(loaded, PilotAction::TargetPlayer) == PilotBinding{"1"} &&
+				key(loaded, PilotAction::TargetRight) == PilotBinding{"4"} &&
+				key(loaded, PilotAction::TargetTrackers) == PilotBinding{"7"},
+			"Settings from before device keys started at 1 keep the old defaults");
+	key(settings, PilotAction::TargetHead) = {"H"};
+	key(settings, PilotAction::TargetGaze) = {"G", 1};
+	SaveSettings(file, settings);
+	Require(LoadSettings(file) == settings, "Device keys survive restart without renumbering custom bindings");
+}
+
 void ConcurrentSettings()
 {
 	Directory directory;
@@ -696,6 +721,7 @@ int main(int argc, char** argv)
 		McpPreference();
 		UpdatePreference();
 		SessionPreference();
+		DeviceKeys();
 		ConcurrentSettings();
 		Persistence();
 #ifdef __linux__

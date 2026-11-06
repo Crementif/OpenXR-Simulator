@@ -35,8 +35,13 @@ enum class PilotAction
 	TargetRight,
 	TargetPlayer,
 	Escape,
+	// Saved after the actions above, so settings written before them still load.
+	TargetBody,
+	TargetGaze,
+	TargetTrackers,
 	Count
 };
+inline constexpr std::size_t LegacyPilotActionCount = static_cast<std::size_t>(PilotAction::TargetBody);
 inline constexpr std::array<const char*, static_cast<std::size_t>(PilotAction::Count)> PilotActionNames{
 	"Capture",
 	"Walk forward",
@@ -65,7 +70,10 @@ inline constexpr std::array<const char*, static_cast<std::size_t>(PilotAction::C
 	"Pilot left",
 	"Pilot right",
 	"Pilot player",
-	"End capture"};
+	"End capture",
+	"Show body",
+	"Show gaze",
+	"Show trackers"};
 
 struct PilotBinding
 {

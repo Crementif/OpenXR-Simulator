@@ -264,10 +264,10 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 	{
 		if (reader.Number() != 3)
 			throw std::runtime_error("Unknown input settings version");
-		for (auto& binding : result.pilotBindings)
+		for (std::size_t index = 0; index < LegacyPilotActionCount; ++index)
 		{
-			binding.key = reader.Text();
-			binding.modifiers = reader.Count(15);
+			result.pilotBindings[index].key = reader.Text();
+			result.pilotBindings[index].modifiers = reader.Count(15);
 		}
 		for (auto* bindings :
 			 {&result.gamepadBindings.stickX, &result.gamepadBindings.stickY, &result.gamepadBindings.trigger,
@@ -376,6 +376,30 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.openNewSessions = reader.Count(1) != 0;
 	}
 	if (!reader.Empty())
+	{
+		if (reader.Number() != 15)
+			throw std::runtime_error("Unknown device key settings version");
+		for (auto index = LegacyPilotActionCount; index < result.pilotBindings.size(); ++index)
+		{
+			result.pilotBindings[index].key = reader.Text();
+			result.pilotBindings[index].modifiers = reader.Count(15);
+		}
+	}
+	else
+	{
+		// Device keys used to start at 0 for the player; those still at the old defaults move to 1 through 4.
+		const auto defaults = DefaultPilotBindings();
+		auto& keys = result.pilotBindings;
+		const auto at = [&](PilotAction action) -> PilotBinding& {
+			return keys[static_cast<std::size_t>(action)];
+		};
+		if (at(PilotAction::TargetPlayer) == PilotBinding{"0"} && at(PilotAction::TargetHead) == PilotBinding{"1"} &&
+			at(PilotAction::TargetLeft) == PilotBinding{"2"} && at(PilotAction::TargetRight) == PilotBinding{"3"})
+			for (const auto action : {PilotAction::TargetPlayer, PilotAction::TargetHead, PilotAction::TargetLeft,
+									  PilotAction::TargetRight})
+				at(action) = defaults[static_cast<std::size_t>(action)];
+	}
+	if (!reader.Empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -406,10 +430,10 @@ static void WriteSettings(const std::filesystem::path& path, const CompanionSett
 	Put(bytes, static_cast<std::uint32_t>(settings.railCollapsed));
 	Put(bytes, static_cast<std::uint32_t>(settings.timelineResized));
 	Put(bytes, 3);
-	for (const auto& binding : settings.pilotBindings)
+	for (std::size_t index = 0; index < LegacyPilotActionCount; ++index)
 	{
-		Put(bytes, binding.key);
-		Put(bytes, binding.modifiers);
+		Put(bytes, settings.pilotBindings[index].key);
+		Put(bytes, settings.pilotBindings[index].modifiers);
 	}
 	for (const auto* bindings :
 		 {&settings.gamepadBindings.stickX, &settings.gamepadBindings.stickY, &settings.gamepadBindings.trigger,
@@ -464,7 +488,10 @@ static void WriteSettings(const std::filesystem::path& path, const CompanionSett
 							[](const LaunchProfile& profile) { return profile.useBundledRuntime; }) ||
 		std::ranges::any_of(settings.recent, [](const RecentApp& recent) { return recent.launch.useBundledRuntime; });
 	// Later sections are optional, so a file stops at the last one that differs from its default.
-	const bool sessions = !settings.openNewSessions;
+	const auto defaultKeys = DefaultPilotBindings();
+	const bool deviceKeys = !std::equal(settings.pilotBindings.begin() + LegacyPilotActionCount,
+										settings.pilotBindings.end(), defaultKeys.begin() + LegacyPilotActionCount);
+	const bool sessions = !settings.openNewSessions || deviceKeys;
 	const bool updates = settings.autoUpdateCheck || sessions;
 	const bool mcp = settings.mcpEnabled || updates;
 	if (bundled || mcp)
@@ -491,6 +518,15 @@ static void WriteSettings(const std::filesystem::path& path, const CompanionSett
 	{
 		Put(bytes, std::uint32_t{14});
 		Put(bytes, static_cast<std::uint32_t>(settings.openNewSessions));
+	}
+	if (deviceKeys)
+	{
+		Put(bytes, std::uint32_t{15});
+		for (auto index = LegacyPilotActionCount; index < settings.pilotBindings.size(); ++index)
+		{
+			Put(bytes, settings.pilotBindings[index].key);
+			Put(bytes, settings.pilotBindings[index].modifiers);
+		}
 	}
 	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");

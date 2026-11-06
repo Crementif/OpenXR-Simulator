@@ -14,6 +14,7 @@ PilotBindings DefaultPilotBindings()
 	return {{{"MouseRight"}, {"W"},		   {"S"},		{"A"},		 {"D"},			{"Q"},		   {"E"},
 			 {"LeftShift"},	 {"LeftCtrl"}, {"LeftAlt"}, {"Z"},		 {"X"},			{"MouseLeft"}, {"MouseMiddle"},
 			 {"R"},			 {"T"},		   {"G"},		{"UpArrow"}, {"DownArrow"}, {"LeftArrow"}, {"RightArrow"},
-			 {"C"},			 {"Tab"},	   {"1"},		{"2"},		 {"3"},			{"0"},		   {"Escape"}}};
+			 {"C"},			 {"Tab"},	   {"2"},		{"3"},		 {"4"},			{"1"},		   {"Escape"},
+			 {"5"},			 {"6"},		   {"7"}}};
 }
 }

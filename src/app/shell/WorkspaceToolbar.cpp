@@ -2,6 +2,7 @@
 #include "app/RuntimePanels.h"
 #include "app/WorkspacePanels.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/DeviceRail.h"
 #include "app/widgets/Theme.h"
 
 namespace simxr::app
@@ -350,6 +351,11 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 		}
 		if (ImGui::IsKeyPressed(ImGuiKey_F11, false))
 			m_previewExpanded = !m_previewExpanded;
+		if (const auto page = DeviceShortcut(m_settings))
+		{
+			m_shell.selection = DeviceSel{*page};
+			ShowInspector();
+		}
 		if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !runtime.PilotActive())
 		{
 			if (m_previewExpanded)

@@ -7,6 +7,8 @@
 
 namespace simxr::app
 {
+// The device page whose key was pressed this frame.
+std::optional<DevicePage> DeviceShortcut(const CompanionSettings& settings);
 float RailWidth(const CompanionSettings& settings);
 float DeviceTabsHeight();
 std::optional<Selection> DrawDeviceRail(const Selection& selection, const RuntimeView& view,
