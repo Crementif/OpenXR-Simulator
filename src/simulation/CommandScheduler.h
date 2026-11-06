@@ -69,6 +69,8 @@ private:
 		std::uint64_t last = 0;
 	};
 
+	CommandOutcome SubmitLocked(CommandTransaction transaction);
+	void NoteRejection(const CommandOutcome& outcome) noexcept;
 	std::array<bool, ControlChannelCount> ReleaseSourceCommandsLocked(CommandSource source, bool retire);
 	std::array<bool, ControlChannelCount> ReleaseSourceLocked(CommandSource source) noexcept;
 	std::array<bool, ControlChannelCount> StopPoseSequenceLocked(CommandSource owner) noexcept;
@@ -82,6 +84,7 @@ private:
 	std::deque<CommandOutcome> m_pending, m_outcomes;
 	std::vector<SourceCursor> m_sources;
 	std::deque<std::shared_ptr<const AppliedCommandSnapshot>> m_applied;
+	CommandRejections m_rejections;
 	CommandRecorder m_recorder;
 	std::optional<CommandSource> m_recordingOwner;
 	LiveInputSlot m_liveInput;

@@ -105,8 +105,12 @@ Json SimulationDefinitions()
 						  schedule, Json::array({"connection", "transaction_id", "commands"})));
 	auto status = common;
 	status["transaction_id"] = identifier;
-	result.push_back(tool("simulation_status", "Read applied simulator state or one transaction outcome.", status,
-						  Json::array({"connection"})));
+	result.push_back(
+		tool("simulation_status",
+			 "Read applied simulator state or one transaction outcome. State includes the simulation clock "
+			 "(time, runtime_time, epoch = runtime_time - time) and queue health (pending, "
+			 "pending_capacity, rejected).",
+			 status, Json::array({"connection"})));
 	result.push_back(tool("simulation_cancel", "Cancel an unapplied transaction owned by this connection.", status,
 						  Json::array({"connection", "transaction_id"})));
 	result.push_back(tool("simulation_release_control",

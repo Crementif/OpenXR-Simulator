@@ -1103,6 +1103,39 @@ void GenerationAndTeardown()
 			"Closed service accepted late connection or message");
 }
 
+std::optional<wire::Message> Member(const wire::Message& object, std::string_view name)
+{
+	for (const auto& field : object.fields)
+		if (auto member = Nested(object, field.tag); Text(member, 1) == name)
+			return member;
+	return {};
+}
+
+void SimulationClockAndAdmissionReport()
+{
+	Fixture fixture;
+	Client client(fixture.service);
+	client.Hello();
+	client.Discover();
+	const auto frame = fixture.Issue();
+	fixture.Clear(frame);
+	const auto state =
+		Nested(Nested(client.Call(wire::OpCode::SimulationStatus, client.Common()), wire::tag::Document), 3);
+	const auto signedValue = [&](std::string_view name) {
+		const auto member = Member(state, name);
+		Require(member && member->Find(3) && member->Find(3)->AsI64(), "Simulation clock field missing");
+		return *member->Find(3)->AsI64();
+	};
+	Require(signedValue("runtime_time") == frame.displayTime.value.count() &&
+				signedValue("epoch") + signedValue("time") == frame.displayTime.value.count() &&
+				signedValue("epoch") == fixture.config.epoch.value.count(),
+			"Simulation status did not expose the clock epoch of applied simulation time");
+	const auto capacity = Member(state, "pending_capacity");
+	const auto rejected = Member(state, "rejected");
+	Require(capacity && capacity->Find(3)->AsU64() == 128 && rejected && Member(Nested(*rejected, 3), "capacity"),
+			"Simulation status omitted admission capacity or rejection counters");
+}
+
 void GameBodyExtensionReport()
 {
 	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
@@ -2028,6 +2061,7 @@ int main()
 	try
 	{
 		GameBodyExtensionReport();
+		SimulationClockAndAdmissionReport();
 		LiveHaptics();
 		LiveInputNegotiation();
 		ContinuousFrameHistory();

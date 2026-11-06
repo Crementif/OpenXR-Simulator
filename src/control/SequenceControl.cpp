@@ -19,6 +19,9 @@ static InspectionValue Status(const PoseSequenceStatus& status)
 									{"result", InspectionValue::Text(SimulationResultName(status.result))},
 									{"origin", InspectionValue::Unsigned(status.origin.value)},
 									{"last_frame", InspectionValue::Unsigned(status.lastFrame.value)},
+									{"timed", InspectionValue::Boolean(status.timed)},
+									{"origin_time", InspectionValue::Signed(status.originTime.value.count())},
+									{"last_time", InspectionValue::Signed(status.lastTime.value.count())},
 									{"groups", InspectionValue::Unsigned(status.groups)}});
 }
 
@@ -151,6 +154,11 @@ InspectionValue SequenceControl::Start(const Message& request, const ControlSess
 		catch (const std::overflow_error&)
 		{
 			throw ControlRequestError{ErrorCode::Invalid, "Sequence exceeds the frame identity range"};
+		}
+		catch (const std::invalid_argument&)
+		{
+			throw ControlRequestError{ErrorCode::Invalid, "Sequence times must be nonnegative seconds and rows must "
+														  "all select either a time or a frame"};
 		}
 		if (!status)
 			throw ControlRequestError{ErrorCode::Busy,

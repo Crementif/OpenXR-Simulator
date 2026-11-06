@@ -33,21 +33,23 @@ PoseSequenceExecution::PoseSequenceExecution(std::uint64_t id, CommandSource own
 	m_status.id = id;
 	m_status.owner = owner;
 	m_status.loop = m_program->Loops();
+	m_status.timed = m_program->Timed();
 	for (std::size_t index = 0; index < m_channels.size(); ++index)
 		m_channels[index] = inherited[index] || m_program->Channels()[index];
 }
 
-PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, const CommandConfiguration& initial)
+PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, SimulationTime time,
+												 const CommandConfiguration& initial)
 {
 	PoseSequenceFrame result;
 	if (!CanPrepare())
 		return result;
 	const bool starting = !m_started;
 	if (starting)
-		Initialize(frame, initial);
-	if (const auto next = m_playback.NextFrame(); next && *next < frame)
+		Initialize(frame, time, initial);
+	if (const auto next = m_playback.NextFrame(); !m_status.timed && next && *next < frame)
 	{
-		Accept(frame, CommandResult::Late);
+		Accept(frame, time, CommandResult::Late);
 		return result;
 	}
 	// Completed programs retain their local offsets until ownership is released.
@@ -60,17 +62,19 @@ PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, const CommandCon
 		headChanged = !SamePose(m_head.pose, *head);
 		m_head.pose = *head;
 	}
-	const auto steps = m_status.active ? m_playback.Advance(frame) : std::span<const PoseSequenceStep>{};
-	for (const auto& step : steps)
+	bool advanced = false;
+	if (m_status.active && m_status.timed)
 	{
-		if (step.head)
-			step.head->Apply(m_head.pose, m_angles);
-		for (std::size_t hand = 0; hand < step.controllers.size(); ++hand)
-			if (step.controllers[hand])
-				step.controllers[hand]->Apply(m_local[hand], m_controls[hand]);
-		result.capture = result.capture || step.capture;
+		AdvanceTime(time, result.capture);
+		advanced = true;
 	}
-	result.advanced = starting || !steps.empty() || headChanged;
+	else if (m_status.active)
+		for (const auto& step : m_playback.Advance(frame))
+		{
+			ApplyStep(step, result.capture);
+			advanced = true;
+		}
+	result.advanced = starting || advanced || headChanged;
 	if (result.advanced)
 	{
 		for (std::size_t hand = 0; hand < m_controllers.size(); ++hand)
@@ -81,11 +85,12 @@ PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, const CommandCon
 	return result;
 }
 
-void PoseSequenceExecution::Accept(FrameId frame, CommandResult result) noexcept
+void PoseSequenceExecution::Accept(FrameId frame, SimulationTime time, CommandResult result) noexcept
 {
 	m_status.result = result;
 	m_status.lastFrame = frame;
-	m_status.active = result == CommandResult::Applied && !m_playback.Complete();
+	m_status.lastTime = time;
+	m_status.active = result == CommandResult::Applied && !(m_status.timed ? m_finished : m_playback.Complete());
 	if (result == CommandResult::Applied)
 		++m_status.groups;
 	if (!m_status.active)
@@ -131,10 +136,12 @@ std::shared_ptr<const PoseSequence> PoseSequenceExecution::Program() const noexc
 	return m_program;
 }
 
-void PoseSequenceExecution::Initialize(FrameId frame, const CommandConfiguration& initial)
+void PoseSequenceExecution::Initialize(FrameId frame, SimulationTime time, const CommandConfiguration& initial)
 {
-	m_playback.Start(m_program, frame);
+	if (!m_status.timed)
+		m_playback.Start(m_program, frame);
 	m_status.origin = frame;
+	m_status.originTime = time;
 	m_head = initial.tracking.head;
 	m_controllers = initial.tracking.controllers;
 	m_controls = initial.input.controllers;
@@ -155,7 +162,58 @@ void PoseSequenceExecution::Initialize(FrameId frame, const CommandConfiguration
 			m_local[hand] = RelativePose(*controller, *head);
 		}
 	}
+	const auto& head = m_head.pose.position;
+	std::copy_n(std::array{head.x, head.y, head.z, m_angles[0], m_angles[1], m_angles[2]}.begin(), 6,
+				m_cycleStart.scalars.begin());
+	for (std::size_t hand = 0; hand < 2; ++hand)
+	{
+		const auto& local = m_local[hand].position;
+		const auto& controls = m_controls[hand];
+		std::copy_n(
+			std::array{local.x, local.y, local.z, controls.trigger, controls.grip, controls.stick.x, controls.stick.y}
+				.begin(),
+			7, m_cycleStart.scalars.begin() + 6 + 7 * hand);
+		m_cycleStart.orientations[hand] = m_local[hand].orientation;
+	}
 	m_started = true;
+}
+
+void PoseSequenceExecution::ApplyStep(const PoseSequenceStep& step, bool& capture)
+{
+	if (step.head)
+		step.head->Apply(m_head.pose, m_angles);
+	for (std::size_t hand = 0; hand < step.controllers.size(); ++hand)
+		if (step.controllers[hand])
+			step.controllers[hand]->Apply(m_local[hand], m_controls[hand]);
+	capture = capture || step.capture;
+}
+
+void PoseSequenceExecution::AdvanceTime(SimulationTime time, bool& capture)
+{
+	const auto& program = *m_program;
+	const auto steps = program.Steps();
+	const auto length = program.Length();
+	auto elapsed = time.value - m_status.originTime.value;
+	if (program.Loops() && length > Duration{})
+	{
+		// Rows of skipped cycles still fire once so buttons and captures are never lost.
+		if (const auto cycle = static_cast<std::uint64_t>(elapsed / length); cycle != m_cycle)
+		{
+			for (; m_nextStep < steps.size(); ++m_nextStep)
+				ApplyStep(steps[m_nextStep], capture);
+			m_cycleStart = program.End(m_cycleStart);
+			m_cycle = cycle;
+			m_nextStep = 0;
+		}
+		elapsed %= length;
+	}
+	for (; m_nextStep < steps.size() && steps[m_nextStep].time <= elapsed; ++m_nextStep)
+		ApplyStep(steps[m_nextStep], capture);
+	const auto sample = program.Sample(elapsed, m_cycleStart);
+	sample.head.Apply(m_head.pose, m_angles);
+	for (std::size_t hand = 0; hand < 2; ++hand)
+		sample.controllers[hand].Apply(m_local[hand], m_controls[hand]);
+	m_finished = (!program.Loops() || length == Duration{}) && m_nextStep == steps.size() && elapsed >= length;
 }
 
 std::vector<SimulationCommand> PoseSequenceExecution::Commands() const

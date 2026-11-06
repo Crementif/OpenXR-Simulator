@@ -16,7 +16,8 @@ struct PoseSequenceStatus
 	CommandSource owner;
 	CommandResult result = CommandResult::Queued;
 	FrameId origin, lastFrame;
-	bool active = true, loop = false;
+	SimulationTime originTime, lastTime;
+	bool active = true, loop = false, timed = false;
 };
 
 struct PoseSequenceFrame
@@ -33,8 +34,8 @@ public:
 	PoseSequenceExecution(std::uint64_t id, CommandSource owner, std::shared_ptr<const PoseSequence> program,
 						  std::array<bool, ControlChannelCount> inherited = {});
 
-	PoseSequenceFrame Prepare(FrameId frame, const CommandConfiguration& initial);
-	void Accept(FrameId frame, CommandResult result) noexcept;
+	PoseSequenceFrame Prepare(FrameId frame, SimulationTime time, const CommandConfiguration& initial);
+	void Accept(FrameId frame, SimulationTime time, CommandResult result) noexcept;
 	void Cancel() noexcept;
 
 	bool CanPrepare() const noexcept;
@@ -44,7 +45,9 @@ public:
 	std::shared_ptr<const PoseSequence> Program() const noexcept;
 
 private:
-	void Initialize(FrameId frame, const CommandConfiguration& initial);
+	void Initialize(FrameId frame, SimulationTime time, const CommandConfiguration& initial);
+	void ApplyStep(const PoseSequenceStep& step, bool& capture);
+	void AdvanceTime(SimulationTime time, bool& capture);
 	std::vector<SimulationCommand> Commands() const;
 
 	std::shared_ptr<const PoseSequence> m_program;
@@ -57,5 +60,10 @@ private:
 	std::array<XrPosef, 2> m_local{};
 	std::array<float, 3> m_angles{};
 	bool m_started = false;
+	// Time-keyed programs: loop cycle, next discrete row and the values the cycle started from.
+	std::uint64_t m_cycle = 0;
+	std::size_t m_nextStep = 0;
+	PoseSequenceTrackValues m_cycleStart;
+	bool m_finished = false;
 };
 } // namespace simxr

@@ -265,6 +265,21 @@ struct AppliedCommandSnapshot
 	std::optional<SequenceCaptureIntent> sequenceCapture;
 };
 
+// Submissions that never entered the pending queue. Late ones also enter outcomes.
+struct CommandRejections
+{
+	struct Last
+	{
+		std::uint64_t id = 0;
+		CommandSource source;
+		CommandResult result = CommandResult::Invalid;
+		CommandTarget target;
+	};
+
+	std::uint64_t late = 0, conflict = 0, invalid = 0, capacity = 0, closed = 0;
+	std::optional<Last> last;
+};
+
 struct CommandSchedulerSnapshot
 {
 	bool closed = false;
@@ -272,6 +287,11 @@ struct CommandSchedulerSnapshot
 	std::vector<CommandOutcome> outcomes;
 	std::shared_ptr<const AppliedCommandSnapshot> applied;
 	std::uint64_t seed = 0;
+	std::size_t pendingCapacity = 0;
+	// Earliest targets among uncancelled pending transactions.
+	std::optional<FrameId> nextPendingFrame;
+	std::optional<SimulationTime> nextPendingTime;
+	CommandRejections rejections;
 };
 
 // A recording starts at one atomic command boundary. Configuration deliberately

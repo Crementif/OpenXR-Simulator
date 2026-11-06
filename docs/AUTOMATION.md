@@ -97,6 +97,24 @@ with Client() as client:  # finds the only running endpoint, or pass its path
     print(client.simulation_status(session)['document'])
 ```
 
+### Simulation clock and queue
+
+`schedule(time_ns=...)` targets simulation time, which is the predicted display time minus a per-session epoch. Once a frame has applied, `simulation_status` reports `time` (simulation time of that frame), `runtime_time` (its display time, the `XrTime` the application saw) and `epoch` (their difference, fixed for the session). Convert a display time from `status()['pipeline']` by subtracting `epoch`; `client.simulation_clock(session)` does this for the latest waited frame.
+
+The same document reports the queue: `pending`, `pending_capacity`, the earliest `next_pending_frame` and `next_pending_time`, and `rejected`, which counts `late`, `conflict`, `invalid`, `capacity` and `closed` submissions and describes the `last` one.
+
+### Pose sequences
+
+A sequence is JSON lines, one row per keyframe, uploaded with `upload_sequence` and started with `start_sequence`, or both at once with `run_sequence`. A row may set `head` (`x`, `y`, `z` in metres, `yaw`, `pitch`, `roll` in radians), `left` and `right` (head-relative `posX`, `posY`, `posZ`, `yaw`, `pitch`, `roll`, `trigger`, `grip`, `stickX`, `stickY`, `primary`, `secondary`) and `capture`. Omitted values keep their current value.
+
+Rows keyed by `frame` apply at that many frames after the sequence starts. Rows keyed by `time`, in seconds since the sequence's first frame, are evaluated on every frame: each value moves linearly between its own keyframes (controller orientation spherically), from its starting value before its first keyframe, and holds after its last. Buttons and captures fire on the first frame at or after their row. A looped time-keyed program repeats every last-row time. All rows of a program use one key. Motion keyed by time runs at the same speed at any frame rate:
+
+```python
+client.run_sequence(session, [{'time': 30, 'head': {'yaw': math.radians(360)}}])  # 12 degrees per second
+```
+
+`examples/timed-head-turn.py` turns the head this way.
+
 ### MCP
 
 Start with `simulator_list_applications`; application tools take its `application_id`. `debug_connect` binds to one session and fails rather than follow a restart. Setters take a `transaction_id`, and repeating one returns the original receipt. IDs above 2^53−1 must be strings.

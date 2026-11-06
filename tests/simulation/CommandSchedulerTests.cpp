@@ -195,6 +195,90 @@ void ScheduledPoseSequence()
 			"Connection retirement left sequence input ownership alive");
 }
 
+float Yaw(const XrQuaternionf& orientation)
+{
+	return std::atan2(2 * (orientation.x * orientation.z + orientation.w * orientation.y),
+					  1 - 2 * (orientation.x * orientation.x + orientation.y * orientation.y));
+}
+
+void TimedPoseSequence()
+{
+	using namespace std::chrono_literals;
+	const auto program =
+		std::make_shared<const PoseSequence>(PoseSequence::Parse("{\"time\":1,\"head\":{\"yaw\":1.4}}\n"
+																 "{\"time\":0.5,\"right\":{\"primary\":true}}\n"
+																 "{\"time\":3,\"head\":{\"yaw\":2.4,\"x\":3}}\n",
+																 false));
+	Require(program->Timed() && program->Length() == 3s && program->Steps().front().time == 500ms,
+			"Time-keyed rows were not ordered by time");
+	const auto baseline = SequenceBaseline();
+	// The same program sampled at different frame rates reaches the same pose at the same simulation time.
+	for (const auto period : {11ms, 33ms})
+	{
+		CommandScheduler scheduler;
+		scheduler.Start();
+		const auto origin = SimulationTime{Duration{7s}};
+		scheduler.StartPoseSequence(Mcp, program);
+		std::shared_ptr<const AppliedCommandSnapshot> applied;
+		std::uint64_t frame = 1;
+		const auto at = [&](Duration elapsed) {
+			while (!applied || applied->time.value < origin.value + elapsed)
+			{
+				const auto time = origin.value + period * static_cast<std::int64_t>(frame - 1);
+				applied = scheduler.Apply({frame++}, {time}, {time + 100ms}, baseline);
+			}
+			return applied;
+		};
+		const auto first = at(0ms);
+		Require(std::abs(Yaw(first->configuration.tracking.head.pose.orientation) - .4f) < .0001f,
+				"Time-keyed head jumped at the sequence origin");
+		const auto halfway = at(500ms);
+		const auto elapsed = std::chrono::duration<float>(halfway->time.value - origin.value).count();
+		Require(std::abs(Yaw(halfway->configuration.tracking.head.pose.orientation) - (.4f + elapsed)) < .0001f &&
+					halfway->configuration.input.controllers[1].primary,
+				"Time-keyed yaw did not interpolate from the start pose or a row's button did not fire");
+		const auto later = at(2s);
+		const auto turned = std::chrono::duration<float>(later->time.value - origin.value).count();
+		Require(std::abs(Yaw(later->configuration.tracking.head.pose.orientation) - (1.4f + (turned - 1) / 2)) <
+						.0001f &&
+					std::abs(later->configuration.tracking.head.pose.position.x - (1 + 2 * turned / 3)) < .0001f,
+				"Time-keyed values did not interpolate between their own keyframes");
+		const auto end = at(3s + period);
+		const auto status = scheduler.PoseSequenceStatusFor(Mcp);
+		Require(std::abs(Yaw(end->configuration.tracking.head.pose.orientation) - 2.4f) < .0001f && status &&
+					status->timed && !status->active && status->result == CommandResult::Applied &&
+					status->originTime == origin && status->lastTime.value >= origin.value + 3s,
+				"Time-keyed sequence did not finish at its last keyframe");
+	}
+
+	CommandScheduler looping;
+	looping.Start();
+	looping.StartPoseSequence(
+		Mcp, std::make_shared<const PoseSequence>(PoseSequence::Parse("{\"time\":0,\"head\":{\"x\":0}}\n"
+																	  "{\"time\":1,\"head\":{\"x\":2}}\n",
+																	  true)));
+	const auto loop = [&](std::uint64_t frame, Duration time) {
+		return looping.Apply({frame}, {time}, {time + 1ms}, baseline)->configuration.tracking.head.pose.position.x;
+	};
+	Require(loop(1, 0ms) == 0 && std::abs(loop(2, 750ms) - 1.5f) < .0001f && std::abs(loop(3, 2250ms) - .5f) < .0001f &&
+				looping.PoseSequenceStatusFor(Mcp)->active,
+			"Looping time-keyed sequence did not repeat by elapsed time");
+
+	for (const auto* invalid : {"{\"time\":1}\n{\"frame\":2}\n", "{\"time\":-1}\n", "{\"time\":1,\"frame\":1}\n"})
+	{
+		bool rejected = false;
+		try
+		{
+			PoseSequence::Parse(invalid, false);
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "Invalid or mixed time-keyed rows were accepted");
+	}
+}
+
 void PoseSequenceReservationRollback()
 {
 	CommandScheduler scheduler;
@@ -911,6 +995,15 @@ void TimeLateCancelBounds()
 	timed.target = {{}, SimulationTime{Duration{25}}};
 	scheduler.Submit(timed);
 	Require(scheduler.Submit(Request(4, 5, {SetGaze{{}}})).result == CommandResult::Capacity, "Bound pending queue");
+	const auto full = scheduler.Snapshot();
+	Require(full.pending == 2 && full.pendingCapacity == 2 && full.nextPendingFrame == FrameId{2} &&
+				full.nextPendingTime == SimulationTime{Duration{25}} && full.rejections.late == 1 &&
+				full.rejections.capacity == 1 && full.rejections.last && full.rejections.last->id == 4 &&
+				full.rejections.last->result == CommandResult::Capacity &&
+				full.rejections.last->target.frame == FrameId{5},
+			"Status did not report the full queue, its earliest targets or the rejected submission");
+	scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}}));
+	Require(scheduler.Snapshot().rejections.late == 1, "Retrying a late request counted another rejection");
 	Require(Tick(scheduler, 2)->configuration.tracking.gaze.yaw == 0.8f, "Rescheduled applies at explicit next frame");
 	Require(Tick(scheduler, 3)->configuration.tracking.gaze.yaw == 0.2f, "Time target first eligible boundary");
 	Require(scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}})).result == CommandResult::Conflict,
@@ -1535,6 +1628,7 @@ int main()
 		ConditionalAppliedInputs();
 		SequenceRetirementOutsideAdmission();
 		ScheduledPoseSequence();
+		TimedPoseSequence();
 		SequenceLocalControllerFollowing();
 		SequenceSparseControls();
 		SequenceCaptureIssueRollback();

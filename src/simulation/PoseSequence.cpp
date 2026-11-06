@@ -99,6 +99,81 @@ static std::optional<std::uint64_t> SequenceFrame(const json::Object& document)
 	return static_cast<std::uint64_t>(std::max(0.0, value));
 }
 
+template<class Head, class Controller>
+static auto TrackSlot(Head* head, std::array<Controller*, 2> controllers, std::size_t track)
+	-> decltype(&head->position[0])
+{
+	if (track < 6)
+		return !head ? nullptr : track < 3 ? &head->position[track] : &head->angles[track - 3];
+	auto* controller = controllers[(track - 6) / 7];
+	if (!controller)
+		return nullptr;
+	switch (const auto component = (track - 6) % 7)
+	{
+	case 3:
+		return &controller->trigger;
+	case 4:
+		return &controller->grip;
+	case 5:
+	case 6:
+		return &controller->stick[component - 5];
+	default:
+		return &controller->position[component];
+	}
+}
+
+static const std::optional<float>* TrackSlot(const PoseSequenceStep& step, std::size_t track)
+{
+	const auto pointer = [](const auto& value) {
+		return value ? &*value : nullptr;
+	};
+	return TrackSlot(pointer(step.head), std::array{pointer(step.controllers[0]), pointer(step.controllers[1])}, track);
+}
+
+static std::optional<float>* TrackSlot(PoseSequenceSample& sample, std::size_t track)
+{
+	return TrackSlot(&sample.head, std::array{&sample.controllers[0], &sample.controllers[1]}, track);
+}
+
+template<class Key, class Value, class Mix>
+static Value Interpolate(const std::vector<Key>& keys, Duration elapsed, Value start, Mix mix)
+{
+	const auto next = std::upper_bound(keys.begin(), keys.end(), elapsed,
+									   [](Duration time, const Key& key) { return time < key.time; });
+	if (next == keys.end())
+		return keys.back().value;
+	const auto from = next == keys.begin() ? Duration{} : std::prev(next)->time;
+	const auto value = next == keys.begin() ? start : std::prev(next)->value;
+	return mix(value, next->value,
+			   static_cast<double>((elapsed - from).count()) / static_cast<double>((next->time - from).count()));
+}
+
+static XrQuaternionf Slerp(XrQuaternionf from, XrQuaternionf to, double fraction)
+{
+	double dot = from.x * to.x + from.y * to.y + from.z * to.z + from.w * to.w;
+	if (dot < 0)
+	{
+		to = {-to.x, -to.y, -to.z, -to.w};
+		dot = -dot;
+	}
+	double weightFrom = 1 - fraction, weightTo = fraction;
+	if (dot < 0.9995)
+	{
+		const double angle = std::acos(dot), sine = std::sin(angle);
+		weightFrom = std::sin((1 - fraction) * angle) / sine;
+		weightTo = std::sin(fraction * angle) / sine;
+	}
+	const auto mix = [&](float a, float b) {
+		return weightFrom * a + weightTo * b;
+	};
+	const double x = mix(from.x, to.x), y = mix(from.y, to.y), z = mix(from.z, to.z), w = mix(from.w, to.w);
+	const double length = std::sqrt(x * x + y * y + z * z + w * w);
+	if (!(length > 0))
+		return to;
+	return {static_cast<float>(x / length), static_cast<float>(y / length), static_cast<float>(z / length),
+			static_cast<float>(w / length)};
+}
+
 static HeadPosePatch DecodeHead(const json::Object& document)
 {
 	return {{ReadNumber(document, "x"), ReadNumber(document, "y"), ReadNumber(document, "z")},
@@ -123,6 +198,7 @@ static ControllerPosePatch DecodeController(const json::Object& document)
 PoseSequence PoseSequence::Parse(std::string_view source, bool loop)
 {
 	std::vector<PoseSequenceStep> sequence;
+	std::size_t timedRows = 0;
 	std::string line;
 	while (!source.empty())
 	{
@@ -132,13 +208,26 @@ PoseSequence PoseSequence::Parse(std::string_view source, bool loop)
 		const json::Object document(line.c_str());
 		if (!document.Valid())
 			continue;
-		const auto frame = SequenceFrame(document);
-		if (!frame)
-			continue;
+		PoseSequenceStep step;
+		if (document.Has("time"))
+		{
+			if (document.Has("frame"))
+				throw std::invalid_argument("A pose sequence row selects both a frame and a time");
+			const double seconds = document.Number("time", std::numeric_limits<double>::quiet_NaN());
+			if (!(seconds >= 0) || seconds > std::chrono::duration<double>(PoseSequence::MaxTime).count())
+				throw std::invalid_argument("Pose sequence time must be a nonnegative number of seconds");
+			step.time = std::chrono::duration_cast<Duration>(std::chrono::duration<double>(seconds));
+			++timedRows;
+		}
+		else
+		{
+			const auto frame = SequenceFrame(document);
+			if (!frame)
+				continue;
+			step.frame = {*frame};
+		}
 		if (sequence.size() == PoseSequence::MaxSteps)
 			throw std::length_error("Pose sequence exceeds its step limit");
-		PoseSequenceStep step;
-		step.frame = {*frame};
 		const auto head = document.Child("head");
 		if (head.Valid())
 			step.head = DecodeHead(head);
@@ -151,10 +240,13 @@ PoseSequence PoseSequence::Parse(std::string_view source, bool loop)
 		step.capture = document.Boolean("capture", false);
 		sequence.push_back(std::move(step));
 	}
-	return {std::move(sequence), loop};
+	if (timedRows && timedRows != sequence.size())
+		throw std::invalid_argument("Pose sequence rows must all select a time or all select a frame");
+	return {std::move(sequence), loop, timedRows != 0};
 }
 
-PoseSequence::PoseSequence(std::vector<PoseSequenceStep> steps, bool loop) : m_steps(std::move(steps)), m_loop(loop)
+PoseSequence::PoseSequence(std::vector<PoseSequenceStep> steps, bool loop, bool timed)
+	: m_steps(std::move(steps)), m_loop(loop), m_timed(timed)
 {
 	if (m_steps.size() > MaxSteps)
 		throw std::length_error("Pose sequence exceeds its step limit");
@@ -170,8 +262,26 @@ PoseSequence::PoseSequence(std::vector<PoseSequenceStep> steps, bool loop) : m_s
 									   patch->primary || patch->secondary;
 			}
 	}
+	if (!m_timed)
+	{
+		std::stable_sort(m_steps.begin(), m_steps.end(),
+						 [](const auto& left, const auto& right) { return left.frame < right.frame; });
+		return;
+	}
+	for (const auto& step : m_steps)
+		if (step.time < Duration{} || step.time > MaxTime)
+			throw std::invalid_argument("Pose sequence time is out of range");
 	std::stable_sort(m_steps.begin(), m_steps.end(),
-					 [](const auto& left, const auto& right) { return left.frame < right.frame; });
+					 [](const auto& left, const auto& right) { return left.time < right.time; });
+	for (const auto& step : m_steps)
+	{
+		for (std::size_t track = 0; track < m_scalars.size(); ++track)
+			if (const auto* value = TrackSlot(step, track); value && *value)
+				m_scalars[track].push_back({step.time, **value});
+		for (std::size_t hand = 0; hand < m_orientations.size(); ++hand)
+			if (step.controllers[hand] && step.controllers[hand]->orientation)
+				m_orientations[hand].push_back({step.time, *step.controllers[hand]->orientation});
+	}
 }
 
 std::size_t PoseSequence::Size() const noexcept
@@ -192,6 +302,44 @@ bool PoseSequence::Loops() const noexcept
 const std::array<bool, 5>& PoseSequence::Channels() const noexcept
 {
 	return m_channels;
+}
+
+bool PoseSequence::Timed() const noexcept
+{
+	return m_timed;
+}
+
+Duration PoseSequence::Length() const noexcept
+{
+	return m_timed && !m_steps.empty() ? m_steps.back().time : Duration{};
+}
+
+PoseSequenceSample PoseSequence::Sample(Duration elapsed, const PoseSequenceTrackValues& start) const
+{
+	PoseSequenceSample sample;
+	for (std::size_t track = 0; track < m_scalars.size(); ++track)
+		if (!m_scalars[track].empty())
+			*TrackSlot(sample, track) =
+				Interpolate(m_scalars[track], elapsed, start.scalars[track], [](float from, float to, double fraction) {
+					return static_cast<float>(from + (to - from) * fraction);
+				});
+	for (std::size_t hand = 0; hand < m_orientations.size(); ++hand)
+		if (!m_orientations[hand].empty())
+			sample.controllers[hand].orientation =
+				Interpolate(m_orientations[hand], elapsed, start.orientations[hand], Slerp);
+	return sample;
+}
+
+PoseSequenceTrackValues PoseSequence::End(const PoseSequenceTrackValues& start) const
+{
+	auto end = start;
+	for (std::size_t track = 0; track < m_scalars.size(); ++track)
+		if (!m_scalars[track].empty())
+			end.scalars[track] = m_scalars[track].back().value;
+	for (std::size_t hand = 0; hand < m_orientations.size(); ++hand)
+		if (!m_orientations[hand].empty())
+			end.orientations[hand] = m_orientations[hand].back().value;
+	return end;
 }
 
 void PoseSequencePlayback::Start(PoseSequence sequence, FrameId origin)

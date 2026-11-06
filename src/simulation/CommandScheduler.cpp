@@ -548,7 +548,7 @@ private:
 			return;
 		if (m_sequence->Status().origin.value && !m_sequence->HasControl(m_state.OwnedChannels(m_sequence->Source())))
 		{
-			m_sequence->Accept(frame, CommandResult::Conflict);
+			m_sequence->Accept(frame, time, CommandResult::Conflict);
 			ReleaseSource(m_sequence->Source());
 			return;
 		}
@@ -561,15 +561,15 @@ private:
 		PoseSequenceFrame prepared;
 		try
 		{
-			prepared = m_sequence->Prepare(frame, initial);
+			prepared = m_sequence->Prepare(frame, time, initial);
 		}
 		catch (const std::invalid_argument&)
 		{
-			m_sequence->Accept(frame, CommandResult::Invalid);
+			m_sequence->Accept(frame, time, CommandResult::Invalid);
 		}
 		catch (const std::overflow_error&)
 		{
-			m_sequence->Accept(frame, CommandResult::Invalid);
+			m_sequence->Accept(frame, time, CommandResult::Invalid);
 		}
 		if (!m_sequence->CanPrepare())
 		{
@@ -600,7 +600,7 @@ private:
 			m_snapshot->outcomes.push_back(outcome);
 			AppendHistory(std::move(outcome));
 		}
-		m_sequence->Accept(frame, result);
+		m_sequence->Accept(frame, time, result);
 		if (result != CommandResult::Applied)
 			ReleaseSource(m_sequence->Source());
 		else if (prepared.capture)
@@ -642,6 +642,7 @@ void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfigurat
 	m_outcomes.clear();
 	m_sources.clear();
 	m_applied.clear();
+	m_rejections = {};
 	m_liveInput.Reset();
 	retired.swap(m_sequence);
 	m_replacedSequence.reset();
@@ -670,8 +671,43 @@ void CommandScheduler::Close()
 
 CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 {
-	CommandOutcome outcome{std::move(transaction), CommandResult::Queued};
 	std::lock_guard lock(m_mutex);
+	auto outcome = SubmitLocked(std::move(transaction));
+	// Admitted, late and retried requests carry their retained identity.
+	if (!outcome.requested)
+		NoteRejection(outcome);
+	return outcome;
+}
+
+void CommandScheduler::NoteRejection(const CommandOutcome& outcome) noexcept
+{
+	switch (outcome.result)
+	{
+	case CommandResult::Late:
+		++m_rejections.late;
+		break;
+	case CommandResult::Conflict:
+		++m_rejections.conflict;
+		break;
+	case CommandResult::Invalid:
+		++m_rejections.invalid;
+		break;
+	case CommandResult::Capacity:
+		++m_rejections.capacity;
+		break;
+	case CommandResult::Closed:
+		++m_rejections.closed;
+		break;
+	default:
+		return;
+	}
+	m_rejections.last = CommandRejections::Last{outcome.transaction.id, outcome.transaction.source, outcome.result,
+												outcome.transaction.target};
+}
+
+CommandOutcome CommandScheduler::SubmitLocked(CommandTransaction transaction)
+{
+	CommandOutcome outcome{std::move(transaction), CommandResult::Queued};
 	if (m_closed)
 	{
 		outcome.result = CommandResult::Closed;
@@ -766,6 +802,7 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 		returned.recordingOverrun = !m_recorder.Observe(outcome);
 		outcomes.back().recordingOverrun = returned.recordingOverrun;
 		m_outcomes.swap(outcomes);
+		NoteRejection(returned);
 	}
 	else
 		m_pending.push_back(std::move(outcome));
@@ -867,14 +904,27 @@ std::optional<CommandOutcome> CommandScheduler::Read(CommandSource source, std::
 CommandSchedulerSnapshot CommandScheduler::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
-	return {m_closed,
-			m_closed ? 0
-					 : static_cast<std::size_t>(
-						   std::count_if(m_pending.begin(), m_pending.end(),
-										 [](const auto& value) { return value.result != CommandResult::Cancelled; })),
-			{m_outcomes.begin(), m_outcomes.end()},
-			m_applied.empty() ? nullptr : m_applied.back(),
-			m_seed};
+	CommandSchedulerSnapshot snapshot{m_closed,
+									  0,
+									  {m_outcomes.begin(), m_outcomes.end()},
+									  m_applied.empty() ? nullptr : m_applied.back(),
+									  m_seed,
+									  m_pendingCapacity};
+	snapshot.rejections = m_rejections;
+	if (m_closed)
+		return snapshot;
+	for (const auto& value : m_pending)
+	{
+		if (value.result == CommandResult::Cancelled)
+			continue;
+		++snapshot.pending;
+		const auto& target = value.effectiveTarget ? *value.effectiveTarget : value.transaction.target;
+		if (target.frame && (!snapshot.nextPendingFrame || *target.frame < *snapshot.nextPendingFrame))
+			snapshot.nextPendingFrame = target.frame;
+		if (target.time && (!snapshot.nextPendingTime || *target.time < *snapshot.nextPendingTime))
+			snapshot.nextPendingTime = target.time;
+	}
+	return snapshot;
 }
 
 CommandResult CommandScheduler::Cancel(CommandSource source, std::uint64_t id)

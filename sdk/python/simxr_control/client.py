@@ -1,5 +1,6 @@
 """Typed synchronous local control API; unfinished exchanges require retry()."""
 from dataclasses import dataclass
+import json
 import threading
 import time
 
@@ -362,6 +363,32 @@ class Client:
             raise ProtocolError('Sequence loop must be boolean')
         return self.request(OpCode.START_SEQUENCE, self._session(session) + [
             Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.PROGRAM_ID, program_id, True), Field.boolean(Tag.LOOP, loop)])
+
+    def run_sequence(self, session, rows, *, loop=False, source=1):
+        """Upload and start a program of JSON-line rows (dicts or text); returns the sequence status.
+
+        Rows keyed by "time" (seconds since the sequence's first frame) are interpolated
+        and evaluated on every frame, so motion speed does not depend on frame rate.
+        """
+        if not isinstance(rows, (str, bytes)):
+            rows = ''.join(json.dumps(row, separators=(',', ':')) + '\n' for row in rows)
+        program = self.upload_sequence(session, rows, source=source)
+        return self.start_sequence(session, program, loop=loop, source=source)['document']
+
+    def simulation_clock(self, session, *, source=1):
+        """Relate display times to the simulation time that schedule(time_ns=...) targets.
+
+        Returns None before the session applies a frame. next_time is the simulation
+        time of the frame the application most recently waited for.
+        """
+        state = self.simulation_status(session, source=source)['document']
+        if 'epoch' not in state:
+            return None
+        pipeline = self.status(session).get('pipeline', {})
+        latest = pipeline.get('waited') or pipeline.get('begun')
+        return {'epoch': state['epoch'], 'frame_id': state['frame_id'], 'time': state['time'],
+                'next_time': latest['time'] - state['epoch'] if latest else state['time'],
+                'period': latest['period'] if latest else None}
 
     def sequence_status(self, session, sequence=None, *, after=0, count=32, source=1):
         """Read a sequence owned by this connection."""

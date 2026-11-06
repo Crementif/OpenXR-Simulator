@@ -86,7 +86,9 @@ Json SequenceDefinitions()
 									  "staged with upload_pose_sequence."}};
 	result.push_back(tool("run_pose_sequence",
 						  "Upload an optional JSONL program and start it at an ordinary frame boundary. Repeating the "
-						  "same program and loop returns its current execution, not a restart.",
+						  "same program and loop returns its current execution, not a restart. Rows keyed by frame "
+						  "apply that many frames after the start; rows keyed by time (seconds) are interpolated on "
+						  "every frame, so motion speed is independent of frame rate.",
 						  run, Json::array({"connection", "program_id"})));
 	auto status = common;
 	status["sequence_id"] = id;

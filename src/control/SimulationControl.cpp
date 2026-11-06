@@ -313,6 +313,28 @@ InspectionValue SimulationOutcome(const CommandOutcome& outcome, bool includeCom
 		 {"commands", InspectionValue::Array(std::move(commands))}});
 }
 
+static InspectionValue Rejections(const CommandRejections& rejections)
+{
+	auto last = InspectionValue::Null();
+	if (rejections.last)
+	{
+		const auto& target = rejections.last->target;
+		last = InspectionValue::Object(
+			{{"transaction_id", InspectionValue::Unsigned(rejections.last->id)},
+			 {"source", SourceValue(rejections.last->source)},
+			 {"phase", InspectionValue::Text(SimulationResultName(rejections.last->result))},
+			 {"target_frame", target.frame ? InspectionValue::Unsigned(target.frame->value) : InspectionValue::Null()},
+			 {"target_time",
+			  target.time ? InspectionValue::Signed(target.time->value.count()) : InspectionValue::Null()}});
+	}
+	return InspectionValue::Object({{"late", InspectionValue::Unsigned(rejections.late)},
+									{"conflict", InspectionValue::Unsigned(rejections.conflict)},
+									{"invalid", InspectionValue::Unsigned(rejections.invalid)},
+									{"capacity", InspectionValue::Unsigned(rejections.capacity)},
+									{"closed", InspectionValue::Unsigned(rejections.closed)},
+									{"last", std::move(last)}});
+}
+
 InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool includeCommands,
 								std::optional<bool> trackerInteraction, std::span<const std::uint64_t> boundTrackers,
 								std::optional<std::array<std::string, 2>> controllerProfiles,
@@ -328,6 +350,12 @@ InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool incl
 		{"seed", InspectionValue::Unsigned(state.seed)},
 		{"closed", InspectionValue::Boolean(state.closed)},
 		{"pending", InspectionValue::Unsigned(state.pending)},
+		{"pending_capacity", InspectionValue::Unsigned(state.pendingCapacity)},
+		{"next_pending_frame",
+		 state.nextPendingFrame ? InspectionValue::Unsigned(state.nextPendingFrame->value) : InspectionValue::Null()},
+		{"next_pending_time", state.nextPendingTime ? InspectionValue::Signed(state.nextPendingTime->value.count())
+													: InspectionValue::Null()},
+		{"rejected", Rejections(state.rejections)},
 		{"transactions", InspectionValue::Array(std::move(outcomes))}};
 	if (controllerProfiles)
 		fields.emplace_back("controller_profiles",
@@ -359,6 +387,8 @@ InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool incl
 		fields.emplace_back("revision", InspectionValue::Unsigned(applied.revision));
 		fields.emplace_back("frame_id", InspectionValue::Unsigned(applied.frame.value));
 		fields.emplace_back("time", InspectionValue::Signed(applied.time.value.count()));
+		fields.emplace_back("runtime_time", InspectionValue::Signed(applied.runtimeTime.value.count()));
+		fields.emplace_back("epoch", InspectionValue::Signed((applied.runtimeTime.value - applied.time.value).count()));
 		fields.emplace_back("owners", InspectionValue::Array(std::move(owners)));
 		fields.emplace_back("scenarios", InspectionValue::Array(std::move(scenarios)));
 		fields.emplace_back("configuration_available", InspectionValue::Boolean(applied.configurationAvailable));
