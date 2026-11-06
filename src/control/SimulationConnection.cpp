@@ -210,6 +210,13 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 											   return body && body->observationOrigin.has_value();
 										   }))
 				throw ControlRequestError{ErrorCode::UnsupportedField, "Body replay timing requires protocol minor 12"};
+			if (response.minor < 18 && std::any_of(
+										   transaction.commands.begin(), transaction.commands.end(),
+										   [](const auto& command) {
+											   const auto* head = std::get_if<SetHeadPose>(&command);
+											   return head && head->Moving();
+										   }))
+				throw ControlRequestError{ErrorCode::UnsupportedField, "Head velocity requires protocol minor 18"};
 			transaction.source = source;
 			Track(session, source);
 			const auto outcome = scheduler.Submit(std::move(transaction));

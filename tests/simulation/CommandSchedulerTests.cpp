@@ -71,8 +71,7 @@ CommandTransaction Request(std::uint64_t id, std::uint64_t frame, std::vector<Si
 std::shared_ptr<const AppliedCommandSnapshot> Tick(CommandScheduler& scheduler, std::uint64_t frame,
 												   const CommandConfiguration& baseline = {})
 {
-	return scheduler.Apply({frame},
-						   {Duration{static_cast<std::int64_t>(frame * 10)}}, baseline);
+	return scheduler.Apply({frame}, {Duration{static_cast<std::int64_t>(frame * 10)}}, baseline);
 }
 
 PoseSample Pose(float x)
@@ -279,6 +278,44 @@ void TimedPoseSequence()
 	}
 }
 
+void HeadVelocity()
+{
+	using namespace std::chrono_literals;
+	const SetHeadPose moving{{{{0, 0, 0, 1}, {0, 1.5f, 0}}, TrackedPoseFlags}, {1, 0, -2}, {0, .5f, 0}};
+	// The head reaches the same pose at the same display time at any frame rate.
+	for (const auto period : {10ms, 25ms})
+	{
+		CommandScheduler scheduler;
+		scheduler.Start();
+		const auto time = [&](std::uint64_t frame) {
+			return RuntimeTime{1s + period * static_cast<std::int64_t>(frame - 1)};
+		};
+		scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}, moving}, Mcp));
+		std::uint64_t frame = 1;
+		std::shared_ptr<const AppliedCommandSnapshot> applied;
+		for (; time(frame).value <= 1s + 100ms; ++frame)
+			applied = scheduler.Apply({frame}, time(frame), {});
+		const auto& head = applied->configuration.tracking.head.pose;
+		Require(std::abs(head.position.x - .1f) < .0001f && std::abs(head.position.z + .2f) < .0001f &&
+					head.position.y == 1.5f && std::abs(Yaw(head.orientation) - .05f) < .0001f,
+				"Head velocity did not extrapolate from the display time the pose applied at");
+
+		scheduler.Submit(Request(2, frame, {SetHeadPose{{head, TrackedPoseFlags}}}, Mcp));
+		const auto stopped = scheduler.Apply({frame}, time(frame), {});
+		const auto still = scheduler.Apply({frame + 1}, time(frame + 1), {});
+		Require(stopped->configuration.tracking.head.pose.position.x == head.position.x &&
+					still->configuration.tracking.head.pose.position.x == head.position.x,
+				"A head pose without velocity did not stop the motion");
+
+		scheduler.Submit(Request(3, frame + 2, {moving}, Mcp));
+		scheduler.Apply({frame + 2}, time(frame + 2), {});
+		scheduler.Submit(Request(4, frame + 3, {ReleaseControl{ControlChannel::Head}}, Mcp));
+		scheduler.Apply({frame + 3}, time(frame + 3), {});
+		Require(scheduler.Apply({frame + 4}, time(frame + 4), {})->configuration.tracking.head.pose.position.x == 0,
+				"Releasing the head kept its velocity");
+	}
+}
+
 void PoseSequenceReservationRollback()
 {
 	CommandScheduler scheduler;
@@ -475,14 +512,13 @@ void SequenceCaptureIssueRollback()
 	bool rejected = false;
 	try
 	{
-		commands.Apply(
-			prediction.id, prediction.displayTime, SequenceBaseline(), [&](const auto& applied) {
-				auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
-				Require(capture.Record()->reservation.result == SnapshotAdmission::Accepted && pool.InUse() == 1,
-						"Sequence did not reserve before history admission");
-				failCommandAllocation = true;
-				history.Issue(prediction, {}, capture.Record());
-			});
+		commands.Apply(prediction.id, prediction.displayTime, SequenceBaseline(), [&](const auto& applied) {
+			auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
+			Require(capture.Record()->reservation.result == SnapshotAdmission::Accepted && pool.InUse() == 1,
+					"Sequence did not reserve before history admission");
+			failCommandAllocation = true;
+			history.Issue(prediction, {}, capture.Record());
+		});
 	}
 	catch (const std::bad_alloc&)
 	{
@@ -861,8 +897,7 @@ void SequenceReleaseRecording()
 			bool rejected = false;
 			try
 			{
-				scheduler.Apply({2}, {Duration{20}}, baseline,
-								[](const auto&) { throw std::bad_alloc{}; });
+				scheduler.Apply({2}, {Duration{20}}, baseline, [](const auto&) { throw std::bad_alloc{}; });
 			}
 			catch (const std::bad_alloc&)
 			{
@@ -1007,8 +1042,7 @@ void TimeLateCancelBounds()
 	auto distant = Request(4, 2 + CommandScheduler::MaxFrameLead, {SetGaze{{}}});
 	Require(scheduler.Submit(distant).result == CommandResult::TooFar, "Accepted a frame beyond the lead limit");
 	distant.target = {{}, RuntimeTime{Duration{11} + CommandScheduler::MaxTimeLead}};
-	Require(scheduler.Submit(distant).result == CommandResult::TooFar &&
-				scheduler.Snapshot().rejections.tooFar == 2 &&
+	Require(scheduler.Submit(distant).result == CommandResult::TooFar && scheduler.Snapshot().rejections.tooFar == 2 &&
 				scheduler.Submit(Request(4, 1 + CommandScheduler::MaxFrameLead, {SetGaze{{}}})).result ==
 					CommandResult::Capacity,
 			"Lead limit rejected the wrong targets or consumed the request ID");
@@ -1637,6 +1671,7 @@ int main()
 		SequenceRetirementOutsideAdmission();
 		ScheduledPoseSequence();
 		TimedPoseSequence();
+		HeadVelocity();
 		SequenceLocalControllerFollowing();
 		SequenceSparseControls();
 		SequenceCaptureIssueRollback();

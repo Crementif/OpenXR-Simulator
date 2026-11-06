@@ -299,6 +299,11 @@ static std::vector<std::uint64_t> RequestWords(const CommandTransaction& transac
 							if (value.observationOrigin)
 								identity.Add(value.observationOrigin->value.count());
 						}
+						if constexpr (std::is_same_v<T, SetHeadPose>)
+						{
+							identity.Add(value.linearVelocity);
+							identity.Add(value.angularVelocity);
+						}
 					}
 				},
 				command);
@@ -366,9 +371,8 @@ static std::optional<CommandOutcome> ReleaseOutcome(CommandSource source,
 	return outcome;
 }
 
-static std::shared_ptr<const CommandRecordingOrigin> ReleaseState(const CommandState& state,
-																  const CommandConfiguration& baseline, FrameId frame,
-																  RuntimeTime time)
+static std::shared_ptr<const CommandRecordingOrigin>
+ReleaseState(const CommandState& state, const CommandConfiguration& baseline, FrameId frame, RuntimeTime time)
 {
 	auto origin = state.RecordingOrigin(baseline, time);
 	origin.frame = frame;
@@ -393,8 +397,9 @@ static bool ValidSource(CommandSource source)
 class CommandScheduler::PreparedCommandBoundary
 {
 public:
-	PreparedCommandBoundary(const CommandScheduler& scheduler, FrameId frame, RuntimeTime time, const CommandConfiguration& baseline,
-							LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
+	PreparedCommandBoundary(const CommandScheduler& scheduler, FrameId frame, RuntimeTime time,
+							const CommandConfiguration& baseline, LiveInputClock::time_point now,
+							std::optional<std::uint64_t> clockRevision)
 		: m_state(scheduler.m_state), m_baseline(baseline), m_pending(scheduler.m_pending),
 		  m_outcomes(scheduler.m_outcomes), m_snapshots(scheduler.m_applied),
 		  m_snapshot(std::make_shared<AppliedCommandSnapshot>()), m_historyCapacity(scheduler.m_historyCapacity),
@@ -407,7 +412,7 @@ public:
 		m_snapshot->revision = scheduler.m_revision + 1;
 		m_snapshot->frame = frame;
 		m_snapshot->time = time;
-		m_state.BeginBoundary(baseline.referenceSpaces);
+		m_state.BeginBoundary(baseline.referenceSpaces, time);
 		for (auto command = m_pending.begin(); command != m_pending.end();)
 		{
 			if (command->result == CommandResult::Cancelled)
@@ -502,15 +507,13 @@ private:
 		if (auto outcome = ReleaseOutcome(source, channels, m_snapshot->frame, m_snapshot->time, false))
 		{
 			outcome->appliedRuntimeTime = m_snapshot->time;
-			outcome->releaseState =
-				ReleaseState(m_state, *m_baseline, m_snapshot->frame, m_snapshot->time);
+			outcome->releaseState = ReleaseState(m_state, *m_baseline, m_snapshot->frame, m_snapshot->time);
 			m_snapshot->outcomes.push_back(std::move(*outcome));
 		}
 	}
 
-	void ApplyLiveInput(FrameId frame, RuntimeTime time,
-						const CommandConfiguration& baseline, LiveInputClock::time_point now,
-						std::optional<std::uint64_t> clockRevision)
+	void ApplyLiveInput(FrameId frame, RuntimeTime time, const CommandConfiguration& baseline,
+						LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
 	{
 		const auto owner = m_liveInput.Status().owner;
 		if (!owner)
@@ -539,8 +542,7 @@ private:
 		AppendHistory(std::move(*outcome));
 	}
 
-	void ApplySequence(FrameId frame, RuntimeTime time,
-					   const CommandConfiguration& baseline)
+	void ApplySequence(FrameId frame, RuntimeTime time, const CommandConfiguration& baseline)
 	{
 		if (!m_sequence || !m_sequence->CanPrepare())
 			return;
@@ -974,8 +976,7 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 }
 
 std::shared_ptr<const AppliedCommandSnapshot>
-CommandScheduler::Apply(FrameId frame, RuntimeTime time,
-						const CommandConfiguration& baseline,
+CommandScheduler::Apply(FrameId frame, RuntimeTime time, const CommandConfiguration& baseline,
 						const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve,
 						LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
 {
@@ -1157,8 +1158,7 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceLocked(Comm
 			{
 				const auto time = latest ? latest->time : RuntimeTime{Duration{1}};
 				outcome->appliedRuntimeTime = time;
-				outcome->releaseState =
-					ReleaseState(m_state, *m_baseline, outcome->appliedFrame, time);
+				outcome->releaseState = ReleaseState(m_state, *m_baseline, outcome->appliedFrame, time);
 			}
 			m_recorder.Observe(*outcome);
 		}

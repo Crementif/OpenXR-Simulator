@@ -1,5 +1,6 @@
 #include "simulation/CommandState.h"
 #include "Pch.h"
+#include "math/Math.h"
 #include "runtime/validation/Path.h"
 #include "simulation/TrackingSystem.h"
 #include "simulation/BodyObservation.h"
@@ -45,6 +46,17 @@ public:
 		return CommandResult::Applied;
 	}
 
+	CommandResult operator()(const SetHeadPose& command)
+	{
+		const auto result = (*this)(command, Generic{});
+		if (result == CommandResult::Applied && command.Moving())
+			m_state.m_headMotion =
+				HeadMotion{command.value.pose, m_time, command.linearVelocity, command.angularVelocity};
+		else if (result == CommandResult::Applied)
+			m_state.m_headMotion.reset();
+		return result;
+	}
+
 	CommandResult operator()(const SetScenario& command)
 	{
 		if (m_state.m_owners[CheckedChannel(ChannelFor(command))] != m_source)
@@ -64,6 +76,17 @@ public:
 	template<class Command>
 	CommandResult operator()(const Command& command)
 	{
+		return (*this)(command, Generic{});
+	}
+
+private:
+	struct Generic
+	{
+	};
+
+	template<class Command>
+	CommandResult operator()(const Command& command, Generic)
+	{
 		const auto index = CheckedChannel(ChannelFor(command));
 		if (m_state.m_owners[index] != m_source)
 			return CommandResult::Conflict;
@@ -73,7 +96,6 @@ public:
 		return CommandResult::Applied;
 	}
 
-private:
 	CommandState& m_state;
 	CommandSource m_source;
 	const RuntimeTime m_time;
@@ -110,9 +132,29 @@ ControlChannel CommandState::ScenarioChannel(FailureScenario scenario)
 	}
 }
 
-void CommandState::BeginBoundary(const ReferenceSpaceState& spaces)
+void CommandState::BeginBoundary(const ReferenceSpaceState& spaces, RuntimeTime time)
 {
 	m_values.referenceSpaces = spaces;
+	if (!m_headMotion || time <= m_headMotion->time)
+		return;
+	const auto& motion = *m_headMotion;
+	const float seconds = std::chrono::duration<float>(time.value - motion.time.value).count();
+	auto& pose = m_values.tracking.head.pose;
+	pose.position = {motion.origin.position.x + motion.linear.x * seconds,
+					 motion.origin.position.y + motion.linear.y * seconds,
+					 motion.origin.position.z + motion.linear.z * seconds};
+	const auto& w = motion.angular;
+	const float rate = std::sqrt(w.x * w.x + w.y * w.y + w.z * w.z);
+	pose.orientation = motion.origin.orientation;
+	if (rate > 0)
+	{
+		const float half = rate * seconds / 2, scale = std::sin(half) / rate;
+		const auto turned =
+			Multiply({w.x * scale, w.y * scale, w.z * scale, std::cos(half)}, motion.origin.orientation);
+		const float length =
+			std::sqrt(turned.x * turned.x + turned.y * turned.y + turned.z * turned.z + turned.w * turned.w);
+		pose.orientation = {turned.x / length, turned.y / length, turned.z / length, turned.w / length};
+	}
 }
 
 CommandResult CommandState::Apply(CommandTransaction& transaction, const CommandConfiguration& baseline,
@@ -206,6 +248,7 @@ void CommandState::ClearOwnership() noexcept
 {
 	m_owners.fill({});
 	m_overrides.fill(false);
+	m_headMotion.reset();
 	m_scenarios.fill(false);
 }
 
@@ -214,6 +257,7 @@ void CommandState::Swap(CommandState& other) noexcept
 	static_assert(std::is_nothrow_swappable_v<CommandConfiguration>);
 	using std::swap;
 	swap(m_values, other.m_values);
+	swap(m_headMotion, other.m_headMotion);
 	m_overrides.swap(other.m_overrides);
 	m_owners.swap(other.m_owners);
 	m_scenarios.swap(other.m_scenarios);
@@ -439,6 +483,8 @@ void CommandState::ApplyScenarios(CommandConfiguration& config) const
 void CommandState::ClearChannel(ControlChannel channel) noexcept
 {
 	m_overrides[Index(channel)] = false;
+	if (channel == ControlChannel::Head)
+		m_headMotion.reset();
 	// Release held controls instead of feeding the last synthetic press back into
 	// the next native baseline. A new owner can subsequently replace this overlay.
 	if (channel == ControlChannel::LeftControls || channel == ControlChannel::RightControls)

@@ -481,7 +481,11 @@ SimulationCommand Command(lua_State* state, int index)
 	if (kind == "release_control")
 		return ReleaseControl{static_cast<ControlChannel>(Named(state, table, "channel", s_channelNames))};
 	if (kind == "head_pose")
-		return SetHeadPose{Pose(state, table)};
+	{
+		const auto linear = Vector(state, table, "linear_velocity", {0, 0, 0});
+		const auto angular = Vector(state, table, "angular_velocity", {0, 0, 0});
+		return SetHeadPose{Pose(state, table), {linear[0], linear[1], linear[2]}, {angular[0], angular[1], angular[2]}};
+	}
 	if (kind == "controller_pose")
 	{
 		ControllerPose value{Pose(state, table), BoolField(state, table, "connected", true)};

@@ -85,6 +85,17 @@ struct ReleaseControl
 struct SetHeadPose
 {
 	PoseSample value;
+	// World-space metres and radians per second. The head keeps moving from value,
+	// extrapolated to each later frame's display time, until the next head pose.
+	XrVector3f linearVelocity{}, angularVelocity{};
+
+	bool Moving() const noexcept
+	{
+		const auto nonzero = [](const XrVector3f& value) {
+			return value.x || value.y || value.z;
+		};
+		return nonzero(linearVelocity) || nonzero(angularVelocity);
+	}
 };
 
 struct SetControllerPose

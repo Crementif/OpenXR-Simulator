@@ -355,8 +355,10 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	}
 	if (kind == "head_pose")
 	{
-		Keys(object, {"kind", "position", "orientation", "flags"});
-		return SetHeadPose{Sample(object)};
+		Keys(object, {"kind", "position", "orientation", "flags", "linear_velocity", "angular_velocity"});
+		const auto linear = Vector<3>(object, "linear_velocity", {0, 0, 0});
+		const auto angular = Vector<3>(object, "angular_velocity", {0, 0, 0});
+		return SetHeadPose{Sample(object), {linear[0], linear[1], linear[2]}, {angular[0], angular[1], angular[2]}};
 	}
 	if (kind == "controller_pose")
 	{

@@ -92,25 +92,26 @@ Json SimulationDefinitions()
 		 "body command accepts active, confidence, preset (0 standing, 1 T-pose, 2 seated), root_pose, five controls "
 		 "and bounded joint overrides; optional observation carries provider joints and nanosecond times. All "
 		 "positions and lengths use metres, angles use radians, orientations are [x,y,z,w] quaternions, and buttons "
-		 "require JSON booleans. Controller commands require hand (0 left, 1 right). A tracker requires index and "
-		 "identity (uint64 decimal string or safe integer), role (0-17), connected, tracked, anchor, position, "
+		 "require JSON booleans. A head_pose may add linear_velocity (m/s) and angular_velocity (rad/s, world axes); "
+		 "the head keeps moving from that pose every frame until the next head_pose or release. Controller commands "
+		 "require hand (0 left, 1 right). A tracker requires index and identity (uint64 decimal string or safe "
+		 "integer), role (0-17), connected, tracked, anchor, position, "
 		 "orientation, joint_offset, flags and source_path. A trackers command replaces the inventory with a devices "
 		 "array. Eye views contain left and right position, orientation, flags and fov, plus space_revision; "
 		 "enabled=false clears them. Reference spaces contain local and stage poses and optional stage bounds. "
 		 "Recorded simxr-command-v1-hex objects are also accepted. See the automation documentation for field "
 		 "details."}};
-	result.push_back(tool("simulation_schedule",
-						  "Schedule one atomic input transaction at an exact frame or predicted display time (time_ns, the XrTime the "
-						  "application sees). Include "
-						  "take_control before setters; admission is not application.",
-						  schedule, Json::array({"connection", "transaction_id", "commands"})));
+	result.push_back(tool(
+		"simulation_schedule",
+		"Schedule one atomic input transaction at an exact frame or predicted display time (time_ns, the XrTime the "
+		"application sees). Include take_control before setters; admission is not application.",
+		schedule, Json::array({"connection", "transaction_id", "commands"})));
 	auto status = common;
 	status["transaction_id"] = identifier;
-	result.push_back(
-		tool("simulation_status",
-			 "Read applied simulator state or one transaction outcome. State includes the applied frame's "
-			 "display time and queue health (pending, pending_capacity, rejected).",
-			 status, Json::array({"connection"})));
+	result.push_back(tool("simulation_status",
+						  "Read applied simulator state or one transaction outcome. State includes the applied frame's "
+						  "display time and queue health (pending, pending_capacity, rejected).",
+						  status, Json::array({"connection"})));
 	result.push_back(tool("simulation_cancel", "Cancel an unapplied transaction owned by this connection.", status,
 						  Json::array({"connection", "transaction_id"})));
 	result.push_back(tool("simulation_release_control",

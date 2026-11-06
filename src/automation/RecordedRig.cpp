@@ -137,6 +137,13 @@ static std::string Format(const SetHeadPose& command)
 	CommandTable table("head_pose");
 	table.Pose(command.value.pose);
 	table.Integer("flags", command.value.flags);
+	if (command.Moving())
+	{
+		const auto& linear = command.linearVelocity;
+		const auto& angular = command.angularVelocity;
+		table.Raw("linear_velocity", Vector({linear.x, linear.y, linear.z}));
+		table.Raw("angular_velocity", Vector({angular.x, angular.y, angular.z}));
+	}
 	return table.Finish();
 }
 

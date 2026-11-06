@@ -364,6 +364,10 @@ void SimulationCommandBoundaries()
 	const auto decoded = DecodeSimulationCommand(encoded);
 	Require(std::get<simxr::ReleaseControl>(decoded).channel == simxr::ControlChannel::Head,
 			"Version-one release-control command targeted a different channel");
+	const auto moving = std::get<simxr::SetHeadPose>(
+		DecodeSimulationCommand(EncodeSimulationCommand(simxr::SetHeadPose{{}, {1, 2, 3}, {0, -.5f, 0}})));
+	Require(moving.linearVelocity.z == 3 && moving.angularVelocity.y == -.5f && moving.angularVelocity.x == 0,
+			"Head velocity did not round-trip");
 	for (const auto nonfinite : {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()})
 		RequireThrows<std::invalid_argument>(
 			[&] { DecodeSimulationCommand(EncodeSimulationCommand(simxr::SetGaze{{nonfinite, 0, true, true}})); },

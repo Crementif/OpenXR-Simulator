@@ -113,6 +113,13 @@ def _encode_command(command, index=1):
     elif kind in ('head_pose', 'controller_pose'):
         allow('position', 'orientation', 'flags')
         f = [_pose(command), Field.u64(Tag.USAGE, _uint(command.get('flags', 15), 15), True)]
+        if kind == 'head_pose':
+            allow('linear_velocity', 'angular_velocity')
+            velocity = [_floats(tag, command.get(name, [0, 0, 0]), 3) for name, tag in
+                        (('linear_velocity', Tag.LINEAR_VELOCITY), ('angular_velocity', Tag.ANGULAR_VELOCITY))]
+            # A stationary pose keeps the encoding older runtimes decode.
+            if any(command.get('linear_velocity') or ()) or any(command.get('angular_velocity') or ()):
+                f += velocity
         if kind == 'controller_pose':
             allow('hand', 'connected', 'aim')
             f += [Field.u32(Tag.LAYER, _uint(command.get('hand', 0), 1), True),
@@ -279,6 +286,9 @@ def decode_command(record):
         if kind == 'take_control': c['replace'] = f[Tag.TAKE_CONTROL].as_bool()
     elif kind in ('head_pose', 'controller_pose'):
         pose(); c['flags'] = f[Tag.USAGE].as_u64()
+        if kind == 'head_pose':
+            for name, tag in (('linear_velocity', Tag.LINEAR_VELOCITY), ('angular_velocity', Tag.ANGULAR_VELOCITY)):
+                if tag in f: c[name] = floats(tag)
         if kind == 'controller_pose':
             c.update(hand=f[Tag.LAYER].as_u32(), connected=f[Tag.ENABLED].as_bool())
             if Tag.AIM_POSE in f:

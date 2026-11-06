@@ -360,7 +360,16 @@ static CommandPayload EncodeCommand(const ReleaseControl& command)
 
 static CommandPayload EncodeCommand(const SetHeadPose& command)
 {
-	return {SimulationCommandKind::HeadPose, EncodePoseSample(command.value)};
+	auto fields = EncodePoseSample(command.value);
+	// Stationary poses keep the encoding older peers decode.
+	if (command.Moving())
+	{
+		fields.push_back(EncodeFloats(tag::LinearVelocity,
+									  {command.linearVelocity.x, command.linearVelocity.y, command.linearVelocity.z}));
+		fields.push_back(EncodeFloats(
+			tag::AngularVelocity, {command.angularVelocity.x, command.angularVelocity.y, command.angularVelocity.z}));
+	}
+	return {SimulationCommandKind::HeadPose, std::move(fields)};
 }
 
 static CommandPayload EncodeCommand(const SetControllerPose& command)
@@ -543,7 +552,22 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 		return ReleaseControl{static_cast<ControlChannel>(ReadU32(fields, tag::Channel))};
 	}
 	case SimulationCommandKind::HeadPose:
-		return SetHeadPose{DecodePoseSample(DecodePayload(payload, {tag::Pose, tag::Usage}))};
+	{
+		const auto fields = DecodePayload(payload, {tag::Pose, tag::Usage, tag::LinearVelocity, tag::AngularVelocity});
+		SetHeadPose head{DecodePoseSample(fields)};
+		const auto vector = [&](std::uint16_t name) {
+			const auto* field = fields.Find(name);
+			if (!field)
+				return XrVector3f{};
+			const auto values = DecodeFloats<3>(*field);
+			if (!std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); }))
+				throw std::invalid_argument("Head velocity must be finite");
+			return XrVector3f{values[0], values[1], values[2]};
+		};
+		head.linearVelocity = vector(tag::LinearVelocity);
+		head.angularVelocity = vector(tag::AngularVelocity);
+		return head;
+	}
 	case SimulationCommandKind::ControllerPose:
 	{
 		const auto fields = DecodePayload(payload, {tag::Pose, tag::Usage, tag::Layer, tag::Enabled, tag::AimPose});

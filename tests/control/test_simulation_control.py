@@ -31,6 +31,7 @@ class SimulationTests(unittest.TestCase):
             {'kind': 'take_control', 'channel': 'head', 'replace': True},
             {'kind': 'release_control', 'channel': 'head'},
             {'kind': 'head_pose', 'position': [1, 2, 3]},
+            {'kind': 'head_pose', 'angular_velocity': [0, .5, 0]},
             {'kind': 'controller_pose', 'hand': 1, 'connected': False},
             {'kind': 'controller_controls', 'hand': 0, 'trigger': .5, 'primary': True},
             {'kind': 'body', 'preset': 1, 'joints': [{'joint': 3, 'tracked': False, 'position': [1, 2, 3]}]},

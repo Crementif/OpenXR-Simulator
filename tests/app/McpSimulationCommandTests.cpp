@@ -128,6 +128,10 @@ int main()
 	Reject({{"kind", "controller_controls"}, {"hand", 0}, {"trigger", 2}});
 	Reject({{"kind", "controller_controls"}, {"hand", 0}, {"stick_y", -1.1}});
 	Reject({{"kind", "head_pose"}, {"yaw_deg", 90}});
+	Reject({{"kind", "head_pose"}, {"angular_velocity", {0, 1}}});
+	const auto turning =
+		std::get<SetHeadPose>(SimulationCommandFromJson({{"kind", "head_pose"}, {"angular_velocity", {0, .5, 0}}}));
+	Require(turning.angularVelocity.y == .5f && turning.Moving(), "MCP head pose dropped its velocity");
 	const auto drain = app::mcp::PrepareSimulation("simulation_start_recording", {{"drain", true}}, 1, 2);
 	Require(drain.opcode == control::OpCode::StartRecording, "Native recording start is exposed");
 	const auto ack = app::mcp::PrepareSimulation("simulation_acknowledge_recording",

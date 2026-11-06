@@ -290,6 +290,10 @@ class Client:
         MCP=1, rig=2). Include an explicit take_control command before writing
         each channel. A queued response is admission, not application; poll
         simulation_status().
+
+        A head_pose may carry linear_velocity (m/s) and angular_velocity
+        (rad/s, world axes); the head then keeps moving from that pose on every
+        frame until the next head_pose or release, at any frame rate.
         """
         from .commands import encode_command, SourceKind, LatePolicy
         if (frame is None) == (time_ns is None):
@@ -297,6 +301,10 @@ class Client:
         commands = tuple(commands)
         if not 1 <= len(commands) <= 64:
             raise ProtocolError('A transaction requires 1 through 64 commands')
+        if self.hello.get('minor', 0) < 18 and any(
+                isinstance(c, dict) and (any(c.get('linear_velocity') or ()) or any(c.get('angular_velocity') or ()))
+                for c in commands):
+            raise ProtocolError('Head velocity requires protocol minor 18')
         if transaction_id is None:
             with self._lock:
                 transaction_id = getattr(self, '_next_transaction', 1)

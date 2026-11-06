@@ -74,7 +74,8 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   ClockDomain = 223, ClockRevision = 224, NativeTime = 225, RuntimeTimeBefore = 226,
 							   RuntimeTimeAfter = 227, ClockResolution = 228, SourceAge = 229, TrackerCollection = 230,
 							   BodyObservation = 231, BodyObservationOrigin = 232, RecordingId = 233,
-							   RecordingDrain = 234, ImageRegion = 235, ExpectedInputs = 236, ApplicationGpuTime = 237;
+							   RecordingDrain = 234, ImageRegion = 235, ExpectedInputs = 236, ApplicationGpuTime = 237,
+							   LinearVelocity = 238, AngularVelocity = 239;
 }
 
 enum class Capability : std::uint64_t

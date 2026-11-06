@@ -21,7 +21,8 @@ public:
 
 	static ControlChannel ScenarioChannel(FailureScenario scenario);
 
-	void BeginBoundary(const ReferenceSpaceState& spaces);
+	// Advances velocity-driven head motion to the boundary's display time.
+	void BeginBoundary(const ReferenceSpaceState& spaces, RuntimeTime time);
 	CommandResult Apply(CommandTransaction& transaction, const CommandConfiguration& baseline, RuntimeTime time);
 	CommandConfiguration Merge(const CommandConfiguration& baseline) const;
 	CommandRecordingOrigin RecordingOrigin(const CommandConfiguration& baseline, RuntimeTime time) const;
@@ -73,7 +74,15 @@ private:
 	void Set(const SetScenario& command);
 	void Set(const SetReferenceSpaces& command);
 
+	struct HeadMotion
+	{
+		XrPosef origin;
+		RuntimeTime time;
+		XrVector3f linear, angular;
+	};
+
 	CommandConfiguration m_values;
+	std::optional<HeadMotion> m_headMotion;
 	ChannelMask m_overrides{};
 	ChannelOwners m_owners{};
 	ScenarioMask m_scenarios{};

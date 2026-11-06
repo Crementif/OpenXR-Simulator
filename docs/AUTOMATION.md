@@ -103,6 +103,16 @@ Every time in the control API is a predicted display time in nanoseconds, the `X
 
 A target more than 10000 frames or 60 seconds past the last applied frame is rejected with phase `too_far`, since it is almost always a value from another clock. `simulation_status` also reports the queue: `pending`, `pending_capacity`, the earliest `next_pending_frame` and `next_pending_time`, and `rejected`, which counts `late`, `conflict`, `invalid`, `capacity`, `too_far` and `closed` submissions and describes the `last` one.
 
+### Moving the head
+
+A `head_pose` with `linear_velocity` (metres per second) or `angular_velocity` (radians per second about the world axes) keeps the head moving from that pose on every frame, timed by display time, until the next `head_pose` or until the head is released. Steer live by sending a new pose and velocity whenever the direction changes:
+
+```python
+client.schedule(session, [{'kind': 'take_control', 'channel': 'head'},
+                          {'kind': 'head_pose', 'position': [0, 1.7, 0], 'angular_velocity': [0, math.radians(12), 0]}],
+                frame=next_frame)
+```
+
 ### Pose sequences
 
 A sequence is JSON lines, one row per keyframe, uploaded with `upload_sequence` and started with `start_sequence`, or both at once with `run_sequence`. A row may set `head` (`x`, `y`, `z` in metres, `yaw`, `pitch`, `roll` in radians), `left` and `right` (head-relative `posX`, `posY`, `posZ`, `yaw`, `pitch`, `roll`, `trigger`, `grip`, `stickX`, `stickY`, `primary`, `secondary`) and `capture`. Omitted values keep their current value.
