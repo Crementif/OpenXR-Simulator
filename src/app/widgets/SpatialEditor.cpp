@@ -53,7 +53,10 @@ void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const 
 	m_lookingBack = lookingBack;
 	m_markerRects = {};
 	m_rotationBallRect = {};
-	m_eye = eyes.empty() ? std::nullopt : std::optional{eyes.front()};
+	// The live image is briefly unselected while its replacement uploads; keep the last eye so the head cone holds
+	// still.
+	if (!eyes.empty())
+		m_eye = eyes.front();
 	if (historyIdentity != m_historyIdentity)
 	{
 		m_historyIdentity = historyIdentity;
