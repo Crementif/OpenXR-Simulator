@@ -87,7 +87,8 @@ int main(int argc, char** argv)
 		{
 			std::puts(
 				"Usage: simxr_companion [--connect SOCKET] [--hidden] [--windowless] [--validation] [--smoke-frames N] "
-				"[--screenshot PATH] [--runtime-smoke [--export PATH]] [--proof-consumer [FD]] "
+				"[--screenshot PATH [--screenshot-delay SECONDS]] [--window-size WIDTHxHEIGHT] "
+				"[--runtime-smoke [--export PATH]] [--proof-consumer [FD]] "
 				"[--proof-verify-pixels] [--mcp-http PORT] [--launch-profile=NAME]"
 #ifdef SIMXR_MCP_DISCOVERY
 				" [--mcp]"
@@ -185,6 +186,39 @@ int main(int argc, char** argv)
 				}
 			}
 		}
+		else if (argument == "--window-size")
+		{
+			const auto value = ReadValue(argc, argv, index);
+			if (!value)
+				return 2;
+			int width = 0, height = 0;
+			const auto separator = value->find('x');
+			const auto end = value->data() + value->size();
+			const bool parsed =
+				separator != std::string_view::npos &&
+				std::from_chars(value->data(), value->data() + separator, width).ptr == value->data() + separator &&
+				std::from_chars(value->data() + separator + 1, end, height).ptr == end;
+			if (!parsed || width < 320 || height < 240 || width > 16384 || height > 16384)
+			{
+				std::fputs("--window-size requires WIDTHxHEIGHT in pixels, at least 320x240\n", stderr);
+				return 2;
+			}
+			options.windowSize = std::pair{width, height};
+		}
+		else if (argument == "--screenshot-delay")
+		{
+			const auto value = ReadValue(argc, argv, index);
+			if (!value)
+				return 2;
+			const auto end = value->data() + value->size();
+			const auto result = std::from_chars(value->data(), end, options.screenshotDelay);
+			if (result.ec != std::errc{} || result.ptr != end || !(options.screenshotDelay >= 0) ||
+				options.screenshotDelay > 3600)
+			{
+				std::fputs("--screenshot-delay requires seconds from 0 to 3600\n", stderr);
+				return 2;
+			}
+		}
 		else if (argument == "--proof-consumer")
 		{
 			options.proofDescriptor = 3;
@@ -222,12 +256,15 @@ int main(int argc, char** argv)
 		(options.proofDescriptor >= 0 && !options.controlSocket.empty()) ||
 		((options.mcpPort || options.mcpBootstrapDescriptor != -2) &&
 		 (options.proofDescriptor >= 0 || options.runtimeSmoke || options.smokeFrames)) ||
-		(options.mcpPort && options.mcpBootstrapDescriptor != -2))
+		(options.mcpPort && options.mcpBootstrapDescriptor != -2) ||
+		(options.screenshotDelay && (options.screenshot.empty() || options.smokeFrames)) ||
+		(options.windowSize && (options.windowless || options.smokeFrames)))
 	{
 		std::fputs("--runtime-smoke requires --connect and excludes proof mode; --export requires --runtime-smoke; "
 				   "--proof-verify-pixels requires --proof-consumer; proof mode excludes --connect; "
 				   "--mcp-http excludes finite smoke and proof modes; --launch-profile excludes windowless, "
-				   "smoke, proof and --connect modes\n",
+				   "smoke, proof and --connect modes; --screenshot-delay requires --screenshot and excludes smoke; "
+				   "--window-size excludes windowless and smoke modes\n",
 				   stderr);
 		return 2;
 	}

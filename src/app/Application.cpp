@@ -70,6 +70,8 @@ int Application::Run()
 	bool proofFinished = m_options.proofDescriptor < 0;
 	{
 		Window window(m_options.hidden);
+		if (m_options.windowSize)
+			window.Resize(m_options.windowSize->first, m_options.windowSize->second);
 		UiRenderer renderer(window, m_options.validation, validation, !m_options.screenshot.empty(),
 							m_options.proofDescriptor >= 0);
 #ifdef SIMXR_COMPANION_PROOF
@@ -105,6 +107,9 @@ int Application::Run()
 		std::printf("Companion adapter: %s; SDL driver: %s\n", renderer.DeviceName().c_str(),
 					SDL_GetCurrentVideoDriver());
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+		const auto screenshotAt =
+			std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+												   std::chrono::duration<double>(m_options.screenshotDelay));
 		bool running = true;
 		auto lastFrame = std::chrono::steady_clock::time_point{};
 		auto lastInput = lastFrame;
@@ -199,6 +204,7 @@ int Application::Run()
 				captureReady = proof->ReadyForScreenshot();
 #endif
 			if (captureReady && !m_options.screenshot.empty() && !captureRequested &&
+				std::chrono::steady_clock::now() >= screenshotAt &&
 				(!m_options.smokeFrames || renderer.SubmittedFrames() + 1 >= m_options.smokeFrames))
 			{
 				renderer.RequestScreenshot(Utf8Path(m_options.screenshot));
