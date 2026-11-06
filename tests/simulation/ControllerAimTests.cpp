@@ -173,6 +173,39 @@ static void Offsets()
 			"Translated aim invented a position without grip orientation");
 }
 
+static void Pointing()
+{
+	const XrPosef eye{EulerAngles(0.3f, -0.2f, 0), {0.1f, 1.6f, 0.2f}};
+	const XrFovf fov{-0.8f, 0.7f, 0.6f, -0.9f};
+	const auto target = ViewRayPoint(eye, fov, {0.3f, 0.7f}, 2);
+	const auto projected = RelativePose({{0, 0, 0, 1}, target}, eye).position;
+	const float u =
+		(projected.x / -projected.z - std::tan(fov.angleLeft)) / (std::tan(fov.angleRight) - std::tan(fov.angleLeft));
+	const float v =
+		(std::tan(fov.angleUp) - projected.y / -projected.z) / (std::tan(fov.angleUp) - std::tan(fov.angleDown));
+	Require(std::abs(u - 0.3f) < 0.0001f && std::abs(v - 0.7f) < 0.0001f, "View ray missed its pixel");
+	const XrVector3f origin{0.3f, 1.1f, -0.2f};
+	const XrPosef aim{LookAt(origin, target), origin};
+	const auto forward = Rotate(aim.orientation, {0, 0, -1});
+	const XrVector3f toTarget{target.x - origin.x, target.y - origin.y, target.z - origin.z};
+	const float length = std::sqrt(toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z);
+	Require(std::abs(forward.x - toTarget.x / length) < 0.0001f &&
+				std::abs(forward.y - toTarget.y / length) < 0.0001f &&
+				std::abs(forward.z - toTarget.z / length) < 0.0001f,
+			"Aim did not look at its target");
+	Require(std::abs(Rotate(aim.orientation, {1, 0, 0}).y) < 0.0001f, "Aim rolled");
+	for (const auto* profile :
+		 {"/interaction_profiles/oculus/touch_controller", "/interaction_profiles/valve/index_controller", ""})
+	{
+		const auto grip = ControllerGripFromAim(aim, profile, false);
+		const auto back = ControllerAimFromGrip({grip, TrackedPoseFlags, {}}, profile, false).pose;
+		Require(std::abs(back.position.x - aim.position.x) < 0.0001f &&
+					std::abs(back.position.y - aim.position.y) < 0.0001f &&
+					std::abs(Rotate(back.orientation, {0, 0, -1}).y - forward.y) < 0.0001f,
+				"Grip from aim did not invert the profile offset");
+	}
+}
+
 } // namespace simxr::tests
 
 int main()
@@ -180,6 +213,7 @@ int main()
 	try
 	{
 		simxr::tests::ControllerAim();
+		simxr::tests::Pointing();
 		simxr::tests::ActionPoses("/interaction_profiles/khr/simple_controller");
 		simxr::tests::ActionPoses("/interaction_profiles/oculus/touch_controller");
 		simxr::tests::ActionPoses("/interaction_profiles/valve/index_controller");

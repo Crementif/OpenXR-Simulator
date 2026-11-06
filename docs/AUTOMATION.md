@@ -115,6 +115,19 @@ client.schedule(session, [{'kind': 'take_control', 'channel': 'head'},
                 frame=client.next_frame(session))
 ```
 
+### Pointing a controller
+
+The MCP `point_controller` tool turns a hand in place so its laser passes through a point of an eye image, given as `x` and `y` from 0 to 1 from the image's top left. The ray meets the eye's view ray `distance` metres out (3 by default), so set that near the depth of the menu being aimed at. It sets both the grip and an explicit aim pose; follow it with `set_controller_controls` to pull the trigger. The Python SDK builds the same command from the applied configuration:
+
+```python
+from simxr_control import point_controller
+
+configuration = client.simulation_status(session)['document']['configuration']
+client.schedule(session, [{'kind': 'take_control', 'channel': 'right_pose'},
+                          point_controller(configuration, 1, x=.42, y=.61)],
+                frame=client.next_frame(session))
+```
+
 ### Pose sequences
 
 A sequence is JSON lines, one row per keyframe, uploaded with `upload_sequence` and started with `start_sequence`, or both at once with `run_sequence`. A row may set `head` (`x`, `y`, `z` in metres, `yaw`, `pitch`, `roll` in radians), `left` and `right` (head-relative `posX`, `posY`, `posZ`, `yaw`, `pitch`, `roll`, `trigger`, `grip`, `stickX`, `stickY`, `primary`, `secondary`) and `capture`. Omitted values keep their current value.

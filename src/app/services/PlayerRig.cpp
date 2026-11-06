@@ -506,6 +506,8 @@ ManualTransaction PlayerRig::Transaction(const ObservedSetup& observed, std::opt
 			continue;
 		auto controller = observed.values.tracking.controllers[hand];
 		controller.pose.pose = Hand(hand);
+		// An aim another source set would stay put while the hand moves.
+		controller.aim.reset();
 		result.commands.emplace_back(TakeControl{channel, false});
 		result.commands.emplace_back(SetControllerPose{hand, controller});
 	}

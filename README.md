@@ -23,7 +23,7 @@ Both platforms require a Vulkan driver and loader for the desktop app.
 
 1. Choose **Add application** and select the OpenXR application's executable.
 2. Choose **Launch**. New application profiles use the bundled simulator runtime without changing your system's default OpenXR runtime.
-3. Open **Pilot keys** in the preview to see the keyboard, mouse and gamepad controls. Use the device inspector to adjust poses and settings precisely.
+3. Open **Pilot keys** in the preview to see the keyboard, mouse and gamepad controls. Turn on **Point** in the HUD to aim a controller's laser at whatever the pointer hovers: click to pull the trigger and scroll to push the stick. Use the device inspector to adjust poses and settings precisely.
 
 Use **Connect** to attach to an application already running with the simulator runtime.
 

@@ -7,6 +7,8 @@
 #include "control/SimulationControl.h"
 #include "simulation/BodyModel.h"
 #include "simulation/HeadsetProfiles.h"
+#include "simulation/ControllerPoses.h"
+#include "math/Math.h"
 #include "../TestSupport.h"
 
 using Json = nlohmann::json;
@@ -119,6 +121,59 @@ int main()
 				"Convenience controls and exact-frame commands share the native contract");
 		Require(app::mcp::ControlsExpectedInputs(name, configuration).empty(),
 				"Absolute replacements do not depend on unrelated applied inputs");
+	}
+	{
+		auto pointing = configuration;
+		const Json still = {{"position", {0, 0, 0}}, {"orientation", {0, 0, 0, 1}}, {"flags", 15}};
+		pointing["head"] = {{"position", {0, 1.6, 0}}, {"orientation", {0, 0, 0, 1}}, {"flags", 15}};
+		pointing["eye_views"] = nullptr;
+		pointing["controllers"] = Json::array();
+		for (const auto* profile : {"", "/interaction_profiles/oculus/touch_controller"})
+		{
+			auto hand = Json{{"pose", still}, {"aim", nullptr}, {"connected", true}, {"profile", profile}};
+			hand["pose"]["position"] = {.2, 1.2, -.2};
+			pointing["controllers"].push_back(hand);
+		}
+		for (const int hand : {0, 1})
+		{
+			const auto edit = app::mcp::ControlsCommands(
+				"point_controller", {{"hand", hand}, {"x", .5}, {"y", .25}, {"distance", 2}}, pointing);
+			Require(edit.size() == 2 && std::get<TakeControl>(edit[0]).channel ==
+											(hand ? ControlChannel::RightPose : ControlChannel::LeftPose),
+					"Pointing did not take the hand's pose");
+			const auto& value = std::get<SetControllerPose>(edit[1]).value;
+			Require(value.aim.has_value() && value.connected, "Pointing did not set an explicit aim");
+			const auto expected =
+				ViewRayPoint({{0, 0, 0, 1}, {-.04f, 1.6f, 0}}, {-.8f, .8f, .8f, -.8f}, {.5f, .25f}, 2);
+			const auto& aim = value.aim->pose;
+			const XrVector3f toward{expected.x - aim.position.x, expected.y - aim.position.y,
+									expected.z - aim.position.z};
+			const float length = std::sqrt(toward.x * toward.x + toward.y * toward.y + toward.z * toward.z);
+			const auto forward = Rotate(aim.orientation, {0, 0, -1});
+			Require(std::abs(forward.x - toward.x / length) < .0001f &&
+						std::abs(forward.y - toward.y / length) < .0001f,
+					"Pointing aim missed the pixel's point");
+			const auto derived = ControllerAimFromGrip(
+				value.pose, pointing["controllers"][hand]["profile"].get<std::string>(), hand == 0);
+			Require(std::abs(derived.pose.position.y - aim.position.y) < .0001f &&
+						std::abs(Rotate(derived.pose.orientation, {0, 0, -1}).y - forward.y) < .0001f,
+					"Pointing grip disagrees with its aim");
+		}
+		for (const auto& bad : {Json{{"hand", 0}, {"x", 1.5}, {"y", .5}}, Json{{"hand", 0}, {"x", .5}},
+								Json{{"hand", 0}, {"x", .5}, {"y", .5}, {"eye", 2}},
+								Json{{"hand", 0}, {"x", .5}, {"y", .5}, {"position", {0, 0, 0}}}})
+		{
+			bool rejected = false;
+			try
+			{
+				(void)app::mcp::ControlsCommands("point_controller", bad, pointing);
+			}
+			catch (const std::exception&)
+			{
+				rejected = true;
+			}
+			Require(rejected, "Invalid pointing was accepted");
+		}
 	}
 	Reject({{"kind", "controller_pose"}});
 	Reject({{"kind", "controller_controls"}, {"hand", -1}});

@@ -19,7 +19,7 @@ def main():
         client.initialize('controls-test')
 
         names = {item['name'] for item in client.rpc('tools/list')['result']['tools']}
-        assert {'set_head_pose', 'set_controller_pose', 'set_controller_controls', 'set_views',
+        assert {'set_head_pose', 'set_controller_pose', 'point_controller', 'set_controller_controls', 'set_views',
                 'set_headset_profile', 'get_headset_profiles'} <= names
         profiles = client.tool('get_headset_profiles', {})
         assert not profiles['error'], profiles

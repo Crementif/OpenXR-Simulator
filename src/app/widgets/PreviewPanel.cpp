@@ -9,6 +9,7 @@
 #include "app/widgets/PilotController.h"
 #include "app/widgets/SpatialEditor.h"
 #include "app/widgets/Theme.h"
+#include "simulation/ControllerPoses.h"
 
 #include <imgui_internal.h>
 
@@ -196,8 +197,30 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 	const ImVec2 imageMax{imageMin.x + totalWidth, imageMin.y + height};
 	preview.DrawSelected(width, selectedSlice, crop, fit);
 	bool overlayHovered = false;
+	std::optional<XrVector3f> pointTarget;
+	if (m_pilot.Pointing() && ImGui::IsMouseHoveringRect(imageMin, imageMax))
+	{
+		const auto mouse = ImGui::GetMousePos();
+		const auto ordinal =
+			std::clamp(static_cast<int>((mouse.x - imageMin.x) / (width + spacing)), 0, static_cast<int>(slices) - 1);
+		const auto eye = m_slice < 0 ? static_cast<std::size_t>(ordinal) : static_cast<std::size_t>(m_slice);
+		const float eyeX = imageMin.x + ordinal * (width + spacing);
+		if (eye < description.views.size() && mouse.x <= eyeX + width)
+		{
+			const float local = (mouse.x - eyeX) / width, down = (mouse.y - imageMin.y) / height;
+			const XrVector2f uv{crop.x + local * (crop.z - crop.x), crop.y + down * (crop.w - crop.y)};
+			pointTarget =
+				ViewRayPoint(description.views[eye].pose, description.views[eye].fov, uv, DefaultPointDistance);
+			auto* draw = ImGui::GetWindowDrawList();
+			const float ring = 7 * ImGui::GetFontSize() / 16;
+			draw->AddCircle(mouse, ring, theme::Accent, 0, 2);
+			draw->AddCircleFilled(mouse, 2, theme::Accent);
+		}
+	}
+	m_pilot.PointAt(pointTarget);
 	// Device markers project onto the whole image, so a crop or a pick hides them.
-	if (!m_pilot.Active() && !m_crop && !m_picking && (!view.manual || image->frame == m_spatial.ObservedFrame()))
+	if (!m_pilot.Active() && !m_pilot.Pointing() && !m_crop && !m_picking &&
+		(!view.manual || image->frame == m_spatial.ObservedFrame()))
 		for (std::size_t ordinal = 0; ordinal < static_cast<std::size_t>(slices); ++ordinal)
 		{
 			const auto eye = m_slice < 0 ? ordinal : static_cast<std::size_t>(m_slice);
@@ -232,7 +255,7 @@ void PreviewPanel::UpdateImage(const ImageArea& area, const PreviewImageSummary&
 							   bool pilotArea, bool automaticGamepad)
 {
 	const bool hovered = area.hovered && !cornerHovered;
-	const bool busy = m_pilot.Active() || m_spatial.Active() || m_picking;
+	const bool busy = m_pilot.Active() || m_pilot.Pointing() || m_spatial.Active() || m_picking;
 	if (!busy && hovered && !m_fit && !m_crop && ImGui::GetIO().MouseWheel)
 		m_zoom = std::clamp(m_zoom * std::pow(1.15f, ImGui::GetIO().MouseWheel), .05f, 16.0f);
 	if (!busy && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle) && !m_fit && !m_crop)

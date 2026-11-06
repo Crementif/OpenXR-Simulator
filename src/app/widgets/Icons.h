@@ -51,6 +51,7 @@ enum class Icon
 	Keyboard,
 	History,
 	Fullscreen,
+	Point,
 };
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color);
 } // namespace simxr::app

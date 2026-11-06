@@ -41,7 +41,18 @@ public:
 
 	bool Active() const
 	{
-		return m_captured || m_starting;
+		return m_captured || m_starting || m_aiming;
+	}
+
+	// Point mode aims the button hand at the hovered pixel; the preview passes the point it chose each frame.
+	bool Pointing() const
+	{
+		return m_pointing;
+	}
+
+	void PointAt(std::optional<XrVector3f> target)
+	{
+		m_pointTarget = target;
 	}
 
 	bool Locked() const
@@ -75,6 +86,10 @@ private:
 	bool m_poseEngaged = false;
 	bool m_remoteMouseDrag = false, m_captureModeChanged = false;
 	bool m_captured = false, m_starting = false, m_locked = false, m_gamepadActive = false, m_hudFolded = false;
+	bool m_pointing = false, m_aiming = false;
+	std::optional<XrVector3f> m_pointTarget;
+	float m_scroll = 0;
+	double m_scrollUntil = 0;
 	std::uint64_t m_startObservation = 0;
 	std::uint32_t m_gamepadIdentity = 0;
 	std::array<ControllerControls, 2> m_controls{};

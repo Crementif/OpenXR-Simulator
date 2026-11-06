@@ -16,3 +16,6 @@ __all__ += ['collect_recording', 'to_luau']
 
 from .frame_recording import record_frames
 __all__ += ['record_frames']
+
+from .pointing import point_controller
+__all__ += ['point_controller']

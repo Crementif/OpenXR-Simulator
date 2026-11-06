@@ -4,6 +4,7 @@
 #include "app/platform/Window.h"
 #include "app/services/ManualInputController.h"
 #include "app/services/PlayerRig.h"
+#include "simulation/ControllerPoses.h"
 
 namespace simxr::app
 {
@@ -96,7 +97,7 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 			input.Refresh();
 		}
 	}
-	if (!Down(PilotAction::Capture) && !m_locked && Active())
+	if (!Down(PilotAction::Capture) && !m_locked && (m_captured || m_starting))
 		Stop(&window, input, false);
 	if (m_starting && state.observation != m_startObservation && !state.posePending)
 	{
@@ -222,6 +223,38 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 		hand.stick.x = std::clamp(hand.stick.x + axis(PilotAction::StickRight, PilotAction::StickLeft), -1.0f, 1.0f);
 		hand.stick.y = std::clamp(hand.stick.y + axis(PilotAction::StickUp, PilotAction::StickDown), -1.0f, 1.0f);
 	}
+	const bool aim = m_pointing && !m_captured && !m_starting && hovered && m_pointTarget &&
+					 (m_aiming || (!ImGui::IsAnyItemActive() && !state.posePending));
+	if (aim && !m_aiming)
+		m_rig.Observe(observed);
+	m_aiming = aim;
+	if (m_aiming)
+	{
+		const std::string profile = observed.controllerProfiles ? (*observed.controllerProfiles)[m_hand] : "";
+		const auto grip = m_rig.Hand(m_hand);
+		const auto origin = ControllerAimFromGrip({grip, TrackedPoseFlags, {}}, profile, m_hand == 0).pose.position;
+		const auto next = ControllerGripFromAim({LookAt(origin, *m_pointTarget), origin}, profile, m_hand == 0);
+		const auto moved = RelativePose(next, grip);
+		if (std::abs(moved.orientation.w) < .99999f ||
+			std::abs(moved.position.x) + std::abs(moved.position.y) + std::abs(moved.position.z) > .0001f)
+		{
+			m_rig.SetHandWorld(m_hand, next);
+			m_handEdits |= 1u << m_hand;
+			poseChanged = true;
+		}
+		auto& hand = controls[m_hand];
+		if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+			hand.trigger = 1;
+		if (io.MouseWheel)
+		{
+			// One wheel notch is a single frame; hold the stick long enough for the app to read it.
+			m_scroll = io.MouseWheel > 0 ? 1.0f : -1.0f;
+			m_scrollUntil = ImGui::GetTime() + .15;
+		}
+		if (ImGui::GetTime() < m_scrollUntil)
+			hand.stick.y = m_scroll;
+		ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+	}
 	Submit(input, observed, poseChanged, controls);
 }
 
@@ -231,7 +264,7 @@ void PilotController::Stop(Window* window, ManualInputController& input, bool di
 		forceButtons || Active() || m_gamepadActive || AnyHeld(m_controls[0]) || AnyHeld(m_controls[1]);
 	if (window)
 		window->CapturePointer(false);
-	m_captured = m_starting = m_locked = m_gamepadActive = false;
+	m_captured = m_starting = m_locked = m_gamepadActive = m_aiming = false;
 	if (discard)
 	{
 		input.DiscardUnsentPose();
@@ -316,6 +349,7 @@ void PilotController::Submit(ManualInputController& input, const ObservedSetup& 
 		edit.commands.emplace_back(TakeControl{channel, false});
 		auto controller = observed.values.tracking.controllers[hand];
 		controller.pose.pose = m_rig.Hand(hand);
+		controller.aim.reset();
 		edit.commands.emplace_back(SetControllerPose{hand, controller});
 	}
 	for (unsigned hand = 0; hand < 2; ++hand)

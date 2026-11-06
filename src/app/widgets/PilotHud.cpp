@@ -100,10 +100,12 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	else if (m_captured)
 		hint = (m_locked ? std::string{"Locked, "} : std::string{}) + KeyName(PilotAction::Escape) + " releases, " +
 			   KeyName(PilotAction::FreeLook) + ": look only";
+	else if (m_pointing)
+		hint = "Pointing: click pulls the trigger, the wheel pushes the stick";
 	else
 		hint = "Hold " + KeyName(PilotAction::Capture) + " over the image to pilot";
 	const float targetWidth = textWidth(preview.c_str()) + rowHeight * 1.5f;
-	float left = targetWidth + gap + rowHeight + textWidth(lock) + style.FramePadding.x + gap + rowHeight;
+	float left = targetWidth + gap + rowHeight + textWidth(lock) + style.FramePadding.x + gap + rowHeight * 2 + gap;
 	const float handButton = textWidth("Buttons: Right") + buttonPadding;
 	const float bars = textWidth("Trigger") + textWidth("Grip") + 2 * (36 + 4) * scale + gap;
 	const float pills = textWidth("A") + textWidth("B") + textWidth("Menu") + 3 * 10 * scale + 8 * scale;
@@ -200,6 +202,12 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 			if (IconButton("Lock", m_locked ? Icon::Lock : Icon::Unlock, lockTip.c_str(), m_locked, lock))
 				m_locked = !m_locked;
 			ImGui::EndDisabled();
+			ImGui::SameLine();
+			const auto pointTip = std::string{"Point the "} + (m_hand ? "right" : "left") +
+								  " hand's laser at the pointer over the image. Click pulls the trigger; the wheel "
+								  "pushes the stick";
+			if (IconButton("Point", Icon::Point, pointTip.c_str(), m_pointing))
+				m_pointing = !m_pointing;
 			ImGui::SameLine();
 			if (IconButton("Pilot keys", Icon::Keyboard, "Mouse, keyboard and gamepad bindings for piloting"))
 				ImGui::OpenPopup("Piloting");
