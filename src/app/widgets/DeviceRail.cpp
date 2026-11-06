@@ -175,11 +175,10 @@ std::optional<Selection> DrawDeviceRail(const Selection& selection, const Runtim
 										const CompanionSettings& settings)
 {
 	std::optional<Selection> picked;
-	const float unit = ImGui::GetFontSize() / 17, spacing = 2 * unit;
+	const float unit = ImGui::GetFontSize() / 17, spacing = ImGui::GetStyle().ItemSpacing.y;
 	// Rows shrink (down to one text line) rather than clip when the window is short.
 	const float height = std::clamp((ImGui::GetContentRegionAvail().y - spacing * (s_rows.size() - 1)) / s_rows.size(),
-									ImGui::GetFontSize() + 4, 28 * unit);
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {ImGui::GetStyle().ItemSpacing.x, spacing});
+									ImGui::GetFontSize() + 4, 36 * unit);
 	for (std::size_t index = 0; index < s_rows.size(); ++index)
 	{
 		auto status = ReadTabStatus(index, view, settings);
@@ -187,7 +186,6 @@ std::optional<Selection> DrawDeviceRail(const Selection& selection, const Runtim
 		if (RailItem(s_rows[index].label, s_rows[index].icon, IsSelected(index, selection), status.View(), height))
 			picked = DeviceSel{static_cast<DevicePage>(index)};
 	}
-	ImGui::PopStyleVar();
 	return picked;
 }
 
