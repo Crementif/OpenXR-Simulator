@@ -1,8 +1,11 @@
 """Shared OpenXR Simulator local control API."""
 from .client import Client, ControlError, ControlTimeout, Lease, Session, ReceivedHandles, discover
+from .discovery import endpoint
+from .errors import TransactionError
 from .protocol import Capability, CommandKind, ErrorCode, ProtocolError, TargetKind
 
-__all__ = ['Client', 'ControlError', 'ControlTimeout', 'Lease', 'Session', 'ReceivedHandles', 'discover',
+__all__ = ['Client', 'ControlError', 'ControlTimeout', 'TransactionError', 'Lease', 'Session', 'ReceivedHandles',
+           'discover', 'endpoint',
            'Capability', 'CommandKind', 'ErrorCode', 'ProtocolError', 'TargetKind']
 
 from .commands import SourceKind, LatePolicy, ControlChannel, Scenario, encode_command, decode_command

@@ -5,8 +5,8 @@ import threading
 import time
 
 from .connection import PacketConnection, ReceivedHandles
-from .discovery import discover
-from .errors import ControlError, ControlTimeout
+from .discovery import discover, endpoint
+from .errors import ControlError, ControlTimeout, TransactionError
 from .protocol import (Capability, CommandKind, ErrorCode, Field, OpCode,
                        ProtocolError, Tag, TargetKind, MAX_PAYLOAD)
 
@@ -24,7 +24,12 @@ class Lease:
 
 
 class Client:
-    def __init__(self, path=None, timeout=2.0, required=Capability.DEBUG_COMMANDS, name='Python SDK'):
+    def __init__(self, path=None, timeout=2.0, required=Capability.DEBUG_COMMANDS, name='Python SDK', *, pid=None):
+        """Connect to path, to the application with process id pid, or to the only discovered runtime."""
+        if pid is not None:
+            if path is not None:
+                raise ValueError('Select a socket path or a process id, not both')
+            path = endpoint(pid)
         if path is None:
             candidates = discover()
             if len(candidates) != 1:
@@ -326,6 +331,31 @@ class Client:
                 raise ProtocolError('A nonnegative int64 display time is required')
             fields.append(Field.i64(Tag.APPLY_TIME, time_ns, True))
         return self.request(OpCode.SUBMIT_SIMULATION, fields)
+
+    def next_frame(self, session, lead=2, *, source=1):
+        """A schedule() frame lead frames after the newest one, for input meant to apply right away."""
+        if type(lead) is not int or lead < 1:
+            raise ValueError('A positive frame lead is required')
+        return int(self.simulation_status(session, source=source)['document']['frame_id']) + lead
+
+    def wait_applied(self, session, transaction, *, source=1, timeout=5.0):
+        """Like wait_simulation(), but raise TransactionError unless the transaction applied.
+
+        For a conflict the error names the source holding each channel; take_control
+        with replace takes a channel over.
+        """
+        from .commands import ControlChannel, SourceKind
+        result = self.wait_simulation(session, transaction, source=source, timeout=timeout)
+        if result['phase'] == 'applied':
+            return result
+        owners = {}
+        if result['phase'] == 'conflict':
+            held = self.simulation_status(session, source=source)['document'].get('owners') or []
+            for channel, owner in enumerate(held[:len(ControlChannel)]):
+                if owner:
+                    owners[ControlChannel(channel).name.lower()] = \
+                        f"{SourceKind(owner['kind']).name.lower()} source {owner['id']}"
+        raise TransactionError(result['document'], owners)
 
     def simulation_status(self, session, transaction=None, *, source=1):
         fields = self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)]

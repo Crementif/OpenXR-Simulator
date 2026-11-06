@@ -5,7 +5,7 @@ import struct
 import math
 
 MAGIC = 0x32525853
-MAJOR, MINOR = 1, 16
+MAJOR, MINOR = 1, 18
 HEADER = struct.Struct('<IHHHHIQII')
 TLV = struct.Struct('<HHI')
 MAX_PAYLOAD, MAX_FIELDS = 1024 * 1024, 256

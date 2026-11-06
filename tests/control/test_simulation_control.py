@@ -9,8 +9,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'sdk/python'))
-from simxr_control import (Client, CommandKind, Capability, ControlError, ProtocolError,
-                           collect_recording, to_luau, encode_command, decode_command, Scenario)
+from simxr_control import (Client, CommandKind, Capability, ControlError, ProtocolError, TransactionError,
+                           collect_recording, to_luau, encode_command, decode_command, endpoint, Scenario)
 
 HOST, RUNNER = sys.argv[1:3]
 
@@ -26,6 +26,13 @@ def wait_for(predicate, process=None):
 
 
 class SimulationTests(unittest.TestCase):
+    def test_endpoint_names_a_process_socket(self):
+        self.assertEqual(Path(endpoint(42, '/tmp/simxr')), Path('/tmp/simxr/control.42.sock'))
+        with self.assertRaises(ValueError):
+            endpoint(0)
+        with self.assertRaises(ValueError):
+            Client('/tmp/simxr/control.42.sock', pid=42)
+
     def test_command_codec_preserves_editable_all_command_payloads(self):
         commands = [
             {'kind': 'take_control', 'channel': 'head', 'replace': True},
@@ -124,6 +131,15 @@ class SimulationTests(unittest.TestCase):
                         observed = source.simulation_status(session, 1)
                         self.assertEqual(observed['document']['applied_frame'], 2)
                         self.assertEqual(observed['phase'], 'applied')
+                        blocked = client.schedule(session, [{'kind': 'take_control', 'channel': 'gaze'},
+                                                            {'kind': 'gaze', 'yaw': .1}],
+                                                  frame=client.next_frame(session, 1))
+                        step = client.submit(lease, CommandKind.STEP)
+                        self.assertEqual(client.wait(session, step['operation_id'])['phase'], 'complete')
+                        with self.assertRaises(TransactionError) as held:
+                            client.wait_applied(session, blocked['document']['transaction_id'])
+                        self.assertEqual(held.exception.phase, 'conflict')
+                        self.assertIn('gaze', held.exception.owners)
                         with self.assertRaises(ProtocolError):
                             source.schedule(session, [{'kind': 'gaze', 'ywa': .8}], transaction_id=2, frame=3)
                         source.release_control(session)

@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import windows_transport as transport
 from simxr_control import client as sdk
 from simxr_control import connection as packets
+from simxr_control import discovery
 from simxr_control.protocol import Field, HEADER, Message, OpCode, ProtocolError, Tag
 
 
@@ -129,6 +130,8 @@ class WindowsOwnershipTests(unittest.TestCase):
 
     def test_local_only_path_policy(self):
         transport._validate(r'\\.\pipe\SimXR.Control.1234')
+        with patch.object(discovery.os, 'name', 'nt'):
+            self.assertEqual(discovery.endpoint(1234), r'\\.\pipe\SimXR.Control.1234')
         for path in (r'\\remote\pipe\SimXR.Control.1234', r'\\.\pipe\other.1234', r'\\.\pipe\SimXR.Control.x\suffix'):
             with self.assertRaises(ValueError):
                 transport._validate(path)

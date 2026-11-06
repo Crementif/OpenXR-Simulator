@@ -92,10 +92,12 @@ pip install sdk/python  # share/simxr/sdk/python in a release
 ```python
 from simxr_control import Client
 
-with Client() as client:  # finds the only running endpoint, or pass its path
+with Client() as client:  # finds the only running endpoint; or pass its path, or pid=PROCESS_ID
     session, = client.sessions()
     print(client.simulation_status(session)['document'])
 ```
+
+`next_frame(session)` gives a `schedule` frame a couple of frames ahead of the newest one, for input meant to apply right away. A queued response only means the transaction was admitted; `wait_applied(session, transaction_id)` waits until it applies and raises `TransactionError` otherwise. For a `conflict`, the error names who holds each channel; another client's channel needs `take_control` with `replace`. Closing a client releases everything it held.
 
 ### Time and the input queue
 
@@ -110,7 +112,7 @@ A `head_pose` with `linear_velocity` (metres per second) or `angular_velocity` (
 ```python
 client.schedule(session, [{'kind': 'take_control', 'channel': 'head'},
                           {'kind': 'head_pose', 'position': [0, 1.7, 0], 'angular_velocity': [0, math.radians(12), 0]}],
-                frame=next_frame)
+                frame=client.next_frame(session))
 ```
 
 ### Pose sequences

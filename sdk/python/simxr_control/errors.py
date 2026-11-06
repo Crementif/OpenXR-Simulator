@@ -9,6 +9,18 @@ class ControlError(RuntimeError):
         super().__init__(record.get('detail', self.code.name))
 
 
+class TransactionError(RuntimeError):
+    """A scheduled transaction was admitted but did not apply; owners names who held each channel."""
+
+    def __init__(self, document, owners=None):
+        self.document = document
+        self.phase = document.get('phase')
+        self.owners = owners or {}
+        held = ', '.join(f'{channel} by {owner}' for channel, owner in self.owners.items())
+        super().__init__(f"Transaction {document.get('transaction_id')} {self.phase}" +
+                         (f'; held: {held}' if held else ''))
+
+
 class ControlTimeout(TimeoutError):
     """The exchange is unfinished; it may already have admitted an operation."""
 
