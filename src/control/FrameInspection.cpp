@@ -450,6 +450,7 @@ static InspectionValue InspectViews(const ViewSettings& value, ViewLayout layout
 		 {"inset_width", InspectionValue::Unsigned(value.insetWidth)},
 		 {"inset_height", InspectionValue::Unsigned(value.insetHeight)},
 		 {"inset_half_angle", InspectionValue::Float(value.insetHalfAngle)},
+		 {"refresh_rate", InspectionValue::Float(value.refreshRate)},
 		 {"outer_fov", InspectArray(value.outerFov, InspectFov)}});
 }
 

@@ -311,6 +311,31 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeadset(bool supported)
 		ImGui::EndCombo();
 	}
 	ImGui::SetItemTooltip("Sets the field of view. Launch profiles set the render size");
+	FieldLabel("Refresh rate");
+	const auto rateLabel = [](float rate) {
+		char label[32];
+		if (rate == 0)
+			std::snprintf(label, sizeof(label), "Automatic");
+		else
+			std::snprintf(label, sizeof(label), "%g Hz", rate);
+		return std::string(label);
+	};
+	ImGui::SetNextItemWidth(-1);
+	if (ImGui::BeginCombo("##Refresh rate", rateLabel(m_authoredViews.refreshRate).c_str()))
+	{
+		std::array<float, StandardRefreshRates.size() + 1> rates{};
+		std::copy(StandardRefreshRates.begin(), StandardRefreshRates.end(), rates.begin() + 1);
+		for (const auto rate : rates)
+			if (ImGui::Selectable(rateLabel(rate).c_str(), rate == m_authoredViews.refreshRate) &&
+				rate != m_authoredViews.refreshRate)
+			{
+				m_authoredViews.refreshRate = rate;
+				ApplyOwned(ControlChannel::Views, SetViewSettings{m_authoredViews});
+			}
+		ImGui::EndCombo();
+	}
+	ImGui::SetItemTooltip("How often the simulated display refreshes. Automatic keeps the app's choice or the "
+						  "launch rate");
 	FieldLabel("IPD");
 	const ViewSettings defaults;
 	const float minimum = model ? model->ipdMinMm / 1000.f : .04f, maximum = model ? model->ipdMaxMm / 1000.f : .09f;

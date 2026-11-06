@@ -462,15 +462,18 @@ static CommandPayload EncodeCommand(const SetEyeViews& command)
 static CommandPayload EncodeCommand(const SetViewSettings& command)
 {
 	const auto& settings = command.value;
-	return {SimulationCommandKind::ViewSettings,
-			{EncodeFloats(tag::Values, {settings.ipd, settings.insetHalfAngle, settings.outerFov[0].angleLeft,
-										settings.outerFov[0].angleRight, settings.outerFov[0].angleUp,
-										settings.outerFov[0].angleDown, settings.outerFov[1].angleLeft,
-										settings.outerFov[1].angleRight, settings.outerFov[1].angleUp,
-										settings.outerFov[1].angleDown}),
-			 Field::U32(tag::Width, settings.outerWidth, true), Field::U32(tag::Height, settings.outerHeight, true),
-			 Field::U32(tag::Depth, settings.insetWidth, true),
-			 Field::U32(tag::ArrayLayers, settings.insetHeight, true)}};
+	CommandPayload payload{
+		SimulationCommandKind::ViewSettings,
+		{EncodeFloats(tag::Values,
+					  {settings.ipd, settings.insetHalfAngle, settings.outerFov[0].angleLeft,
+					   settings.outerFov[0].angleRight, settings.outerFov[0].angleUp, settings.outerFov[0].angleDown,
+					   settings.outerFov[1].angleLeft, settings.outerFov[1].angleRight, settings.outerFov[1].angleUp,
+					   settings.outerFov[1].angleDown}),
+		 Field::U32(tag::Width, settings.outerWidth, true), Field::U32(tag::Height, settings.outerHeight, true),
+		 Field::U32(tag::Depth, settings.insetWidth, true), Field::U32(tag::ArrayLayers, settings.insetHeight, true)}};
+	if (settings.refreshRate != 0)
+		payload.fields.push_back(Field::F32(tag::Period, settings.refreshRate, true));
+	return payload;
 }
 
 static CommandPayload EncodeCommand(const SetBodyProportions& command)
@@ -656,7 +659,7 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 	case SimulationCommandKind::ViewSettings:
 	{
 		const auto fields =
-			DecodePayload(payload, {tag::Values, tag::Width, tag::Height, tag::Depth, tag::ArrayLayers});
+			DecodePayload(payload, {tag::Values, tag::Width, tag::Height, tag::Depth, tag::ArrayLayers, tag::Period});
 		const auto values = DecodeFloats<10>(RequireField(fields, tag::Values));
 		ViewSettings settings;
 		settings.ipd = values[0];
@@ -667,6 +670,8 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 		settings.outerHeight = ReadU32(fields, tag::Height);
 		settings.insetWidth = ReadU32(fields, tag::Depth);
 		settings.insetHeight = ReadU32(fields, tag::ArrayLayers);
+		if (const auto* rate = fields.Find(tag::Period))
+			settings.refreshRate = ReadFloat(*rate);
 		return SetViewSettings{settings};
 	}
 	case SimulationCommandKind::BodyProportions:

@@ -2166,6 +2166,34 @@ static XrResult XRAPI_PTR xrEnumerateViveTrackerPathsHTCX_runtime(XrInstance han
 	return instance->Trackers().Enumerate(capacity, count, paths);
 }
 
+static XrResult XRAPI_PTR xrEnumerateDisplayRefreshRatesFB_runtime(XrSession handle, std::uint32_t capacity,
+																   std::uint32_t* count, float* rates)
+{
+	auto core = rt::RetainSession(handle);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	return core->EnumerateRefreshRates(capacity, count, rates);
+}
+
+static XrResult XRAPI_PTR xrGetDisplayRefreshRateFB_runtime(XrSession handle, float* rate)
+{
+	auto core = rt::RetainSession(handle);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	if (!rate)
+		return XR_ERROR_VALIDATION_FAILURE;
+	*rate = core->RefreshRate();
+	return XR_SUCCESS;
+}
+
+static XrResult XRAPI_PTR xrRequestDisplayRefreshRateFB_runtime(XrSession handle, float rate)
+{
+	auto core = rt::RetainSession(handle);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	return core->RequestRefreshRate(rate);
+}
+
 static XrResult XRAPI_PTR xrCreateBodyTrackerFB_runtime(XrSession handle, const XrBodyTrackerCreateInfoFB* info,
 														XrBodyTrackerFB* output)
 {
@@ -2303,6 +2331,12 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateEnvironmentBlendModes_runtime>::Invoke)},
 	{"xrEnumerateViveTrackerPathsHTCX",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateViveTrackerPathsHTCX_runtime>::Invoke)},
+	{"xrEnumerateDisplayRefreshRatesFB",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateDisplayRefreshRatesFB_runtime>::Invoke)},
+	{"xrGetDisplayRefreshRateFB",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetDisplayRefreshRateFB_runtime>::Invoke)},
+	{"xrRequestDisplayRefreshRateFB",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrRequestDisplayRefreshRateFB_runtime>::Invoke)},
 	{"xrCreateBodyTrackerFB",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateBodyTrackerFB_runtime>::Invoke)},
 	{"xrCreateBodyTrackerBD",

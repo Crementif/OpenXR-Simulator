@@ -17,6 +17,13 @@ public:
 	using std::runtime_error::runtime_error;
 };
 
+// The peer ended the connection, for example because the application exited.
+class ControlPeerClosed : public std::runtime_error
+{
+public:
+	using std::runtime_error::runtime_error;
+};
+
 class ControlExchangeTimeout : public std::runtime_error
 {
 public:

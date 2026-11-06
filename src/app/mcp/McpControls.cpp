@@ -81,12 +81,14 @@ Json ControlsDefinitions()
 	views["ipd"] = number;
 	views["outer_fov"] = vector(8);
 	views["inset_half_angle"] = number;
+	views["refresh_rate"] = {{"type", "number"}, {"minimum", 0}, {"maximum", MaximumRefreshRate}};
 	for (const auto* key : {"outer_width", "outer_height", "inset_width", "inset_height"})
 		views[key] = {{"type", "integer"}, {"minimum", 1}, {"maximum", UINT32_MAX}};
 	tools.push_back(
 		tool("set_views",
 			 "Update view settings, preserving omitted fields. IPD uses metres; FOV angles use radians. outer_fov "
-			 "contains left/right/up/down for the left eye, then the right eye. Dimensions use pixels.",
+			 "contains left/right/up/down for the left eye, then the right eye. Dimensions use pixels. "
+			 "refresh_rate sets the display rate in hertz; 0 returns to the app's request or the launch rate.",
 			 views));
 	auto profile = common;
 	Json names = Json::array();

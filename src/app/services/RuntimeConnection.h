@@ -52,6 +52,8 @@ struct RuntimeConnectionSnapshot
 	std::uint64_t epoch = 0, peerProcess = 0;
 	std::size_t queued = 0, ready = 0;
 	bool inFlight = false;
+	// Failed because the runtime ended the connection, as when the app exits.
+	bool peerClosed = false;
 	control::ControlPacket hello;
 };
 
@@ -85,7 +87,7 @@ private:
 	bool Current(std::uint64_t epoch);
 	void ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
 						 std::optional<control::ControlPacket> hello = {}, std::string appName = {},
-						 std::uint64_t peerProcess = 0);
+						 std::uint64_t peerProcess = 0, bool peerClosed = false);
 	void Reply(RuntimeReply reply);
 	control::ControlPacket Exchange(control::LocalControlClient& client, control::ControlPacket packet,
 									std::uint64_t epoch);

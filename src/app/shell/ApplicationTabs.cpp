@@ -5,6 +5,8 @@
 #include "app/platform/Window.h"
 #include "app/render/UiRenderer.h"
 #include "app/services/ProcessSupervisor.h"
+#include "app/widgets/Icons.h"
+#include "app/widgets/Theme.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/services/LuauAutomation.h"
 #endif
@@ -37,6 +39,8 @@ ApplicationTabs::ApplicationTabs(ProcessSupervisor& processes, UiRenderer& rende
 {
 	auto& tab = Add(std::move(endpoint));
 	m_active = tab.id;
+	if (m_showTabs)
+		m_watcher.emplace();
 }
 
 ApplicationTabs::~ApplicationTabs() = default;
@@ -62,19 +66,13 @@ void ApplicationTabs::OpenApplication(RunningApp app)
 		if (!tab->closing && tab->runtime.Endpoint() == app.endpoint && !app.endpoint.empty())
 		{
 			auto* current = Find(m_active);
-			if (current && current->id != tab->id && current->runtime.Endpoint().empty() &&
-				current->workspace.Process().state == LaunchState::Idle && !current->runtime.Snapshot().recording &&
-				!current->runtime.Exporting() && !current->workspace.HasActiveAutomation() &&
-				!current->workspace.HasPendingFiles())
-			{
-				const auto host = current->runtime.HeadsetStatus();
-				if (host.phase == HeadsetHostPhase::Idle || host.phase == HeadsetHostPhase::Exited)
-					BeginClose(*current);
-			}
+			if (current && current->id != tab->id && Idle(*current))
+				BeginClose(*current);
 			m_select = tab->id;
 			return;
 		}
 	m_open = std::move(app);
+	m_openInBackground = false;
 }
 
 bool ApplicationTabs::PilotActive() const
@@ -317,6 +315,74 @@ ApplicationTabs::Tab& ApplicationTabs::Add(std::string endpoint)
 	return tab;
 }
 
+void ApplicationTabs::OpenAppeared()
+{
+	if (!m_watcher)
+		return;
+	for (auto& app : m_watcher->TakeAppeared())
+		m_appeared.push_back({std::move(app), std::chrono::steady_clock::now()});
+	if (!Find(m_active)->workspace.OpensNewApps())
+		m_appeared.clear();
+	if (m_appeared.empty() || m_add || m_open)
+		return;
+	const auto& [app, since] = m_appeared.front();
+	const auto sameProcess = [&](const Tab& tab) {
+		return app.process && (tab.process == app.process || tab.workspace.Process().process == app.process);
+	};
+	const auto owned = [&](const Tab& tab) {
+		return !tab.closing && !Disconnected(tab) && (tab.runtime.Endpoint() == app.endpoint || sameProcess(tab));
+	};
+	// A launch from this companion connects its own tab once the runtime answers.
+	const bool launching = std::ranges::any_of(m_tabs, [](const auto& tab) {
+		const auto state = tab->workspace.Process().state;
+		return !tab->closing && tab->runtime.Endpoint().empty() &&
+			   (state == LaunchState::Starting || state == LaunchState::Running);
+	});
+	if (launching && std::chrono::steady_clock::now() - since < std::chrono::seconds(10))
+		return;
+	if (std::ranges::none_of(m_tabs, [&](const auto& tab) { return owned(*tab); }))
+	{
+		// An app that starts again returns to the tab it left; otherwise an unused active tab takes it.
+		Tab* target = nullptr;
+		for (const auto& tab : m_tabs)
+			if (Disconnected(*tab) && (sameProcess(*tab) || tab->workspace.ApplicationName(tab->runtime) == app.name))
+			{
+				target = tab.get();
+				break;
+			}
+		if (auto& active = *Find(m_active); !target && (Idle(active) || Disconnected(active)))
+			target = &active;
+		if (target)
+		{
+			target->process = app.process;
+			target->workspace.ConnectApp(target->runtime, app);
+		}
+		else
+		{
+			m_open = app;
+			m_openInBackground = true;
+		}
+	}
+	m_appeared.erase(m_appeared.begin());
+}
+
+bool ApplicationTabs::Disconnected(const Tab& tab) const
+{
+	const auto view = tab.runtime.Snapshot();
+	return !tab.closing && !tab.runtime.Endpoint().empty() && view.epoch && !view.connected && view.error.empty() &&
+		   view.connectionState == "Disconnected" && !view.recording && !tab.runtime.Exporting() &&
+		   !tab.workspace.HasActiveAutomation() && !tab.workspace.HasPendingFiles();
+}
+
+bool ApplicationTabs::Idle(const Tab& tab) const
+{
+	const auto host = tab.runtime.HeadsetStatus();
+	return !tab.closing && tab.runtime.Endpoint().empty() && tab.workspace.Process().state == LaunchState::Idle &&
+		   !tab.runtime.Snapshot().recording && !tab.runtime.Exporting() && !tab.workspace.HasActiveAutomation() &&
+		   !tab.workspace.HasPendingFiles() &&
+		   (host.phase == HeadsetHostPhase::Idle || host.phase == HeadsetHostPhase::Exited);
+}
+
 ApplicationTabs::Tab* ApplicationTabs::Find(std::uint64_t id) const
 {
 	for (const auto& tab : m_tabs)
@@ -327,10 +393,12 @@ ApplicationTabs::Tab* ApplicationTabs::Find(std::uint64_t id) const
 
 void ApplicationTabs::ApplyRequests()
 {
+	OpenAppeared();
 	if (m_add || m_open)
 	{
 		auto& tab = Add();
-		m_select = tab.id;
+		if (!std::exchange(m_openInBackground, false))
+			m_select = tab.id;
 		if (m_open)
 		{
 			if (const auto* app = std::get_if<RunningApp>(&*m_open))
@@ -421,7 +489,24 @@ void ApplicationTabs::ApplyRequests()
 void ApplicationTabs::DrawBar()
 {
 	bool requestConfirmation = false;
-	if (ImGui::BeginTabBar("Applications", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll))
+	// Tabs fill the bar's height as separate cards; the selected one is tinted and carries the accent.
+	const float scale = ImGui::GetFontSize() / 17, iconSize = ImGui::GetFrameHeight() * .6f;
+	const float padding = std::max(0.0f, (ImGui::GetContentRegionAvail().y - ImGui::GetFontSize()) / 2);
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {12 * scale, padding});
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, {6 * scale, ImGui::GetStyle().ItemInnerSpacing.y});
+	ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, theme::Radius * scale);
+	ImGui::PushStyleVar(ImGuiStyleVar_TabBarBorderSize, 0.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_TabBarOverlineSize, 2 * scale);
+	ImGui::PushStyleVar(ImGuiStyleVar_TabMinWidthBase, 64 * scale);
+	const auto selectedFill = theme::Mix(theme::SurfaceRaised, theme::Accent, .22f);
+	ImGui::PushStyleColor(ImGuiCol_Tab, theme::Surface);
+	ImGui::PushStyleColor(ImGuiCol_TabHovered, theme::SurfaceRaised);
+	ImGui::PushStyleColor(ImGuiCol_TabSelected, selectedFill);
+	ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, theme::Accent);
+	ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected, selectedFill);
+	ImGui::PushStyleColor(ImGuiCol_TabDimmedSelectedOverline, theme::Accent);
+	if (ImGui::BeginTabBar("Applications", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll |
+											   ImGuiTabBarFlags_DrawSelectedOverline))
 	{
 		for (const auto& tab : m_tabs)
 		{
@@ -437,25 +522,45 @@ void ApplicationTabs::DrawBar()
 			const auto process = launched.process ? launched.process : tab->process;
 			if (process)
 				title += " (" + std::to_string(process) + ")";
+			// A status icon is drawn over spaces reserved at the start of the title.
+			std::optional<std::pair<Icon, ImU32>> status;
+			if (!tab->closing && !view.error.empty())
+				status = {Icon::Warning, theme::Record};
+			else if (!tab->closing && view.recording)
+				status = {Icon::Record, theme::Record};
+			if (status)
+				title.insert(0,
+							 static_cast<std::size_t>(std::ceil((iconSize + ImGui::GetStyle().ItemInnerSpacing.x) /
+																ImGui::CalcTextSize(" ").x)),
+							 ' ');
 			if (tab->closing)
 				title += " (closing)";
-			else if (!view.error.empty())
-				title += " !";
-			else if (view.recording)
-				title += " ●";
-			else if (view.manual)
-				title += " (Paused)";
-			else if (!view.connected &&
-					 (launched.state == LaunchState::Starting || view.connectionState == "Connecting"))
-				title += " (Connecting)";
-			else if (!view.connected && !tab->runtime.Endpoint().empty())
-				title += " (Disconnected)";
+			else if (!status)
+			{
+				if (view.manual)
+					title += " (Paused)";
+				else if (!view.connected &&
+						 (launched.state == LaunchState::Starting || view.connectionState == "Connecting"))
+					title += " (Connecting)";
+				else if (!view.connected && !tab->runtime.Endpoint().empty())
+					title += " (Disconnected)";
+			}
 			title += "###application-" + std::to_string(tab->id);
 			bool open = true;
 			const auto flags = m_forceSelection && tab->id == m_active ? ImGuiTabItemFlags_SetSelected : 0;
+			ImGui::PushStyleColor(ImGuiCol_Text, tab->id == m_active ? theme::Text : theme::TextDim);
 			const bool selected = ImGui::BeginTabItem(title.c_str(), &open, flags);
+			ImGui::PopStyleColor();
+			if (status)
+			{
+				const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
+				DrawIcon(ImGui::GetWindowDrawList(), status->first,
+						 {minimum.x + ImGui::GetStyle().FramePadding.x + iconSize / 2, (minimum.y + maximum.y) / 2},
+						 iconSize, status->second);
+			}
 			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s\n%s%s%s", name.c_str(), view.connectionState.c_str(),
+				ImGui::SetTooltip("%s\n%s%s%s%s%s", name.c_str(), view.connectionState.c_str(),
+								  view.error.empty() ? "" : "\n", view.error.c_str(),
 								  tab->runtime.Endpoint().empty() ? "" : "\n", tab->runtime.Endpoint().c_str());
 			if (selected)
 			{
@@ -485,6 +590,8 @@ void ApplicationTabs::DrawBar()
 		ImGui::SetItemTooltip("Open another application");
 		ImGui::EndTabBar();
 	}
+	ImGui::PopStyleColor(6);
+	ImGui::PopStyleVar(6);
 	if (requestConfirmation)
 		ImGui::OpenPopup("Close application tab");
 	if (ImGui::BeginPopupModal("Close application tab", nullptr, ImGuiWindowFlags_AlwaysAutoResize))

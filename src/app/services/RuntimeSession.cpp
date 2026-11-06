@@ -36,7 +36,9 @@ void RuntimeSession::Poll(bool piloting, bool foreground)
 	const auto connection = m_requests.Snapshot();
 	if (connection.state == RuntimeConnectionState::Failed)
 	{
-		m_failure = connection.detail.empty() ? "Runtime connection failed" : connection.detail;
+		// An app that ends its connection leaves the session disconnected, not failed.
+		if (!connection.peerClosed)
+			m_failure = connection.detail.empty() ? "Runtime connection failed" : connection.detail;
 		// Retire the failed epoch, including replies queued before the transport failed.
 		m_requests.Disconnect();
 	}

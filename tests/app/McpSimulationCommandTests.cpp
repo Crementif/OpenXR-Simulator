@@ -129,6 +129,14 @@ int main()
 	Reject({{"kind", "controller_controls"}, {"hand", 0}, {"stick_y", -1.1}});
 	Reject({{"kind", "head_pose"}, {"yaw_deg", 90}});
 	Reject({{"kind", "head_pose"}, {"angular_velocity", {0, 1}}});
+	const auto paced = SimulationCommandFromJson({{"kind", "views"}, {"refresh_rate", 120}});
+	Require(std::get<SetViewSettings>(paced).value.refreshRate == 120 &&
+				std::get<SetViewSettings>(control::DecodeSimulationCommand(control::EncodeSimulationCommand(paced)))
+						.value.refreshRate == 120 &&
+				std::get<SetViewSettings>(
+					control::DecodeSimulationCommand(control::EncodeSimulationCommand(SetViewSettings{})))
+						.value.refreshRate == 0,
+			"View refresh rate did not round-trip");
 	const auto turning =
 		std::get<SetHeadPose>(SimulationCommandFromJson({{"kind", "head_pose"}, {"angular_velocity", {0, .5, 0}}}));
 	Require(turning.angularVelocity.y == .5f && turning.Moving(), "MCP head pose dropped its velocity");

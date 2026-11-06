@@ -183,6 +183,38 @@ XrResult FrameScheduler::RebasePaused(DisplayTick boundary)
 	return XR_SUCCESS;
 }
 
+std::optional<DisplayTimeline> FrameScheduler::Retime(Duration period)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || period.count() <= 0)
+		return {};
+	try
+	{
+		auto boundary = std::max(m_nextAdmission, m_hostTick);
+		if (!m_state.paused && m_config.mode == ExecutionMode::RealTime)
+		{
+			const FrameClockMapping mapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)};
+			boundary = std::max(boundary, m_timeline.TickAtOrAfter(mapping.Map(m_clock->Now())));
+		}
+		auto timeline = m_timeline.Retimed(boundary, period);
+		// Moving the host anchor along the same line keeps every host-to-runtime mapping unchanged.
+		const auto shift = timeline.TimeAt(boundary).value - m_timeline.TimeAt(m_hostTick).value;
+		m_hostEpoch += std::chrono::duration_cast<HostTime::duration>(shift);
+		m_hostTick = boundary;
+		m_timeline = timeline;
+		m_config.period = period;
+		m_slowFrames = m_fastFrames = 0;
+		++m_policyRevision;
+		m_clock->Wake();
+		m_changed.notify_all();
+		return timeline;
+	}
+	catch (const std::exception&)
+	{
+		return {};
+	}
+}
+
 XrResult FrameScheduler::Resume(HostTime anchor, DisplayTick boundary)
 {
 	std::lock_guard lock(m_mutex);

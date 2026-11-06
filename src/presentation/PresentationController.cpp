@@ -40,6 +40,13 @@ void PresentationController::Start(SessionGeneration generation, const DisplayTi
 	m_published.notify_all();
 }
 
+void PresentationController::Retime(SessionGeneration generation, const DisplayTimeline& timeline)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_running && generation == m_generation)
+		m_timeline = timeline;
+}
+
 PresentationAdmission PresentationController::Submit(PresentationSubmission submission,
 													 const std::function<void()>& commit)
 {
@@ -226,8 +233,7 @@ std::optional<PresentationTick> PresentationController::AdvanceAt(RuntimeTime no
 		std::lock_guard lock(m_mutex);
 		if (!m_running || (generation && *generation != m_generation) || now < m_timeline->Epoch())
 			return {};
-		tick.value =
-			static_cast<std::uint64_t>((now.value - m_timeline->Epoch().value).count() / m_timeline->Period().count());
+		tick = m_timeline->TickAtOrBefore(now);
 		time = exact ? now : m_timeline->TimeAt(tick);
 		if (m_latest)
 		{

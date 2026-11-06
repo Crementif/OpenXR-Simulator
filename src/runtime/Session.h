@@ -143,6 +143,12 @@ public:
 	CommandConfiguration CommandConfigurationSnapshot() const;
 	RecordingResult StartCommandRecording(bool drain = false, CommandSource owner = ApplicationAutomationSource);
 
+	// XR_FB_display_refresh_rate. The companion's view settings take precedence over the
+	// app's request, which takes precedence over the rate the session began with.
+	XrResult EnumerateRefreshRates(std::uint32_t capacity, std::uint32_t* count, float* rates) const;
+	float RefreshRate() const;
+	XrResult RequestRefreshRate(float hertz);
+
 	XrResult LocateViews(const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count,
 						 XrView* views);
 	XrViewConfigurationType ActiveViewConfiguration() const;
@@ -157,6 +163,8 @@ private:
 							 bool requireRunning = true);
 	void Transition(XrSessionState state, RuntimeTime time);
 	void WatchLiveInput(std::stop_token stop);
+	std::vector<float> RefreshRatesLocked() const;
+	void ApplyRefreshRateLocked();
 
 	XrSession m_handle;
 	std::shared_ptr<Instance> m_instanceOwner;
@@ -178,6 +186,10 @@ private:
 	std::uint64_t m_revision = 0;
 	bool m_liveInputFailed = false;
 	std::optional<CommandSource> m_externalDisplaySource;
+	float m_defaultRate = 0;
+	float m_requestedRate = 0;
+	float m_overrideRate = 0;
+	float m_rate = 0;
 	std::jthread m_liveInputWorker;
 };
 } // namespace simxr

@@ -505,8 +505,17 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	if (!view.connected)
 	{
 		DrawIcon(draw, Icon::App, {center.x, center.y - 72 * unit}, 40 * unit, theme::TextDim);
-		line("OpenXR Simulator", center.y - 44 * unit, theme::Text);
-		line("Launch or connect an OpenXR app", center.y - 14 * unit, theme::Text);
+		if (view.epoch && !view.endpoint.empty() && view.error.empty())
+		{
+			line("App disconnected", center.y - 44 * unit, theme::Text);
+			line(shell.reconnects ? "It reconnects here when it starts again" : "The app closed its connection",
+				 center.y - 14 * unit, theme::TextDim);
+		}
+		else
+		{
+			line("OpenXR Simulator", center.y - 44 * unit, theme::Text);
+			line("Launch or connect an OpenXR app", center.y - 14 * unit, theme::Text);
+		}
 		const auto& style = ImGui::GetStyle();
 		const float addWidth = ImGui::CalcTextSize("Add application").x + style.FramePadding.x * 2;
 		const float connectWidth = ImGui::CalcTextSize("Connect").x + style.FramePadding.x * 2;

@@ -876,6 +876,43 @@ static XrResult XRAPI_PTR RunXrEnumerateViveTrackerPathsHTCX(XrInstance handle, 
 	return instance->Trackers().Enumerate(capacity, count, paths);
 }
 
+static XrResult XRAPI_PTR RunXrEnumerateDisplayRefreshRatesFB(XrSession handle, std::uint32_t capacity,
+															  std::uint32_t* count, float* rates)
+{
+	std::unique_lock<std::recursive_mutex> lock(Host().Mutex());
+	auto session = Host().FindSession(handle);
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	auto core = session->core.Shared();
+	lock.unlock();
+	return core->EnumerateRefreshRates(capacity, count, rates);
+}
+
+static XrResult XRAPI_PTR RunXrGetDisplayRefreshRateFB(XrSession handle, float* rate)
+{
+	std::unique_lock<std::recursive_mutex> lock(Host().Mutex());
+	auto session = Host().FindSession(handle);
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	if (!rate)
+		return XR_ERROR_VALIDATION_FAILURE;
+	auto core = session->core.Shared();
+	lock.unlock();
+	*rate = core->RefreshRate();
+	return XR_SUCCESS;
+}
+
+static XrResult XRAPI_PTR RunXrRequestDisplayRefreshRateFB(XrSession handle, float rate)
+{
+	std::unique_lock<std::recursive_mutex> lock(Host().Mutex());
+	auto session = Host().FindSession(handle);
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	auto core = session->core.Shared();
+	lock.unlock();
+	return core->RequestRefreshRate(rate);
+}
+
 static XrResult XRAPI_PTR RunXrCreateBodyTrackerFB(XrSession handle, const XrBodyTrackerCreateInfoFB* info,
 												   XrBodyTrackerFB* output)
 {
@@ -1069,6 +1106,9 @@ static XrResult XRAPI_PTR RunXrGetInstanceProcAddr(XrInstance iHandle, const cha
 		ENTRY(CreateVulkanInstanceKHR),
 		ENTRY(CreateVulkanDeviceKHR),
 		ENTRY(EnumerateViveTrackerPathsHTCX),
+		ENTRY(EnumerateDisplayRefreshRatesFB),
+		ENTRY(GetDisplayRefreshRateFB),
+		ENTRY(RequestDisplayRefreshRateFB),
 		ENTRY(CreateBodyTrackerFB),
 		ENTRY(CreateBodyTrackerBD),
 		ENTRY(DestroyBodyTrackerFB),

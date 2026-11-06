@@ -38,13 +38,21 @@ struct TrackerConnectedEvent
 	XrPath rolePath;
 };
 
+// The OpenXR event names no session; this one lets a destroyed session drop it.
+struct DisplayRefreshRateEvent
+{
+	XrSession session;
+	float from;
+	float to;
+};
+
 struct InstanceLossEvent
 {
 	RuntimeTime lossTime;
 };
 
 using RuntimeEvent = std::variant<SessionStateEvent, InteractionProfileEvent, ReferenceSpaceEvent, InstanceLossEvent,
-								  TrackerConnectedEvent>;
+								  TrackerConnectedEvent, DisplayRefreshRateEvent>;
 
 struct ObservedEvent
 {

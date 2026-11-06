@@ -69,6 +69,7 @@ void RuntimeConnection::Disconnect(std::optional<std::uint64_t> expectedEpoch)
 	m_snapshot.peerProcess = 0;
 	m_snapshot.state = RuntimeConnectionState::Disconnected;
 	m_snapshot.inFlight = false;
+	m_snapshot.peerClosed = false;
 	m_snapshot.detail.clear();
 	m_snapshot.appName.clear();
 	if (m_snapshot.epoch != std::numeric_limits<std::uint64_t>::max())
@@ -155,7 +156,7 @@ bool RuntimeConnection::Current(std::uint64_t epoch)
 
 void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
 										std::optional<control::ControlPacket> hello, std::string appName,
-										std::uint64_t peerProcess)
+										std::uint64_t peerProcess, bool peerClosed)
 {
 	control::ControlPacket previous;
 	std::lock_guard lock(m_mutex);
@@ -165,6 +166,7 @@ void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionSt
 	m_snapshot.detail = std::move(detail);
 	m_snapshot.appName = std::move(appName);
 	m_snapshot.peerProcess = state == RuntimeConnectionState::Connected ? peerProcess : 0;
+	m_snapshot.peerClosed = peerClosed;
 	if (hello)
 		previous = std::exchange(m_snapshot.hello, std::move(*hello));
 }
@@ -366,6 +368,12 @@ void RuntimeConnection::RunChecked()
 				reply.timedOut = true;
 				client.reset();
 				ConnectionState(activeEpoch, RuntimeConnectionState::Failed, reply.error);
+			}
+			catch (const control::ControlPeerClosed&)
+			{
+				reply.error = "The app closed the connection";
+				client.reset();
+				ConnectionState(activeEpoch, RuntimeConnectionState::Failed, reply.error, {}, {}, 0, true);
 			}
 			catch (const std::exception& error)
 			{

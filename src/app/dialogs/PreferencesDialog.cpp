@@ -49,6 +49,10 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 													   ImGui::GetStyle().ItemInnerSpacing.x));
 				if (ImGui::SliderFloat("UI scale", &settings.scale, 0.75f, 2.5f, "%.2f"))
 					dirty = true;
+				if (ImGui::Checkbox("Open a tab for each new app", &settings.openNewSessions))
+					dirty = true;
+				ImGui::SetItemTooltip("Connect to OpenXR apps that start while the simulator runs.\n"
+									  "An empty tab takes the app; otherwise it opens in a new tab.");
 				int budget = static_cast<int>(settings.snapshotBudgetMiB);
 				if (ImGui::SliderInt("Snapshots (MiB)", &budget, SnapshotBudget::MinMiB, SnapshotBudget::MaxMiB))
 				{

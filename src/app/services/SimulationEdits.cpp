@@ -421,6 +421,8 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 	const auto views = Member(config, "views");
 	values.views.ipd = Number(Member(views, "ipd"));
 	values.views.insetHalfAngle = Number(Member(views, "inset_half_angle"));
+	if (const auto rate = FindMember(views, "refresh_rate"))
+		values.views.refreshRate = Number(*rate);
 	for (const auto& [name, field] : {std::pair{"outer_width", &ViewSettings::outerWidth},
 									  {"outer_height", &ViewSettings::outerHeight},
 									  {"inset_width", &ViewSettings::insetWidth},

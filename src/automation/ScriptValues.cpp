@@ -447,6 +447,7 @@ static ViewSettings ReadViews(lua_State* state, int table)
 	settings.outerHeight = IndexField(state, table, "outer_height", settings.outerHeight);
 	settings.insetWidth = IndexField(state, table, "inset_width", settings.insetWidth);
 	settings.insetHeight = IndexField(state, table, "inset_height", settings.insetHeight);
+	settings.refreshRate = FloatField(state, table, "refresh_rate", settings.refreshRate);
 	const auto fovAngles = Vector(state, table, "outer_fov", {-0.9f, 0.9f, 0.9f, -0.9f, -0.9f, 0.9f, 0.9f, -0.9f});
 	settings.outerFov = {{{fovAngles[0], fovAngles[1], fovAngles[2], fovAngles[3]},
 						  {fovAngles[4], fovAngles[5], fovAngles[6], fovAngles[7]}}};

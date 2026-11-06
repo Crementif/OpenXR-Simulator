@@ -3,6 +3,7 @@
 #include "app/services/ApplicationCatalog.h"
 #include "app/services/RunningApps.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -59,6 +60,9 @@ private:
 	Tab& Add(std::string endpoint = {});
 	Tab* Find(std::uint64_t id) const;
 	void ApplyRequests();
+	void OpenAppeared();
+	bool Idle(const Tab& tab) const;
+	bool Disconnected(const Tab& tab) const;
 	void DrawBar();
 	void BeginClose(Tab& tab);
 	ProcessSupervisor& m_processes;
@@ -69,6 +73,15 @@ private:
 	std::uint64_t m_active = 0, m_nextId = 1;
 	std::optional<std::uint64_t> m_select, m_confirmClose;
 	std::optional<OpenRequest> m_open;
-	bool m_add = false;
+	bool m_add = false, m_openInBackground = false;
+	std::optional<RunningAppWatcher> m_watcher;
+
+	struct Appeared
+	{
+		RunningApp app;
+		std::chrono::steady_clock::time_point since;
+	};
+
+	std::vector<Appeared> m_appeared;
 };
 } // namespace simxr::app

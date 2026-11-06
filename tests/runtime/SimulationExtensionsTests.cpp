@@ -76,7 +76,11 @@ int main()
 						  {"xrSuggestBodyTrackingCalibrationOverrideMETA", "xrResetBodyTrackingCalibrationMETA"}},
 		ExpectedExtension{XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME,
 						  XR_META_body_tracking_fidelity_SPEC_VERSION,
-						  {"xrRequestBodyTrackingFidelityMETA"}}};
+						  {"xrRequestBodyTrackingFidelityMETA"}},
+		ExpectedExtension{
+			XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME,
+			XR_FB_display_refresh_rate_SPEC_VERSION,
+			{"xrEnumerateDisplayRefreshRatesFB", "xrGetDisplayRefreshRateFB", "xrRequestDisplayRefreshRateFB"}}};
 	const auto definitions = SimulationExtensions();
 	Require(definitions.size() == expected.size(), "Simulation metadata extension count");
 	ExtensionRegistry registry(definitions);
@@ -100,7 +104,7 @@ int main()
 			entries.push_back({command, Stub});
 		}
 	}
-	Require(uniqueCommands.size() == 11 && !registry.HasCommand("xrGetBodyTrackingStateBD"),
+	Require(uniqueCommands.size() == 14 && !registry.HasCommand("xrGetBodyTrackingStateBD"),
 			"Unsupported auxiliary commands advertised");
 	EnabledExtensions all(names), none;
 	Require(registry.Validate(names, XR_MAKE_VERSION(1, 0, 27)) == XR_SUCCESS, "Valid simulation extension set");
@@ -122,13 +126,13 @@ int main()
 	Require(registry.Validate(fidelityWithoutCore, XR_MAKE_VERSION(0, 9, 0)) == XR_ERROR_EXTENSION_NOT_PRESENT,
 			"Fidelity AND core1.0 dependency");
 	std::uint32_t count = 0;
-	Require(registry.Enumerate(0, &count, nullptr) == XR_SUCCESS && count == 7, "Metadata count enumeration");
-	std::array<XrExtensionProperties, 7> properties{};
+	Require(registry.Enumerate(0, &count, nullptr) == XR_SUCCESS && count == 8, "Metadata count enumeration");
+	std::array<XrExtensionProperties, 8> properties{};
 	for (auto& output : properties)
 		output.type = XR_TYPE_EXTENSION_PROPERTIES;
-	Require(registry.Enumerate(6, &count, properties.data()) == XR_ERROR_SIZE_INSUFFICIENT && count == 7,
+	Require(registry.Enumerate(7, &count, properties.data()) == XR_ERROR_SIZE_INSUFFICIENT && count == 8,
 			"Metadata enumeration capacity");
-	Require(registry.Enumerate(7, &count, properties.data()) == XR_SUCCESS, "Metadata enumeration");
+	Require(registry.Enumerate(8, &count, properties.data()) == XR_SUCCESS, "Metadata enumeration");
 	for (const auto& property : properties)
 	{
 		auto found = std::find_if(expected.begin(), expected.end(), [&](const auto& value) {

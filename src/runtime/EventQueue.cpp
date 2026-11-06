@@ -34,6 +34,13 @@ static void EncodeEvent(const ReferenceSpaceEvent& value, XrEventDataBuffer& out
 		output);
 }
 
+static void EncodeEvent(const DisplayRefreshRateEvent& value, XrEventDataBuffer& output)
+{
+	WriteEvent(XrEventDataDisplayRefreshRateChangedFB{XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB, nullptr,
+													  value.from, value.to},
+			   output);
+}
+
 static void EncodeEvent(const InstanceLossEvent& value, XrEventDataBuffer& output)
 {
 	WriteEvent(

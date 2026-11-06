@@ -41,19 +41,8 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 		choice.connect.reset();
 	if (!choice.discoveryError.empty())
 		m_notices.Push({"Application discovery failed", choice.discoveryError});
-	if (choice.connect || choice.disconnect)
-	{
-		CancelRestart();
-		m_attachment.reset();
-		m_launchError.clear();
-		m_launchedEndpoint.clear();
-		m_launchedName.clear();
-		m_connectedEndpoint.clear();
-		m_connectedName.clear();
-#ifdef SIMXR_COMPANION_AUTOMATION
-		m_rigs.PrepareLaunch({});
-#endif
-	}
+	if (choice.disconnect)
+		ForgetApp();
 	if (choice.connect)
 		ConnectApp(runtime, *choice.connect);
 	if (choice.launchProfile)
@@ -88,8 +77,23 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 		runtime.Disconnect();
 }
 
+void WorkspacePanels::ForgetApp()
+{
+	CancelRestart();
+	m_attachment.reset();
+	m_launchError.clear();
+	m_launchedEndpoint.clear();
+	m_launchedName.clear();
+	m_connectedEndpoint.clear();
+	m_connectedName.clear();
+#ifdef SIMXR_COMPANION_AUTOMATION
+	m_rigs.PrepareLaunch({});
+#endif
+}
+
 void WorkspacePanels::ConnectApp(RuntimePanels& runtime, const RunningApp& app)
 {
+	ForgetApp();
 	m_workspaceProfile.clear();
 	m_connectedEndpoint = app.endpoint;
 	m_connectedName = app.name;
@@ -163,7 +167,11 @@ void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
 	{
 		const auto& entry = logged[index];
 		ImGui::PushID(static_cast<int>(index));
-		ImGui::TextColored(theme::Vec(theme::Warn), "!");
+		const float icon = ImGui::GetFontSize();
+		const auto at = ImGui::GetCursorScreenPos();
+		DrawIcon(ImGui::GetWindowDrawList(), Icon::Warning, {at.x + icon / 2, at.y + ImGui::GetTextLineHeight() / 2},
+				 icon, theme::Warn);
+		ImGui::Dummy({icon, ImGui::GetTextLineHeight()});
 		ImGui::SameLine();
 		ImGui::TextUnformatted(entry.title.c_str());
 		if (!entry.detail.empty() && ImGui::BeginItemTooltip())
@@ -216,6 +224,7 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 {
 	const auto& snapshot = runtime.View();
 	m_shell.session = DeriveRunState(snapshot, m_attachment != nullptr, m_launchError);
+	m_shell.reconnects = m_settings.openNewSessions && m_tabBar;
 	if (std::holds_alternative<DeviceSel>(m_shell.selection))
 		m_shell.device = m_shell.selection;
 	if (const auto stepped = runtime.TakeSteppedFrame();
@@ -249,20 +258,26 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	const float actions = button * 2 + focus + style.ItemSpacing.x * 2;
 	const float reserved =
 		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
-	const float middle = std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2);
-	// The leading icons share a line with the tabs, which stand on the bar's bottom rule.
-	ImGui::SetCursorPosY(m_tabBar ? ImGui::GetWindowHeight() - button : middle);
+	const float barHeight = ImGui::GetWindowHeight(), middle = std::max(0.0f, (barHeight - button) / 2);
+	ImGui::SetCursorPos({style.FramePadding.x, middle});
 	// The headset sits outside the apps, so it comes before them.
 	DrawHeadset(runtime);
-	ImGui::SameLine(0, 0);
+	ImGui::SameLine(0, 2 * m_settings.scale);
 	DrawAppPicker(runtime, snapshot, std::max(1.f, ImGui::GetContentRegionAvail().x - reserved), bool(m_tabBar));
 	if (m_tabBar)
 	{
-		// The tabs stand on the top bar's bottom rule. The bar's trailing spacing must not make them scroll.
-		ImGui::SameLine();
-		ImGui::SetCursorPosY(ImGui::GetWindowHeight() - button);
+		ImGui::SameLine(0, style.ItemSpacing.x);
+		const auto divider = ImGui::GetCursorScreenPos();
+		const float inset = barHeight * .3f, top = ImGui::GetWindowPos().y;
+		ImGui::GetWindowDrawList()->AddLine({divider.x, top + inset}, {divider.x, top + barHeight - inset},
+											theme::Line);
+		ImGui::Dummy({1, button});
+		// The tabs stand on the bar's bottom rule. The bar's trailing spacing must not make them scroll.
+		ImGui::SameLine(0, style.ItemSpacing.x);
+		const float tabsHeight = barHeight - 6 * m_settings.scale;
+		ImGui::SetCursorPosY(barHeight - tabsHeight);
 		const float tabsWidth = std::max(1.f, ImGui::GetContentRegionAvail().x - reserved);
-		ImGui::BeginChild("Applications", {tabsWidth, button}, 0,
+		ImGui::BeginChild("Applications", {tabsWidth, tabsHeight}, 0,
 						  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 		m_tabBar();
 		ImGui::EndChild();

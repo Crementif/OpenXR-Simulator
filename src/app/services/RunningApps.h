@@ -3,10 +3,13 @@
 #include "app/services/LaunchTypes.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <stop_token>
+#include <thread>
 #include <vector>
 
 namespace simxr::app
@@ -30,4 +33,23 @@ std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout = 
 // The executable, arguments, working folder and environment needed to relaunch.
 // Unavailable when process details cannot be read or represented without truncation.
 std::optional<LaunchProfile> DescribeProcess(std::uint64_t process);
+
+// Reports runtimes whose endpoints appear after the watcher starts. Endpoints
+// present at the start are never reported, even when they first answer later.
+class RunningAppWatcher
+{
+public:
+	RunningAppWatcher();
+	RunningAppWatcher(const RunningAppWatcher&) = delete;
+	RunningAppWatcher& operator=(const RunningAppWatcher&) = delete;
+	std::vector<RunningApp> TakeAppeared();
+
+private:
+	void Run(std::stop_token stop) noexcept;
+
+	std::mutex m_mutex;
+	std::condition_variable_any m_wake;
+	std::vector<RunningApp> m_appeared;
+	std::jthread m_worker;
+};
 } // namespace simxr::app

@@ -187,6 +187,54 @@ void ManualAdmission()
 			"Restart retained old manual policy/permits");
 }
 
+void RetimedDisplay()
+{
+	DisplayTimeline timeline({Duration{100}}, 10ns);
+	const auto faster = timeline.Retimed({3}, 5ns).Retimed({5}, 20ns);
+	Require(faster.TimeAt({2}).value.count() == 120 && faster.TimeAt({3}).value.count() == 130 &&
+				faster.TimeAt({4}).value.count() == 135 && faster.TimeAt({6}).value.count() == 160,
+			"Retimed segments moved earlier ticks");
+	Require(faster.TickAtOrAfter({Duration{131}}) == DisplayTick{4} &&
+				faster.TickAtOrAfter({Duration{141}}) == DisplayTick{6} &&
+				faster.TickAtOrBefore({Duration{139}}) == DisplayTick{4} &&
+				faster.TickAtOrBefore({Duration{50}}) == DisplayTick{0},
+			"Retimed tick lookup");
+	Require(faster.Period() == 20ns && faster.Epoch().value.count() == 100 && timeline.Period() == 10ns,
+			"Retimed period");
+	bool rejected = false;
+	try
+	{
+		faster.Retimed({4}, 10ns);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Retimed before the latest change");
+
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::Deterministic;
+	config.epoch = {Duration{100}};
+	config.period = 10ns;
+	scheduler.Start(config);
+	Require(!FrameScheduler(clock).Retime(5ns), "Stopped scheduler retimed");
+	FramePrediction first, second, third, submitted;
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS && scheduler.BeginFrame() == XR_SUCCESS &&
+				scheduler.WaitFrame(second) == XR_SUCCESS,
+			"Frames before retime");
+	const auto retimed = scheduler.Retime(20ns);
+	Require(retimed && retimed->TimeAt(second.displayTick) == second.displayTime && retimed->Period() == 20ns,
+			"Retime moved an admitted frame");
+	Require(scheduler.EndFrame(submitted) == XR_SUCCESS && scheduler.BeginFrame() == XR_SUCCESS &&
+				scheduler.WaitFrame(third) == XR_SUCCESS && third.displayPeriod == 20ns &&
+				third.displayTime.value - second.displayTime.value == 20ns,
+			"Retime did not pace the next frame");
+	Require(!scheduler.Retime(0ns), "Invalid period accepted");
+	scheduler.Stop();
+}
+
 void PauseDuringPacingAndRebase()
 {
 	auto clock = std::make_shared<FakeClock>();
@@ -621,6 +669,7 @@ int main()
 	AutomaticCadence();
 	HostElapsedOverflow();
 	ManualAdmission();
+	RetimedDisplay();
 	PauseDuringPacingAndRebase();
 	AlignPausedDisplayBoundary();
 	PublicationContention();

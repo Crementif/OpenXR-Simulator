@@ -188,8 +188,7 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	// The app tabs sit on this rule; the panels below start on it.
 	const auto bar = ImGui::GetWindowPos();
 	ImGui::GetWindowDrawList()->AddRectFilled({bar.x, bar.y + 39 * scale},
-											  {bar.x + ImGui::GetWindowWidth(), bar.y + 40 * scale},
-											  ImGui::GetColorU32(ImGuiCol_TabSelected));
+											  {bar.x + ImGui::GetWindowWidth(), bar.y + 40 * scale}, theme::Line);
 	DrawToolbar(runtime);
 	ImGui::EndChild();
 	const bool compact = width / scale < 1100, overlay = width / scale < 800;

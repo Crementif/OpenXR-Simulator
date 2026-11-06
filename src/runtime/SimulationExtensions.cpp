@@ -14,6 +14,8 @@ std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCap
 	static constexpr std::array<std::string_view, 2> s_calibrationCommands{
 		"xrSuggestBodyTrackingCalibrationOverrideMETA", "xrResetBodyTrackingCalibrationMETA"};
 	static constexpr std::array<std::string_view, 1> s_fidelityCommands{"xrRequestBodyTrackingFidelityMETA"};
+	static constexpr std::array<std::string_view, 3> s_refreshCommands{
+		"xrEnumerateDisplayRefreshRatesFB", "xrGetDisplayRefreshRateFB", "xrRequestDisplayRefreshRateFB"};
 	static constexpr std::array s_fbDependency{ExtensionDependency{XR_FB_BODY_TRACKING_EXTENSION_NAME}};
 	static constexpr std::array s_coreDependency{ExtensionDependency{{}, XR_MAKE_VERSION(1, 0, 0)}};
 	static constexpr std::array s_dependsFB{DependencyClause{s_fbDependency}};
@@ -35,6 +37,8 @@ std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCap
 							XR_META_body_tracking_calibration_SPEC_VERSION, s_calibrationCommands, s_dependsFB},
 		ExtensionDefinition{XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME, XR_META_body_tracking_fidelity_SPEC_VERSION,
 							s_fidelityCommands, s_dependsFidelity},
+		ExtensionDefinition{XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME, XR_FB_display_refresh_rate_SPEC_VERSION,
+							s_refreshCommands},
 		ExtensionDefinition{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME, XR_VARJO_quad_views_SPEC_VERSION, {}},
 		ExtensionDefinition{
 			XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME, XR_VARJO_foveated_rendering_SPEC_VERSION, {}, s_dependsQuad}};

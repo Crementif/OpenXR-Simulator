@@ -482,6 +482,33 @@ void InvalidBounds()
 	}
 }
 
+void PeerClose(wire::LocalControlServer& server)
+{
+	app::RuntimeConnection connection;
+	const auto epoch = connection.Connect(server.Path());
+	Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Connected; },
+			   "Peer close fixture did not connect");
+	server.Close();
+	Eventually(
+		[&] {
+			connection.Submit(Packet(wire::OpCode::Sessions));
+			return connection.Snapshot().state == app::RuntimeConnectionState::Failed;
+		},
+		"Closed peer did not end the connection");
+	const auto snapshot = connection.Snapshot();
+	Require(snapshot.peerClosed && snapshot.epoch == epoch, "A closed peer was reported as a transport failure");
+	connection.Disconnect();
+	Require(!connection.Snapshot().peerClosed, "Disconnect kept the closed-peer state");
+}
+
+void PeerCloseLinux()
+{
+	Directory directory;
+	wire::test::Fixture fixture;
+	wire::LocalControlServer server{fixture.service, (directory.path / "control.sock").string()};
+	PeerClose(server);
+}
+
 void ExplicitFailures()
 {
 	app::RuntimeConnection connection;
@@ -496,6 +523,36 @@ void ExplicitFailures()
 }
 #endif
 #if defined(_WIN32)
+
+void PeerClose(wire::LocalControlServer& server)
+{
+	app::RuntimeConnection connection;
+	const auto epoch = connection.Connect(server.Path());
+	Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Connected; },
+			   "Peer close fixture did not connect");
+	server.Close();
+	Eventually(
+		[&] {
+			connection.Submit(Packet(wire::OpCode::Sessions));
+			return connection.Snapshot().state == app::RuntimeConnectionState::Failed;
+		},
+		"Closed peer did not end the connection");
+	const auto snapshot = connection.Snapshot();
+	Require(snapshot.peerClosed && snapshot.epoch == epoch, "A closed peer was reported as a transport failure");
+	connection.Disconnect();
+	Require(!connection.Snapshot().peerClosed, "Disconnect kept the closed-peer state");
+}
+
+void PeerCloseWindows()
+{
+	ExtensionRegistry extensions({});
+	Runtime runtime(extensions);
+	wire::ControlService service(runtime);
+	wire::LocalControlServer server(service, std::string(R"(\\.\pipe\SimXR.Control.)") +
+												 std::to_string(GetCurrentProcessId()) + ".closed");
+	PeerClose(server);
+}
+
 void BusyPipeAttachment()
 {
 	using namespace wire::windows;
@@ -562,8 +619,10 @@ int main()
 		ResponsiveShutdownAndDeadline();
 		InvalidBounds();
 		ExplicitFailures();
+		PeerCloseLinux();
 #elif defined(_WIN32)
 		BusyPipeAttachment();
+		PeerCloseWindows();
 #else
 		app::RuntimeConnection connection;
 		connection.Connect("unsupported");

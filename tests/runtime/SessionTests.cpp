@@ -212,6 +212,89 @@ void TestPhysicalHeadsetSpaceChange()
 	session.Close();
 }
 
+void TestRefreshRate()
+{
+	using namespace simxr;
+	const std::array extensions{XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME};
+	Instance instance(reinterpret_cast<XrInstance>(920), extensions, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(921), instance);
+	std::uint32_t count = 0;
+	Require(session.RefreshRate() == 90 && session.EnumerateRefreshRates(0, &count, nullptr) == XR_SUCCESS &&
+				count == 6,
+			"Default refresh rates");
+	std::array<float, 6> rates{};
+	Require(session.EnumerateRefreshRates(5, &count, rates.data()) == XR_ERROR_SIZE_INSUFFICIENT &&
+				session.EnumerateRefreshRates(6, &count, rates.data()) == XR_SUCCESS && rates[3] == 90,
+			"Enumerate refresh rates");
+	Require(session.RequestRefreshRate(75) == XR_ERROR_DISPLAY_REFRESH_RATE_UNSUPPORTED_FB,
+			"Unsupported refresh rate accepted");
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+			"Begin refresh-rate session");
+	const auto changes = [&] {
+		std::vector<std::pair<float, float>> result;
+		XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
+		while (instance.Events().Poll(event) == XR_SUCCESS)
+		{
+			if (event.type == XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB)
+			{
+				const auto& changed = reinterpret_cast<const XrEventDataDisplayRefreshRateChangedFB&>(event);
+				result.emplace_back(changed.fromDisplayRefreshRate, changed.toDisplayRefreshRate);
+			}
+			event = {XR_TYPE_EVENT_DATA_BUFFER};
+		}
+		return result;
+	};
+	const auto frame = [&] {
+		FramePrediction prediction;
+		Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS &&
+					session.EndFrame(prediction) == XR_SUCCESS,
+				"Refresh-rate frame");
+		return prediction;
+	};
+	const auto first = frame();
+	Require(session.RequestRefreshRate(120) == XR_SUCCESS && session.RefreshRate() == 120 &&
+				changes() == std::vector<std::pair<float, float>>{{90.f, 120.f}},
+			"App refresh-rate request");
+	const auto second = frame();
+	Require(second.displayPeriod == Duration{8333333} &&
+				second.displayTime.value - first.displayTime.value == Duration{8333333},
+			"Requested rate did not pace frames");
+
+	ViewSettings views;
+	views.refreshRate = 60;
+	const CommandSource manual{CommandSourceKind::Manual, 1};
+	Require(session.Commands()
+					.Submit({1,
+							 manual,
+							 {FrameId{3}, {}},
+							 CommandLatePolicy::RescheduleNext,
+							 {TakeControl{ControlChannel::Views}, SetViewSettings{views}}})
+					.result == CommandResult::Queued,
+			"Queue companion refresh rate");
+	frame();
+	const auto overridden = frame();
+	Require(session.RefreshRate() == 60 && overridden.displayPeriod == Duration{16666667} &&
+				changes() == std::vector<std::pair<float, float>>{{120.f, 60.f}},
+			"Companion refresh rate did not override the app");
+	Require(session.RequestRefreshRate(0) == XR_SUCCESS && session.RefreshRate() == 60 && changes().empty(),
+			"App request replaced the companion's rate");
+	Require(session.Commands()
+					.Submit({2,
+							 manual,
+							 {FrameId{5}, {}},
+							 CommandLatePolicy::RescheduleNext,
+							 {ReleaseControl{ControlChannel::Views}}})
+					.result == CommandResult::Queued,
+			"Queue companion release");
+	frame();
+	Require(session.RefreshRate() == 90 && changes() == std::vector<std::pair<float, float>>{{60.f, 90.f}},
+			"Released companion rate did not return to the default");
+	session.Close();
+}
+
 void TestReentrantCaptureCollection()
 {
 	using namespace simxr;
@@ -1878,6 +1961,7 @@ int main()
 	Require(!instance.Events().Observe().empty(), "Teardown consumed observation history");
 	Require(session.Ready({Duration{40}}) == XR_ERROR_SESSION_LOST, "Closed session reactivated");
 	TestPresentationPolicyLifecycle();
+	TestRefreshRate();
 	TestConcurrentNativeControlSynchronization();
 	TestPhysicalHeadsetSpaceChange();
 	TestRetainedInstanceAndCpuOwnership();

@@ -207,11 +207,38 @@ void WorkspacePanels::Draw(RuntimePanels& runtime)
 		runtime.DrawConnection(&m_showConnection);
 	if (!m_launchError.empty() || m_showError)
 	{
+		const bool launch = !m_launchError.empty();
+		const auto& detail = launch ? m_launchError : m_shell.session.error;
+		const float scale = m_settings.scale, width = 420 * scale;
 		ImGui::OpenPopup("Error details");
-		if (ImGui::BeginPopupModal("Error details"))
+		ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, {.5f, .5f});
+		ImGui::SetNextWindowSize({width, 0});
+		if (ImGui::BeginPopupModal("Error details", nullptr,
+								   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+									   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::TextWrapped("%s", (m_launchError.empty() ? m_shell.session.error : m_launchError).c_str());
-			if (ImGui::Button("Dismiss"))
+			const float icon = ImGui::GetFrameHeight();
+			const auto at = ImGui::GetCursorScreenPos();
+			DrawIcon(ImGui::GetWindowDrawList(), Icon::Warning, {at.x + icon / 2, at.y + icon / 2}, icon * .8f,
+					 theme::Record);
+			ImGui::Dummy({icon, icon});
+			ImGui::SameLine();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(launch ? "The app could not be launched" : "The connection failed");
+			ImGui::Spacing();
+			ImGui::PushStyleColor(ImGuiCol_Text, theme::TextDim);
+			ImGui::TextWrapped("%s", detail.c_str());
+			ImGui::PopStyleColor();
+			ImGui::Spacing();
+			const auto& style = ImGui::GetStyle();
+			const float buttons = ImGui::CalcTextSize("Copy").x + ImGui::CalcTextSize("Close").x +
+								  style.FramePadding.x * 4 + style.ItemSpacing.x;
+			ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - buttons));
+			if (ImGui::Button("Copy") && !SDL_SetClipboardText(detail.c_str()))
+				m_notices.Push({"Copy failed", SDL_GetError()});
+			ImGui::SetItemTooltip("Copy the error text");
+			ImGui::SameLine();
+			if (ImGui::Button("Close") || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
 			{
 				m_launchError.clear();
 				m_showError = false;
@@ -440,6 +467,11 @@ std::string WorkspacePanels::ApplicationName(const RuntimePanels& runtime) const
 bool WorkspacePanels::McpEnabled() const
 {
 	return m_settings.mcpEnabled;
+}
+
+bool WorkspacePanels::OpensNewApps() const
+{
+	return m_settings.openNewSessions;
 }
 
 McpUiState& WorkspacePanels::McpState()

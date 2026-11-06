@@ -38,6 +38,8 @@ public:
 	// Pause joins wall-clock advancement without closing producer admission.
 	bool Pause();
 	bool Resume(HostTime hostAnchor, DisplayTick boundary);
+	// Adopts the scheduler's timeline after a refresh-rate change.
+	bool Retime(SessionGeneration generation, const DisplayTimeline& timeline);
 	bool Paused() const;
 
 	// Queue only; the existing display worker performs all image observation and

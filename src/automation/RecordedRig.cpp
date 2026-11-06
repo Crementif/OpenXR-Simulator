@@ -362,6 +362,8 @@ static std::string Format(const SetViewSettings& command)
 	table.Integer("outer_height", views.outerHeight);
 	table.Integer("inset_width", views.insetWidth);
 	table.Integer("inset_height", views.insetHeight);
+	if (views.refreshRate != 0)
+		table.Float("refresh_rate", views.refreshRate);
 	const auto& left = views.outerFov[0];
 	const auto& right = views.outerFov[1];
 	table.Raw("outer_fov", Vector({left.angleLeft, left.angleRight, left.angleUp, left.angleDown, right.angleLeft,

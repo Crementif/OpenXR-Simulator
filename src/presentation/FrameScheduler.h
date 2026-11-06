@@ -77,6 +77,10 @@ public:
 	// Align with a frozen display before issuing manual permits; admitted
 	// predictions are immutable. Unused permits must first be cancelled.
 	XrResult RebasePaused(DisplayTick boundary);
+	// Changes the display period from the first tick not yet predicted or reached, so
+	// admitted predictions keep their times and the clock mapping stays valid.
+	// Returns the timeline the virtual display must adopt.
+	std::optional<DisplayTimeline> Retime(Duration period);
 	// Maps virtual boundary to host anchor without changing the display epoch.
 	// Repeating Resume while unpaused does not rebase again.
 	XrResult Resume(HostTime anchor, DisplayTick boundary);

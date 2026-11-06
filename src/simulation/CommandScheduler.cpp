@@ -207,6 +207,8 @@ public:
 		Add(value.insetWidth);
 		Add(value.insetHeight);
 		Add(value.insetHalfAngle);
+		if (value.refreshRate != 0)
+			Add(value.refreshRate);
 		for (const auto& component : value.outerFov)
 		{
 			Add(component.angleLeft);

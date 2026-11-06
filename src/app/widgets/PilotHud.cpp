@@ -145,17 +145,33 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	};
 	if (folded)
 	{
-		const std::string release = KeyName(PilotAction::Escape) + " releases";
-		const float width = rowHeight + (m_captured ? gap + textWidth(release.c_str()) : 0);
+		// The strip names what piloting moves and the keys that change it.
+		const char* target = s_targetNames[targetIndex];
+		std::string keys;
+		for (const auto action : s_targetKeys)
+			keys += (keys.empty() ? "" : " ") + KeyName(action);
+		keys += " target, " + KeyName(PilotAction::SwapHand) + " hand";
+		if (m_captured)
+			keys = KeyName(PilotAction::Escape) + " releases, " + keys;
+		const float full = rowHeight + gap + textWidth(target) + gap + textWidth(keys.c_str());
+		const float limit = available - frame;
+		const bool showTarget = rowHeight + gap + textWidth(target) <= limit, showKeys = full <= limit;
+		const float width = showKeys ? full : showTarget ? rowHeight + gap + textWidth(target) : rowHeight;
 		group("HUD strip", minimum.x + margin, width, [&] {
 			if (IconButton("Show HUD", Icon::Keyboard,
 						   m_hudFolded ? "Show the pilot controls" : "Widen the image to show the pilot controls"))
 				m_hudFolded = false;
-			if (m_captured)
+			if (showTarget)
 			{
 				ImGui::SameLine();
 				ImGui::AlignTextToFramePadding();
-				ImGui::TextDisabled("%s", release.c_str());
+				ImGui::TextUnformatted(target);
+				ImGui::SetItemTooltip("Mouse look and walking keys move this");
+			}
+			if (showKeys)
+			{
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s", keys.c_str());
 			}
 		});
 	}

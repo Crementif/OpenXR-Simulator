@@ -81,6 +81,7 @@ public:
 	std::string LaunchDataDirectory() const;
 	std::string ApplicationName(const RuntimePanels& runtime) const;
 	bool McpEnabled() const;
+	bool OpensNewApps() const;
 	McpUiState& McpState();
 
 	const ShellState& State() const;
@@ -129,6 +130,8 @@ private:
 	void PollLaunch(RuntimePanels& runtime);
 	bool Restart(RuntimePanels& runtime, LaunchRestartRequest request);
 	void CancelRestart();
+	// Drops the launch, restart and connection bookkeeping of the previous app.
+	void ForgetApp();
 	void ToggleLibrary();
 	void ShowInspector();
 	void FoldTimeline();

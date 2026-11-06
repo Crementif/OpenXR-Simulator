@@ -32,14 +32,14 @@ static void Ready(int socket, int stopping, short events, Clock::time_point dead
 			throw std::system_error(errno, std::generic_category(), "Control socket polling failed");
 		if (items[1].revents)
 			throw std::runtime_error("Control connection is closed");
-		if (items[0].revents & (POLLERR | POLLNVAL))
+		if (items[0].revents & POLLNVAL)
 			throw std::runtime_error("Control socket polling failed");
 		if (!result)
 			throw ControlExchangeTimeout{request};
 		if (items[0].revents & events)
 			return;
-		if (items[0].revents & POLLHUP)
-			throw std::runtime_error("Control peer disconnected");
+		if (items[0].revents & (POLLHUP | POLLERR))
+			throw ControlPeerClosed("Control peer disconnected");
 	}
 }
 
@@ -173,6 +173,8 @@ struct LocalControlClient::State
 							  exchange.encoded.size() - exchange.sent, MSG_NOSIGNAL);
 			if (sent < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
 				continue;
+			if (sent < 0 && (errno == EPIPE || errno == ECONNRESET))
+				throw ControlPeerClosed("Control peer disconnected");
 			if (sent <= 0)
 				throw std::system_error(errno, std::generic_category(), "Control request send failed");
 			exchange.sent += static_cast<std::size_t>(sent);
@@ -195,6 +197,8 @@ struct LocalControlClient::State
 			const auto count = ::recvmsg(socket.value, &message, MSG_CMSG_CLOEXEC);
 			if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
 				continue;
+			if (count == 0 || (count < 0 && errno == ECONNRESET))
+				throw ControlPeerClosed("Control peer disconnected");
 			Rights rights;
 			bool valid = !(message.msg_flags & ~MSG_CMSG_CLOEXEC);
 			if (count >= 0)

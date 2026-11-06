@@ -370,6 +370,12 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.autoUpdateCheck = reader.Count(1) != 0;
 	}
 	if (!reader.Empty())
+	{
+		if (reader.Number() != 14)
+			throw std::runtime_error("Unknown session settings version");
+		result.openNewSessions = reader.Count(1) != 0;
+	}
+	if (!reader.Empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -457,7 +463,11 @@ static void WriteSettings(const std::filesystem::path& path, const CompanionSett
 		std::ranges::any_of(settings.profiles,
 							[](const LaunchProfile& profile) { return profile.useBundledRuntime; }) ||
 		std::ranges::any_of(settings.recent, [](const RecentApp& recent) { return recent.launch.useBundledRuntime; });
-	if (bundled || settings.mcpEnabled || settings.autoUpdateCheck)
+	// Later sections are optional, so a file stops at the last one that differs from its default.
+	const bool sessions = !settings.openNewSessions;
+	const bool updates = settings.autoUpdateCheck || sessions;
+	const bool mcp = settings.mcpEnabled || updates;
+	if (bundled || mcp)
 	{
 		Put(bytes, std::uint32_t{11});
 		Put(bytes, static_cast<std::uint32_t>(settings.profiles.size()));
@@ -467,15 +477,20 @@ static void WriteSettings(const std::filesystem::path& path, const CompanionSett
 		for (const auto& recent : settings.recent)
 			Put(bytes, static_cast<std::uint32_t>(recent.launch.useBundledRuntime));
 	}
-	if (settings.mcpEnabled || settings.autoUpdateCheck)
+	if (mcp)
 	{
 		Put(bytes, std::uint32_t{12});
 		Put(bytes, static_cast<std::uint32_t>(settings.mcpEnabled));
 	}
-	if (settings.autoUpdateCheck)
+	if (updates)
 	{
 		Put(bytes, std::uint32_t{13});
-		Put(bytes, std::uint32_t{1});
+		Put(bytes, static_cast<std::uint32_t>(settings.autoUpdateCheck));
+	}
+	if (sessions)
+	{
+		Put(bytes, std::uint32_t{14});
+		Put(bytes, static_cast<std::uint32_t>(settings.openNewSessions));
 	}
 	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");

@@ -33,7 +33,12 @@ struct ViewSettings
 	std::uint32_t insetHeight = 800;
 	float insetHalfAngle = 0.35f;
 	std::array<XrFovf, 2> outerFov{{{-0.9f, 0.9f, 0.9f, -0.9f}, {-0.9f, 0.9f, 0.9f, -0.9f}}};
+	// Display refresh rate in hertz; 0 leaves the app's request or the configured rate.
+	float refreshRate = 0;
 };
+
+inline constexpr float MinimumRefreshRate = 20, MaximumRefreshRate = 500;
+inline constexpr std::array<float, 6> StandardRefreshRates{60, 72, 80, 90, 120, 144};
 
 struct ViewDescription
 {

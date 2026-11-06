@@ -1,12 +1,18 @@
 #include "platform/windows/WindowsControl.h"
 #include "Pch.h"
 #include "control/ControlSchema.h"
+#include "control/LocalControlClient.h"
 
 #include <sddl.h>
 
 namespace simxr::control::windows
 {
 static std::atomic<unsigned> s_nativeChannels{0};
+
+static bool PeerClosed(DWORD error)
+{
+	return error == ERROR_BROKEN_PIPE || error == ERROR_NO_DATA || error == ERROR_PIPE_NOT_CONNECTED;
+}
 
 Handle::Handle(HANDLE value) : value(value) {}
 
@@ -341,6 +347,8 @@ std::size_t Channel::Transfer(bool write, std::span<std::byte> bytes, Clock::tim
 		else if (const auto error = GetLastError(); error != ERROR_IO_PENDING)
 		{
 			m_native->kind = Kind::None;
+			if (PeerClosed(error))
+				throw ControlPeerClosed("Control pipe peer disconnected");
 			throw Error("Start control pipe transfer failed", error);
 		}
 	}
@@ -348,8 +356,10 @@ std::size_t Channel::Transfer(bool write, std::span<std::byte> bytes, Clock::tim
 		throw std::logic_error("A pending control pipe operation must be retried unchanged");
 	if (m_native->kind != Kind::None)
 		count = Finish(deadline, stop);
-	if (!count || count > goal)
-		throw std::runtime_error("Control pipe peer disconnected or returned invalid byte count");
+	if (!count)
+		throw ControlPeerClosed("Control pipe peer disconnected");
+	if (count > goal)
+		throw std::runtime_error("Control pipe peer returned an invalid byte count");
 	if (!write)
 		std::copy_n(m_native->bytes.data(), count, bytes.data());
 	return count;
@@ -418,6 +428,8 @@ DWORD Channel::Finish(Clock::time_point deadline, HANDLE stop)
 			if (error == ERROR_IO_INCOMPLETE)
 				continue;
 			m_native->kind = Kind::None;
+			if (PeerClosed(error))
+				throw ControlPeerClosed("Control pipe peer disconnected");
 			throw Error("Control pipe operation failed", error);
 		}
 		m_native->kind = Kind::None;

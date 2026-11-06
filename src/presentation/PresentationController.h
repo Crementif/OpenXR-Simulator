@@ -107,6 +107,8 @@ public:
 									CompletionObserver completed = {});
 
 	void Start(SessionGeneration generation, const DisplayTimeline& timeline);
+	// Adopts a timeline that differs only from a future tick on.
+	void Retime(SessionGeneration generation, const DisplayTimeline& timeline);
 	// Reserve queue storage before committing frame state. The callback may throw
 	// but must not reenter this controller. It runs before publication to readers.
 	PresentationAdmission Submit(PresentationSubmission submission, const std::function<void()>& commit = {});

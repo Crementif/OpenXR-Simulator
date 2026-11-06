@@ -50,6 +50,7 @@ struct CompanionSettings
 	bool remoteMouseDrag = false;
 	bool mcpEnabled = false;
 	bool autoUpdateCheck = false;
+	bool openNewSessions = true;
 	GamepadBindings gamepadBindings;
 	float inspectorWidth = 340, timelineHeight = 132;
 	// railCollapsed is no longer used; it stays so older builds can read the file.

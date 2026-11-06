@@ -145,6 +145,21 @@ bool VirtualDisplay::Resume(HostTime hostAnchor, DisplayTick boundary)
 	return true;
 }
 
+bool VirtualDisplay::Retime(SessionGeneration generation, const DisplayTimeline& timeline)
+{
+	std::lock_guard control(m_control);
+	{
+		std::lock_guard lock(m_mutex);
+		if (!m_active || generation != m_generation)
+			return false;
+		m_timeline = timeline;
+		m_changed.notify_all();
+	}
+	m_controller.Retime(generation, timeline);
+	m_waiter->Wake();
+	return true;
+}
+
 bool VirtualDisplay::Paused() const
 {
 	std::lock_guard lock(m_mutex);
@@ -404,10 +419,10 @@ void VirtualDisplay::Run() noexcept
 			lock.lock();
 			if (!m_active || m_paused)
 				break;
-			const auto elapsedTicks = static_cast<std::uint64_t>(elapsed.count() / timeline.Period().count());
-			if (anchorTick.value >= std::numeric_limits<std::uint64_t>::max() - elapsedTicks)
+			const auto reached = timeline.TickAtOrBefore(now);
+			if (reached.value == std::numeric_limits<std::uint64_t>::max())
 				throw std::overflow_error("Virtual display tick exhausted");
-			const DisplayTick next{anchorTick.value + elapsedTicks + 1};
+			const DisplayTick next{std::max(reached.value, anchorTick.value) + 1};
 			const auto offset = timeline.TimeAt(next).value - anchorTime.value;
 			if (anchor > HostTime::max() - std::chrono::duration_cast<HostTime::duration>(offset))
 				throw std::overflow_error("Virtual display host deadline exhausted");

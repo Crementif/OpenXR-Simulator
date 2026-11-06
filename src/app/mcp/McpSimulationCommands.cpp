@@ -513,8 +513,9 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	if (kind == "views")
 	{
 		Keys(object, {"kind", "ipd", "inset_half_angle", "outer_fov", "outer_width", "outer_height", "inset_width",
-					  "inset_height"});
+					  "inset_height", "refresh_rate"});
 		ViewSettings value;
+		value.refreshRate = Float(object, "refresh_rate", value.refreshRate);
 		value.ipd = Float(object, "ipd", value.ipd);
 		value.insetHalfAngle = Float(object, "inset_half_angle", value.insetHalfAngle);
 		value.outerWidth = Integer(object, "outer_width", value.outerWidth, UINT32_MAX);

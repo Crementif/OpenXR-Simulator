@@ -29,6 +29,8 @@ ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& sett
 {
 	if ((layout != ViewLayout::Stereo && layout != ViewLayout::StereoWithInset) || !std::isfinite(settings.ipd) ||
 		settings.ipd < 0 || !settings.outerWidth || !settings.outerHeight ||
+		(settings.refreshRate != 0 &&
+		 !(settings.refreshRate >= MinimumRefreshRate && settings.refreshRate <= MaximumRefreshRate)) ||
 		(layout == ViewLayout::StereoWithInset &&
 		 (!std::isfinite(settings.insetHalfAngle) || settings.insetHalfAngle <= 0 || !settings.insetWidth ||
 		  !settings.insetHeight)))

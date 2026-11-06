@@ -13,6 +13,16 @@ static Instance& RetainedInstance(const std::shared_ptr<Instance>& instance)
 	return *instance;
 }
 
+static float RateOf(Duration period)
+{
+	return static_cast<float>(std::round(1e11 / static_cast<double>(period.count())) / 100);
+}
+
+static bool SameRate(float left, float right)
+{
+	return std::abs(left - right) < .005f;
+}
+
 Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> clock)
 	: m_handle(handle), m_instance(instance), m_clock(std::move(clock)), m_scheduler(m_clock),
 	  m_display(m_clock, 8, &m_history,
@@ -32,6 +42,7 @@ Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> cl
 {
 	if (handle == XR_NULL_HANDLE)
 		throw std::invalid_argument("Session requires a handle");
+	m_defaultRate = m_rate = RateOf(FrameSchedulerConfig{}.period);
 }
 
 Session::Session(XrSession handle, std::shared_ptr<Instance> instance, std::shared_ptr<Clock> clock)
@@ -113,6 +124,9 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	m_state.running = true;
 	m_state.lastIssued = {};
 	m_state.lastSubmitted = {};
+	m_defaultRate = m_rate = RateOf(timing.period);
+	m_overrideRate = 0;
+	ApplyRefreshRateLocked();
 	Transition(XR_SESSION_STATE_SYNCHRONIZED, config.epoch);
 	Transition(XR_SESSION_STATE_VISIBLE, config.epoch);
 	Transition(XR_SESSION_STATE_FOCUSED, config.epoch);
@@ -241,6 +255,7 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 	try
 	{
 		SessionGeneration generation;
+		float overrideRate = 0;
 		{
 			std::lock_guard lock(m_mutex);
 			if (m_state.closed || revision != m_revision)
@@ -256,6 +271,7 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 				Transition(*transition, prediction.displayTime);
 			boundary->Publish();
 			const auto& applied = boundary->Applied();
+			overrideRate = applied.configuration.views.refreshRate;
 			for (const auto& outcome : applied.outcomes)
 				m_history.Trace(outcome.result == CommandResult::Applied || outcome.result == CommandResult::Released
 									? FrameTraceKind::CommandsApplied
@@ -287,6 +303,14 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 		}
 		m_display.AdvanceFromFrame(generation, {prediction.displayTime.value - prediction.displayPeriod});
 		publication.unlock();
+		{
+			std::lock_guard lock(m_mutex);
+			if (!m_state.closed && revision == m_revision && overrideRate != m_overrideRate)
+			{
+				m_overrideRate = overrideRate;
+				ApplyRefreshRateLocked();
+			}
+		}
 		if (publishNative)
 		{
 			result = publishNative(prediction);
@@ -778,6 +802,71 @@ RecordingResult Session::StartCommandRecording(bool drain, CommandSource owner)
 	if (m_state.closed || !m_state.running)
 		return RecordingResult::Closed;
 	return m_publication.StartRecording(m_spaces.RecordingState(m_state.time), drain, owner);
+}
+
+std::vector<float> Session::RefreshRatesLocked() const
+{
+	std::vector<float> rates(StandardRefreshRates.begin(), StandardRefreshRates.end());
+	for (const auto rate : {m_defaultRate, m_overrideRate})
+		if (rate != 0 &&
+			std::none_of(rates.begin(), rates.end(), [rate](float known) { return SameRate(known, rate); }))
+			rates.insert(std::upper_bound(rates.begin(), rates.end(), rate), rate);
+	return rates;
+}
+
+XrResult Session::EnumerateRefreshRates(std::uint32_t capacity, std::uint32_t* count, float* rates) const
+{
+	if (!count || (capacity && !rates))
+		return XR_ERROR_VALIDATION_FAILURE;
+	std::lock_guard lock(m_mutex);
+	if (m_state.closed)
+		return XR_ERROR_SESSION_LOST;
+	const auto supported = RefreshRatesLocked();
+	*count = static_cast<std::uint32_t>(supported.size());
+	if (!capacity)
+		return XR_SUCCESS;
+	if (capacity < supported.size())
+		return XR_ERROR_SIZE_INSUFFICIENT;
+	std::copy(supported.begin(), supported.end(), rates);
+	return XR_SUCCESS;
+}
+
+float Session::RefreshRate() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_rate;
+}
+
+XrResult Session::RequestRefreshRate(float hertz)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_state.closed)
+		return XR_ERROR_SESSION_LOST;
+	if (hertz != 0)
+	{
+		const auto supported = RefreshRatesLocked();
+		const auto match =
+			std::find_if(supported.begin(), supported.end(), [hertz](float rate) { return SameRate(rate, hertz); });
+		if (!std::isfinite(hertz) || match == supported.end())
+			return XR_ERROR_DISPLAY_REFRESH_RATE_UNSUPPORTED_FB;
+		hertz = *match;
+	}
+	m_requestedRate = hertz;
+	ApplyRefreshRateLocked();
+	return XR_SUCCESS;
+}
+
+void Session::ApplyRefreshRateLocked()
+{
+	const auto target = m_overrideRate != 0 ? m_overrideRate : m_requestedRate != 0 ? m_requestedRate : m_defaultRate;
+	if (SameRate(target, m_rate) || !m_state.running)
+		return;
+	const auto timeline = m_scheduler.Retime(Duration{std::llround(1e9 / target)});
+	if (!timeline || !m_display.Retime(m_state.generation, *timeline))
+		return;
+	const auto previous = std::exchange(m_rate, target);
+	if (m_instance.Extensions().Contains(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
+		m_instance.Events().Push(DisplayRefreshRateEvent{m_handle, previous, target});
 }
 
 XrResult Session::LocateViews(const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity,

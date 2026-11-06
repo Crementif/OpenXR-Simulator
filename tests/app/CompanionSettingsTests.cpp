@@ -224,6 +224,20 @@ void UpdatePreference()
 	Require(LoadSettings(file) == settings, "Earlier settings default automatic updates to off");
 }
 
+void SessionPreference()
+{
+	Directory directory;
+	const auto file = directory.path / "settings";
+	CompanionSettings settings;
+	Require(LoadSettings(file).openNewSessions, "New apps open in tabs by default");
+	settings.openNewSessions = false;
+	SaveSettings(file, settings);
+	Require(LoadSettings(file) == settings, "Disabled automatic tabs survive restart");
+	std::filesystem::resize_file(file, std::filesystem::file_size(file) - 8);
+	settings.openNewSessions = true;
+	Require(LoadSettings(file) == settings, "Earlier settings open new apps in tabs");
+}
+
 void ConcurrentSettings()
 {
 	Directory directory;
@@ -681,6 +695,7 @@ int main(int argc, char** argv)
 		ProfileCommand();
 		McpPreference();
 		UpdatePreference();
+		SessionPreference();
 		ConcurrentSettings();
 		Persistence();
 #ifdef __linux__
