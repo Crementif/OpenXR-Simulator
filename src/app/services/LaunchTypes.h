@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -29,6 +30,8 @@ struct LaunchProfile
 
 void ValidateLaunchProfile(const LaunchProfile& profile);
 LaunchProfile ResolveLaunchProfile(LaunchProfile profile, const std::filesystem::path& applicationDirectory);
+// The Steam app id of a game installed in a Steam library, from that library's app manifests.
+std::optional<std::string> SteamAppId(const std::filesystem::path& executable);
 std::string LinuxSteamRuntimeOption(const std::filesystem::path& manifest);
 enum class LaunchCommandShell
 {

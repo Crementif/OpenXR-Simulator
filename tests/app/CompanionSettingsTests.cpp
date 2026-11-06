@@ -114,6 +114,23 @@ void BundledRuntimeSelection()
 	Require(ResolveLaunchProfile(profile, {}) == profile, "Legacy system runtime selection stays unchanged");
 	profile.runtimeManifest = "custom-runtime.json";
 	Require(ResolveLaunchProfile(profile, {}) == profile, "Custom runtime selection stays unchanged");
+	{
+		const auto library = directory.path / "Library";
+		std::filesystem::create_directories(library / "SteamApps" / "common" / "Some Game");
+		std::ofstream(library / "SteamApps" / "appmanifest_42.acf")
+			<< "\"AppState\"\n{\n\t\"appid\"\t\t\"42\"\n\t\"installdir\"\t\t\"Some Game\"\n}\n";
+		auto steam = profile;
+		steam.executable = PathText(library / "SteamApps" / "common" / "Some Game" / "game.exe");
+		const auto launched = ResolveLaunchProfile(steam, {});
+		Require(launched.environment ==
+					std::vector<std::pair<std::string, std::string>>{{"SteamAppId", "42"}, {"SteamGameId", "42"}},
+				"A Steam game runs in place under its app id");
+		steam.environment = {{"SteamAppId", "7"}};
+		Require(ResolveLaunchProfile(steam, {}).environment ==
+					std::vector<std::pair<std::string, std::string>>{{"SteamAppId", "7"}, {"SteamGameId", "42"}},
+				"A profile's own Steam app id is kept");
+		Require(!SteamAppId(directory.path / "game.exe"), "A game outside Steam has no app id");
+	}
 	profile.runtimeManifest.clear();
 	profile.useBundledRuntime = true;
 	CompanionSettings settings;

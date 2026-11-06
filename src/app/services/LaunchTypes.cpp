@@ -78,9 +78,68 @@ std::string LinuxSteamRuntimeOption(const std::filesystem::path& manifest)
 	return "XR_RUNTIME_JSON=" + quoted + " %command%";
 }
 
+static std::string Lower(std::string text)
+{
+	std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	return text;
+}
+
+// The quoted value after key in a Steam .acf file, or empty.
+static std::string AcfValue(const std::string& text, std::string_view key)
+{
+	const auto quotedKey = "\"" + std::string(key) + "\"";
+	const auto at = Lower(text).find(Lower(quotedKey));
+	if (at == std::string::npos)
+		return {};
+	const auto open = text.find('"', at + quotedKey.size());
+	const auto close = open == std::string::npos ? open : text.find('"', open + 1);
+	return close == std::string::npos ? std::string{} : text.substr(open + 1, close - open - 1);
+}
+
+std::optional<std::string> SteamAppId(const std::filesystem::path& executable)
+{
+	// A game lives in <library>/steamapps/common/<installdir>/; its manifest names that folder.
+	std::filesystem::path library;
+	std::string folder;
+	for (auto part = executable.begin(); part != executable.end(); ++part)
+	{
+		const auto next = std::next(part);
+		if (Lower(PathText(*part)) == "steamapps" && next != executable.end() && Lower(PathText(*next)) == "common" &&
+			std::next(next) != executable.end())
+		{
+			folder = Lower(PathText(*std::next(next)));
+			break;
+		}
+		library /= *part;
+	}
+	if (folder.empty())
+		return std::nullopt;
+	std::error_code error;
+	for (std::filesystem::directory_iterator entry(library / "steamapps", error), end; !error && entry != end;
+		 entry.increment(error))
+	{
+		const auto name = PathText(entry->path().filename());
+		if (!name.starts_with("appmanifest_") || !name.ends_with(".acf"))
+			continue;
+		std::ifstream input(entry->path(), std::ios::binary);
+		const std::string text{std::istreambuf_iterator<char>(input), {}};
+		const auto id = AcfValue(text, "appid");
+		if (Lower(AcfValue(text, "installdir")) == folder && !id.empty() &&
+			std::ranges::all_of(id, [](unsigned char c) { return std::isdigit(c); }))
+			return id;
+	}
+	return std::nullopt;
+}
+
 LaunchProfile ResolveLaunchProfile(LaunchProfile profile, const std::filesystem::path& applicationDirectory)
 {
 	ValidateLaunchProfile(profile);
+	// Started outside Steam, a Steam game restarts itself through Steam and loses this launch's runtime; naming
+	// its app id lets it run in place.
+	if (const auto id = SteamAppId(Utf8Path(profile.executable)))
+		for (const auto* name : {"SteamAppId", "SteamGameId"})
+			if (std::ranges::none_of(profile.environment, [&](const auto& entry) { return entry.first == name; }))
+				profile.environment.emplace_back(name, *id);
 	if (profile.useBundledRuntime)
 	{
 		if (!applicationDirectory.is_absolute())
