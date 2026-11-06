@@ -124,6 +124,7 @@ struct ShellState
 	// Set by an empty-state button; the top bar opens its app picker.
 	bool openAppPicker = false;
 	bool addApplication = false;
+	bool reconnect = false;
 	// A disconnected tab takes its app back when it starts again.
 	bool reconnects = false;
 };

@@ -258,6 +258,8 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 		m_cropProfile = m_workspaceProfile;
 	}
 	runtime.DrawPreview(m_shell);
+	if (std::exchange(m_shell.reconnect, false))
+		runtime.ConnectEndpoint(runtime.View().endpoint);
 	if (std::exchange(m_shell.addApplication, false))
 	{
 		m_profiles.Edit(m_settings, -1);

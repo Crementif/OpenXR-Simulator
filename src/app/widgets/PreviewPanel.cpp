@@ -505,6 +505,21 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	if (!view.connected)
 	{
 		DrawIcon(draw, Icon::App, {center.x, center.y - 72 * unit}, 40 * unit, theme::TextDim);
+		if (view.epoch && !view.endpoint.empty() && !view.error.empty())
+		{
+			// The reason stays readable so a lost connection is not mistaken for a fresh window.
+			line("Connection lost", center.y - 44 * unit, theme::Text);
+			const float wrap = std::min(available.x - 32 * unit, 440 * unit);
+			const auto size = ImGui::CalcTextSize(view.error.c_str(), nullptr, false, wrap);
+			draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(), {center.x - size.x / 2, center.y - 18 * unit},
+						  theme::TextDim, view.error.c_str(), nullptr, wrap);
+			const float width = ImGui::CalcTextSize("Reconnect").x + ImGui::GetStyle().FramePadding.x * 2;
+			ImGui::SetCursorScreenPos({center.x - width / 2, center.y - 6 * unit + size.y});
+			if (ImGui::Button("Reconnect"))
+				shell.reconnect = true;
+			ImGui::SetItemTooltip("Connect to %s again", view.appName.empty() ? "the app" : view.appName.c_str());
+			return;
+		}
 		if (view.epoch && !view.endpoint.empty() && view.error.empty())
 		{
 			line("App disconnected", center.y - 44 * unit, theme::Text);
