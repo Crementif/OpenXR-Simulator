@@ -652,7 +652,7 @@ void CheckSpatialWidgetLifecycle()
 		control::Field::Bytes(control::tag::Document, control::SimulationState(scheduler.Snapshot()).Encode()));
 	editor.Observe(snapshot, false);
 	Selection selection = DeviceSel{DevicePage::Right};
-	bool placement = true, historical = false;
+	bool placement = true, historical = false, liveRig = false;
 	std::uint64_t historyIdentity = 1;
 	std::vector<FrameView> eyes{{rig.Head(), {-.8f, .8f, .8f, -.8f}}};
 	FrameRecord record;
@@ -671,7 +671,7 @@ void CheckSpatialWidgetLifecycle()
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({440, 650}, ImGuiCond_Always);
 		ImGui::Begin("Spatial lifecycle");
-		if (historical)
+		if (historical || liveRig)
 			editor.DrawRig(selection, {400, 400});
 		else if (placement)
 			editor.DrawPlacement(selection);
@@ -727,6 +727,19 @@ void CheckSpatialWidgetLifecycle()
 	const auto missing = editor.RigDevicePoints()[2];
 	Require(std::hypot(missing.x - back.x, missing.y - back.y) < .01f,
 			"Historical frame without eye metadata reused another frame's camera");
+	// Live, the image is briefly unselected while the next one uploads; the Eye camera holds still meanwhile.
+	historical = false;
+	liveRig = true;
+	eyes = {{rig.Head(), {-.8f, .8f, .8f, -.8f}}};
+	pump(4);
+	ChooseRigView(window->GetID("Rig view"), "Eye", pump);
+	const auto live = editor.RigDevicePoints()[2];
+	Require(std::hypot(live.x - back.x, live.y - back.y) > 10, "Live Eye fixture did not use the eye camera");
+	eyes.clear();
+	pump(2);
+	const auto swapping = editor.RigDevicePoints()[2];
+	Require(std::hypot(swapping.x - live.x, swapping.y - live.y) < .01f,
+			"Live Eye view jumped while the next image uploaded");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Spatial lifecycle validation errors");
 	std::cout
@@ -805,8 +818,7 @@ void ConfigureObservedDevices()
 	std::optional<std::array<std::string, 2>> effectiveProfiles;
 	scheduler.Start(0, initial);
 	const auto observe = [&](std::uint64_t frame) {
-		scheduler.Apply(simxr::FrameId{frame},
-						simxr::RuntimeTime{simxr::Duration{200}}, {});
+		scheduler.Apply(simxr::FrameId{frame}, simxr::RuntimeTime{simxr::Duration{200}}, {});
 		simxr::control::Message state;
 		state.fields.push_back(simxr::control::Field::Bytes(
 			simxr::control::tag::Document,

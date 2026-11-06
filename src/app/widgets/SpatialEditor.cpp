@@ -57,6 +57,8 @@ void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const 
 	// still.
 	if (!eyes.empty())
 		m_eye = eyes.front();
+	else if (lookingBack)
+		m_eye.reset();
 	if (historyIdentity != m_historyIdentity)
 	{
 		m_historyIdentity = historyIdentity;
