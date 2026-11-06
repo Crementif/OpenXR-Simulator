@@ -254,14 +254,17 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 					   m_tint))
 			m_tint = !m_tint;
 	}
-	if (!folded && roomy)
+	if (!folded)
 	{
 		const auto bounds = m_canvas.Bounds();
 		const float below = live.y + live.height;
-		DrawMeter(history, state,
-				  {live.x + style.ItemSpacing.x, below, live.width - style.ItemSpacing.x * 2,
-				   bounds.y + bounds.height - below},
-				  false);
+		// A narrow column still shows the frame rate on one line.
+		const float width = live.width - style.ItemSpacing.x * 2;
+		if (roomy || width >= ImGui::CalcTextSize("000 fps").x)
+			DrawMeter(history, state,
+					  {live.x + style.ItemSpacing.x, below, width,
+					   roomy ? bounds.y + bounds.height - below : ImGui::GetFrameHeight()},
+					  !roomy);
 	}
 	if (state.historyFull)
 	{
