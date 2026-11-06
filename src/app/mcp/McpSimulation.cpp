@@ -100,16 +100,16 @@ Json SimulationDefinitions()
 		 "Recorded simxr-command-v1-hex objects are also accepted. See the automation documentation for field "
 		 "details."}};
 	result.push_back(tool("simulation_schedule",
-						  "Schedule one atomic input transaction at an exact frame or simulated time. Include "
+						  "Schedule one atomic input transaction at an exact frame or predicted display time (time_ns, the XrTime the "
+						  "application sees). Include "
 						  "take_control before setters; admission is not application.",
 						  schedule, Json::array({"connection", "transaction_id", "commands"})));
 	auto status = common;
 	status["transaction_id"] = identifier;
 	result.push_back(
 		tool("simulation_status",
-			 "Read applied simulator state or one transaction outcome. State includes the simulation clock "
-			 "(time, runtime_time, epoch = runtime_time - time) and queue health (pending, "
-			 "pending_capacity, rejected).",
+			 "Read applied simulator state or one transaction outcome. State includes the applied frame's "
+			 "display time and queue health (pending, pending_capacity, rejected).",
 			 status, Json::array({"connection"})));
 	result.push_back(tool("simulation_cancel", "Cancel an unapplied transaction owned by this connection.", status,
 						  Json::array({"connection", "transaction_id"})));

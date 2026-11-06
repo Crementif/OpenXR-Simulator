@@ -284,13 +284,16 @@ class Client:
                  source=1, late_policy=0):
         """Schedule one atomic input transaction at an exact future boundary.
 
-        Source is fixed for a connection (manual=0, MCP=1, rig=2). Include an
-        explicit take_control command before writing each channel. A queued
-        response is admission, not application; poll simulation_status().
+        time_ns is a predicted display time (XrTime), the clock status() and
+        frame_history() report; the transaction applies at the first frame
+        displayed at or after it. Source is fixed for a connection (manual=0,
+        MCP=1, rig=2). Include an explicit take_control command before writing
+        each channel. A queued response is admission, not application; poll
+        simulation_status().
         """
         from .commands import encode_command, SourceKind, LatePolicy
         if (frame is None) == (time_ns is None):
-            raise ProtocolError('Select exactly one frame or simulation time target')
+            raise ProtocolError('Select exactly one frame or display time target')
         commands = tuple(commands)
         if not 1 <= len(commands) <= 64:
             raise ProtocolError('A transaction requires 1 through 64 commands')
@@ -312,7 +315,7 @@ class Client:
             fields.append(Field.u64(Tag.APPLY_FRAME, frame, True))
         else:
             if type(time_ns) is not int or not 0 <= time_ns < 2**63:
-                raise ProtocolError('A nonnegative int64 simulation time is required')
+                raise ProtocolError('A nonnegative int64 display time is required')
             fields.append(Field.i64(Tag.APPLY_TIME, time_ns, True))
         return self.request(OpCode.SUBMIT_SIMULATION, fields)
 
@@ -374,21 +377,6 @@ class Client:
             rows = ''.join(json.dumps(row, separators=(',', ':')) + '\n' for row in rows)
         program = self.upload_sequence(session, rows, source=source)
         return self.start_sequence(session, program, loop=loop, source=source)['document']
-
-    def simulation_clock(self, session, *, source=1):
-        """Relate display times to the simulation time that schedule(time_ns=...) targets.
-
-        Returns None before the session applies a frame. next_time is the simulation
-        time of the frame the application most recently waited for.
-        """
-        state = self.simulation_status(session, source=source)['document']
-        if 'epoch' not in state:
-            return None
-        pipeline = self.status(session).get('pipeline', {})
-        latest = pipeline.get('waited') or pipeline.get('begun')
-        return {'epoch': state['epoch'], 'frame_id': state['frame_id'], 'time': state['time'],
-                'next_time': latest['time'] - state['epoch'] if latest else state['time'],
-                'period': latest['period'] if latest else None}
 
     def sequence_status(self, session, sequence=None, *, after=0, count=32, source=1):
         """Read a sequence owned by this connection."""

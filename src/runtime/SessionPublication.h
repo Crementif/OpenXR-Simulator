@@ -24,7 +24,7 @@ public:
 	class PreparedStart
 	{
 	public:
-		PreparedStart(SessionPublication& owner, RuntimeTime epoch, ViewLayout layout);
+		PreparedStart(SessionPublication& owner, ViewLayout layout);
 		~PreparedStart();
 		PreparedStart(const PreparedStart&) = delete;
 		PreparedStart& operator=(const PreparedStart&) = delete;
@@ -35,7 +35,6 @@ public:
 	private:
 		SessionPublication& m_owner;
 		CommandConfiguration m_baseline;
-		RuntimeTime m_epoch;
 		ViewLayout m_layout;
 		bool m_committed = false;
 	};
@@ -59,7 +58,6 @@ public:
 	private:
 		SessionPublication& m_owner;
 		CommandConfiguration m_baseline;
-		RuntimeTime m_epoch;
 		std::shared_ptr<const AppliedCommandSnapshot> m_applied;
 		bool m_published = false;
 	};
@@ -110,7 +108,6 @@ private:
 	std::uint64_t m_seed = 0;
 	std::optional<CommandConfiguration> m_initial;
 	bool m_overrideInitial = true;
-	RuntimeTime m_epoch;
 	CommandConfiguration m_baseline;
 	std::uint64_t m_managedInputRevision = 0;
 	bool m_sessionOverride = false;

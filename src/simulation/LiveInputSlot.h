@@ -48,7 +48,7 @@ public:
 
 	CommandResult Write(CommandSource source, const LiveInputSample& sample, const Channels& owned,
 						LiveInputClock::time_point now);
-	std::optional<CommandOutcome> Prepare(FrameId frame, SimulationTime time, const Channels& owned,
+	std::optional<CommandOutcome> Prepare(FrameId frame, RuntimeTime time, const Channels& owned,
 										  LiveInputClock::time_point now,
 										  std::optional<std::uint64_t> clockRevision = {});
 

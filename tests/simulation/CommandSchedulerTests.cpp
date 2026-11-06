@@ -71,8 +71,8 @@ CommandTransaction Request(std::uint64_t id, std::uint64_t frame, std::vector<Si
 std::shared_ptr<const AppliedCommandSnapshot> Tick(CommandScheduler& scheduler, std::uint64_t frame,
 												   const CommandConfiguration& baseline = {})
 {
-	return scheduler.Apply({frame}, {Duration{static_cast<std::int64_t>(frame * 10)}},
-						   {Duration{static_cast<std::int64_t>(frame * 10 + 100)}}, baseline);
+	return scheduler.Apply({frame},
+						   {Duration{static_cast<std::int64_t>(frame * 10)}}, baseline);
 }
 
 PoseSample Pose(float x)
@@ -217,7 +217,7 @@ void TimedPoseSequence()
 	{
 		CommandScheduler scheduler;
 		scheduler.Start();
-		const auto origin = SimulationTime{Duration{7s}};
+		const auto origin = RuntimeTime{Duration{7s}};
 		scheduler.StartPoseSequence(Mcp, program);
 		std::shared_ptr<const AppliedCommandSnapshot> applied;
 		std::uint64_t frame = 1;
@@ -225,7 +225,7 @@ void TimedPoseSequence()
 			while (!applied || applied->time.value < origin.value + elapsed)
 			{
 				const auto time = origin.value + period * static_cast<std::int64_t>(frame - 1);
-				applied = scheduler.Apply({frame++}, {time}, {time + 100ms}, baseline);
+				applied = scheduler.Apply({frame++}, {time}, baseline);
 			}
 			return applied;
 		};
@@ -258,7 +258,7 @@ void TimedPoseSequence()
 																	  "{\"time\":1,\"head\":{\"x\":2}}\n",
 																	  true)));
 	const auto loop = [&](std::uint64_t frame, Duration time) {
-		return looping.Apply({frame}, {time}, {time + 1ms}, baseline)->configuration.tracking.head.pose.position.x;
+		return looping.Apply({frame}, {time + 1ms}, baseline)->configuration.tracking.head.pose.position.x;
 	};
 	Require(loop(1, 0ms) == 0 && std::abs(loop(2, 750ms) - 1.5f) < .0001f && std::abs(loop(3, 2250ms) - .5f) < .0001f &&
 				looping.PoseSequenceStatusFor(Mcp)->active,
@@ -289,7 +289,7 @@ void PoseSequenceReservationRollback()
 	bool rejected = false;
 	try
 	{
-		scheduler.Apply({1}, {Duration{10}}, {Duration{110}}, baseline, [](const auto& prepared) {
+		scheduler.Apply({1}, {Duration{10}}, baseline, [](const auto& prepared) {
 			Require(prepared->sequenceCapture.has_value(), "Sequence was absent from the prospective boundary");
 			throw std::bad_alloc{};
 		});
@@ -476,7 +476,7 @@ void SequenceCaptureIssueRollback()
 	try
 	{
 		commands.Apply(
-			prediction.id, {Duration{10}}, prediction.displayTime, SequenceBaseline(), [&](const auto& applied) {
+			prediction.id, prediction.displayTime, SequenceBaseline(), [&](const auto& applied) {
 				auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
 				Require(capture.Record()->reservation.result == SnapshotAdmission::Accepted && pool.InUse() == 1,
 						"Sequence did not reserve before history admission");
@@ -492,7 +492,7 @@ void SequenceCaptureIssueRollback()
 				!commands.At(prediction.id) && !commands.PoseSequenceStatusFor(Mcp)->origin.value &&
 				!history.Find({generation, prediction.id}),
 			"Failed issue leaked a ticket or advanced sequence/history");
-	commands.Apply(prediction.id, {Duration{10}}, prediction.displayTime, SequenceBaseline(), [&](const auto& applied) {
+	commands.Apply(prediction.id, prediction.displayTime, SequenceBaseline(), [&](const auto& applied) {
 		auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
 		history.Issue(
 			prediction,
@@ -595,7 +595,7 @@ void PreparedBoundaryAllocationRollback()
 	failCommandAllocation = true;
 	try
 	{
-		scheduler.Apply({2}, {Duration{20}}, {Duration{120}}, {}, [&](const auto&) { reserved = true; });
+		scheduler.Apply({2}, {Duration{20}}, {}, [&](const auto&) { reserved = true; });
 	}
 	catch (const std::bad_alloc&)
 	{
@@ -625,7 +625,7 @@ void ImmutableRecordingPublication()
 	bool failed = false;
 	try
 	{
-		scheduler.Apply({1}, {Duration{10}}, {Duration{110}}, {}, [&](const auto& snapshot) {
+		scheduler.Apply({1}, {Duration{10}}, {}, [&](const auto& snapshot) {
 			rejected = snapshot;
 			const auto recording = scheduler.Recorder().Snapshot(0, 0);
 			Require(recording.active && !recording.overflow && recording.total == 1024 &&
@@ -647,7 +647,7 @@ void ImmutableRecordingPublication()
 			"Rejected external reservation published command or recorder overflow state");
 	const auto rejectedOutcomes = rejected->outcomes;
 	std::shared_ptr<const AppliedCommandSnapshot> accepted;
-	const auto applied = scheduler.Apply({1}, {Duration{10}}, {Duration{110}}, {}, [&](const auto& snapshot) {
+	const auto applied = scheduler.Apply({1}, {Duration{10}}, {}, [&](const auto& snapshot) {
 		accepted = snapshot;
 		Require(snapshot->outcomes.front().recordingOverrun && scheduler.Recorder().Snapshot(0, 0).active,
 				"Retry exposed an unfinished recording flag or locked out read-only recorder inspection");
@@ -727,7 +727,7 @@ void SourceReleaseRecording()
 	const auto& release = recording.transactions[1];
 	Require(release.result == CommandResult::Released && release.transaction.id == 0 &&
 				release.transaction.source == Manual && release.afterFrame && release.appliedFrame == FrameId{1} &&
-				release.appliedTime == SimulationTime{Duration{10}} && release.transaction.commands.size() == 1 &&
+				release.appliedTime == RuntimeTime{Duration{10}} && release.transaction.commands.size() == 1 &&
 				std::get<ReleaseControl>(release.transaction.commands[0]).channel == ControlChannel::LeftControls,
 			"Release lost its source, channel or position after the committed boundary");
 	CommandScheduler replay;
@@ -805,7 +805,7 @@ void RecordedReleaseState()
 		bool failed = false;
 		try
 		{
-			scheduler.Apply({2}, {Duration{20}}, {Duration{120}}, next, [&](const auto&) {
+			scheduler.Apply({2}, {Duration{20}}, next, [&](const auto&) {
 				if (reject)
 					throw std::bad_alloc{};
 			});
@@ -861,7 +861,7 @@ void SequenceReleaseRecording()
 			bool rejected = false;
 			try
 			{
-				scheduler.Apply({2}, {Duration{20}}, {Duration{120}}, baseline,
+				scheduler.Apply({2}, {Duration{20}}, baseline,
 								[](const auto&) { throw std::bad_alloc{}; });
 			}
 			catch (const std::bad_alloc&)
@@ -992,12 +992,12 @@ void TimeLateCancelBounds()
 	Require(scheduler.Submit(late).result == CommandResult::Rescheduled, "Explicit reschedule acknowledgement");
 	Require(scheduler.Submit(late).result == CommandResult::Rescheduled, "Rescheduled original retry");
 	auto timed = Request(3, 1, {SetGaze{{0.2f, 0, true, true}}});
-	timed.target = {{}, SimulationTime{Duration{25}}};
+	timed.target = {{}, RuntimeTime{Duration{25}}};
 	scheduler.Submit(timed);
 	Require(scheduler.Submit(Request(4, 5, {SetGaze{{}}})).result == CommandResult::Capacity, "Bound pending queue");
 	const auto full = scheduler.Snapshot();
 	Require(full.pending == 2 && full.pendingCapacity == 2 && full.nextPendingFrame == FrameId{2} &&
-				full.nextPendingTime == SimulationTime{Duration{25}} && full.rejections.late == 1 &&
+				full.nextPendingTime == RuntimeTime{Duration{25}} && full.rejections.late == 1 &&
 				full.rejections.capacity == 1 && full.rejections.last && full.rejections.last->id == 4 &&
 				full.rejections.last->result == CommandResult::Capacity &&
 				full.rejections.last->target.frame == FrameId{5},
@@ -1190,7 +1190,7 @@ void AdmissionRollback()
 	history.StartGeneration();
 	FramePrediction prediction;
 	auto reserve = [&](const FramePrediction& candidate, bool fail) {
-		commands.Apply(candidate.id, {Duration{1}}, candidate.displayTime, {}, [&](const auto&) {
+		commands.Apply(candidate.id, candidate.displayTime, {}, [&](const auto&) {
 			history.Issue(candidate, [&](const auto&, const auto&) {
 				if (fail)
 					throw std::bad_alloc{};
@@ -1416,7 +1416,7 @@ void PublicationBoundaryRollbackAndHistory()
 	initial.tracking.head.pose.position.x = 1;
 	initial.views.ipd = 0.065f;
 	publication.Configure(44, initial, false);
-	SessionPublication::PreparedStart start(publication, {Duration{100}}, ViewLayout::StereoWithInset);
+	SessionPublication::PreparedStart start(publication, ViewLayout::StereoWithInset);
 	start.Commit();
 	publication.Commands().Recorder().Start({44, initial});
 	Require(publication.Commands()
@@ -1451,7 +1451,7 @@ void PublicationBoundaryRollbackAndHistory()
 	boundary.StateTransition(XR_SESSION_STATE_FOCUSED);
 	boundary.Publish();
 	const auto admitted = publication.Commands().At(first.id);
-	Require(reservations == 1 && admitted && admitted->time.value == Duration{10} &&
+	Require(reservations == 1 && admitted && admitted->time == first.displayTime &&
 				publication.Tracking().Sample(first.displayTime)->head.pose.position.x == 4 &&
 				publication.Commands().Recorder().Snapshot().total == 1,
 			"Retry did not publish exactly one matching command boundary");
@@ -1500,7 +1500,7 @@ void PublicationBoundaryRollbackAndHistory()
 	Require(publication.Input().Snapshot().controllers[1].grip == 0 &&
 				publication.Tracking().Sample(first.displayTime)->head.pose.position.x == 4,
 			"Stop lost historical tracking or retained held controls");
-	SessionPublication::PreparedStart restart(publication, {Duration{1000}}, ViewLayout::Stereo);
+	SessionPublication::PreparedStart restart(publication, ViewLayout::Stereo);
 	restart.Commit();
 	Require(!publication.Tracking().Sample(first.displayTime) &&
 				publication.ConfigurationAt(first.displayTime).Describe().size() == 2 &&
@@ -1558,8 +1558,8 @@ void SessionBoundary()
 				record->submission->commands->configuration.input.controllers[1].grip == 0.6f &&
 				admissionReader->configuration.tracking.controllers[1].pose.pose.position.x != 7,
 			"Submission refines native-unowned values without mutating earlier readers");
-	Require(record->submission->commands->time.value == first.displayTime.value - timing.epoch.value,
-			"Commands record relative simulation time from the fixed epoch");
+	Require(record->submission->commands->time == first.displayTime,
+			"Commands record the frame's predicted display time");
 	session.Scheduler().Pause();
 	session.Commands().Submit(Request(3, 3, {SetHeadPose{Pose(11)}}));
 	session.StartCommandRecording();

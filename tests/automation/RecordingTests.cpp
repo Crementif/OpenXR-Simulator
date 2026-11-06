@@ -153,7 +153,7 @@ void CollectionIdentityAndRollback()
 	initial.tracking.head.pose.position.x = 1.25f;
 	const auto origin = std::numeric_limits<std::uint64_t>::max() - 100;
 	recorder.Start(
-		{std::numeric_limits<std::uint64_t>::max(), initial, {}, FrameId{origin}, SimulationTime{Duration{13}}});
+		{std::numeric_limits<std::uint64_t>::max(), initial, {}, FrameId{origin}, RuntimeTime{Duration{13}}});
 	for (std::uint64_t index = 1; index <= 19; ++index)
 	{
 		CommandOutcome outcome;

@@ -167,9 +167,9 @@ enum class CommandLatePolicy
 
 struct CommandTarget
 {
-	// Exactly one selector. Time targets apply at the first boundary >= time.
+	// Exactly one selector. Time targets apply at the first boundary whose predicted display time is >= time.
 	std::optional<FrameId> frame;
-	std::optional<SimulationTime> time;
+	std::optional<RuntimeTime> time;
 };
 
 struct CommandTransaction
@@ -221,7 +221,7 @@ struct CommandOutcome
 	CommandTransaction transaction;
 	CommandResult result = CommandResult::Invalid;
 	FrameId appliedFrame;
-	SimulationTime appliedTime;
+	RuntimeTime appliedTime;
 	bool recordingOverrun = false;
 	std::optional<CommandTarget> effectiveTarget;
 	// Exact immutable retry identity, separate from normalized acknowledged values.
@@ -255,8 +255,8 @@ struct AppliedCommandSnapshot
 {
 	std::uint64_t seed = 0, revision = 0;
 	FrameId frame;
-	SimulationTime time;
-	RuntimeTime runtimeTime;
+	// Predicted display time of the boundary, the XrTime the application observes.
+	RuntimeTime time;
 	CommandConfiguration configuration;
 	bool configurationAvailable = true;
 	std::array<std::optional<CommandSource>, ControlChannelCount> owners;
@@ -290,7 +290,7 @@ struct CommandSchedulerSnapshot
 	std::size_t pendingCapacity = 0;
 	// Earliest targets among uncancelled pending transactions.
 	std::optional<FrameId> nextPendingFrame;
-	std::optional<SimulationTime> nextPendingTime;
+	std::optional<RuntimeTime> nextPendingTime;
 	CommandRejections rejections;
 };
 
@@ -303,7 +303,7 @@ struct CommandRecordingOrigin
 	CommandConfiguration configuration;
 	ScenarioState scenarios{};
 	FrameId frame;
-	SimulationTime time;
+	RuntimeTime time;
 	std::optional<RuntimeTime> runtimeTime;
 };
 

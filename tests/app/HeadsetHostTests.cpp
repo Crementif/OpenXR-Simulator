@@ -250,7 +250,7 @@ int main(int argc, char** argv)
 			for (std::size_t channel = 0; channel < simxr::ControlChannelCount; ++channel)
 				claim.commands.push_back(simxr::TakeControl{static_cast<simxr::ControlChannel>(channel)});
 			Require(scheduler.Submit(claim).result == simxr::CommandResult::Queued, "Queue manual ownership fixture");
-			scheduler.Apply({1}, {simxr::Duration{1}}, {simxr::Duration{1}}, baseline);
+			scheduler.Apply({1}, {simxr::Duration{1}}, baseline);
 			const simxr::CommandSource other{simxr::CommandSourceKind::Rig, 81};
 			if (raced)
 			{
@@ -265,7 +265,7 @@ int main(int argc, char** argv)
 			claim.target.frame = simxr::FrameId{2};
 			claim.commands = release.commands;
 			Require(scheduler.Submit(claim).result == simxr::CommandResult::Queued, "Queue selective release");
-			const auto applied = scheduler.Apply({2}, {simxr::Duration{2}}, {simxr::Duration{2}}, baseline);
+			const auto applied = scheduler.Apply({2}, {simxr::Duration{2}}, baseline);
 			for (const auto& command : release.commands)
 			{
 				const auto channel = std::get<simxr::ReleaseControl>(command).channel;

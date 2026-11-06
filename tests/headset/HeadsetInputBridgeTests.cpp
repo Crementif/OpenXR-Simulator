@@ -218,7 +218,7 @@ static void Forwarding()
 	std::uint64_t frame = 0;
 	const auto tick = [&] {
 		++frame;
-		session->Commands().Apply({frame}, {Duration{static_cast<std::int64_t>(frame) * 1000000}},
+		session->Commands().Apply({frame},
 								  {config.epoch.value + Duration{static_cast<std::int64_t>(frame) * 1000000}}, {}, {},
 								  LiveInputClock::now(), *session->Scheduler().LiveInputClockRevision());
 		session->PublishInput({});

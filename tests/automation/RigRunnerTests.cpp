@@ -716,7 +716,7 @@ simxr.stop_input_recording()
 				Require(reset && applied, "Replay advanced before the game's acknowledged reset");
 				if (const auto& body = applied->configuration.tracking.bodyObservation; body && !bodyVerified)
 				{
-					Require(body->requestedTime.value.count() == applied->runtimeTime.value.count() - 20,
+					Require(body->requestedTime.value.count() == applied->time.value.count() - 20,
 							"Generated replay failed to preserve body observation age in the new runtime clock");
 					bodyVerified = true;
 				}
@@ -1166,7 +1166,7 @@ void CheckBodyReplayTransport()
 	Require(runner.Snapshot().phase == automation::RigPhase::Complete && applied &&
 				applied->configuration.tracking.bodyObservation &&
 				applied->configuration.tracking.bodyObservation->requestedTime.value.count() ==
-					applied->runtimeTime.value.count() - 20,
+					applied->time.value.count() - 20,
 			"Luau/transport/application boundary lost the recorded body sample age");
 }
 

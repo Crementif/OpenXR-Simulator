@@ -52,7 +52,7 @@ public:
 	std::shared_ptr<const AppliedCommandSnapshot> Tick()
 	{
 		++frame;
-		return scheduler.Apply({frame}, {Duration{static_cast<std::int64_t>(frame)}},
+		return scheduler.Apply({frame},
 							   {Duration{1000 + static_cast<std::int64_t>(frame)}}, {}, {}, now);
 	}
 };
@@ -411,7 +411,7 @@ static void Rollback()
 	try
 	{
 		fixture.scheduler.Apply(
-			{2}, {Duration{2}}, {Duration{1002}}, {}, [](const auto&) { throw std::bad_alloc{}; }, fixture.now);
+			{2}, {Duration{1002}}, {}, [](const auto&) { throw std::bad_alloc{}; }, fixture.now);
 	}
 	catch (const std::bad_alloc&)
 	{
@@ -492,7 +492,7 @@ static void PausedExpiry()
 	controls.primary = true;
 	claim.commands = {TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, controls}};
 	Require(session.Commands().Submit(claim).result == CommandResult::Queued, "Claim session controls");
-	session.Commands().Apply({1}, {}, timing.epoch, {});
+	session.Commands().Apply({1}, timing.epoch, {});
 	Require(session.PublishInput({}) == XR_SUCCESS && session.Input().Snapshot().controllers[0].primary,
 			"Publish held control before game stops advancing");
 	auto sample = fixture.sample;
@@ -516,7 +516,7 @@ static void PausedExpiry()
 				session.SubmitLiveInput(before.generation, s_device, sample) == CommandResult::Conflict,
 			"Old generation cannot start input after restart");
 	Require(session.Commands().Submit(claim).result == CommandResult::Queued, "Reclaim controls after restart");
-	session.Commands().Apply({1}, {}, timing.epoch, {});
+	session.Commands().Apply({1}, timing.epoch, {});
 	Require(session.PublishInput({}) == XR_SUCCESS && session.Input().Snapshot().controllers[0].primary,
 			"Publish restarted held control");
 	Require(session.SubmitLiveInput(restarted.generation, s_device, sample) == CommandResult::Queued,
@@ -536,7 +536,7 @@ static void ClockRevision()
 	fixture.sample.clockRevision = 7;
 	fixture.sample.controls[0].primary = true;
 	Require(fixture.Send() == CommandResult::Queued, "Admit live sample under clock revision seven");
-	const auto applied = fixture.scheduler.Apply({2}, {Duration{2}}, {Duration{1002}}, {}, {}, fixture.now, 8);
+	const auto applied = fixture.scheduler.Apply({2}, {Duration{1002}}, {}, {}, fixture.now, 8);
 	Require(!applied->configuration.input.controllers[0].primary && applied->configuration.tracking.head.flags == 0 &&
 				fixture.scheduler.LiveInputState().phase == LiveInputPhase::Stale,
 			"Rebase between admission and publication neutralizes stale live input");

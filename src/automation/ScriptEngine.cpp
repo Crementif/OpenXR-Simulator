@@ -208,8 +208,8 @@ int ScriptEngine::Schedule(lua_State* state)
 	{
 		const auto time = Integer(state, -1);
 		if (time > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
-			throw std::invalid_argument("Simulation time exceeds int64");
-		target.time = SimulationTime{Duration{static_cast<std::int64_t>(time)}};
+			throw std::invalid_argument("Display time exceeds int64");
+		target.time = RuntimeTime{Duration{static_cast<std::int64_t>(time)}};
 	}
 	lua_pop(state, 1);
 	if (target.frame.has_value() == target.time.has_value())

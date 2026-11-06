@@ -29,7 +29,7 @@ wire::Message Observation(const CommandScheduler& scheduler, std::optional<std::
 
 std::shared_ptr<const AppliedCommandSnapshot> Apply(CommandScheduler& scheduler, std::uint64_t frame)
 {
-	return scheduler.Apply(FrameId{frame}, SimulationTime{Duration{100}}, RuntimeTime{Duration{200}}, {});
+	return scheduler.Apply(FrameId{frame}, RuntimeTime{Duration{200}}, {});
 }
 
 template<typename Action>

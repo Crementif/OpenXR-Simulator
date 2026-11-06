@@ -80,7 +80,7 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	const auto layout = info.primaryViewConfigurationType == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO
 							? ViewLayout::StereoWithInset
 							: ViewLayout::Stereo;
-	SessionPublication::PreparedStart publication(m_publication, config.epoch, layout);
+	SessionPublication::PreparedStart publication(m_publication, layout);
 	auto timing = config;
 	if (!timing.hostEpoch)
 		timing.hostEpoch = m_clock->Now();

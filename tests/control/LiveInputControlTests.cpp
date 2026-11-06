@@ -186,7 +186,7 @@ static void Transport()
 	Require(!DecodeLiveClock(send(OpCode::ReadLiveClock, {Field::U64(tag::AttachmentId, attachment)})),
 			"Deterministic session cannot advertise a wall-clock mapping");
 	Require(claim(1, 1).Find(tag::Phase)->AsText() == "queued", "Queue attached channel claim");
-	session->Commands().Apply({1}, {}, timing.epoch, {});
+	session->Commands().Apply({1}, timing.epoch, {});
 	LiveInputSample sample;
 	sample.connection = attachment;
 	sample.sequence = 1;
@@ -269,7 +269,7 @@ static void Transport()
 			"Reject prediction before observation without consuming sample identity");
 	Require(send(OpCode::SubmitLiveInput, EncodeLiveInput(sample)).Find(tag::Phase)->AsText() == "queued",
 			"Admit native sample");
-	const auto applied = session->Commands().Apply({2}, {}, timing.epoch, {});
+	const auto applied = session->Commands().Apply({2}, timing.epoch, {});
 	Require(applied->configuration.input.controllers[0].primary &&
 				applied->configuration.tracking.controllers[0].aim->pose.position.x == 7,
 			"Preserve independent aim and controls over wire");
@@ -290,10 +290,10 @@ static void Transport()
 	}
 	Require(rejected, "Reject delayed old attachment sample");
 	claim(2, 3);
-	session->Commands().Apply({3}, {}, timing.epoch, {});
+	session->Commands().Apply({3}, timing.epoch, {});
 	sample.connection = *reattached.Find(tag::AttachmentId)->AsU64();
 	send(OpCode::SubmitLiveInput, EncodeLiveInput(sample));
-	session->Commands().Apply({4}, {}, timing.epoch, {});
+	session->Commands().Apply({4}, timing.epoch, {});
 	session->PublishInput({});
 	connection.reset();
 	Require(!session->Input().Snapshot().controllers[0].primary && !session->Commands().LiveInputState().owner,
@@ -328,7 +328,7 @@ static void Transport()
 	}
 	Require(rejected, "Host decoder rejects an unknown native clock domain");
 	claim(3, 1);
-	session->Commands().Apply({1}, {}, timing.epoch, {});
+	session->Commands().Apply({1}, timing.epoch, {});
 	sample.connection = realAttachment;
 	sample.sequence = 1;
 	sample.observedTime = mapped->runtimeBefore;
@@ -360,7 +360,7 @@ static void Transport()
 			return selected && selected->time == sample.targetTime;
 		},
 		"Wire prediction reaches physical display opportunity");
-	session->Commands().Apply({2}, {}, timing.epoch, {}, {}, LiveInputClock::now(), mapped->revision);
+	session->Commands().Apply({2}, timing.epoch, {}, {}, LiveInputClock::now(), mapped->revision);
 	session->PublishInput({});
 	Require(session->Input().Snapshot().controllers[0].primary, "Publish live control before clock pause");
 	session->Scheduler().Pause();
@@ -383,7 +383,7 @@ static void Transport()
 		DecodeLiveClock(send(OpCode::ReadLiveClock, {Field::U64(tag::AttachmentId, recovered)}));
 	Require(recoveredClock.has_value(), "Recovery obtains a fresh clock mapping");
 	claim(4, 3);
-	session->Commands().Apply({3}, {}, timing.epoch, {});
+	session->Commands().Apply({3}, timing.epoch, {});
 	sample.connection = recovered;
 	sample.sequence = 1;
 	sample.clockRevision = recoveredClock->revision;

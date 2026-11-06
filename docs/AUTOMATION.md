@@ -97,11 +97,11 @@ with Client() as client:  # finds the only running endpoint, or pass its path
     print(client.simulation_status(session)['document'])
 ```
 
-### Simulation clock and queue
+### Time and the input queue
 
-`schedule(time_ns=...)` targets simulation time, which is the predicted display time minus a per-session epoch. Once a frame has applied, `simulation_status` reports `time` (simulation time of that frame), `runtime_time` (its display time, the `XrTime` the application saw) and `epoch` (their difference, fixed for the session). Convert a display time from `status()['pipeline']` by subtracting `epoch`; `client.simulation_clock(session)` does this for the latest waited frame.
+Every time in the control API is a predicted display time in nanoseconds, the `XrTime` the application sees. `schedule(time_ns=...)` applies at the first frame displayed at or after `time_ns`; `status()['pipeline']['waited']['time']` and `['period']` give the latest frame's display time and the frame period to count from, and `simulation_status` reports the display `time` of the last frame input was applied to.
 
-The same document reports the queue: `pending`, `pending_capacity`, the earliest `next_pending_frame` and `next_pending_time`, and `rejected`, which counts `late`, `conflict`, `invalid`, `capacity` and `closed` submissions and describes the `last` one.
+`simulation_status` also reports the queue: `pending`, `pending_capacity`, the earliest `next_pending_frame` and `next_pending_time`, and `rejected`, which counts `late`, `conflict`, `invalid`, `capacity` and `closed` submissions and describes the `last` one.
 
 ### Pose sequences
 

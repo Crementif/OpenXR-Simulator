@@ -691,7 +691,7 @@ CommandTransaction DecodeSimulationTransaction(const Message& request, std::uint
 	if (const auto* frame = request.Find(tag::ApplyFrame))
 		transaction.target.frame = FrameId{RequireValue(frame->AsU64())};
 	if (const auto* time = request.Find(tag::ApplyTime))
-		transaction.target.time = SimulationTime{Duration{RequireValue(time->AsI64())}};
+		transaction.target.time = RuntimeTime{Duration{RequireValue(time->AsI64())}};
 	const auto& commandsField = RequireField(request, tag::Commands);
 	if (commandsField.value.size() > 64 * 1024)
 		throw std::length_error("Simulation command payload exceeds 64 KiB");

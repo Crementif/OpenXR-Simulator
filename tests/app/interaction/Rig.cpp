@@ -645,7 +645,7 @@ void CheckSpatialWidgetLifecycle()
 	SpatialEditor editor{rig, input, undo};
 	CommandScheduler scheduler;
 	scheduler.Start();
-	scheduler.Apply(FrameId{1}, SimulationTime{Duration{100}}, RuntimeTime{Duration{200}}, {});
+	scheduler.Apply(FrameId{1}, RuntimeTime{Duration{200}}, {});
 	ManualInputSnapshot snapshot;
 	snapshot.observation = 1;
 	snapshot.state.fields.push_back(
@@ -751,7 +751,7 @@ void CheckExpandedTrackerUi()
 		}
 		CommandScheduler scheduler;
 		scheduler.Start(0, config);
-		scheduler.Apply({1}, {Duration{100}}, {Duration{200}}, {});
+		scheduler.Apply({1}, {Duration{200}}, {});
 		control::Message state;
 		state.fields.push_back(
 			control::Field::Bytes(control::tag::Document, control::SimulationState(scheduler.Snapshot()).Encode()));
@@ -805,7 +805,7 @@ void ConfigureObservedDevices()
 	std::optional<std::array<std::string, 2>> effectiveProfiles;
 	scheduler.Start(0, initial);
 	const auto observe = [&](std::uint64_t frame) {
-		scheduler.Apply(simxr::FrameId{frame}, simxr::SimulationTime{simxr::Duration{100}},
+		scheduler.Apply(simxr::FrameId{frame},
 						simxr::RuntimeTime{simxr::Duration{200}}, {});
 		simxr::control::Message state;
 		state.fields.push_back(simxr::control::Field::Bytes(

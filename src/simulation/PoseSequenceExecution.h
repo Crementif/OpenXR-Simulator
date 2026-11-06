@@ -16,7 +16,7 @@ struct PoseSequenceStatus
 	CommandSource owner;
 	CommandResult result = CommandResult::Queued;
 	FrameId origin, lastFrame;
-	SimulationTime originTime, lastTime;
+	RuntimeTime originTime, lastTime;
 	bool active = true, loop = false, timed = false;
 };
 
@@ -34,8 +34,8 @@ public:
 	PoseSequenceExecution(std::uint64_t id, CommandSource owner, std::shared_ptr<const PoseSequence> program,
 						  std::array<bool, ControlChannelCount> inherited = {});
 
-	PoseSequenceFrame Prepare(FrameId frame, SimulationTime time, const CommandConfiguration& initial);
-	void Accept(FrameId frame, SimulationTime time, CommandResult result) noexcept;
+	PoseSequenceFrame Prepare(FrameId frame, RuntimeTime time, const CommandConfiguration& initial);
+	void Accept(FrameId frame, RuntimeTime time, CommandResult result) noexcept;
 	void Cancel() noexcept;
 
 	bool CanPrepare() const noexcept;
@@ -45,9 +45,9 @@ public:
 	std::shared_ptr<const PoseSequence> Program() const noexcept;
 
 private:
-	void Initialize(FrameId frame, SimulationTime time, const CommandConfiguration& initial);
+	void Initialize(FrameId frame, RuntimeTime time, const CommandConfiguration& initial);
 	void ApplyStep(const PoseSequenceStep& step, bool& capture);
-	void AdvanceTime(SimulationTime time, bool& capture);
+	void AdvanceTime(RuntimeTime time, bool& capture);
 	std::vector<SimulationCommand> Commands() const;
 
 	std::shared_ptr<const PoseSequence> m_program;

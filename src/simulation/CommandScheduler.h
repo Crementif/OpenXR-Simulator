@@ -47,7 +47,7 @@ public:
 	// but must not reenter this scheduler or mutate recording. It must complete all
 	// throwing external allocation before its own publication/acceptance.
 	std::shared_ptr<const AppliedCommandSnapshot>
-	Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeTime, const CommandConfiguration& baseline,
+	Apply(FrameId frame, RuntimeTime time, const CommandConfiguration& baseline,
 		  const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve = {},
 		  LiveInputClock::time_point now = LiveInputClock::now(), std::optional<std::uint64_t> clockRevision = {});
 	CommandConfiguration Merge(const CommandConfiguration& baseline) const;

@@ -387,8 +387,6 @@ InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool incl
 		fields.emplace_back("revision", InspectionValue::Unsigned(applied.revision));
 		fields.emplace_back("frame_id", InspectionValue::Unsigned(applied.frame.value));
 		fields.emplace_back("time", InspectionValue::Signed(applied.time.value.count()));
-		fields.emplace_back("runtime_time", InspectionValue::Signed(applied.runtimeTime.value.count()));
-		fields.emplace_back("epoch", InspectionValue::Signed((applied.runtimeTime.value - applied.time.value).count()));
 		fields.emplace_back("owners", InspectionValue::Array(std::move(owners)));
 		fields.emplace_back("scenarios", InspectionValue::Array(std::move(scenarios)));
 		fields.emplace_back("configuration_available", InspectionValue::Boolean(applied.configurationAvailable));

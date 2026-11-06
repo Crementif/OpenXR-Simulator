@@ -22,9 +22,6 @@ def main():
     args = parser.parse_args()
     with Client(args.socket, name='timed-head-turn') as client:
         session, = client.sessions()
-        clock = client.simulation_clock(session)
-        if clock:
-            print(f"simulation time {clock['time']} ns, epoch {clock['epoch']} ns")
         # Yaw is in radians and not wrapped, so one segment can turn more than a full circle.
         status = client.run_sequence(session, [
             {'time': 0, 'head': {'x': 0, 'y': args.height, 'z': 0, 'yaw': 0, 'pitch': 0, 'roll': 0}},

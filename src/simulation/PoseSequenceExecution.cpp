@@ -38,7 +38,7 @@ PoseSequenceExecution::PoseSequenceExecution(std::uint64_t id, CommandSource own
 		m_channels[index] = inherited[index] || m_program->Channels()[index];
 }
 
-PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, SimulationTime time,
+PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, RuntimeTime time,
 												 const CommandConfiguration& initial)
 {
 	PoseSequenceFrame result;
@@ -85,7 +85,7 @@ PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, SimulationTime t
 	return result;
 }
 
-void PoseSequenceExecution::Accept(FrameId frame, SimulationTime time, CommandResult result) noexcept
+void PoseSequenceExecution::Accept(FrameId frame, RuntimeTime time, CommandResult result) noexcept
 {
 	m_status.result = result;
 	m_status.lastFrame = frame;
@@ -136,7 +136,7 @@ std::shared_ptr<const PoseSequence> PoseSequenceExecution::Program() const noexc
 	return m_program;
 }
 
-void PoseSequenceExecution::Initialize(FrameId frame, SimulationTime time, const CommandConfiguration& initial)
+void PoseSequenceExecution::Initialize(FrameId frame, RuntimeTime time, const CommandConfiguration& initial)
 {
 	if (!m_status.timed)
 		m_playback.Start(m_program, frame);
@@ -188,7 +188,7 @@ void PoseSequenceExecution::ApplyStep(const PoseSequenceStep& step, bool& captur
 	capture = capture || step.capture;
 }
 
-void PoseSequenceExecution::AdvanceTime(SimulationTime time, bool& capture)
+void PoseSequenceExecution::AdvanceTime(RuntimeTime time, bool& capture)
 {
 	const auto& program = *m_program;
 	const auto steps = program.Steps();

@@ -195,7 +195,7 @@ CommandResult LiveInputSlot::Write(CommandSource source, const LiveInputSample& 
 	return CommandResult::Queued;
 }
 
-std::optional<CommandOutcome> LiveInputSlot::Prepare(FrameId frame, SimulationTime time, const Channels& owned,
+std::optional<CommandOutcome> LiveInputSlot::Prepare(FrameId frame, RuntimeTime time, const Channels& owned,
 													 LiveInputClock::time_point now,
 													 std::optional<std::uint64_t> clockRevision)
 {

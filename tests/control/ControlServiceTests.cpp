@@ -1117,19 +1117,32 @@ void SimulationClockAndAdmissionReport()
 	Client client(fixture.service);
 	client.Hello();
 	client.Discover();
-	const auto frame = fixture.Issue();
-	fixture.Clear(frame);
+	const auto first = fixture.Issue();
+	fixture.Clear(first);
+	// Time targets use the same display clock the pipeline and frame history report.
+	auto fields = client.Common();
+	fields.push_back(wire::Field::U64(wire::tag::TransactionId, 1));
+	fields.push_back(wire::Field::I64(wire::tag::ApplyTime, first.displayTime.value.count() + 1));
+	fields.push_back(wire::Field::U32(wire::tag::LatePolicy, 0));
+	fields.push_back(wire::Field::U32(wire::tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)));
+	const auto command = wire::EncodeSimulationCommand(TakeControl{ControlChannel::Head});
+	fields.push_back(wire::Field::Bytes(wire::tag::Commands, wire::EncodeFields(std::array{command}), true));
+	Require(Text(client.Call(wire::OpCode::SubmitSimulation, std::move(fields)), wire::tag::Phase) == "queued",
+			"Queue a display-time target");
+	const auto second = fixture.Issue();
+	fixture.Clear(second);
 	const auto state =
 		Nested(Nested(client.Call(wire::OpCode::SimulationStatus, client.Common()), wire::tag::Document), 3);
-	const auto signedValue = [&](std::string_view name) {
-		const auto member = Member(state, name);
-		Require(member && member->Find(3) && member->Find(3)->AsI64(), "Simulation clock field missing");
-		return *member->Find(3)->AsI64();
-	};
-	Require(signedValue("runtime_time") == frame.displayTime.value.count() &&
-				signedValue("epoch") + signedValue("time") == frame.displayTime.value.count() &&
-				signedValue("epoch") == fixture.config.epoch.value.count(),
-			"Simulation status did not expose the clock epoch of applied simulation time");
+	const auto time = Member(state, "time");
+	const auto transactions = Member(state, "transactions");
+	Require(time && time->Find(3)->AsI64() == second.displayTime.value.count() && transactions,
+			"Simulation status time is not the applied frame's display time");
+	const auto pages = Nested(*transactions, 3);
+	Require(pages.fields.size() == 1 && Nested(pages, 1).fields.size() == 1, "Display-time target did not apply");
+	const auto outcome = Nested(Nested(Nested(pages, 1), 1), 3);
+	const auto appliedFrame = Member(outcome, "applied_frame");
+	Require(appliedFrame && appliedFrame->Find(3)->AsU64() == second.id.value,
+			"Display-time target applied at the wrong frame");
 	const auto capacity = Member(state, "pending_capacity");
 	const auto rejected = Member(state, "rejected");
 	Require(capacity && capacity->Find(3)->AsU64() == 128 && rejected && Member(Nested(*rejected, 3), "capacity"),

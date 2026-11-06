@@ -4,8 +4,8 @@
 
 namespace simxr
 {
-SessionPublication::PreparedStart::PreparedStart(SessionPublication& owner, RuntimeTime epoch, ViewLayout layout)
-	: m_owner(owner), m_baseline(owner.m_initial.value_or(CommandConfiguration{})), m_epoch(epoch), m_layout(layout)
+SessionPublication::PreparedStart::PreparedStart(SessionPublication& owner, ViewLayout layout)
+	: m_owner(owner), m_baseline(owner.m_initial.value_or(CommandConfiguration{})), m_layout(layout)
 {
 	owner.m_commands.Start(owner.m_seed, owner.m_overrideInitial ? owner.m_initial : std::nullopt);
 }
@@ -28,7 +28,6 @@ void SessionPublication::PreparedStart::Commit()
 	m_owner.m_instance.Trackers().BeginSession();
 	m_owner.m_tracking.Reset();
 	m_owner.m_baseline = std::move(m_baseline);
-	m_owner.m_epoch = m_epoch;
 	m_owner.m_sessionOverride = false;
 	m_owner.m_viewHistory.clear();
 	m_owner.m_viewQueries.clear();
@@ -38,7 +37,7 @@ void SessionPublication::PreparedStart::Commit()
 
 SessionPublication::FrameBoundary::FrameBoundary(SessionPublication& owner, bool focused,
 												 const ReferenceSpaceState& spaces)
-	: m_owner(owner), m_baseline(owner.m_baseline), m_epoch(owner.m_epoch)
+	: m_owner(owner), m_baseline(owner.m_baseline)
 {
 	auto observed = owner.m_input.Snapshot();
 	if (observed.revision != owner.m_managedInputRevision)
@@ -52,9 +51,8 @@ void SessionPublication::FrameBoundary::Reserve(
 {
 	if (m_applied)
 		throw std::logic_error("Frame publication was already reserved");
-	const SimulationTime time{prediction.displayTime.value - m_epoch.value};
 	m_applied = m_owner.m_commands.Apply(
-		prediction.id, time, prediction.displayTime, m_baseline, [&](const auto& applied) { reserveHistory(*applied); },
+		prediction.id, prediction.displayTime, m_baseline, [&](const auto& applied) { reserveHistory(*applied); },
 		LiveInputClock::now(), prediction.clockRevision);
 }
 
@@ -94,7 +92,7 @@ void SessionPublication::FrameBoundary::Publish()
 	const auto& applied = Applied();
 	m_owner.m_baseline.input = std::move(m_baseline.input);
 	m_owner.m_baseline.referenceSpaces = applied.configuration.referenceSpaces;
-	m_owner.PublishEffective(applied.runtimeTime, applied.configuration);
+	m_owner.PublishEffective(applied.time, applied.configuration);
 	m_published = true;
 }
 

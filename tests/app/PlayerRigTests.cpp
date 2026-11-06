@@ -90,14 +90,14 @@ void AtomicOwnership()
 	Require(head && right, "Owned head and available hand were not composed together");
 	CommandScheduler scheduler;
 	scheduler.Start();
-	scheduler.Apply(FrameId{1}, SimulationTime{Duration{100}}, RuntimeTime{Duration{200}}, {});
+	scheduler.Apply(FrameId{1}, RuntimeTime{Duration{200}}, {});
 	CommandTransaction transaction;
 	transaction.id = 1;
 	transaction.source = own;
 	transaction.target.frame = FrameId{2};
 	transaction.commands = edit.commands;
 	Require(scheduler.Submit(transaction).result == CommandResult::Queued, "Rig transaction rejected");
-	const auto applied = scheduler.Apply(FrameId{2}, SimulationTime{Duration{200}}, RuntimeTime{Duration{300}}, {});
+	const auto applied = scheduler.Apply(FrameId{2}, RuntimeTime{Duration{300}}, {});
 	SamePose(applied->configuration.tracking.head.pose, rig.Head());
 	SamePose(applied->configuration.tracking.controllers[1].pose.pose, rig.Hand(1));
 	SamePose(applied->configuration.tracking.controllers[0].pose.pose,
@@ -114,14 +114,14 @@ TrackingState Applied(const ManualTransaction& edit)
 {
 	CommandScheduler scheduler;
 	scheduler.Start();
-	scheduler.Apply(FrameId{1}, SimulationTime{Duration{100}}, RuntimeTime{Duration{200}}, {});
+	scheduler.Apply(FrameId{1}, RuntimeTime{Duration{200}}, {});
 	CommandTransaction transaction;
 	transaction.id = 1;
 	transaction.source = CommandSource{CommandSourceKind::Manual, 3};
 	transaction.target.frame = FrameId{2};
 	transaction.commands = edit.commands;
 	Require(scheduler.Submit(transaction).result == CommandResult::Queued, "Rig transaction rejected");
-	const auto applied = scheduler.Apply(FrameId{2}, SimulationTime{Duration{200}}, RuntimeTime{Duration{300}}, {});
+	const auto applied = scheduler.Apply(FrameId{2}, RuntimeTime{Duration{300}}, {});
 	Require(applied != nullptr, "Rig transaction not applied");
 	return applied->configuration.tracking;
 }

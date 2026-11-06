@@ -174,7 +174,7 @@ void Replay(RecordingHost& host, const std::string& script, std::uint64_t seed, 
 			{
 				const auto& body = *applied->configuration.tracking.bodyObservation;
 				if (body.jointSet != BodyJointSet::FullBodyMETA || !body.returnedTime ||
-					body.returnedTime->value != applied->runtimeTime.value - Duration{20})
+					body.returnedTime->value != applied->time.value - Duration{20})
 					failed = true;
 				bodyFrame = true;
 			}
@@ -684,13 +684,13 @@ void CaptureBodyRange()
 	capture.Stop();
 	Require(CaptureFinished(capture).phase == app::RecordingCapturePhase::Complete, "Body range capture failed");
 	const auto range = automation::ReadRecordingRange(directory, FrameId{2}, FrameId{2});
-	Require(range.version == 4 && range.originRuntimeTime == boundary->runtimeTime && range.total == 0,
+	Require(range.version == 4 && range.originRuntimeTime == boundary->time && range.total == 0,
 			"Body range lost schema or exact boundary anchor");
 	bool found = false;
 	for (const auto& command : automation::ReplayInitialCommands(range))
 		if (const auto* value = std::get_if<SetBodyControls>(&command))
 		{
-			found = value->observation && value->observationOrigin == boundary->runtimeTime &&
+			found = value->observation && value->observationOrigin == boundary->time &&
 					value->observation->returnedTime == body.returnedTime &&
 					value->observation->requestedTime == body.requestedTime &&
 					value->observation->skeletonRevision == 7 && value->observation->skeleton.has_value();

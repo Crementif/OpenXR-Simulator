@@ -12,10 +12,4 @@ struct RuntimeTime
 	Duration value{};
 	auto operator<=>(const RuntimeTime&) const = default;
 };
-
-struct SimulationTime
-{
-	Duration value{};
-	auto operator<=>(const SimulationTime&) const = default;
-};
 }

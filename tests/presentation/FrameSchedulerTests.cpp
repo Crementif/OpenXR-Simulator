@@ -626,7 +626,6 @@ int main()
 	PublicationContention();
 	PauseReservationBoundaryAndLimits();
 	static_assert(!std::is_convertible_v<FrameId, DisplayTick>);
-	static_assert(!std::is_convertible_v<RuntimeTime, SimulationTime>);
 	DisplayTimeline timeline({Duration{7000000000000000000LL}}, 10ns);
 	Require(timeline.TimeAt({123}).value.count() == 7000000000000001230LL, "Large timestamp precision");
 	Require(timeline.TickAtOrAfter(timeline.TimeAt({123})) == DisplayTick{123}, "Exact tick");
