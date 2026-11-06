@@ -140,6 +140,16 @@ bool Section(const char* label, ImGuiTreeNodeFlags flags)
 	return open;
 }
 
+float RailKeyX()
+{
+	return 32 * ImGui::GetFontSize() / 17;
+}
+
+float RailKeyLimit()
+{
+	return 48 * ImGui::GetFontSize() / 17;
+}
+
 static ImU32 IconColor(const RailStatus& status, bool selected)
 {
 	if (status.tint)
@@ -197,6 +207,9 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 	if (named)
 		draw->AddText({textX, minimum.y + (height - ImGui::GetFontSize()) / 2},
 					  ImGui::GetColorU32(selected ? theme::Text : theme::TextDim), label);
+	else if (status.key && ImGui::CalcTextSize(status.key).x <= RailKeyLimit())
+		draw->AddText({minimum.x + RailKeyX(), minimum.y + (height - ImGui::GetFontSize()) / 2},
+					  ImGui::GetColorU32(theme::TextDim), status.key);
 	float right = maximum.x - 6 * unit;
 	const float textEnd = textX + ImGui::CalcTextSize(label).x + 6 * unit;
 	for (const auto& [text, color] : {std::pair{status.key, theme::TextDim}, {status.badge, status.badgeColor}})

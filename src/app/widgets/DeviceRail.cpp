@@ -161,9 +161,18 @@ static bool IsSelected(std::size_t index, const Selection& selection)
 	return device && index == static_cast<std::size_t>(device->page);
 }
 
-float RailWidth()
+float RailWidth(const CompanionSettings& settings)
 {
-	return 34 * ImGui::GetFontSize() / 17 + ImGui::GetStyle().WindowPadding.x * 2;
+	// The icon column, widened to fit the longest target shortcut drawn beside its icon.
+	const float unit = ImGui::GetFontSize() / 17;
+	float keys = 0;
+	for (const auto& row : s_rows)
+		if (row.key)
+			keys = std::max(keys,
+							ImGui::CalcTextSize(
+								PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]).c_str())
+								.x);
+	return std::max(34 * unit, RailKeyX() + std::min(keys, RailKeyLimit()) + 8 * unit);
 }
 
 float DeviceTabsHeight()

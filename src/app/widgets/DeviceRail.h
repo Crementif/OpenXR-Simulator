@@ -7,7 +7,7 @@
 
 namespace simxr::app
 {
-float RailWidth();
+float RailWidth(const CompanionSettings& settings);
 float DeviceTabsHeight();
 std::optional<Selection> DrawDeviceRail(const Selection& selection, const RuntimeView& view,
 										const CompanionSettings& settings);

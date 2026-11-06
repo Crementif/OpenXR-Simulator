@@ -29,6 +29,9 @@ struct RailStatus
 	ImU32 tint = 0;
 };
 
+// Where an icon-only rail row draws its shortcut, and the widest shortcut it draws rather than leave to the tooltip.
+float RailKeyX();
+float RailKeyLimit();
 bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& status, float height = 0);
 bool DeviceTab(const char* label, Icon icon, bool selected, const RailStatus& status, ImVec2 size, bool named);
 } // namespace simxr::app

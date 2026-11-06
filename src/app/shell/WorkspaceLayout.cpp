@@ -199,7 +199,7 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	m_wasOverlay = overlay;
 	const bool inspectorFolded = m_settings.inspectorFolded && !overlay;
 	const bool rail = !focus && (overlay || inspectorFolded);
-	const float railWidth = rail ? RailWidth() : 0;
+	const float railWidth = rail ? RailWidth(m_settings) : 0;
 	const float inspector = focus || inspectorFolded
 								? 0
 								: std::min(std::min(m_settings.inspectorWidth, compact ? 320.0f : 520.0f) * scale,
