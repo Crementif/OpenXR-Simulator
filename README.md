@@ -2,6 +2,8 @@
 
 Run and test OpenXR applications on your desktop without a VR headset. Control a simulated headset and controllers with a keyboard, mouse or gamepad, watch the stereo preview, and inspect what the application renders.
 
+![A Python script drives Beat Saber through the simulator: it points the right controller at Solo, scrolls the song list with the thumbstick, starts a song and swings both sabers, while the companion shows the stereo preview, frame times and controller state.](docs/media/beat-saber-demo.gif)
+
 ## What you can do
 
 - Launch applications with their own runtime settings and keep several applications open in separate tabs.
