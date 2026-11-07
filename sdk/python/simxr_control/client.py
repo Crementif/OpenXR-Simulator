@@ -517,6 +517,16 @@ class Client:
             fields.append(Field.u64(Tag.FRAME_ID, frame))
         return self.request(OpCode.READ_DIAGNOSTICS, fields)
 
+    def latest_diagnostics(self, session, count=64):
+        """The newest ``count`` diagnostic events, oldest of them first.
+
+        ``diagnostics`` pages forward from a cursor, so ``after=0`` starts at the oldest retained
+        event. This reads the cursor first and returns the page that ends at the newest event."""
+        if type(count) is not int or not 1 <= count <= 256:
+            raise ProtocolError('Diagnostic pages require a count in [1,256]')
+        newest = int(self.diagnostics(session, count=0)['document']['next'])
+        return self.diagnostics(session, after=max(newest - count - 1, 0), count=count)
+
 
     def game_observations(self, session=None, *, offset=None, count=16):
         """Read a bounded journal page; inspect gap before accepting continuity."""

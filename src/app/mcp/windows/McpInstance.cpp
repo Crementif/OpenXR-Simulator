@@ -276,9 +276,12 @@ private:
 	PPROC_THREAD_ATTRIBUTE_LIST m_list = nullptr;
 };
 
-static DWORD StartupFlags()
+// The simulator leaves the client's job so it outlives the client. A job that forbids breakaway keeps it
+// inside, and contained is set.
+static DWORD StartupFlags(bool& contained)
 {
 	DWORD flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_PROCESS_GROUP;
+	contained = false;
 	BOOL inJob = FALSE;
 	if (!IsProcessInJob(GetCurrentProcess(), nullptr, &inJob))
 		throw windows::Error("Cannot inspect MCP connector job ownership");
@@ -289,12 +292,9 @@ static DWORD StartupFlags()
 									   nullptr))
 			throw windows::Error("Cannot inspect MCP connector job limits");
 		const auto limits = information.BasicLimitInformation.LimitFlags;
-		if (!(limits & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK))
-		{
-			if (!(limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK))
-				throw std::runtime_error("The client job does not permit an independent simulator process");
+		if ((limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK) && !(limits & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK))
 			flags |= CREATE_BREAKAWAY_FROM_JOB;
-		}
+		contained = !(limits & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK));
 	}
 	return flags;
 }
@@ -339,12 +339,17 @@ void McpInstanceDiscovery::StartIfNeeded()
 	startup.StartupInfo.hStdError = nullFile.Get();
 	startup.lpAttributeList = attributes.Get();
 	PROCESS_INFORMATION process{};
-	const auto flags = StartupFlags();
+	bool contained = false;
+	const auto flags = StartupFlags(contained);
 	if (!CreateProcessW(m_executable.c_str(), command.data(), nullptr, nullptr, TRUE, flags, environment.data(),
 						m_executable.parent_path().c_str(), &startup.StartupInfo, &process))
 		throw windows::Error("Cannot start the selected MCP app");
 	m_child = process.hProcess;
 	windows::Handle primaryThread(process.hThread);
+	if (contained)
+		std::fputs("MCP connector: this client's job forbids breakaway, so the simulator may close with it. Start "
+				   "simxr_companion --mcp first to keep it independent.\n",
+				   stderr);
 }
 
 std::optional<McpEndpoint> McpInstanceDiscovery::Read()

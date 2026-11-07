@@ -36,7 +36,7 @@ simxr_runner --pid $! --rig tests/smoke.luau --junit smoke.xml
 
 ### Checking rendered images
 
-In a rig, `simxr.capture` and `simxr.export` save frames, and `simxr.export_history` saves frames the runtime already retained without pausing. To check images in the script itself, sample them (see [Sampling images](#sampling-images)); `examples/rigs/flicker_monitor.luau` detects flicker this way. For full-resolution analysis use the Python SDK, as in `examples/inspect-retained-image.py`.
+In a rig, `simxr.capture` and `simxr.export` save frames, and `simxr.export_history` saves frames the runtime already retained without pausing. A path ending in `.png` is written as a PNG with the eye layers side by side; any other path gets the raw pixels, layer after layer. Each export returns `{width, height, layers, format, bytes_per_pixel, bytes, encoding}`, where `format` is the Vulkan format number, so raw files can be read back without guessing. To check images in the script itself, sample them (see [Sampling images](#sampling-images)); `examples/rigs/flicker_monitor.luau` detects flicker this way. For full-resolution analysis use the Python SDK, as in `examples/inspect-retained-image.py`.
 
 ### Starting the game from a known state
 
@@ -44,7 +44,7 @@ A game that links [`include/simxr/game_bridge.h`](../include/simxr/game_bridge.h
 
 ### Debugging with an AI agent
 
-Copy the configuration from **Preferences → MCP** into the agent's MCP client; the connector starts the companion if needed. The agent can launch and restart applications, take screenshots, read logs and diagnostics, pause and step frames, set input and run Luau.
+Copy the configuration from **Preferences → MCP** into the agent's MCP client; the connector attaches to a running companion that has MCP on (enabled in Preferences, or started with `simxr_companion --mcp`) and otherwise starts one. If the client's Windows job forbids breakaway, a companion the connector starts may close with the client; start `simxr_companion --mcp` first to keep it independent. The agent can launch and restart applications, take screenshots, read logs and diagnostics, pause and step frames, set input and run Luau.
 
 ## Reference
 
@@ -54,9 +54,9 @@ The runtime runs inside the application, and each application process listens on
 
 ### Luau rigs
 
-Run a rig from the companion's Library, with `simxr_runner (--pid ID | --socket PATH) --rig FILE [--seed N] [--deadline-ms N] [--json FILE] [--junit FILE]`, or with the MCP `simulator_luau_*` tools. Runs are limited to one hour and 256 printed lines.
+Run a rig from the companion's Library, with `simxr_runner (--pid ID | --socket PATH) --rig FILE [--seed N] [--deadline-ms N] [--json FILE] [--junit FILE]`, or with the MCP `simulator_luau_*` tools. Each run stops at its deadline: 30 seconds unless raised with `--deadline-ms`, the Library's deadline slider or the MCP `deadline_seconds` argument, up to one hour. Output is limited to 256 printed lines.
 
-Frame IDs and other 64-bit identifiers are decimal strings; use `simxr.frame_add` and `simxr.frame_before` instead of arithmetic. Units are metres and radians, and orientations are `{x, y, z, w}` quaternions. Input a rig takes stays held until `release_inputs` or the end of the rig. [`examples/rigs`](../examples/rigs) has a script for each area below.
+Frame IDs and other 64-bit identifiers are decimal strings; use `simxr.frame_add` and `simxr.frame_before` instead of arithmetic. Units are metres and radians, and orientations are `{x, y, z, w}` quaternions. Controllers start at hand height with the grip pitched 90° up, `{0.7071, 0, 0, 0.7071}`, the way a held controller's handle stands; the aim pose derived from it then points above the horizon, so give a controller pose an orientation whenever its direction matters. Input a rig takes stays held until `release_inputs` or the end of the rig. [`examples/rigs`](../examples/rigs) has a script for each area below.
 
 | Area | `simxr.*` |
 | --- | --- |
@@ -86,7 +86,7 @@ local red = buffer.readu8(sample.pixels, (y * sample.width + x) * 4)
 ### Python SDK
 
 ```sh
-pip install sdk/python  # share/simxr/sdk/python in a release
+pip install sdk/python  # share/simxr/sdk/python in a release or a build_simulator.ps1 install
 ```
 
 ```python
@@ -98,6 +98,8 @@ with Client() as client:  # finds the only running endpoint; or pass its path, o
 ```
 
 `next_frame(session)` gives a `schedule` frame a couple of frames ahead of the newest one, for input meant to apply right away. A queued response only means the transaction was admitted; `wait_applied(session, transaction_id)` waits until it applies and raises `TransactionError` otherwise. For a `conflict`, the error names who holds each channel; another client's channel needs `take_control` with `replace`. Closing a client releases everything it held.
+
+`client.diagnostics(session, after=N)` pages forward from a cursor, so it starts at the oldest retained event; `client.latest_diagnostics(session, count)` returns the newest events instead.
 
 ### Time and the input queue
 

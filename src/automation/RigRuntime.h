@@ -32,6 +32,14 @@ struct ScriptGameOperation
 	std::uint64_t game = 0;
 };
 
+// Raw files hold the layers one after another; PNG files place them side by side.
+struct ScriptExport
+{
+	std::uint32_t width = 0, height = 0, layers = 0, format = 0, bytesPerPixel = 0;
+	std::uint64_t bytes = 0;
+	bool png = false;
+};
+
 struct ScriptCaptureTarget
 {
 	control::TargetKind kind = control::TargetKind::ComposedEyes;
@@ -100,13 +108,13 @@ public:
 	ScriptInspection Inspect(std::uint64_t capture);
 	std::vector<std::byte> ProjectionHistory(std::uint32_t count);
 	std::vector<std::byte> ImageHistory(std::uint32_t count, control::TargetKind target);
-	void ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
-					   control::TargetKind target);
+	ScriptExport ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
+							   control::TargetKind target);
 
 	ScriptInspection BeginImageWindow(control::TargetKind target);
 	std::vector<std::byte> ImageWindow(std::uint64_t window);
-	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
-						   std::optional<std::uint32_t> arraySlice);
+	ScriptExport ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
+								   std::optional<std::uint32_t> arraySlice);
 	control::ImageSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
 										   std::optional<std::array<XrRect2Di, 2>> rectangles);
 	std::optional<control::ImageSample> SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
@@ -118,8 +126,8 @@ public:
 	std::vector<std::byte> State();
 	FrameId CurrentFrame();
 	void ReleaseInputs();
-	void Export(std::uint64_t capture, const std::string& path, std::optional<ScriptCaptureTarget> target,
-				std::optional<std::uint32_t> arraySlice);
+	ScriptExport Export(std::uint64_t capture, const std::string& path, std::optional<ScriptCaptureTarget> target,
+						std::optional<std::uint32_t> arraySlice);
 	void ReleaseCapture(std::uint64_t capture);
 
 	ScriptGameOperation GameCommand(std::uint32_t kind, const std::string& payload);
@@ -137,7 +145,7 @@ private:
 	control::Message Debug(control::CommandKind kind, Fields fields = {});
 	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
 	control::ImageSample SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles);
-	void ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
+	ScriptExport ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
 	void RenewLease();
 	void PollAgain();
 	void CleanupCall(control::OpCode opcode, Fields fields);

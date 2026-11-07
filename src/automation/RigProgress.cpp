@@ -3,6 +3,12 @@
 
 namespace simxr::automation
 {
+static std::string DeadlineMessage(std::chrono::milliseconds budget, bool paused)
+{
+	return "Rig execution deadline of " + std::to_string(budget.count()) + " ms exceeded" +
+		   (paused ? " while paused" : "") + "; runs default to 30 s and allow up to one hour";
+}
+
 void RigProgress::Start(const RigOptions& options)
 {
 	std::lock_guard lock(m_mutex);
@@ -12,6 +18,7 @@ void RigProgress::Start(const RigOptions& options)
 	m_result = {};
 	m_result.phase = RigPhase::Running;
 	m_result.seed = options.seed;
+	m_budget = options.deadline;
 	m_deadline = std::chrono::steady_clock::now() + options.deadline;
 }
 
@@ -56,7 +63,7 @@ void RigProgress::Check(bool bindingBoundary)
 	if (Cancelled())
 		throw std::runtime_error("Rig cancelled");
 	if (std::chrono::steady_clock::now() >= m_deadline)
-		throw std::runtime_error("Rig execution deadline exceeded");
+		throw std::runtime_error(DeadlineMessage(m_budget, false));
 	if (!bindingBoundary)
 		return;
 	std::unique_lock lock(m_mutex);
@@ -65,7 +72,7 @@ void RigProgress::Check(bool bindingBoundary)
 		m_result.phase = RigPhase::Paused;
 		m_changed.wait_until(lock, m_deadline);
 		if (std::chrono::steady_clock::now() >= m_deadline)
-			throw std::runtime_error("Rig execution deadline exceeded while paused");
+			throw std::runtime_error(DeadlineMessage(m_budget, true));
 	}
 	if (Cancelled())
 		throw std::runtime_error("Rig cancelled");

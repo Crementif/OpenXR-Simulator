@@ -160,7 +160,7 @@ static Json Tools(bool windowless)
 		 {"source", {{"type", "string"}, {"minLength", 1}, {"maxLength", 524288}}},
 		 {"name", {{"type", "string"}, {"maxLength", 256}}},
 		 {"seed", seed},
-		 {"deadline_seconds", {{"type", "integer"}, {"minimum", 1}, {"maximum", 3600}}},
+		 {"deadline_seconds", {{"type", "integer"}, {"minimum", 1}, {"maximum", 3600}, {"default", 30}}},
 		 {"memory_mib", {{"type", "integer"}, {"minimum", 1}, {"maximum", 512}}}},
 		Json::array({"application_id", "source"})));
 	for (const auto& [name, description] :

@@ -24,6 +24,7 @@ add_library(simxr_automation STATIC
     src/automation/ScriptValues.cpp)
 simxr_configure_target(simxr_automation)
 target_link_libraries(simxr_automation PUBLIC simxr_control simxr_recording PRIVATE Luau.Compiler Luau.VM)
+target_include_directories(simxr_automation SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/third_party/stb")
 add_library(simxr_rig_controller STATIC src/app/services/RigController.cpp src/app/services/LuauAutomation.cpp)
 target_include_directories(simxr_rig_controller PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 simxr_configure_target(simxr_rig_controller)

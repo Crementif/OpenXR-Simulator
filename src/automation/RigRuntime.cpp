@@ -9,7 +9,14 @@
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 
+#include "graphics/ColorPixels.h"
+
 #include <iterator>
+
+#define STBI_WRITE_NO_STDIO
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 namespace simxr::automation
 {
@@ -20,6 +27,57 @@ static std::string Text(const wire::Message& message, std::uint16_t name)
 {
 	const auto* field = message.Find(name);
 	return field && field->AsText() ? std::string{*field->AsText()} : std::string{};
+}
+
+static void AppendPng(void* context, void* data, int size)
+{
+	auto& encoded = *static_cast<std::vector<unsigned char>*>(context);
+	const auto* begin = static_cast<const unsigned char*>(data);
+	encoded.insert(encoded.end(), begin, begin + size);
+}
+
+// Layers go side by side. Formats wider than 8 bits are clamped and sRGB-encoded, as the companion's PNG
+// saves are.
+static std::vector<unsigned char> EncodePng(std::span<const std::byte> pixels, const ScriptExport& image)
+{
+	const auto width = std::uint64_t{image.width} * image.layers;
+	if (width > 65535 || image.height > 65535)
+		throw std::runtime_error("Image is too large for a PNG export; use a raw extension such as .rgba");
+	const bool rgba8 = image.format == static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm) ||
+					   image.format == static_cast<std::uint32_t>(ColorFormat::Rgba8Srgb);
+	const bool bgra8 = image.format == static_cast<std::uint32_t>(ColorFormat::Bgra8Unorm) ||
+					   image.format == static_cast<std::uint32_t>(ColorFormat::Bgra8Srgb);
+	std::vector<unsigned char> rgba(static_cast<std::size_t>(width) * image.height * 4);
+	for (std::uint32_t layer = 0; layer < image.layers; ++layer)
+		for (std::uint32_t y = 0; y < image.height; ++y)
+			for (std::uint32_t x = 0; x < image.width; ++x)
+			{
+				const auto source = ((std::size_t{layer} * image.height + y) * image.width + x) * image.bytesPerPixel;
+				auto* target = &rgba[(std::size_t{y} * width + std::size_t{layer} * image.width + x) * 4];
+				const auto bytes = pixels.subspan(source, image.bytesPerPixel);
+				if (rgba8 || bgra8)
+				{
+					for (std::size_t channel = 0; channel < 4; ++channel)
+						target[channel] = std::to_integer<unsigned char>(bytes[channel]);
+					if (bgra8)
+						std::swap(target[0], target[2]);
+					continue;
+				}
+				const auto channels = DecodeColorPixel(image.format, bytes);
+				for (std::size_t channel = 0; channel < 4; ++channel)
+				{
+					auto value = std::isnan(channels[channel]) ? 0.0f : std::clamp(channels[channel], 0.0f, 1.0f);
+					if (channel < 3)
+						value = value <= .0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - .055f;
+					target[channel] = static_cast<unsigned char>(std::lround(value * 255.0f));
+				}
+			}
+	std::vector<unsigned char> encoded;
+	if (!stbi_write_png_to_func(AppendPng, &encoded, static_cast<int>(width), static_cast<int>(image.height), 4,
+								rgba.data(), static_cast<int>(width * 4)) ||
+		encoded.empty())
+		throw std::runtime_error("PNG encoding failed");
+	return encoded;
 }
 
 static std::uint64_t Number(const wire::Message& message, std::uint16_t name)
@@ -368,8 +426,8 @@ std::vector<std::byte> RigRuntime::ImageHistory(std::uint32_t count, control::Ta
 	return Document(Call(control::OpCode::ReadImageHistory, std::move(fields)));
 }
 
-void RigRuntime::ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
-							   control::TargetKind target)
+ScriptExport RigRuntime::ExportHistory(std::uint64_t frame, const std::string& path,
+									   std::optional<std::uint32_t> arraySlice, control::TargetKind target)
 {
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::FrameId, frame, true));
@@ -377,7 +435,7 @@ void RigRuntime::ExportHistory(std::uint64_t frame, const std::string& path, std
 	const auto response = Call(control::OpCode::RetainHistoricalImage, std::move(fields));
 	if (!response.Find(tag::ImageReaderId))
 		throw std::runtime_error("Historical frame has no ready GPU image");
-	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
+	return ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
 }
 
 ScriptInspection RigRuntime::BeginImageWindow(control::TargetKind target)
@@ -397,13 +455,13 @@ std::vector<std::byte> RigRuntime::ImageWindow(std::uint64_t window)
 	return Document(Call(control::OpCode::ReadImageWindow, {control::Field::U64(tag::ImageWindowId, window, true)}));
 }
 
-void RigRuntime::ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
-								   std::optional<std::uint32_t> arraySlice)
+ScriptExport RigRuntime::ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
+										   std::optional<std::uint32_t> arraySlice)
 {
 	const auto response =
 		Call(control::OpCode::RetainWindowImage,
 			 {control::Field::U64(tag::ImageWindowId, window, true), control::Field::U64(tag::FrameId, frame, true)});
-	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
+	return ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
 }
 
 control::ImageSample RigRuntime::SampleWindowImage(std::uint64_t window, std::uint64_t frame,
@@ -492,15 +550,15 @@ void RigRuntime::ReleaseInputs()
 	Call(control::OpCode::ReleaseControl, Source());
 }
 
-void RigRuntime::Export(std::uint64_t capture, const std::string& path, std::optional<ScriptCaptureTarget> target,
-						std::optional<std::uint32_t> arraySlice)
+ScriptExport RigRuntime::Export(std::uint64_t capture, const std::string& path,
+								std::optional<ScriptCaptureTarget> target, std::optional<std::uint32_t> arraySlice)
 {
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
 	if (target)
 		fields.push_back(EncodeTarget(*target));
 	const auto image = Number(Call(control::OpCode::RetainImage, std::move(fields)), tag::ImageReaderId);
-	ExportImage(image, path, arraySlice);
+	return ExportImage(image, path, arraySlice);
 }
 
 void RigRuntime::ReleaseCapture(std::uint64_t capture)
@@ -662,9 +720,18 @@ control::ImageSample RigRuntime::SampleImage(std::uint64_t image, std::optional<
 		[&] { PollAgain(); }, image, description, *rectangles);
 }
 
-void RigRuntime::ExportImage(std::uint64_t image, const std::string& path, std::optional<std::uint32_t> arraySlice)
+ScriptExport RigRuntime::ExportImage(std::uint64_t image, const std::string& path,
+									 std::optional<std::uint32_t> arraySlice)
 {
 	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
+	ScriptExport result;
+	const std::u8string utf8Path{path.begin(), path.end()};
+	const std::filesystem::path destination{utf8Path};
+	auto extension = destination.extension().u8string();
+	std::ranges::transform(extension, extension.begin(), [](char8_t value) {
+		return value >= u8'A' && value <= u8'Z' ? static_cast<char8_t>(value - u8'A' + u8'a') : value;
+	});
+	result.png = extension == u8".png";
 	Fields exportFields{control::Field::U64(tag::ImageReaderId, image, true)};
 	if (arraySlice)
 		exportFields.push_back(control::Field::U32(tag::Layer, *arraySlice));
@@ -674,20 +741,53 @@ void RigRuntime::ExportImage(std::uint64_t image, const std::string& path, std::
 															: Call(opcode, std::move(fields));
 		},
 		std::move(exportFields), [&] { PollAgain(); });
-	const std::u8string utf8Path{path.begin(), path.end()};
-	std::ofstream output(std::filesystem::path{utf8Path}, std::ios::binary | std::ios::trunc);
+	result.bytes = exported.Size();
+	if (const auto* descriptor = exported.Info().Find(tag::ImageDescriptor))
+	{
+		const auto description = control::DecodeImageDescription(*descriptor);
+		result.width = description.width;
+		result.height = description.height;
+		result.format = description.format;
+		result.layers = arraySlice ? 1 : std::max(description.arrayLayers, 1u);
+		result.bytesPerPixel = ColorPixelBytes(description.format);
+	}
+	if (result.png && (!result.bytesPerPixel || !result.width || !result.height))
+		throw std::runtime_error("PNG export needs a colour image in a known format; use a raw extension such as .rgba");
+	if (result.bytesPerPixel && result.width && result.height)
+	{
+		const auto layerBytes = std::uint64_t{result.width} * result.height * result.bytesPerPixel;
+		if (!result.bytes || result.bytes % layerBytes)
+		{
+			if (result.png)
+				throw std::runtime_error("Exported bytes do not match the image description");
+		}
+		else
+			result.layers = static_cast<std::uint32_t>(result.bytes / layerBytes);
+	}
+	std::ofstream output(destination, std::ios::binary | std::ios::trunc);
 	if (!output)
 		throw std::runtime_error("Cannot open explicit export path");
-	exported.Read([&](std::span<const std::byte> bytes) {
-		output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-		if (!output)
-			throw std::runtime_error("Explicit export write failed");
-	});
+	if (result.png)
+	{
+		std::vector<std::byte> pixels;
+		pixels.reserve(static_cast<std::size_t>(result.bytes));
+		exported.Read(
+			[&](std::span<const std::byte> bytes) { pixels.insert(pixels.end(), bytes.begin(), bytes.end()); });
+		const auto encoded = EncodePng(pixels, result);
+		output.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
+	}
+	else
+		exported.Read([&](std::span<const std::byte> bytes) {
+			output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+			if (!output)
+				throw std::runtime_error("Explicit export write failed");
+		});
 	output.close();
 	if (!output)
 		throw std::runtime_error("Explicit export close failed");
 	exported.Release();
 	reader.Release();
+	return result;
 }
 
 void RigRuntime::RenewLease()

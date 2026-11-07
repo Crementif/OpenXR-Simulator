@@ -437,6 +437,21 @@ class FdTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             to_dict([Field.binary(Tag.DRIVER_UUID, b'short')])
 
+    def test_session_game_observations_decode_the_native_clock_mapping(self):
+        reply = Message(OpCode.READ_GAME_OBSERVATIONS, 7, (
+            Field.u32(Tag.ERROR, 0), Field.u64(Tag.SESSION, 3), Field.u64(Tag.GENERATION, 4),
+            Field.u32(Tag.CLOCK_DOMAIN, 2), Field.u64(Tag.CLOCK_REVISION, 9),
+            Field.i64(Tag.NATIVE_TIME, -5), Field.i64(Tag.RUNTIME_TIME_BEFORE, 100),
+            Field.i64(Tag.RUNTIME_TIME_AFTER, 120), Field.i64(Tag.CLOCK_RESOLUTION, 1),
+            Field.i64(Tag.SOURCE_AGE, -1)))
+        decoded = to_dict(Message.decode(reply.encode()).fields)
+        self.assertEqual({key: decoded[key] for key in ('session', 'generation', 'clock_domain', 'clock_revision',
+                                                        'native_time', 'runtime_time_before', 'runtime_time_after',
+                                                        'clock_resolution', 'source_age')},
+                         {'session': 3, 'generation': 4, 'clock_domain': 2, 'clock_revision': 9, 'native_time': -5,
+                          'runtime_time_before': 100, 'runtime_time_after': 120, 'clock_resolution': 1,
+                          'source_age': -1})
+
 
 if __name__ == '__main__':
     unittest.main()

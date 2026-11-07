@@ -29,11 +29,57 @@ static DWORD RecordProcess(const std::filesystem::path& directory)
 	return 0;
 }
 
+static std::string ReadLog(const std::filesystem::path& path)
+{
+	std::ifstream log(path, std::ios::binary);
+	return {(std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>()};
+}
+
+// Independent: the connector starts the app outside its job. Contained: the job forbids breakaway, so
+// the app starts inside it and ends with it. Attached: a hand-started app is already registered, and
+// the connector uses it without starting another.
+enum class Expect
+{
+	Independent,
+	Contained,
+	Attached
+};
+
+static simxr::app::windows::Handle StartByHand(const std::filesystem::path& app, const std::filesystem::path& directory)
+{
+	auto command = simxr::app::windows::Quote(app.native()) + L" --mcp";
+	STARTUPINFOW startup{};
+	startup.cb = sizeof(startup);
+	PROCESS_INFORMATION process{};
+	CheckWindows(CreateProcessW(app.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+								nullptr, &startup, &process),
+				 "Start the app by hand");
+	simxr::app::windows::Handle child(process.hProcess), thread(process.hThread);
+	const auto deadline = std::chrono::steady_clock::now() + 15s;
+	while (RecordProcess(directory) != process.dwProcessId)
+	{
+		if (std::chrono::steady_clock::now() >= deadline || WaitForSingleObject(child.Get(), 0) == WAIT_OBJECT_0)
+		{
+			TerminateProcess(child.Get(), 1);
+			throw std::runtime_error("An app hand-started with --mcp did not register for MCP");
+		}
+		std::this_thread::sleep_for(25ms);
+	}
+	return child;
+}
+
 static void RunCase(const std::filesystem::path& connector, const std::filesystem::path& app,
-					const std::filesystem::path& directory, DWORD limits, bool shouldStart)
+					const std::filesystem::path& directory, DWORD limits, Expect expect)
 {
 	using simxr::app::windows::Handle;
 	CheckWindows(SetEnvironmentVariableW(L"SIMXR_MCP_DISCOVERY_DIR", directory.c_str()), "Set discovery directory");
+	Handle handStarted;
+	DWORD handPid = 0;
+	if (expect == Expect::Attached)
+	{
+		handStarted = StartByHand(app, directory);
+		handPid = GetProcessId(handStarted.Get());
+	}
 	Handle job(CreateJobObjectW(nullptr, nullptr));
 	if (!job.Get())
 		throw simxr::app::windows::Error("Create test job");
@@ -81,41 +127,49 @@ static void RunCase(const std::filesystem::path& connector, const std::filesyste
 		DWORD written = 0;
 		const auto sent =
 			WriteFile(writer.Get(), initialize.data(), static_cast<DWORD>(initialize.size()), &written, nullptr);
-		if (!sent && shouldStart)
+		if (!sent)
 			throw simxr::app::windows::Error("Initialize test connector");
-		if (sent)
-			Require(written == initialize.size(), "Write complete test initialization");
+		Require(written == initialize.size(), "Write complete test initialization");
 		const auto deadline = std::chrono::steady_clock::now() + 15s;
 		DWORD pid = 0;
 		while (std::chrono::steady_clock::now() < deadline)
 		{
 			pid = RecordProcess(directory);
-			if (pid || WaitForSingleObject(child.Get(), 0) == WAIT_OBJECT_0)
+			if ((pid && pid != handPid) || WaitForSingleObject(child.Get(), 0) == WAIT_OBJECT_0)
+				break;
+			if (expect == Expect::Attached && ReadLog(logPath).find("\"result\"") != std::string::npos)
 				break;
 			std::this_thread::sleep_for(25ms);
 		}
-		if (!shouldStart)
+		if (expect == Expect::Attached)
 		{
-			Require(!pid && WaitForSingleObject(child.Get(), 0) == WAIT_OBJECT_0,
-					"A job without breakaway must reject automatic startup");
-			DWORD exitCode = 0;
-			CheckWindows(GetExitCodeProcess(child.Get(), &exitCode), "Read rejected connector exit");
-			Require(exitCode != 0, "Disallowed job must report startup failure");
-			return;
+			if (pid != handPid || ReadLog(logPath).find("\"result\"") == std::string::npos)
+				throw std::runtime_error("The connector must initialize through the hand-started app: " +
+										 ReadLog(logPath));
+			Require(WaitForSingleObject(child.Get(), 0) == WAIT_TIMEOUT, "The attached connector keeps running");
+			appProcess = std::move(handStarted);
 		}
-		if (!pid)
+		else
 		{
-			std::ifstream log(logPath, std::ios::binary);
-			const std::string detail((std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>());
-			throw std::runtime_error("MCP app did not start in " + simxr::app::PathText(directory.filename()) + ": " +
-									 detail);
+			if (!pid)
+				throw std::runtime_error("MCP app did not start in " + simxr::app::PathText(directory.filename()) +
+										 ": " + ReadLog(logPath));
+			appProcess = Handle(OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid));
+			if (!appProcess.Get())
+				throw simxr::app::windows::Error("Open test MCP app");
 		}
-		appProcess = Handle(OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid));
-		if (!appProcess.Get())
-			throw simxr::app::windows::Error("Open test MCP app");
 		Require(WaitForSingleObject(appProcess.Get(), 0) == WAIT_TIMEOUT, "MCP app is alive");
+		if (expect == Expect::Contained)
+			Require(ReadLog(logPath).find("forbids breakaway") != std::string::npos,
+					"A contained start must say the app closes with its client");
 		job = Handle();
 		Require(WaitForSingleObject(child.Get(), 10000) == WAIT_OBJECT_0, "Closing the job terminates the connector");
+		if (expect == Expect::Contained)
+		{
+			Require(WaitForSingleObject(appProcess.Get(), 10000) == WAIT_OBJECT_0,
+					"An app started inside the client's job closes with it");
+			return;
+		}
 		Require(WaitForSingleObject(appProcess.Get(), 0) == WAIT_TIMEOUT, "MCP app survives its client's job shutdown");
 		CheckWindows(TerminateProcess(appProcess.Get(), 1), "Terminate isolated test app");
 		Require(WaitForSingleObject(appProcess.Get(), 10000) == WAIT_OBJECT_0, "Test app exits");
@@ -126,6 +180,11 @@ static void RunCase(const std::filesystem::path& connector, const std::filesyste
 		{
 			TerminateProcess(appProcess.Get(), 1);
 			WaitForSingleObject(appProcess.Get(), 10000);
+		}
+		if (handStarted.Get())
+		{
+			TerminateProcess(handStarted.Get(), 1);
+			WaitForSingleObject(handStarted.Get(), 10000);
 		}
 		TerminateProcess(child.Get(), 1);
 		WaitForSingleObject(child.Get(), 10000);
@@ -140,10 +199,11 @@ int wmain(int argc, wchar_t** argv)
 	try
 	{
 		const std::filesystem::path connector(argv[1]), app(argv[2]), root(argv[3]);
-		RunCase(connector, app, root / L"breakaway", JOB_OBJECT_LIMIT_BREAKAWAY_OK, true);
-		RunCase(connector, app, root / L"silent-breakaway", JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK, true);
-		RunCase(connector, app, root / L"no-breakaway", 0, false);
-		std::puts("PASS Windows job breakaway, silent breakaway and explicit refusal");
+		RunCase(connector, app, root / L"breakaway", JOB_OBJECT_LIMIT_BREAKAWAY_OK, Expect::Independent);
+		RunCase(connector, app, root / L"silent-breakaway", JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK, Expect::Independent);
+		RunCase(connector, app, root / L"no-breakaway", 0, Expect::Contained);
+		RunCase(connector, app, root / L"hand-started", 0, Expect::Attached);
+		std::puts("PASS Windows job breakaway, silent breakaway, contained start and attach to a hand-started app");
 		return 0;
 	}
 	catch (const std::exception& error)

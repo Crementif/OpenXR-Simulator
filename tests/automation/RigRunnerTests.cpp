@@ -8,6 +8,7 @@
 #include "control/ControlSchema.h"
 #include "control/ExportReader.h"
 #include "control/ControlService.h"
+#include "control/ImageInspection.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 #include "math/Math.h"
@@ -914,6 +915,93 @@ void CheckTemporaryResourceCleanup()
 	}
 }
 
+void CheckExportEncoding()
+{
+	const auto directory =
+		std::filesystem::temp_directory_path() /
+		("simxr-export-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	Require(std::filesystem::create_directory(directory), "Create private export directory");
+	// Two 2x1 BGRA layers: left eye blue then green, right eye red then white.
+	const std::vector<std::byte> pixels{std::byte{255}, std::byte{0},	std::byte{0},	std::byte{255},
+										std::byte{0},	std::byte{255}, std::byte{0},	std::byte{255},
+										std::byte{0},	std::byte{0},	std::byte{255}, std::byte{255},
+										std::byte{255}, std::byte{255}, std::byte{255}, std::byte{255}};
+	wire::ImageDescription description;
+	description.format = 44;
+	description.width = 2;
+	description.height = 1;
+	description.arrayLayers = 2;
+	automation::RigRunner runner([&](auto opcode, auto fields) {
+		wire::Message request, response;
+		request.fields = std::move(fields);
+		response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+		switch (opcode)
+		{
+		case wire::OpCode::RetainImage:
+			response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
+			break;
+		case wire::OpCode::StartExport:
+			response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
+			break;
+		case wire::OpCode::ExportInfo:
+			response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
+			response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, pixels.size()));
+			response.fields.push_back(wire::EncodeImageDescription(description));
+			break;
+		case wire::OpCode::ReadExport:
+		{
+			const auto offset = *request.Find(wire::tag::Offset)->AsU64();
+			response.fields.push_back(wire::Field::U64(wire::tag::Offset, offset));
+			response.fields.push_back(wire::Field::Bytes(
+				wire::tag::Bytes, std::vector(pixels.begin() + static_cast<std::ptrdiff_t>(offset), pixels.end())));
+			response.fields.push_back(wire::Field::Bool(wire::tag::End, true));
+			break;
+		}
+		case wire::OpCode::ReleaseImage:
+		case wire::OpCode::ReleaseExport:
+		case wire::OpCode::Status:
+		case wire::OpCode::ReleaseControl:
+			break;
+		default:
+			throw std::runtime_error("Unexpected export test operation");
+		}
+		return response;
+	});
+	const auto base = directory.generic_string();
+	automation::RigOptions options;
+	options.session = wire::ControlSessionId{1};
+	options.generation = 1;
+	options.source = "local raw = simxr.export('7', '" + base + "/eyes.rgba')\n"
+					 "local png = simxr.export('7', '" + base + "/eyes.PNG')\n"
+					 "simxr.checkpoint('shape', raw.width == 2 and raw.height == 1 and raw.layers == 2 and "
+					 "raw.format == 44 and raw.bytes_per_pixel == 4 and raw.bytes == '16' and raw.encoding == 'raw' and "
+					 "png.encoding == 'png' and png.layers == 2)";
+	runner.Start(std::move(options));
+	runner.Join();
+	const auto snapshot = runner.Snapshot();
+	std::error_code ignored;
+	const auto read = [&](const char* name) {
+		std::ifstream stream(directory / name, std::ios::binary);
+		return std::string((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+	};
+	const auto raw = read("eyes.rgba"), png = read("eyes.PNG");
+	std::filesystem::remove_all(directory, ignored);
+	Require(snapshot.phase == automation::RigPhase::Complete && snapshot.checkpoints.size() == 1 &&
+				snapshot.checkpoints[0].passed,
+			"Export did not report its width, height, layers and format");
+	Require(raw.size() == pixels.size() && !std::memcmp(raw.data(), pixels.data(), raw.size()),
+			"Raw export changed the exported bytes");
+	const auto be32 = [&](std::size_t offset) {
+		return (std::uint32_t{static_cast<unsigned char>(png[offset])} << 24) |
+			   (std::uint32_t{static_cast<unsigned char>(png[offset + 1])} << 16) |
+			   (std::uint32_t{static_cast<unsigned char>(png[offset + 2])} << 8) |
+			   std::uint32_t{static_cast<unsigned char>(png[offset + 3])};
+	};
+	Require(png.size() > 24 && png.starts_with("\x89PNG\r\n\x1a\n") && png.substr(12, 4) == "IHDR" && be32(16) == 4 &&
+				be32(20) == 1,
+			"PNG export must be a 4x1 PNG with the two eyes side by side");
+}
+
 void CheckImageWindowCleanup()
 {
 	for (int mode = 0; mode < 4; ++mode)
@@ -1322,6 +1410,7 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 		CheckReportText();
 		CheckExportReader();
 		CheckTemporaryResourceCleanup();
+		CheckExportEncoding();
 		CheckImageWindowCleanup();
 		CheckLeaseRenewal();
 		CheckInputRecording();

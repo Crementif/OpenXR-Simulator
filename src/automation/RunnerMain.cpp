@@ -90,7 +90,8 @@ int simxr::automation::RunRunner(int argc, char** argv)
 			if (flag == "--help")
 			{
 				std::puts("Usage: simxr_runner (--pid ID | --socket PATH) --rig PATH [--session ID --generation ID] "
-						  "[--seed N] [--deadline-ms N] [--json PATH] [--junit PATH]");
+						  "[--seed N] [--deadline-ms N] [--json PATH] [--junit PATH]\n"
+						  "--deadline-ms defaults to 30000 (30 s); the limit is 3600000 (one hour).");
 				return 0;
 			}
 			if (flag != "--pid" && flag != "--socket" && flag != "--rig" && flag != "--session" &&

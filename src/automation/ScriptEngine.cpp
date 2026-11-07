@@ -359,10 +359,29 @@ int ScriptEngine::ImageHistory(lua_State* state)
 	return 1;
 }
 
+static int PushExport(lua_State* state, const ScriptExport& image)
+{
+	lua_newtable(state);
+	lua_pushinteger(state, static_cast<int>(image.width));
+	lua_setfield(state, -2, "width");
+	lua_pushinteger(state, static_cast<int>(image.height));
+	lua_setfield(state, -2, "height");
+	lua_pushinteger(state, static_cast<int>(image.layers));
+	lua_setfield(state, -2, "layers");
+	lua_pushinteger(state, static_cast<int>(image.format));
+	lua_setfield(state, -2, "format");
+	lua_pushinteger(state, static_cast<int>(image.bytesPerPixel));
+	lua_setfield(state, -2, "bytes_per_pixel");
+	PushIntegerField(state, "bytes", image.bytes);
+	lua_pushstring(state, image.png ? "png" : "raw");
+	lua_setfield(state, -2, "encoding");
+	return 1;
+}
+
 int ScriptEngine::ExportHistory(lua_State* state)
 {
-	m_runtime.ExportHistory(Integer(state, 1), String(state, 2), HistorySlice(state, 3), HistoryTarget(state, 4));
-	return 0;
+	return PushExport(state, m_runtime.ExportHistory(Integer(state, 1), String(state, 2), HistorySlice(state, 3),
+													 HistoryTarget(state, 4)));
 }
 
 int ScriptEngine::BeginImageWindow(lua_State* state)
@@ -381,8 +400,8 @@ int ScriptEngine::ImageWindow(lua_State* state)
 
 int ScriptEngine::ExportWindowImage(lua_State* state)
 {
-	m_runtime.ExportWindowImage(Integer(state, 1), Integer(state, 2), String(state, 3), HistorySlice(state, 4));
-	return 0;
+	return PushExport(state, m_runtime.ExportWindowImage(Integer(state, 1), Integer(state, 2), String(state, 3),
+														 HistorySlice(state, 4)));
 }
 
 int ScriptEngine::ReleaseImageWindow(lua_State* state)
@@ -472,8 +491,7 @@ int ScriptEngine::Export(lua_State* state)
 		if (selectSlice)
 			arraySlice = IndexField(state, 3, "array_slice", 0);
 	}
-	m_runtime.Export(Integer(state, 1), String(state, 2), target, arraySlice);
-	return 0;
+	return PushExport(state, m_runtime.Export(Integer(state, 1), String(state, 2), target, arraySlice));
 }
 
 int ScriptEngine::ReleaseCapture(lua_State* state)

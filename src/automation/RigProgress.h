@@ -41,6 +41,7 @@ private:
 	bool m_paused = false;
 	std::size_t m_permits = 0;
 	std::chrono::steady_clock::time_point m_deadline;
+	std::chrono::milliseconds m_budget{};
 	RigSnapshot m_result;
 };
 } // namespace simxr::automation

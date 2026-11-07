@@ -3,9 +3,9 @@
     Build and install the OpenXR Simulator runtime and companion.
 
 .DESCRIPTION
-    Installs the runtime, Vulkan companion, rig runner, relative manifest and
-    activate/deactivate scripts into the target folder. Only build output lands
-    there, never source.
+    Installs the runtime, Vulkan companion, MCP connector, rig runner, Python SDK,
+    relative manifest and activate/deactivate scripts into the target folder.
+    Only build output and the SDK land there, never other source.
 
     The dll and scripts are symlinked, so a rebuild is live in BetterVR without
     reinstalling. Creating symlinks needs Developer Mode (or an elevated shell);
@@ -88,9 +88,40 @@ function Install-Artifact {
     $script:copied++
 }
 
-foreach ($artifact in 'openxr_simulator.dll', 'simxr_companion.exe', 'simxr_runner.exe') {
+function Install-Directory {
+    param([string]$Source, [string]$Dest)
+
+    $source = (Resolve-Path -LiteralPath $Source).Path
+    $item = Get-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+    if ($item) {
+        # Recursing into a directory link would delete the source tree.
+        try {
+            if ($item.LinkType) { $item.Delete() }
+            else { Remove-Item -LiteralPath $Dest -Recurse -Force -ErrorAction Stop }
+        } catch { throw "Cannot replace $Dest -- a running process still has it open. Close it and rebuild." }
+    }
+    New-Item -ItemType Directory -Force (Split-Path $Dest -Parent) | Out-Null
+
+    if (-not $script:Copy) {
+        try {
+            New-Item -ItemType SymbolicLink -Path $Dest -Target $source -ErrorAction Stop | Out-Null
+            $script:linked++
+            return
+        } catch {
+            # No SeCreateSymbolicLinkPrivilege: fall back rather than fail the build.
+        }
+    }
+    Copy-Item -LiteralPath $source -Destination $Dest -Recurse -Force
+    Get-ChildItem -LiteralPath $Dest -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
+    $script:copied++
+}
+
+# The companion looks for the MCP connector beside itself.
+foreach ($artifact in 'openxr_simulator.dll', 'simxr_companion.exe', 'simxr_mcp_connector.exe', 'simxr_runner.exe') {
     Install-Artifact (Join-Path $output $artifact) $InstallTo
 }
+$sdk = Join-Path $InstallTo 'share\simxr\sdk\python'
+Install-Directory (Join-Path $root 'sdk\python') $sdk
 $fonts = Join-Path $InstallTo 'fonts'
 $fontLicense = Join-Path $InstallTo 'share\licenses\simxr_companion'
 New-Item -ItemType Directory -Force $fonts, $fontLicense | Out-Null
@@ -119,6 +150,8 @@ if ($linked -gt 0 -and $copied -eq 0) {
 }
 Write-Host ''
 Write-Host "Start the companion: $(Join-Path $InstallTo 'simxr_companion.exe')"
+Write-Host "MCP client config:   $(Join-Path $InstallTo 'simxr_mcp_connector.exe') --print-config"
+Write-Host "Python SDK:          pip install `"$sdk`"  (or put it on PYTHONPATH)"
 Write-Host 'Use it per-process (leaves the machine-wide runtime alone):'
 Write-Host "  `$env:XR_RUNTIME_JSON = '$(Join-Path $InstallTo 'openxr_simulator.json')'"
 Write-Host 'or machine-wide with .\activate_simulator.ps1 in that folder.'
