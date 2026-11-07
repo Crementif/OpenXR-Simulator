@@ -14,11 +14,15 @@ std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCap
 	static constexpr std::array<std::string_view, 2> s_calibrationCommands{
 		"xrSuggestBodyTrackingCalibrationOverrideMETA", "xrResetBodyTrackingCalibrationMETA"};
 	static constexpr std::array<std::string_view, 1> s_fidelityCommands{"xrRequestBodyTrackingFidelityMETA"};
+	static constexpr std::array<std::string_view, 3> s_handCommands{"xrCreateHandTrackerEXT", "xrDestroyHandTrackerEXT",
+																	"xrLocateHandJointsEXT"};
 	static constexpr std::array<std::string_view, 3> s_refreshCommands{
 		"xrEnumerateDisplayRefreshRatesFB", "xrGetDisplayRefreshRateFB", "xrRequestDisplayRefreshRateFB"};
 	static constexpr std::array s_fbDependency{ExtensionDependency{XR_FB_BODY_TRACKING_EXTENSION_NAME}};
 	static constexpr std::array s_coreDependency{ExtensionDependency{{}, XR_MAKE_VERSION(1, 0, 0)}};
 	static constexpr std::array s_dependsFB{DependencyClause{s_fbDependency}};
+	static constexpr std::array s_handDependency{ExtensionDependency{XR_EXT_HAND_TRACKING_EXTENSION_NAME}};
+	static constexpr std::array s_dependsHand{DependencyClause{s_handDependency}};
 	static constexpr std::array s_dependsFidelity{DependencyClause{s_fbDependency}, DependencyClause{s_coreDependency}};
 	static constexpr std::array s_quadDependency{ExtensionDependency{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME},
 												 ExtensionDependency{{}, XR_MAKE_VERSION(1, 1, 0)}};
@@ -37,6 +41,11 @@ std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCap
 							XR_META_body_tracking_calibration_SPEC_VERSION, s_calibrationCommands, s_dependsFB},
 		ExtensionDefinition{XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME, XR_META_body_tracking_fidelity_SPEC_VERSION,
 							s_fidelityCommands, s_dependsFidelity},
+		ExtensionDefinition{XR_EXT_HAND_TRACKING_EXTENSION_NAME, XR_EXT_hand_tracking_SPEC_VERSION, s_handCommands},
+		ExtensionDefinition{XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME,
+							XR_EXT_hand_tracking_data_source_SPEC_VERSION,
+							{},
+							s_dependsHand},
 		ExtensionDefinition{XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME, XR_FB_display_refresh_rate_SPEC_VERSION,
 							s_refreshCommands},
 		ExtensionDefinition{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME, XR_VARJO_quad_views_SPEC_VERSION, {}},
@@ -51,7 +60,7 @@ XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProp
 {
 	if (!properties || properties->type != XR_TYPE_SYSTEM_PROPERTIES)
 		return XR_ERROR_VALIDATION_FAILURE;
-	std::array<XrStructureType, 7> known{};
+	std::array<XrStructureType, 8> known{};
 	std::size_t knownCount = 0;
 	if (enabled.Contains(XR_FB_BODY_TRACKING_EXTENSION_NAME))
 		known[knownCount++] = XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_FB;
@@ -65,6 +74,8 @@ XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProp
 		known[knownCount++] = XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FIDELITY_META;
 	if (enabled.Contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
 		known[knownCount++] = XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT;
+	if (enabled.Contains(XR_EXT_HAND_TRACKING_EXTENSION_NAME))
+		known[knownCount++] = XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT;
 	if (enabled.Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME))
 		known[knownCount++] = XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO;
 	StructureChain chain(properties->next);
@@ -80,6 +91,11 @@ XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProp
 			if (auto output = const_cast<XrSystemFoveatedRenderingPropertiesVARJO*>(
 					chain.Find<XrSystemFoveatedRenderingPropertiesVARJO>(type)))
 				output->supportsFoveatedRendering = XR_TRUE;
+			break;
+		case XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT:
+			if (auto output = const_cast<XrSystemHandTrackingPropertiesEXT*>(
+					chain.Find<XrSystemHandTrackingPropertiesEXT>(type)))
+				output->supportsHandTracking = XR_TRUE;
 			break;
 		case XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT:
 			if (auto output = const_cast<XrSystemEyeGazeInteractionPropertiesEXT*>(

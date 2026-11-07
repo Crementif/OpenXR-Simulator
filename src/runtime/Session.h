@@ -11,6 +11,7 @@
 #include "runtime/SessionInteraction.h"
 #include "runtime/SessionPublication.h"
 #include "runtime/extensions/BodyTracking.h"
+#include "runtime/extensions/HandTracking.h"
 #include "simulation/ActionRegistry.h"
 #include "simulation/HapticState.h"
 #include "simulation/InputState.h"
@@ -121,6 +122,7 @@ public:
 	TrackingSystem& Tracking();
 	SpaceSystem& Spaces();
 	BodyTracking& Body();
+	HandTracking& Hands();
 	const EnabledExtensions& Extensions() const;
 
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings = {}, FrameId frame = {});
@@ -183,6 +185,7 @@ private:
 	SessionPublication m_publication;
 	SpaceSystem m_spaces;
 	BodyTracking m_body;
+	HandTracking m_hands;
 	std::uint64_t m_revision = 0;
 	bool m_liveInputFailed = false;
 	std::optional<CommandSource> m_externalDisplaySource;

@@ -2280,6 +2280,32 @@ static XrResult XRAPI_PTR xrRequestBodyTrackingFidelityMETA_runtime(XrBodyTracke
 	return core->Body().RequestFidelityFB(tracker, fidelity);
 }
 
+static XrResult XRAPI_PTR xrCreateHandTrackerEXT_runtime(XrSession handle, const XrHandTrackerCreateInfoEXT* info,
+														 XrHandTrackerEXT* output)
+{
+	auto core = rt::RetainSession(handle);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	return core->Hands().Create(info, output);
+}
+
+static XrResult XRAPI_PTR xrDestroyHandTrackerEXT_runtime(XrHandTrackerEXT tracker)
+{
+	auto core = rt::RetainSession();
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	return core->Hands().Destroy(tracker);
+}
+
+static XrResult XRAPI_PTR xrLocateHandJointsEXT_runtime(XrHandTrackerEXT tracker, const XrHandJointsLocateInfoEXT* info,
+														XrHandJointLocationsEXT* output)
+{
+	auto core = rt::RetainSession();
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	return core->Hands().Locate(tracker, info, output);
+}
+
 static XrResult XRAPI_PTR xrConvertWin32PerformanceCounterToTimeKHR_runtime(XrInstance instance,
 																			const LARGE_INTEGER* performanceCounter,
 																			XrTime* time)
@@ -2358,6 +2384,12 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrResetBodyTrackingCalibrationMETA_runtime>::Invoke)},
 	{"xrRequestBodyTrackingFidelityMETA",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrRequestBodyTrackingFidelityMETA_runtime>::Invoke)},
+	{"xrCreateHandTrackerEXT",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateHandTrackerEXT_runtime>::Invoke)},
+	{"xrDestroyHandTrackerEXT",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroyHandTrackerEXT_runtime>::Invoke)},
+	{"xrLocateHandJointsEXT",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrLocateHandJointsEXT_runtime>::Invoke)},
 	{"xrCreateSession", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateSession_runtime>::Invoke)},
 	{"xrDestroySession", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroySession_runtime>::Invoke)},
 	{"xrEnumerateSwapchainFormats",

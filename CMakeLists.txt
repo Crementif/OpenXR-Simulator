@@ -73,6 +73,7 @@ add_library(simxr_core STATIC
     src/runtime/validation/StructureChain.cpp
     src/simulation/HapticState.cpp
     src/runtime/extensions/BodyTracking.cpp
+    src/runtime/extensions/HandTracking.cpp
     src/simulation/BodyModel.cpp
     src/simulation/HeadsetProfiles.cpp
     src/simulation/PoseSequence.cpp
@@ -618,6 +619,8 @@ if(BUILD_TESTING)
     target_link_libraries(interaction_devices_tests PRIVATE simxr_core)
     simxr_add_test(body_tracking_tests tests/runtime/extensions/BodyTrackingTests.cpp body_tracking)
     target_link_libraries(body_tracking_tests PRIVATE simxr_core)
+    simxr_add_test(hand_tracking_tests tests/runtime/extensions/HandTrackingTests.cpp hand_tracking)
+    target_link_libraries(hand_tracking_tests PRIVATE simxr_core)
     simxr_add_test(body_model_tests tests/simulation/BodyModelTests.cpp body_model)
     target_link_libraries(body_model_tests PRIVATE simxr_core)
     simxr_add_test(clock_conversion_tests tests/platform/ClockConversionTests.cpp clock_conversion)

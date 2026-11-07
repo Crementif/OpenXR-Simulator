@@ -38,7 +38,8 @@ Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> cl
 		  [this](XrAction action, XrPath path) { return m_publication.ValidatePoseAction(action, path); },
 		  &instance.Events(), instance.Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME),
 		  instance.Extensions().Core11()),
-	  m_body(handle, m_publication.Tracking(), m_spaces, instance.Extensions())
+	  m_body(handle, m_publication.Tracking(), m_spaces, instance.Extensions()),
+	  m_hands(handle, m_publication.Tracking(), m_publication.Input(), m_spaces, instance.Extensions())
 {
 	if (handle == XR_NULL_HANDLE)
 		throw std::invalid_argument("Session requires a handle");
@@ -722,6 +723,11 @@ BodyTracking& Session::Body()
 	return m_body;
 }
 
+HandTracking& Session::Hands()
+{
+	return m_hands;
+}
+
 const EnabledExtensions& Session::Extensions() const
 {
 	return m_instance.Extensions();
@@ -934,6 +940,7 @@ void Session::Close(std::optional<SessionGeneration> expectedGeneration)
 	m_captures.Stop();
 	m_interaction.LoseFocus(m_state.time);
 	m_body.Clear();
+	m_hands.Clear();
 	m_spaces.Clear();
 	m_instance.Events().RemoveSession(m_handle);
 	m_liveInputWorker.request_stop();

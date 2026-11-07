@@ -1009,6 +1009,35 @@ static XrResult XRAPI_PTR RunXrRequestBodyTrackingFidelityMETA(XrBodyTrackerFB t
 	return session->core->Body().RequestFidelityFB(tracker, fidelity);
 }
 
+static XrResult XRAPI_PTR RunXrCreateHandTrackerEXT(XrSession handle, const XrHandTrackerCreateInfoEXT* info,
+													XrHandTrackerEXT* output)
+{
+	std::lock_guard<std::recursive_mutex> lock(Host().Mutex());
+	auto session = Host().FindSession(handle);
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	return session->core->Hands().Create(info, output);
+}
+
+static XrResult XRAPI_PTR RunXrDestroyHandTrackerEXT(XrHandTrackerEXT tracker)
+{
+	std::lock_guard<std::recursive_mutex> lock(Host().Mutex());
+	auto session = Host().CurrentSession();
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	return session->core->Hands().Destroy(tracker);
+}
+
+static XrResult XRAPI_PTR RunXrLocateHandJointsEXT(XrHandTrackerEXT tracker, const XrHandJointsLocateInfoEXT* info,
+												   XrHandJointLocationsEXT* output)
+{
+	std::lock_guard<std::recursive_mutex> lock(Host().Mutex());
+	auto session = Host().CurrentSession();
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	return session->core->Hands().Locate(tracker, info, output);
+}
+
 static XrResult XRAPI_PTR RunXrDestroyInstance(XrInstance iHandle)
 {
 	return Host().DestroyInstance(iHandle);
@@ -1119,6 +1148,9 @@ static XrResult XRAPI_PTR RunXrGetInstanceProcAddr(XrInstance iHandle, const cha
 		ENTRY(SuggestBodyTrackingCalibrationOverrideMETA),
 		ENTRY(ResetBodyTrackingCalibrationMETA),
 		ENTRY(RequestBodyTrackingFidelityMETA),
+		ENTRY(CreateHandTrackerEXT),
+		ENTRY(DestroyHandTrackerEXT),
+		ENTRY(LocateHandJointsEXT),
 		ENTRY(CreateSession),
 		ENTRY(DestroySession),
 		ENTRY(BeginSession),

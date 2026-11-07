@@ -29,8 +29,8 @@ struct Properties
 	XrSystemBodyTrackingPropertiesBD bd{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD};
 	XrSystemPropertiesBodyTrackingCalibrationMETA calibration{XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_CALIBRATION_META};
 	XrSystemPropertiesBodyTrackingFidelityMETA fidelity{XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FIDELITY_META};
-	XrBaseOutStructure unknown{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, nullptr};
-	XrBaseOutStructure unknownTail{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, nullptr};
+	XrBaseOutStructure unknown{XR_TYPE_SYSTEM_FACIAL_TRACKING_PROPERTIES_HTC, nullptr};
+	XrBaseOutStructure unknownTail{XR_TYPE_SYSTEM_FACIAL_TRACKING_PROPERTIES_HTC, nullptr};
 
 	Properties()
 	{
@@ -77,6 +77,11 @@ int main()
 		ExpectedExtension{XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME,
 						  XR_META_body_tracking_fidelity_SPEC_VERSION,
 						  {"xrRequestBodyTrackingFidelityMETA"}},
+		ExpectedExtension{XR_EXT_HAND_TRACKING_EXTENSION_NAME,
+						  XR_EXT_hand_tracking_SPEC_VERSION,
+						  {"xrCreateHandTrackerEXT", "xrDestroyHandTrackerEXT", "xrLocateHandJointsEXT"}},
+		ExpectedExtension{
+			XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME, XR_EXT_hand_tracking_data_source_SPEC_VERSION, {}},
 		ExpectedExtension{
 			XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME,
 			XR_FB_display_refresh_rate_SPEC_VERSION,
@@ -104,20 +109,22 @@ int main()
 			entries.push_back({command, Stub});
 		}
 	}
-	Require(uniqueCommands.size() == 14 && !registry.HasCommand("xrGetBodyTrackingStateBD"),
+	Require(uniqueCommands.size() == 17 && !registry.HasCommand("xrGetBodyTrackingStateBD"),
 			"Unsupported auxiliary commands advertised");
 	EnabledExtensions all(names), none;
 	Require(registry.Validate(names, XR_MAKE_VERSION(1, 0, 27)) == XR_SUCCESS, "Valid simulation extension set");
 	for (const auto& extension : expected)
 	{
 		const std::array requested{extension.name};
-		bool dependent = std::string_view(extension.name).starts_with("XR_META_");
+		const bool handDependent = std::string_view(extension.name) == XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME;
+		bool dependent = std::string_view(extension.name).starts_with("XR_META_") || handDependent;
 		Require(registry.Validate(requested, XR_MAKE_VERSION(1, 0, 27)) ==
 					(dependent ? XR_ERROR_EXTENSION_NOT_PRESENT : XR_SUCCESS),
 				"FB extension dependency");
 		if (dependent)
 		{
-			const std::array complete{XR_FB_BODY_TRACKING_EXTENSION_NAME, extension.name};
+			const std::array complete{
+				handDependent ? XR_EXT_HAND_TRACKING_EXTENSION_NAME : XR_FB_BODY_TRACKING_EXTENSION_NAME, extension.name};
 			Require(registry.Validate(complete, XR_MAKE_VERSION(1, 0, 27)) == XR_SUCCESS, "Satisfied META dependency");
 		}
 	}
@@ -126,13 +133,13 @@ int main()
 	Require(registry.Validate(fidelityWithoutCore, XR_MAKE_VERSION(0, 9, 0)) == XR_ERROR_EXTENSION_NOT_PRESENT,
 			"Fidelity AND core1.0 dependency");
 	std::uint32_t count = 0;
-	Require(registry.Enumerate(0, &count, nullptr) == XR_SUCCESS && count == 8, "Metadata count enumeration");
-	std::array<XrExtensionProperties, 8> properties{};
+	Require(registry.Enumerate(0, &count, nullptr) == XR_SUCCESS && count == 10, "Metadata count enumeration");
+	std::array<XrExtensionProperties, 10> properties{};
 	for (auto& output : properties)
 		output.type = XR_TYPE_EXTENSION_PROPERTIES;
-	Require(registry.Enumerate(7, &count, properties.data()) == XR_ERROR_SIZE_INSUFFICIENT && count == 8,
+	Require(registry.Enumerate(9, &count, properties.data()) == XR_ERROR_SIZE_INSUFFICIENT && count == 10,
 			"Metadata enumeration capacity");
-	Require(registry.Enumerate(8, &count, properties.data()) == XR_SUCCESS, "Metadata enumeration");
+	Require(registry.Enumerate(10, &count, properties.data()) == XR_SUCCESS, "Metadata enumeration");
 	for (const auto& property : properties)
 	{
 		auto found = std::find_if(expected.begin(), expected.end(), [&](const auto& value) {
@@ -160,6 +167,12 @@ int main()
 			"Disabled gaze property consumed");
 	Require(FillSimulationProperties(all, &gazeSystem) == XR_SUCCESS && gaze.supportsEyeGazeInteraction == XR_TRUE,
 			"Enabled gaze capability");
+	XrSystemHandTrackingPropertiesEXT hands{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, nullptr, 42};
+	XrSystemProperties handSystem{XR_TYPE_SYSTEM_PROPERTIES, &hands};
+	Require(FillSimulationProperties(none, &handSystem) == XR_SUCCESS && hands.supportsHandTracking == 42,
+			"Disabled hand tracking property consumed");
+	Require(FillSimulationProperties(all, &handSystem) == XR_SUCCESS && hands.supportsHandTracking == XR_TRUE,
+			"Enabled hand tracking capability");
 	XrSystemEyeGazeInteractionPropertiesEXT duplicateGaze{XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT};
 	gaze.next = &duplicateGaze;
 	Require(FillSimulationProperties(all, &gazeSystem) == XR_ERROR_VALIDATION_FAILURE, "Duplicate gaze properties");
