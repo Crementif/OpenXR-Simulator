@@ -325,9 +325,11 @@ std::optional<HeadsetPageRequest> PhysicalHeadsetPage::Draw(const HeadsetHostSna
 		if (m_calibrateLocal)
 			summary += ", LOCAL height";
 		ImGui::SameLine();
+		ImGui::PushFont(nullptr, ImGui::GetFontSize() * .85f);
 		ImGui::PushStyleColor(ImGuiCol_Text, theme::TextDim);
 		ImGui::TextWrapped("%s", summary.c_str());
 		ImGui::PopStyleColor();
+		ImGui::PopFont();
 	}
 	else
 	{

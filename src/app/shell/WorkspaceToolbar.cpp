@@ -303,8 +303,8 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	const float mcpWidth =
 		mcp ? std::max(button, ImGui::CalcTextSize("MCP").x + style.FramePadding.x * 2) + style.ItemSpacing.x : 0;
 	const float actions = button * 2 + focus + style.ItemSpacing.x * 2 + mcpWidth;
-	const float reserved =
-		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
+	const float reserved = actions + style.FramePadding.x + style.ItemSpacing.x +
+						   (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
 	const float barHeight = ImGui::GetWindowHeight(), middle = std::max(0.0f, (barHeight - button) / 2);
 	ImGui::SetCursorPos({style.FramePadding.x, middle});
 	// The headset sits outside the apps, so it comes before them.
@@ -319,11 +319,15 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 		ImGui::GetWindowDrawList()->AddLine({divider.x, top + inset}, {divider.x, top + barHeight - inset},
 											theme::Line);
 		ImGui::Dummy({1, button});
-		// The tabs stand on the bar's bottom rule. The bar's trailing spacing must not make them scroll.
+		// The tabs share the icons' top and centre line and stand on the bar's bottom rule, the bar's last scale
+		// pixels. The bar's trailing spacing must not make them scroll.
 		ImGui::SameLine(0, style.ItemSpacing.x);
-		const float tabsHeight = barHeight - 6 * m_settings.scale;
-		ImGui::SetCursorPosY(barHeight - tabsHeight);
+		ImGui::SetCursorPosY(middle);
 		const float tabsWidth = std::max(1.f, ImGui::GetContentRegionAvail().x - reserved);
+		// A child's position and size are truncated to whole pixels, and the rule starts on the first row whose
+		// centre it covers.
+		const float ruleRow = std::ceil(ImGui::GetWindowPos().y + barHeight - m_settings.scale - .5f);
+		const float tabsHeight = ruleRow - std::floor(ImGui::GetCursorScreenPos().y);
 		ImGui::BeginChild("Applications", {tabsWidth, tabsHeight}, 0,
 						  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 		m_tabBar();

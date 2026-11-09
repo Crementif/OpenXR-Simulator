@@ -156,7 +156,10 @@ bool Section(const char* label, ImGuiTreeNodeFlags flags)
 	ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme::Fade(theme::Text, .08f));
 	flags |=
 		ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoAutoOpenOnLog;
+	// The arrow starts at the content edge like a SectionLabel.
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {0, ImGui::GetStyle().FramePadding.y});
 	const bool open = ImGui::TreeNodeEx(label, flags, "%s", Capitals(label).c_str());
+	ImGui::PopStyleVar();
 	ImGui::PopStyleColor(3);
 	ImGui::PopFont();
 	return open;

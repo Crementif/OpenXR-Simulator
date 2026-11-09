@@ -489,24 +489,35 @@ void ApplicationTabs::ApplyRequests()
 void ApplicationTabs::DrawBar()
 {
 	bool requestConfirmation = false;
-	// Tabs fill the bar's height as separate cards; the selected one is tinted and carries the accent.
 	const float scale = ImGui::GetFontSize() / 17, iconSize = ImGui::GetFrameHeight() * .6f;
-	const float padding = std::max(0.0f, (ImGui::GetContentRegionAvail().y - ImGui::GetFontSize()) / 2);
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {12 * scale, padding});
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, {6 * scale, ImGui::GetStyle().ItemInnerSpacing.y});
-	ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, theme::Radius * scale);
+	// A tab's text sits on the bar icons' centre line while its body reaches the bottom of the bar. ImGui sizes a tab
+	// around its text, so its own background is cleared and each body is drawn on a channel beneath the text.
+	const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {10 * scale, ImGui::GetStyle().FramePadding.y});
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, {4 * scale, ImGui::GetStyle().ItemInnerSpacing.y});
 	ImGui::PushStyleVar(ImGuiStyleVar_TabBarBorderSize, 0.0f);
-	ImGui::PushStyleVar(ImGuiStyleVar_TabBarOverlineSize, 2 * scale);
-	ImGui::PushStyleVar(ImGuiStyleVar_TabMinWidthBase, 64 * scale);
-	const auto selectedFill = theme::Mix(theme::SurfaceRaised, theme::Accent, .22f);
-	ImGui::PushStyleColor(ImGuiCol_Tab, theme::Surface);
-	ImGui::PushStyleColor(ImGuiCol_TabHovered, theme::SurfaceRaised);
-	ImGui::PushStyleColor(ImGuiCol_TabSelected, selectedFill);
-	ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, theme::Accent);
-	ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected, selectedFill);
-	ImGui::PushStyleColor(ImGuiCol_TabDimmedSelectedOverline, theme::Accent);
-	if (ImGui::BeginTabBar("Applications", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll |
-											   ImGuiTabBarFlags_DrawSelectedOverline))
+	ImGui::PushStyleVar(ImGuiStyleVar_TabBarOverlineSize, 0.0f);
+	for (const auto color :
+		 {ImGuiCol_Tab, ImGuiCol_TabHovered, ImGuiCol_TabSelected, ImGuiCol_TabDimmed, ImGuiCol_TabDimmedSelected})
+		ImGui::PushStyleColor(color, ImVec4{});
+	auto* draw = ImGui::GetWindowDrawList();
+	ImDrawListSplitter layers;
+	layers.Split(draw, 2);
+	layers.SetCurrentChannel(draw, 1);
+	const auto pill = [&](bool selected) {
+		const auto minimum = ImGui::GetItemRectMin();
+		const ImVec2 maximum{ImGui::GetItemRectMax().x, bottom};
+		const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+		const ImU32 fill = selected	 ? theme::Mix(theme::SurfaceRaised, theme::Accent, hovered ? .3f : .22f)
+						   : hovered ? theme::Mix(theme::SurfaceRaised, theme::Text, .1f)
+									 : theme::Surface;
+		layers.SetCurrentChannel(draw, 0);
+		draw->AddRectFilled(minimum, maximum, fill, 7 * scale, ImDrawFlags_RoundCornersTop);
+		if (selected)
+			draw->AddRectFilled({minimum.x, maximum.y - 2 * scale}, maximum, theme::Accent);
+		layers.SetCurrentChannel(draw, 1);
+	};
+	if (ImGui::BeginTabBar("Applications", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll))
 	{
 		for (const auto& tab : m_tabs)
 		{
@@ -551,6 +562,7 @@ void ApplicationTabs::DrawBar()
 			ImGui::PushStyleColor(ImGuiCol_Text, tab->id == m_active ? theme::Text : theme::TextDim);
 			const bool selected = ImGui::BeginTabItem(title.c_str(), &open, flags);
 			ImGui::PopStyleColor();
+			pill(tab->id == m_active);
 			if (status)
 			{
 				const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
@@ -587,11 +599,13 @@ void ApplicationTabs::DrawBar()
 			m_forceSelection = false;
 		if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing))
 			m_add = true;
+		pill(false);
 		ImGui::SetItemTooltip("Open another application");
 		ImGui::EndTabBar();
 	}
-	ImGui::PopStyleColor(6);
-	ImGui::PopStyleVar(6);
+	layers.Merge(draw);
+	ImGui::PopStyleColor(5);
+	ImGui::PopStyleVar(4);
 	if (requestConfirmation)
 		ImGui::OpenPopup("Close application tab");
 	if (ImGui::BeginPopupModal("Close application tab", nullptr, ImGuiWindowFlags_AlwaysAutoResize))

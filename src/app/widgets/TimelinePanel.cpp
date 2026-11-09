@@ -64,9 +64,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	// Left column: transport, then the lane names the canvas draws below it, or the Library.
 	const auto& style = ImGui::GetStyle();
 	const float button = ImGui::GetFrameHeight(), scale = ImGui::GetFontSize() / 16;
-	// Recording shows its elapsed time on the record button; room for it is kept so the lanes do not shift.
-	const float clock = ImGui::CalcTextSize("00:00").x + style.FramePadding.x;
-	const float transport = button * 6 + clock + style.ItemSpacing.x * 5;
+	const float transport = button * 6 + style.ItemSpacing.x * 5;
 	const bool drawer = shell.library && !folded;
 	const float timelineWidth = ImGui::GetContentRegionAvail().x;
 	const float header = std::max(transport + style.ItemSpacing.x * 2,
@@ -186,7 +184,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 					  static_cast<long long>(seconds % 60));
 	}
 	if (state.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording and save the take (Ctrl+R)", false,
-									 state.recordingStopping ? "Saving…" : elapsed, theme::Record)
+									 nullptr, theme::Record)
 						: IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
 	{
 		if (state.recording)
@@ -202,6 +200,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	if (IconButton("Timeline help", Icon::Help, "What the lanes, marks and keys mean"))
 		ImGui::OpenPopup("Timeline legend");
 	ImGui::EndGroup();
+	const std::string recordingTime = !state.recording ? "" : state.recordingStopping ? "Saving…" : elapsed;
 	DrawLegend();
 	if (!ImGui::GetIO().WantTextInput && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
 	{
@@ -291,6 +290,18 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	const auto gesture =
 		m_canvas.Draw(history, runtime.KeptPreviews(), runtime.PreviewCrop().value_or(ImVec4{0, 0, 1, 1}),
 					  state.time.following, state.time.following ? std::optional<double>{} : cursor, selectedRange);
+	if (!recordingTime.empty())
+	{
+		// The elapsed time sits on the ruler beside the transport, so the lanes keep their place while recording.
+		const auto size = ImGui::CalcTextSize(recordingTime.c_str());
+		const float pad = 6 * scale, height = ImGui::GetFontSize() + 4 * scale;
+		const ImVec2 minimum{cell.x + cell.width,
+							 cell.y + std::max(0.f, (cell.height - button) / 2) + (button - height) / 2};
+		const ImVec2 maximum{minimum.x + size.x + pad * 2, minimum.y + height};
+		auto* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(minimum, maximum, theme::Mix(theme::Bg, theme::Record, .25f), height / 2);
+		draw->AddText({minimum.x + pad, minimum.y + (height - size.y) / 2}, theme::Record, recordingTime.c_str());
+	}
 	shell.timelineCanvas = m_canvas.Bounds();
 	std::tie(shell.timeline.first, shell.timeline.last) = m_canvas.VisibleRange();
 	if (gesture.stopFollowing)

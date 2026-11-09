@@ -461,7 +461,7 @@ std::string WorkspacePanels::ApplicationName(const RuntimePanels& runtime) const
 	const auto process = m_launcher.Snapshot();
 	if (!process.profile.empty())
 		return process.profile;
-	return "Apps";
+	return "No app";
 }
 
 bool WorkspacePanels::McpEnabled() const
