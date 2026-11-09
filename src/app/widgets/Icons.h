@@ -52,6 +52,7 @@ enum class Icon
 	History,
 	Fullscreen,
 	Point,
+	Plus,
 };
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color);
 } // namespace simxr::app

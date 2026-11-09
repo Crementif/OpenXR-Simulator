@@ -517,7 +517,7 @@ void ApplicationTabs::DrawBar()
 			draw->AddRectFilled({minimum.x, maximum.y - 2 * scale}, maximum, theme::Accent);
 		layers.SetCurrentChannel(draw, 1);
 	};
-	if (ImGui::BeginTabBar("Applications", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll))
+	if (ImGui::BeginTabBar("Applications", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyShrink))
 	{
 		for (const auto& tab : m_tabs)
 		{
@@ -597,9 +597,16 @@ void ApplicationTabs::DrawBar()
 		}
 		if (!m_confirmClose)
 			m_forceSelection = false;
-		if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing))
+		// A square button: its empty label leaves only the horizontal padding.
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+							{ImGui::GetFrameHeight() / 2, ImGui::GetStyle().FramePadding.y});
+		if (ImGui::TabItemButton("##Add application", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip))
 			m_add = true;
+		ImGui::PopStyleVar();
 		pill(false);
+		const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
+		DrawIcon(draw, Icon::Plus, {(minimum.x + maximum.x) / 2, (minimum.y + maximum.y) / 2}, iconSize,
+				 ImGui::IsItemHovered() ? theme::Text : theme::TextDim);
 		ImGui::SetItemTooltip("Open another application");
 		ImGui::EndTabBar();
 	}

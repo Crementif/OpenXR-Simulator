@@ -10,14 +10,14 @@ static constexpr std::pair<std::string_view, std::string_view> s_sources[]{
 #include "IconSources.inc"
 };
 // SVG file stem per Icon, in enum order.
-static constexpr std::array<std::string_view, 46> s_files{
+static constexpr std::array<std::string_view, 47> s_files{
 	"play",		 "pause",	   "step-forward", "chevron-left", "chevron-right", "record", "stop",	 "library",
 	"more",		 "settings",   "help",		   "globe",		   "axes",			"app",	  "refresh", "close",
 	"player",	 "head",	   "hand-left",	   "hand-right",   "body",			"eye",	  "tracker", "headset",
 	"scenarios", "pin",		   "export",	   "live",		   "warning",		"rename", "delete",	 "script",
 	"step-back", "chevron-up", "chevron-down", "focus",		   "crop",			"zoom",	  "gauge",	 "lock",
-	"unlock",	 "reset-pose", "keyboard",	   "history",	   "fullscreen",	"point"};
-static_assert(s_files.size() == static_cast<std::size_t>(Icon::Point) + 1, "Every icon needs a file");
+	"unlock",	 "reset-pose", "keyboard",	   "history",	   "fullscreen",	"point",  "plus"};
+static_assert(s_files.size() == static_cast<std::size_t>(Icon::Plus) + 1, "Every icon needs a file");
 
 // One path of an icon in its 24-unit grid, centred on the origin.
 struct IconPath
