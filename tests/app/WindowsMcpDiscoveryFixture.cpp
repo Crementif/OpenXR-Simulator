@@ -3,9 +3,12 @@
 #include "app/mcp/McpCredentials.h"
 #include "app/mcp/McpInstance.h"
 #include "app/mcp/McpServer.h"
+#include "app/mcp/McpTools.h"
 
 int main(int argc, char** argv)
 {
+	if (argc == 2 && std::string_view(argv[1]) == "--mcp-tools")
+		return std::puts(simxr::app::McpToolDefinitions(false).dump().c_str()) < 0 ? 1 : 0;
 	std::intptr_t inherited = -1;
 	if (argc == 3 && std::string_view(argv[1]) == "--mcp-bootstrap-handle")
 	{

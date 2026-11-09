@@ -198,7 +198,11 @@ class McpTest:
             self.resources.callback(stop_tracked_process, handle)
         return self.handles[pid]
 
-    def discover(self):
+    def discover(self, client=None):
+        """Track the app; a client's first tool call starts it."""
+        if client:
+            listed = client.tool("simulator_list_applications", {})
+            assert not listed["error"], listed
         record = eventually(lambda: discovery_record(Path(self.env["SIMXR_MCP_DISCOVERY_DIR"])))
         self.track(record["process_id"])
         return record

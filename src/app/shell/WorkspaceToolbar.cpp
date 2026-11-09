@@ -221,6 +221,49 @@ void WorkspacePanels::DrawHeadset(RuntimePanels& runtime)
 	ImGui::EndPopup();
 }
 
+void WorkspacePanels::DrawMcp()
+{
+	auto& mcp = m_shared->mcp;
+	const bool failed = !mcp.listening && !mcp.stopping && !mcp.error.empty();
+	const bool working = mcp.listening && mcp.activeCalls;
+	const ImU32 dot = failed		  ? theme::Record
+					  : mcp.stopping  ? theme::Warn
+					  : working		  ? theme::Accent
+					  : mcp.listening ? theme::Ok
+									  : 0;
+	const std::string tooltip = "MCP: " + McpStatusText(mcp);
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
+	const bool pressed = LetterButton("MCP", "MCP", tooltip.c_str(), ImGui::IsPopupOpen("MCP"));
+	ImGui::PopStyleColor();
+	const auto maximum = ImGui::GetItemRectMax();
+	const float scale = m_settings.scale;
+	if (dot)
+	{
+		const float radius = ImGui::GetFrameHeight() * .12f;
+		const ImVec2 centre{maximum.x - radius * 1.6f, maximum.y - radius * 1.6f};
+		auto* draw = ImGui::GetWindowDrawList();
+		if (working)
+		{
+			const float pulse = .5f + .5f * std::sin(static_cast<float>(ImGui::GetTime()) * 5);
+			draw->AddCircleFilled(centre, radius * (1.4f + .8f * pulse), theme::Fade(dot, .4f * (1 - pulse)));
+		}
+		if (mcp.listening && !mcp.sessions && !working)
+			draw->AddCircle(centre, radius - .5f * scale, dot, 0, 1.5f * scale);
+		else
+			draw->AddCircleFilled(centre, radius, dot);
+	}
+	if (pressed)
+		ImGui::OpenPopup("MCP");
+	ImGui::SetNextWindowPos({maximum.x, maximum.y + 2 * scale}, ImGuiCond_Always, {1, 0});
+	ImGui::SetNextWindowSize({320 * scale, 0});
+	if (!ImGui::BeginPopup("MCP"))
+		return;
+	SectionLabel("MCP service");
+	if (m_mcpPanel.Draw(m_settings, mcp))
+		Save();
+	ImGui::EndPopup();
+}
+
 void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 {
 	const auto& snapshot = runtime.View();
@@ -256,7 +299,10 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	const float button = ImGui::GetFrameHeight();
 	const float focus =
 		elapsed.empty() ? button : button + ImGui::CalcTextSize(elapsed.c_str()).x + style.FramePadding.x;
-	const float actions = button * 2 + focus + style.ItemSpacing.x * 2;
+	const bool mcp = m_shared->mcp.available;
+	const float mcpWidth =
+		mcp ? std::max(button, ImGui::CalcTextSize("MCP").x + style.FramePadding.x * 2) + style.ItemSpacing.x : 0;
+	const float actions = button * 2 + focus + style.ItemSpacing.x * 2 + mcpWidth;
 	const float reserved =
 		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
 	const float barHeight = ImGui::GetWindowHeight(), middle = std::max(0.0f, (barHeight - button) / 2);
@@ -308,6 +354,11 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	if (IconButton("Settings", Icon::Settings, "Preferences: scale, snapshots, keys and layout", m_showSettings))
 		m_showSettings = true;
 	ImGui::PopStyleColor();
+	if (mcp)
+	{
+		ImGui::SameLine();
+		DrawMcp();
+	}
 	runtime.DrawRecordingPopovers();
 	if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
 		!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))

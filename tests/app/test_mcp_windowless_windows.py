@@ -22,7 +22,7 @@ def main():
 
         assert "simulator_shutdown" in {item["name"] for item in client.rpc("tools/list")["result"]["tools"]}
 
-        app_handle = test.track(test.discover()['process_id'])
+        app_handle = test.track(test.discover(client)['process_id'])
 
         manifest = root / "manifest.json"
         manifest.write_text("{}", encoding="utf-8")

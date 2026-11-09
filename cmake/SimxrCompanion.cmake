@@ -101,6 +101,7 @@ add_library(simxr_app STATIC
     src/app/widgets/Icons.cpp
     src/app/widgets/InputPad.cpp
     src/app/widgets/LiveField.cpp
+    src/app/widgets/McpPanel.cpp
     src/app/widgets/Notices.cpp
     src/app/widgets/PastInput.cpp
     src/app/widgets/PilotController.cpp

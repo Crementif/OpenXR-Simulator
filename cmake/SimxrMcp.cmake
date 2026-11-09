@@ -38,7 +38,8 @@ add_library(simxr_mcp STATIC
     src/app/mcp/McpSimulation.cpp
     src/app/mcp/McpSimulationCommands.cpp
     src/app/mcp/McpServer.cpp
-    src/app/mcp/McpSocket.cpp)
+    src/app/mcp/McpSocket.cpp
+    src/app/mcp/McpTools.cpp)
 if(WIN32)
     target_sources(simxr_mcp PRIVATE src/app/mcp/windows/McpCredentials.cpp src/app/mcp/windows/McpLogFile.cpp)
 else()
@@ -64,6 +65,11 @@ add_executable(simxr_mcp_connector
     src/app/mcp/McpConnector.cpp)
 if(WIN32)
     target_sources(simxr_mcp_connector PRIVATE src/app/mcp/windows/McpCancelablePost.cpp)
+    # MCP clients keep the connector running for their whole session.
+    add_custom_command(TARGET simxr_mcp_connector PRE_LINK
+        COMMAND "${CMAKE_COMMAND}" "-DFILE=$<TARGET_FILE:simxr_mcp_connector>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RetireRunningExecutable.cmake"
+        VERBATIM)
 endif()
 simxr_configure_target(simxr_mcp_connector app/mcp/McpPch.h)
 simxr_set_output_directory(simxr_mcp_connector)

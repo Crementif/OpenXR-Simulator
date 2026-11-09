@@ -27,7 +27,7 @@ def main():
 
         names = {entry['name'] for entry in client.rpc('tools/list')['result']['tools']}
         assert 'capture_screenshot' in names and 'validate_stereo' in names
-        record = test.discover()
+        record = test.discover(client)
 
         launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
             'SIMXR_PROBE_CONTROL': '1', 'SIMXR_PROBE_GPU_INSPECTION': '1', 'SIMXR_PROBE_RECORDING': '1',

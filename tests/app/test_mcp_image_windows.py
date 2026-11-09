@@ -32,7 +32,7 @@ def main():
             index = next(item for item in profiles["data"]["profiles"] if item["name"] == "index")
             assert abs(index["ipd"] - .063) < .0001, index
 
-            test.discover()
+            test.discover(client)
             probe_environment = {
                 "SIMXR_PROBE_FRAMES": "1800" if validate else "120000", "SIMXR_PROBE_SLEEP_MS": "1",
                 "SIMXR_PROBE_STEREO_TEXTURE": "1",

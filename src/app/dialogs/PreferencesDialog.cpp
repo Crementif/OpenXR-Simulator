@@ -130,68 +130,10 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			}
 			if (ImGui::BeginTabItem("MCP"))
 			{
-				if (!mcp || !mcp->available)
+				if (!mcp)
 					ImGui::TextWrapped("MCP controls are unavailable in this session.");
 				else
-				{
-					if (ImGui::Checkbox("Enable MCP on startup", &settings.mcpEnabled))
-						dirty = true;
-					ImGui::SetItemTooltip("Start the local MCP service with the simulator. Changes take effect now.");
-					if (mcp->stopping)
-						ImGui::TextUnformatted("Status: stopping");
-					else if (mcp->listening)
-					{
-						ImGui::Text("Status: listening (%zu client %s)", mcp->sessions,
-									mcp->sessions == 1 ? "session" : "sessions");
-						ImGui::SetItemTooltip("Sessions may remain listed until they are closed or expire.");
-						if (mcp->startedForSession)
-							ImGui::TextWrapped("Enabled for this session.");
-						if (!mcp->discoverable)
-							ImGui::TextWrapped("This development endpoint is not discoverable by the connector.");
-						if (ImGui::Button("Stop MCP"))
-						{
-							dirty |= settings.mcpEnabled;
-							settings.mcpEnabled = false;
-							mcp->stopRequested = true;
-						}
-					}
-					else
-					{
-						ImGui::TextUnformatted(mcp->error.empty() ? "Status: off" : "Status: unavailable");
-						if (!mcp->error.empty())
-							ImGui::TextWrapped("%s", mcp->error.c_str());
-						if (ImGui::Button(mcp->error.empty() ? "Start MCP" : "Retry MCP"))
-						{
-							dirty |= !settings.mcpEnabled;
-							settings.mcpEnabled = true;
-							mcp->retryRequested = true;
-						}
-					}
-					ImGui::SetNextItemWidth(
-						std::max(1.f, std::min(240 * settings.scale, ImGui::GetContentRegionAvail().x -
-																		 ImGui::CalcTextSize("Client").x -
-																		 ImGui::GetStyle().ItemInnerSpacing.x)));
-					ImGui::Combo("Client", &m_mcpClient, "Generic JSON\0Codex\0");
-					const auto& configuration = m_mcpClient == 1 ? mcp->codexConfiguration : mcp->configuration;
-					ImGui::BeginDisabled(configuration.empty());
-					if (ImGui::Button("Copy MCP configuration"))
-						m_clipboardError = SDL_SetClipboardText(configuration.c_str()) ? "" : SDL_GetError();
-					ImGui::EndDisabled();
-					ImGui::SetItemTooltip("Copy a configuration targeting this app executable and its connector.");
-					if (!mcp->configurationError.empty())
-						ImGui::TextWrapped("%s", mcp->configurationError.c_str());
-					if (!m_clipboardError.empty())
-						ImGui::TextWrapped("Clipboard: %s", m_clipboardError.c_str());
-					if (!mcp->httpConfiguration.empty() && ImGui::TreeNode("Advanced HTTP"))
-					{
-						ImGui::TextWrapped("Direct HTTP is local to this computer.");
-						if (ImGui::Button("Copy HTTP connection"))
-							m_clipboardError =
-								SDL_SetClipboardText(mcp->httpConfiguration.c_str()) ? "" : SDL_GetError();
-						ImGui::SetItemTooltip("Includes a private credential. Share it only with trusted clients.");
-						ImGui::TreePop();
-					}
-				}
+					dirty |= m_mcp.Draw(settings, *mcp);
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem("About"))

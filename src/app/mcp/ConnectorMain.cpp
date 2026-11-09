@@ -99,9 +99,7 @@ static int ConnectorMain(int argc, char** argv)
 					throw std::runtime_error("Cannot write MCP configuration");
 				return 0;
 			}
-			auto discovery = std::make_unique<simxr::app::McpInstanceDiscovery>(executable, windowless);
-			discovery->StartIfNeeded();
-			simxr::app::McpConnector(std::move(discovery)).Run();
+			simxr::app::McpConnector(std::make_unique<simxr::app::McpInstanceDiscovery>(executable, windowless)).Run();
 			return 0;
 		}
 #endif

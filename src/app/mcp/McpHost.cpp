@@ -120,6 +120,7 @@ McpUiState McpHost::State() const
 	{
 		state.discoverable = static_cast<bool>(m_running->registration);
 		state.sessions = m_running->server->ClientSessions();
+		state.activeCalls = m_running->server->ActiveCalls();
 		state.httpConfiguration = m_running->httpConfiguration;
 	}
 	return state;

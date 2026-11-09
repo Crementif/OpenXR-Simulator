@@ -7,26 +7,48 @@
 
 namespace simxr::app
 {
-bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled, const char* label, ImU32 tint)
+// An icon button's frame; returns whether it was pressed.
+static bool ToolButton(const char* id, ImVec2 size, bool toggled)
 {
-	const float height = ImGui::GetFrameHeight(), padding = ImGui::GetStyle().FramePadding.x;
-	const float textWidth = label ? ImGui::CalcTextSize(label, nullptr, true).x : 0;
-	const ImVec2 size{label ? height + textWidth + padding : height, height};
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const bool pressed = ImGui::InvisibleButton(id, size, ImGuiButtonFlags_EnableNav);
 	const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
-	const ImVec2 maximum{minimum.x + size.x, minimum.y + size.y};
-	auto* draw = ImGui::GetWindowDrawList();
 	const auto background = held	  ? theme::Vec(theme::Mix(theme::SurfaceRaised, theme::Accent, .55f))
 							: toggled ? theme::Vec(theme::Mix(theme::SurfaceRaised, theme::Accent, .4f))
 							: hovered ? theme::Vec(theme::Mix(theme::SurfaceRaised, theme::Text, .1f))
 									  : ImGui::GetStyle().Colors[ImGuiCol_Button];
-	draw->AddRectFilled(minimum, maximum, ImGui::GetColorU32(background), theme::Radius * ImGui::GetFontSize() / 17);
+	ImGui::GetWindowDrawList()->AddRectFilled(minimum, {minimum.x + size.x, minimum.y + size.y},
+											  ImGui::GetColorU32(background),
+											  theme::Radius * ImGui::GetFontSize() / 17);
+	return pressed;
+}
+
+bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled, const char* label, ImU32 tint)
+{
+	const float height = ImGui::GetFrameHeight(), padding = ImGui::GetStyle().FramePadding.x;
+	const float textWidth = label ? ImGui::CalcTextSize(label, nullptr, true).x : 0;
+	const auto minimum = ImGui::GetCursorScreenPos();
+	const bool pressed = ToolButton(id, {label ? height + textWidth + padding : height, height}, toggled);
+	auto* draw = ImGui::GetWindowDrawList();
 	DrawIcon(draw, icon, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f,
 			 ImGui::GetColorU32(tint ? tint : theme::Text));
 	if (label)
 		draw->AddText({minimum.x + height - padding / 2, minimum.y + (height - ImGui::GetFontSize()) / 2},
 					  ImGui::GetColorU32(theme::Text), label, ImGui::FindRenderedTextEnd(label));
+	if (tooltip)
+		ImGui::SetItemTooltip("%s", tooltip);
+	return pressed;
+}
+
+bool LetterButton(const char* id, const char* letters, const char* tooltip, bool toggled)
+{
+	const float height = ImGui::GetFrameHeight();
+	const auto text = ImGui::CalcTextSize(letters);
+	const float width = std::max(height, text.x + ImGui::GetStyle().FramePadding.x * 2);
+	const auto minimum = ImGui::GetCursorScreenPos();
+	const bool pressed = ToolButton(id, {width, height}, toggled);
+	ImGui::GetWindowDrawList()->AddText({minimum.x + (width - text.x) / 2, minimum.y + (height - text.y) / 2},
+										ImGui::GetColorU32(theme::Text), letters);
 	if (tooltip)
 		ImGui::SetItemTooltip("%s", tooltip);
 	return pressed;

@@ -22,7 +22,7 @@ def main():
 
         names = {item['name'] for item in client.rpc('tools/list')['result']['tools']}
         assert 'analyze_stereo_consistency' in names
-        test.discover()
+        test.discover(client)
 
         launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
             'SIMXR_PROBE_INTERACTIVE': '1', 'SIMXR_PROBE_FRAMES': '120000',

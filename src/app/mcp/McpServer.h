@@ -28,6 +28,7 @@ public:
 
 	std::uint16_t Port() const noexcept;
 	std::size_t ClientSessions() const;
+	std::size_t ActiveCalls() const;
 
 private:
 	void Route(const httplib::Request& request, httplib::Response& response);

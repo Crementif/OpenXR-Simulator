@@ -22,7 +22,7 @@ def main():
         client = Client(bridge)
         client.initialize('windows-screenshot-test')
 
-        test.discover()
+        test.discover(client)
         launched = client.tool('simulator_launch_application', {'executable': probe, 'runtime_manifest': manifest,
             'environment': {'SIMXR_PROBE_FRAMES': '120000',
             'SIMXR_PROBE_SLEEP_MS': '1', 'SIMXR_PROBE_PROJECTION_ONLY': '1',

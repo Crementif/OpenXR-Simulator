@@ -26,6 +26,9 @@ public:
 	void StartIfNeeded();
 	std::optional<McpEndpoint> Read();
 	const std::string& StartupError() const noexcept;
+	const std::filesystem::path& Executable() const noexcept;
+	// Runs the app's --mcp-tools mode; empty when that app cannot list tools without starting.
+	std::optional<std::string> DescribeTools() const;
 
 private:
 	std::filesystem::path m_executable, m_directory;

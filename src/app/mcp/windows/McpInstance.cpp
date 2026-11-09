@@ -344,7 +344,11 @@ void McpInstanceDiscovery::StartIfNeeded()
 	if (!CreateProcessW(m_executable.c_str(), command.data(), nullptr, nullptr, TRUE, flags, environment.data(),
 						m_executable.parent_path().c_str(), &startup.StartupInfo, &process))
 		throw windows::Error("Cannot start the selected MCP app");
+	if (m_child)
+		CloseHandle(m_child);
 	m_child = process.hProcess;
+	m_observed = false;
+	m_startupError.clear();
 	windows::Handle primaryThread(process.hThread);
 	if (contained)
 		std::fputs("MCP connector: this client's job forbids breakaway, so the simulator may close with it. Start "
@@ -420,6 +424,78 @@ std::optional<McpEndpoint> McpInstanceDiscovery::Read()
 const std::string& McpInstanceDiscovery::StartupError() const noexcept
 {
 	return m_startupError;
+}
+
+const std::filesystem::path& McpInstanceDiscovery::Executable() const noexcept
+{
+	return m_executable;
+}
+
+std::optional<std::string> McpInstanceDiscovery::DescribeTools() const
+{
+	SECURITY_ATTRIBUTES inherit{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+	HANDLE readEnd = nullptr, writeEnd = nullptr;
+	if (!CreatePipe(&readEnd, &writeEnd, &inherit, 0))
+		throw windows::Error("Cannot create the MCP tool list pipe");
+	windows::Handle reader(readEnd), writer(writeEnd);
+	if (!SetHandleInformation(reader.Get(), HANDLE_FLAG_INHERIT, 0))
+		throw windows::Error("Cannot protect the MCP tool list pipe");
+	windows::Handle nullFile(CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+										 &inherit, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+	if (nullFile.Get() == INVALID_HANDLE_VALUE)
+		throw windows::Error("Cannot isolate MCP tool list streams");
+	std::array<HANDLE, 2> handles{writer.Get(), nullFile.Get()};
+	McpProcessAttributes attributes(handles);
+	auto command = windows::Quote(m_executable.native()) + L" --mcp-tools";
+	if (m_windowless)
+		command += L" --windowless";
+	STARTUPINFOEXW startup{};
+	startup.StartupInfo.cb = sizeof(startup);
+	startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+	startup.StartupInfo.hStdInput = nullFile.Get();
+	startup.StartupInfo.hStdOutput = writer.Get();
+	startup.StartupInfo.hStdError = nullFile.Get();
+	startup.lpAttributeList = attributes.Get();
+	PROCESS_INFORMATION process{};
+	if (!CreateProcessW(m_executable.c_str(), command.data(), nullptr, nullptr, TRUE,
+						EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, nullptr, m_executable.parent_path().c_str(),
+						&startup.StartupInfo, &process))
+		return {};
+	windows::Handle child(process.hProcess), primaryThread(process.hThread);
+	writer = windows::Handle();
+	std::string output;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (true)
+	{
+		DWORD available = 0;
+		if (!PeekNamedPipe(reader.Get(), nullptr, 0, nullptr, &available, nullptr))
+			break;
+		if (available)
+		{
+			const auto start = output.size();
+			output.resize(start + available);
+			DWORD count = 0;
+			if (!ReadFile(reader.Get(), output.data() + start, available, &count, nullptr))
+				break;
+			output.resize(start + count);
+			if (output.size() > 4 * 1024 * 1024)
+				break;
+		}
+		else if (std::chrono::steady_clock::now() >= deadline)
+			break;
+		else
+			WaitForSingleObject(child.Get(), 10);
+	}
+	DWORD code = 1;
+	if (WaitForSingleObject(child.Get(), 2000) != WAIT_OBJECT_0)
+	{
+		TerminateProcess(child.Get(), 1);
+		WaitForSingleObject(child.Get(), 5000);
+		return {};
+	}
+	if (!GetExitCodeProcess(child.Get(), &code) || code != 0 || output.size() > 4 * 1024 * 1024)
+		return {};
+	return output;
 }
 
 McpInstanceRegistration::McpInstanceRegistration(std::intptr_t inheritedHandle)

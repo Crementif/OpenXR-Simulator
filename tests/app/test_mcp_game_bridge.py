@@ -105,6 +105,7 @@ def main():
                 tools = {tool['name'] for tool in client.rpc('tools/list')['result']['tools']}
                 assert {'game_bridge_connect', 'game_bridge_status', 'game_bridge_observations',
                         'game_bridge_command', 'game_bridge_operation'} <= tools
+                assert not client.tool('simulator_list_applications', {})['error']
                 app_pid = int(eventually(lambda: next((json.loads(p.read_text(encoding='utf-8'))['process_id']
                     for p in (root / 'discovery').glob('*.json')), None)))
                 if os.name == 'nt':

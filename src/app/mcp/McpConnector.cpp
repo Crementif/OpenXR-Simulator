@@ -1,6 +1,7 @@
 #include "app/mcp/McpPch.h"
 #include "app/mcp/McpConnector.h"
 #include "app/mcp/McpCredentials.h"
+#include "simxr/Version.h"
 #ifdef _WIN32
 #include "app/mcp/windows/McpCancelablePost.h"
 #endif
@@ -197,13 +198,16 @@ void McpConnector::Run()
 
 void McpConnector::Monitor()
 {
+	const auto waitingForLaunch = [this] {
+		return m_launchRequests != m_launchesHandled;
+	};
 	while (true)
 	{
 		std::optional<Connection> current;
 		Json initializationParams;
 		{
 			std::unique_lock lock(m_stateMutex);
-			m_stateChanged.wait(lock, [&] { return m_stopping || !m_requestedVersion.empty(); });
+			m_stateChanged.wait(lock, [&] { return m_stopping || m_handshakeComplete; });
 			if (m_stopping)
 				return;
 			current = m_connection;
@@ -217,16 +221,58 @@ void McpConnector::Monitor()
 #ifdef SIMXR_MCP_DISCOVERY
 				if (m_discovery)
 				{
-					endpoint = m_discovery->Read();
-					std::lock_guard lock(m_stateMutex);
-					m_unavailableReason = m_discovery->StartupError();
-					m_stateChanged.notify_all();
+					std::uint64_t requested = 0;
+					bool listed = false;
+					{
+						std::lock_guard lock(m_stateMutex);
+						requested = m_launchRequests;
+						listed = m_listedTools.has_value();
+					}
+					std::string launchError, readError;
+					if (requested != m_launchesHandled)
+					{
+						try
+						{
+							m_discovery->StartIfNeeded();
+						}
+						catch (const std::exception& error)
+						{
+							launchError = error.what();
+						}
+					}
+					try
+					{
+						endpoint = m_discovery->Read();
+					}
+					catch (const std::exception& error)
+					{
+						readError = error.what();
+					}
+					std::optional<Json> catalog;
+					if (!endpoint && listed)
+						catalog = Catalog();
+					bool changed = false;
+					{
+						std::lock_guard lock(m_stateMutex);
+						m_unavailableReason = readError.empty() ? m_discovery->StartupError() : readError;
+						if (requested != m_launchesHandled)
+						{
+							m_launchError = launchError;
+							m_launchesHandled = requested;
+						}
+						changed = catalog && m_listedTools && *catalog != *m_listedTools && m_clientInitialized;
+						if (changed)
+							m_listedTools.reset();
+						m_stateChanged.notify_all();
+					}
+					if (changed)
+						Send(ListChanged());
 				}
 #endif
 				if (!endpoint)
 				{
 					std::unique_lock lock(m_stateMutex);
-					m_stateChanged.wait_for(lock, 1s, [&] { return m_stopping; });
+					m_stateChanged.wait_for(lock, 1s, [&] { return m_stopping || waitingForLaunch(); });
 					if (m_stopping)
 						return;
 					continue;
@@ -257,7 +303,7 @@ void McpConnector::Monitor()
 								stopping = m_stopping;
 								if (!stopping)
 								{
-									m_connection = Connection{*endpoint, session, version, body, ++m_generation};
+									m_connection = Connection{*endpoint, session, version, ++m_generation};
 									notify = m_clientInitialized && m_generation > m_reportedGeneration;
 									if (notify)
 										m_reportedGeneration = m_generation;
@@ -304,7 +350,8 @@ void McpConnector::Monitor()
 				Invalidate(current->generation);
 		}
 		std::unique_lock lock(m_stateMutex);
-		m_stateChanged.wait_for(lock, 1s, [&] { return m_stopping || (current && !m_connection); });
+		m_stateChanged.wait_for(
+			lock, 1s, [&] { return m_stopping || (current && !m_connection) || (!current && waitingForLaunch()); });
 		if (m_stopping)
 			return;
 	}
@@ -371,41 +418,30 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 				Send(Error(id, -32602, "Invalid initialization parameters"));
 			return;
 		}
-		std::unique_lock lock(m_stateMutex);
-		if (m_handshakeActive || m_handshakeComplete ||
-			(!m_requestedVersion.empty() && params != m_initializationParams))
+		const auto requested = params["protocolVersion"].get<std::string>();
+		const auto version = SupportedVersion(requested) ? requested : std::string("2025-11-25");
+		bool repeated = false;
 		{
-			lock.unlock();
-			Send(Error(id, -32600, "The connector is already initializing or initialized"));
+			std::lock_guard lock(m_stateMutex);
+			repeated = m_handshakeComplete;
+			if (!repeated)
+			{
+				m_initializationParams = params;
+				m_handshakeComplete = true;
+				m_stateChanged.notify_all();
+			}
+		}
+		if (repeated)
+		{
+			Send(Error(id, -32600, "The connector is already initialized"));
 			return;
 		}
-		m_handshakeActive = true;
-		m_initializationParams = params;
-		m_requestedVersion = params["protocolVersion"].get<std::string>();
-		if (m_requestedVersion.empty())
-			m_requestedVersion = "2025-11-25";
-		m_stateChanged.notify_all();
-		if (!m_stateChanged.wait_for(
-				lock, 10s, [&] { return m_stopping || m_connection.has_value() || !m_unavailableReason.empty(); }) ||
-			!m_connection)
-		{
-			m_handshakeActive = false;
-			const auto reason = m_unavailableReason.empty() ? "OpenXR Simulator is unavailable" : m_unavailableReason;
-			lock.unlock();
-			Send(Error(id, -32000, reason));
-			return;
-		}
-		auto response = m_connection->initialization;
-		m_reportedGeneration = m_connection->generation;
-		m_handshakeActive = false;
-		m_handshakeComplete = true;
-		lock.unlock();
-		response["id"] = id;
-		if (response["result"].contains("capabilities") && response["result"]["capabilities"].is_object() &&
-			response["result"]["capabilities"].contains("tools") &&
-			response["result"]["capabilities"]["tools"].is_object())
-			response["result"]["capabilities"]["tools"]["listChanged"] = true;
-		Send(response);
+		Send({{"jsonrpc", "2.0"},
+			  {"id", id},
+			  {"result",
+			   {{"protocolVersion", version},
+				{"capabilities", {{"tools", {{"listChanged", true}}}}},
+				{"serverInfo", {{"name", "openxr-simulator"}, {"version", simxr::Version}}}}}});
 		return;
 	}
 	if (notification && method == "notifications/initialized")
@@ -422,6 +458,11 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 			Send(ListChanged());
 		return;
 	}
+	if (method == "ping" && !notification)
+	{
+		Send({{"jsonrpc", "2.0"}, {"id", id}, {"result", Json::object()}});
+		return;
+	}
 	std::optional<Connection> current;
 	std::string unavailableReason;
 	{
@@ -429,6 +470,30 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 		current = m_connection;
 		unavailableReason = m_unavailableReason;
 	}
+#ifdef SIMXR_MCP_DISCOVERY
+	if (!current && m_discovery && !notification && (method == "tools/call" || method == "tools/list"))
+	{
+		if (method == "tools/list")
+		{
+			if (auto tools = Catalog())
+			{
+				{
+					std::lock_guard lock(m_stateMutex);
+					m_listedTools = *tools;
+				}
+				Send({{"jsonrpc", "2.0"}, {"id", id}, {"result", {{"tools", std::move(*tools)}}}});
+				return;
+			}
+		}
+		current = Launch(job, unavailableReason);
+		if (!current)
+		{
+			std::lock_guard lock(m_queueMutex);
+			if (job->cancelled || m_closed.load())
+				return;
+		}
+	}
+#endif
 	if (!current)
 	{
 		if (!notification)
@@ -500,6 +565,12 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 		if (!body.is_discarded() && body.is_object() && body.value("id", Json()) == id &&
 			(body.contains("result") || body.contains("error")))
 		{
+			if (method == "tools/list" && body.contains("result") && body["result"].is_object() &&
+				body["result"].contains("tools") && body["result"]["tools"].is_array())
+			{
+				std::lock_guard lock(m_stateMutex);
+				m_listedTools = body["result"]["tools"];
+			}
 			Send(body);
 			return;
 		}
@@ -512,6 +583,69 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 			? "The simulator request was interrupted; its outcome may be unknown. Inspect applications before retrying."
 			: "The simulator request was interrupted; the connector will reconnect when it returns"));
 }
+
+#ifdef SIMXR_MCP_DISCOVERY
+std::optional<Json> McpConnector::Catalog()
+{
+	std::lock_guard lock(m_catalogMutex);
+	std::error_code error;
+	const auto stamp = std::filesystem::last_write_time(m_discovery->Executable(), error);
+	if (error)
+		return {};
+	if (stamp != m_catalogStamp)
+	{
+		m_catalogStamp = stamp;
+		m_catalog.reset();
+		try
+		{
+			if (const auto output = m_discovery->DescribeTools())
+			{
+				auto tools = Json::parse(*output, nullptr, false);
+				if (tools.is_array())
+					m_catalog = std::move(tools);
+			}
+		}
+		catch (const std::exception& failure)
+		{
+			std::fprintf(stderr, "MCP connector tool list: %s\n", failure.what());
+		}
+	}
+	return m_catalog;
+}
+
+std::optional<McpConnector::Connection> McpConnector::Launch(const std::shared_ptr<Job>& job, std::string& reason)
+{
+	const auto deadline = std::chrono::steady_clock::now() + 15s;
+	std::unique_lock lock(m_stateMutex);
+	const auto request = ++m_launchRequests;
+	m_stateChanged.notify_all();
+	while (true)
+	{
+		if (m_connection || m_stopping)
+			return m_connection;
+		if (m_launchesHandled >= request && (!m_launchError.empty() || !m_unavailableReason.empty()))
+		{
+			reason = m_launchError.empty() ? m_unavailableReason : m_launchError;
+			return {};
+		}
+		if (std::chrono::steady_clock::now() >= deadline)
+		{
+			reason = "OpenXR Simulator did not become ready in time; the connector will connect when it is ready";
+			return {};
+		}
+		m_stateChanged.wait_for(lock, 100ms);
+		lock.unlock();
+		bool cancelled = false;
+		{
+			std::lock_guard queue(m_queueMutex);
+			cancelled = job->cancelled;
+		}
+		lock.lock();
+		if (cancelled)
+			return {};
+	}
+}
+#endif
 
 void McpConnector::Send(const Json& message)
 {

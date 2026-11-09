@@ -4,7 +4,9 @@
 #include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 
+#include <csignal>
 #include <fcntl.h>
+#include <poll.h>
 #include <spawn.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -229,6 +231,8 @@ void McpInstanceDiscovery::StartIfNeeded()
 		if (error)
 			throw SystemError("Cannot start the selected MCP app", error);
 		m_child = process;
+		m_observed = false;
+		m_startupError.clear();
 	}
 	catch (...)
 	{
@@ -309,6 +313,72 @@ std::optional<McpEndpoint> McpInstanceDiscovery::Read()
 const std::string& McpInstanceDiscovery::StartupError() const noexcept
 {
 	return m_startupError;
+}
+
+const std::filesystem::path& McpInstanceDiscovery::Executable() const noexcept
+{
+	return m_executable;
+}
+
+std::optional<std::string> McpInstanceDiscovery::DescribeTools() const
+{
+	std::array<int, 2> ends{-1, -1};
+	if (::pipe2(ends.data(), O_CLOEXEC) != 0)
+		throw SystemError("Cannot create the MCP tool list pipe");
+	McpDescriptor reader(ends[0]), writer(ends[1]);
+	auto executable = m_executable.native();
+	std::string option = "--mcp-tools", mode = "--windowless";
+	std::array<char*, 4> arguments{executable.data(), option.data(), m_windowless ? mode.data() : nullptr, nullptr};
+	posix_spawn_file_actions_t actions;
+	int error = ::posix_spawn_file_actions_init(&actions);
+	if (error)
+		throw SystemError("Cannot prepare the MCP tool list", error);
+	pid_t process = 0;
+	error = ::posix_spawn_file_actions_adddup2(&actions, writer.Get(), STDOUT_FILENO);
+	if (!error)
+		error = ::posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+	if (!error)
+		error = ::posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+	if (!error)
+		error = ::posix_spawn(&process, executable.c_str(), &actions, nullptr, arguments.data(), environ);
+	::posix_spawn_file_actions_destroy(&actions);
+	if (error)
+		return {};
+	writer = McpDescriptor();
+	std::string output;
+	bool complete = false;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (output.size() <= 4 * 1024 * 1024)
+	{
+		const auto remaining =
+			std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+		if (remaining.count() <= 0)
+			break;
+		pollfd ready{reader.Get(), POLLIN, 0};
+		const int polled = ::poll(&ready, 1, static_cast<int>(remaining.count()));
+		if (polled < 0 && errno == EINTR)
+			continue;
+		if (polled <= 0)
+			break;
+		std::array<char, 65536> buffer;
+		const auto count = ::read(reader.Get(), buffer.data(), buffer.size());
+		if (count < 0 && errno == EINTR)
+			continue;
+		if (count <= 0)
+		{
+			complete = count == 0;
+			break;
+		}
+		output.append(buffer.data(), static_cast<std::size_t>(count));
+	}
+	if (!complete)
+		::kill(process, SIGKILL);
+	int status = 0;
+	while (::waitpid(process, &status, 0) < 0 && errno == EINTR)
+	{}
+	if (!complete || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		return {};
+	return output;
 }
 
 McpInstanceRegistration::McpInstanceRegistration(std::intptr_t inheritedHandle)

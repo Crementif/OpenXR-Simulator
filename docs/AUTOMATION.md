@@ -44,7 +44,7 @@ A game that links [`include/simxr/game_bridge.h`](../include/simxr/game_bridge.h
 
 ### Debugging with an AI agent
 
-Copy the configuration from **Preferences → MCP** into the agent's MCP client; the connector attaches to a running companion that has MCP on (enabled in Preferences, or started with `simxr_companion --mcp`) and otherwise starts one. If the client's Windows job forbids breakaway, a companion the connector starts may close with the client; start `simxr_companion --mcp` first to keep it independent. The agent can launch and restart applications, take screenshots, read logs and diagnostics, pause and step frames, set input and run Luau.
+Copy the configuration from **Preferences → MCP** into the agent's MCP client; the connector attaches to a running companion that has MCP on (enabled in Preferences, or started with `simxr_companion --mcp`). Otherwise it lists the tools without starting anything and starts a companion on the agent's first tool call, so opening an MCP client does not open the simulator. If the client's Windows job forbids breakaway, a companion the connector starts may close with the client; start `simxr_companion --mcp` first to keep it independent. The agent can launch and restart applications, take screenshots, read logs and diagnostics, pause and step frames, set input and run Luau.
 
 ## Reference
 

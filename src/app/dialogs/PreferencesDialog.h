@@ -3,6 +3,7 @@
 #include "app/services/CompanionSettings.h"
 #include "app/mcp/McpUiState.h"
 #include "app/services/UpdateChecker.h"
+#include "app/widgets/McpPanel.h"
 
 #include <cstdint>
 #include <imgui.h>
@@ -25,8 +26,7 @@ private:
 	int m_capture = -1, m_captureFrame = 0, m_lastFrame = -1;
 	ImGuiKey m_modifier = ImGuiKey_None;
 	bool m_escapeBlocked = false;
-	int m_mcpClient = 0;
-	std::string m_clipboardError;
+	McpPanel m_mcp;
 	std::string m_urlError;
 };
 } // namespace simxr::app

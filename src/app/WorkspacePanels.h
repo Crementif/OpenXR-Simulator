@@ -11,6 +11,7 @@
 #include "app/services/UpdateChecker.h"
 #include "app/services/ShellState.h"
 #include "app/widgets/AppPicker.h"
+#include "app/widgets/McpPanel.h"
 #include "app/widgets/Notices.h"
 #include "app/widgets/TimelinePanel.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -145,6 +146,7 @@ private:
 	void DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view, float maximumWidth, bool compact = false);
 	void DrawHistory(RuntimePanels& runtime);
 	void DrawHeadset(RuntimePanels& runtime);
+	void DrawMcp();
 	void DrawInspectorPanel(RuntimePanels& runtime, bool rail);
 	void DrawLibrary(RuntimePanels& runtime);
 	void DrawInspector(RuntimePanels& runtime);
@@ -197,6 +199,7 @@ private:
 	bool m_replayFailed = false;
 #endif
 	PreferencesDialog m_preferences;
+	McpPanel m_mcpPanel;
 	LaunchProfilesDialog m_profiles;
 	Notices m_notices;
 	std::string m_launchError;

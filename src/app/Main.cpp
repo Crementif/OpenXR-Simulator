@@ -3,6 +3,7 @@
 #include "app/platform/StartupFailure.h"
 #include "app/services/LaunchTypes.h"
 #include "app/mcp/McpCredentials.h"
+#include "app/mcp/McpTools.h"
 #include "simxr/Version.h"
 #if defined(__linux__)
 #include "platform/linux/InstallUse.h"
@@ -13,25 +14,33 @@
 
 #include <SDL3/SDL_main.h>
 
+static bool WriteStandardOutput(std::string_view text)
+{
+#ifdef _WIN32
+	const auto output = GetStdHandle(STD_OUTPUT_HANDLE);
+	if (!output || output == INVALID_HANDLE_VALUE)
+		return false;
+	std::size_t offset = 0;
+	while (offset < text.size())
+	{
+		DWORD written = 0;
+		const auto count = static_cast<DWORD>(std::min<std::size_t>(text.size() - offset, 65536));
+		if (!WriteFile(output, text.data() + offset, count, &written, nullptr) || !written)
+			return false;
+		offset += written;
+	}
+	return true;
+#else
+	return std::fwrite(text.data(), 1, text.size(), stdout) == text.size() && std::fflush(stdout) == 0;
+#endif
+}
+
 #ifdef _WIN32
 static int RunUpdateWorker(std::string_view repository)
 {
 	try
 	{
-		const auto response = simxr::app::windows::FetchLatestReleaseDirect(repository);
-		const auto output = GetStdHandle(STD_OUTPUT_HANDLE);
-		if (!output || output == INVALID_HANDLE_VALUE)
-			return 1;
-		std::size_t offset = 0;
-		while (offset < response.size())
-		{
-			DWORD written = 0;
-			const auto count = static_cast<DWORD>(std::min<std::size_t>(response.size() - offset, 65536));
-			if (!WriteFile(output, response.data() + offset, count, &written, nullptr) || !written)
-				return 1;
-			offset += written;
-		}
-		return 0;
+		return WriteStandardOutput(simxr::app::windows::FetchLatestReleaseDirect(repository)) ? 0 : 1;
 	}
 	catch (const std::exception&)
 	{
@@ -39,6 +48,23 @@ static int RunUpdateWorker(std::string_view repository)
 	}
 }
 #endif
+
+// The MCP connector lists tools without starting the simulator.
+static int PrintMcpTools(int argc, char** argv)
+{
+	const bool windowless = argc == 3 && std::string_view(argv[2]) == "--windowless";
+	if (argc > 3 || (argc == 3 && !windowless))
+		return 2;
+	try
+	{
+		return WriteStandardOutput(simxr::app::McpToolDefinitions(windowless).dump()) ? 0 : 1;
+	}
+	catch (const std::exception& error)
+	{
+		std::fprintf(stderr, "OpenXR Simulator: %s\n", error.what());
+		return 1;
+	}
+}
 
 static std::optional<std::string_view> ReadValue(int argc, char** argv, int& index)
 {
@@ -74,6 +100,8 @@ int main(int argc, char** argv)
 		return 2;
 #endif
 	}
+	if (argc >= 2 && std::string_view(argv[1]) == "--mcp-tools")
+		return PrintMcpTools(argc, argv);
 	simxr::app::ApplicationOptions options;
 	for (int index = 1; index < argc; ++index)
 	{

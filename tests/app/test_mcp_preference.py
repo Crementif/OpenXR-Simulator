@@ -39,9 +39,8 @@ def main():
                 processes.append(bridge)
                 groups.append(bridge.pid)
                 client = Client(bridge)
-                params = {"protocolVersion": "2025-11-25", "capabilities": {},
-                          "clientInfo": {"name": "test", "version": "1"}}
-                assert "result" in client.rpc("initialize", params)
+                client.initialize()
+                assert not client.tool("simulator_list_applications", {})["error"]
                 assert discovery_record(root / 'enabled')["process_id"] == manual.pid
                 bridge.stdin.close()
                 assert bridge.wait(timeout=15) == 0 and manual.poll() is None
@@ -56,7 +55,8 @@ def main():
                 processes.append(bootstrap)
                 groups.append(bootstrap.pid)
                 client = Client(bootstrap)
-                assert "result" in client.rpc("initialize", params)
+                client.initialize()
+                assert not client.tool("simulator_list_applications", {})["error"]
                 boot_record = eventually(lambda: discovery_record(root / 'bootstrap'))
                 groups.append(int(boot_record["process_id"]))
                 saved = subprocess.check_output([helper, "--read-settings", str(settings)], env=env, text=True)

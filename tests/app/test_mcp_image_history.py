@@ -21,7 +21,7 @@ def exercise(app, connector, probe, target):
         names = {entry['name'] for entry in client.rpc('tools/list')['result']['tools']}
         assert {'debug_image_history', 'debug_retain_history', 'debug_begin_image_window',
                 'debug_image_window', 'debug_retain_window_image', 'debug_release_image_window'} <= names
-        test.discover()
+        test.discover(client)
 
         launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
             'SIMXR_PROBE_CONTROL': '1', 'SIMXR_PROBE_GPU_INSPECTION': '1', 'SIMXR_PROBE_RECORDING': '1',

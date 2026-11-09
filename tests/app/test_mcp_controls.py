@@ -27,7 +27,7 @@ def main():
         assert abs(index['ipd'] - .063) < .0001 and abs(index['outer_fov'][0] + .9424778) < .001, index
         assert index['recommended_width'] == 1440 and index['recommended_height'] == 1600, index
         assert client.tool('get_headset_profiles', {'extra': 1})['error']
-        test.discover()
+        test.discover(client)
 
         launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
             'SIMXR_PROBE_CONTROL': '1', 'SIMXR_PROBE_RECORDING': '1', 'SIMXR_PROBE_INTERACTIVE': '1',

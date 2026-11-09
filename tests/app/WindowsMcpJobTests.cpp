@@ -35,9 +35,9 @@ static std::string ReadLog(const std::filesystem::path& path)
 	return {(std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>()};
 }
 
-// Independent: the connector starts the app outside its job. Contained: the job forbids breakaway, so
-// the app starts inside it and ends with it. Attached: a hand-started app is already registered, and
-// the connector uses it without starting another.
+// Independent: the first tool call starts the app outside the connector's job. Contained: the job forbids
+// breakaway, so the app starts inside it and ends with it. Attached: a hand-started app is already
+// registered, and the connector uses it without starting another.
 enum class Expect
 {
 	Independent,
@@ -121,15 +121,22 @@ static void RunCase(const std::filesystem::path& connector, const std::filesyste
 		CheckWindows(AssignProcessToJobObject(job.Get(), child.Get()), "Assign test job");
 		if (ResumeThread(thread.Get()) == static_cast<DWORD>(-1))
 			throw simxr::app::windows::Error("Resume test connector");
-		const std::string initialize =
+		const std::string requests =
 			R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"job-test","version":"1"}}})"
+			"\n"
+			R"({"jsonrpc":"2.0","method":"notifications/initialized"})"
+			"\n"
+			R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_headset_profiles","arguments":{}}})"
 			"\n";
 		DWORD written = 0;
 		const auto sent =
-			WriteFile(writer.Get(), initialize.data(), static_cast<DWORD>(initialize.size()), &written, nullptr);
+			WriteFile(writer.Get(), requests.data(), static_cast<DWORD>(requests.size()), &written, nullptr);
 		if (!sent)
-			throw simxr::app::windows::Error("Initialize test connector");
-		Require(written == initialize.size(), "Write complete test initialization");
+			throw simxr::app::windows::Error("Send test connector requests");
+		Require(written == requests.size(), "Write complete test requests");
+		const auto answered = [&] {
+			return ReadLog(logPath).find(R"({"id":2,"jsonrpc":"2.0","result")") != std::string::npos;
+		};
 		const auto deadline = std::chrono::steady_clock::now() + 15s;
 		DWORD pid = 0;
 		while (std::chrono::steady_clock::now() < deadline)
@@ -137,15 +144,14 @@ static void RunCase(const std::filesystem::path& connector, const std::filesyste
 			pid = RecordProcess(directory);
 			if ((pid && pid != handPid) || WaitForSingleObject(child.Get(), 0) == WAIT_OBJECT_0)
 				break;
-			if (expect == Expect::Attached && ReadLog(logPath).find("\"result\"") != std::string::npos)
+			if (expect == Expect::Attached && answered())
 				break;
 			std::this_thread::sleep_for(25ms);
 		}
 		if (expect == Expect::Attached)
 		{
-			if (pid != handPid || ReadLog(logPath).find("\"result\"") == std::string::npos)
-				throw std::runtime_error("The connector must initialize through the hand-started app: " +
-										 ReadLog(logPath));
+			if (pid != handPid || !answered())
+				throw std::runtime_error("The connector must call through the hand-started app: " + ReadLog(logPath));
 			Require(WaitForSingleObject(child.Get(), 0) == WAIT_TIMEOUT, "The attached connector keeps running");
 			appProcess = std::move(handStarted);
 		}

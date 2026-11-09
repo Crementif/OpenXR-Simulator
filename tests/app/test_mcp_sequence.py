@@ -21,7 +21,7 @@ def main():
         names = {item['name'] for item in client.rpc('tools/list')['result']['tools']}
         assert {'upload_pose_sequence', 'run_pose_sequence', 'get_pose_sequence',
                 'stop_pose_sequence', 'release_pose_sequence_capture'} <= names
-        test.discover()
+        test.discover(client)
 
         launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
             'SIMXR_PROBE_CONTROL': '1', 'SIMXR_PROBE_RECORDING': '1', 'SIMXR_PROBE_GPU_INSPECTION': '1',

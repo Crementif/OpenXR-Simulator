@@ -48,6 +48,7 @@ def main():
                 expect_luau = os.environ.get("SIMXR_EXPECT_MCP_LUAU", "1") == "1"
                 assert ("simulator_luau_run" in names) == expect_luau
 
+                assert not client.tool("simulator_list_applications", {})["error"]
                 app_pid = int(eventually(lambda: discovery_record(discovery))["process_id"])
                 assert b"--windowless" in Path(f"/proc/{app_pid}/cmdline").read_bytes().split(b"\0")
                 maps = Path(f"/proc/{app_pid}/maps").read_text()

@@ -9,6 +9,8 @@ namespace simxr::app
 {
 bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled = false, const char* label = nullptr,
 				ImU32 tint = 0);
+// A toolbar button showing a short word in place of an icon.
+bool LetterButton(const char* id, const char* letters, const char* tooltip, bool toggled = false);
 int Segmented(std::span<const char* const> labels, int selected, float width,
 			  std::span<const char* const> tooltips = {});
 void PageTitle(Icon icon, const char* title);

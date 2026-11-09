@@ -23,7 +23,7 @@ def main():
 
         names = {entry['name'] for entry in client.rpc('tools/list')['result']['tools']}
         assert {'read_logs', 'clear_logs'} <= names
-        test.discover()
+        test.discover(client)
 
         launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
             'SIMXR_DATA_DIR': str(child_data), 'SIMXR_PROBE_INTERACTIVE': '1', 'SIMXR_PROBE_FRAMES': '120000',

@@ -41,24 +41,26 @@ def main():
                                               stdout=subprocess.PIPE, stderr=log, text=True, encoding='utf-8')
                     try:
                         client = Client(bridge)
-                        result = client.rpc('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
-                            'clientInfo': {'name': 'connector-protocol-check', 'version': '1'}})
+                        client.initialize('connector-protocol-check')
+
+                        def refusal():
+                            response = client.rpc('tools/call', {'name': 'simulator_list_applications',
+                                                                 'arguments': {}})
+                            return response['error']['message'] if 'error' in response else ''
+
                         if protocol in (None, 1):
-                            assert 'result' in result, result
-                            client.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
-                            assert 'result' in client.rpc('tools/list')
+                            assert not refusal()
                         else:
-                            assert 'unsupported MCP connector protocol' in result['error']['message'], result
+                            assert 'unsupported MCP connector protocol' in refusal()
                         assert host.poll() is None
                         assert json.loads(record.read_bytes())['process_id'] == host.pid
                         if protocol == 1:
                             record.write_text(json.dumps({'connector_protocol': 2, 'process_id': host.pid}),
                                               encoding='utf-8')
-                            eventually(lambda: 'unsupported MCP connector protocol' in
-                                       client.rpc('tools/list').get('error', {}).get('message', ''))
+                            eventually(lambda: 'unsupported MCP connector protocol' in refusal())
                             assert host.poll() is None and bridge.poll() is None
                             record.write_bytes(original)
-                            eventually(lambda: 'result' in client.rpc('tools/list'))
+                            eventually(lambda: not refusal())
                             assert json.loads(record.read_bytes())['process_id'] == host.pid
                             assert not client.tool('simulator_shutdown', {})['error']
                         bridge.stdin.close()

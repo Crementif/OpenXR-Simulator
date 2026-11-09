@@ -36,9 +36,9 @@ def main():
                                                      stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8",
                                                      bufsize=1, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
                 processes.append(connector_process)
-                params = {"protocolVersion": "2025-11-25", "capabilities": {},
-                          "clientInfo": {"name": "test", "version": "1"}}
-                assert "result" in Client(connector_process).rpc("initialize", params)
+                client = Client(connector_process)
+                client.initialize()
+                assert not client.tool("simulator_list_applications", {})["error"]
                 assert discovery_record(root / 'enabled')["process_id"] == app_process.pid
                 connector_process.stdin.close()
                 assert connector_process.wait(timeout=15) == 0 and app_process.poll() is None
@@ -51,7 +51,9 @@ def main():
                                         stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8",
                                         bufsize=1, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
                 processes.append(boot)
-                assert "result" in Client(boot).rpc("initialize", params)
+                client = Client(boot)
+                client.initialize()
+                assert not client.tool("simulator_list_applications", {})["error"]
                 boot_record = eventually(lambda: discovery_record(root / 'bootstrap'))
                 boot_handle = process_handle(int(boot_record["process_id"]))
                 saved = subprocess.check_output([helper, "--read-settings", str(settings)], env=env, text=True)

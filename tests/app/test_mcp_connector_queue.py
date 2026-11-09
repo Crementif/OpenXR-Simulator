@@ -124,14 +124,17 @@ def main():
         initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}
         send(initialize)
-        assert "error" in incoming.get(timeout=15), "Unavailable app must produce a bounded initialization error"
+        initialized = incoming.get(timeout=5)
+        assert initialized["id"] == 1 and "result" in initialized, "Initialization must not wait for the app"
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "early", "arguments": {}}})
+        early = incoming.get(timeout=5)
+        assert early["id"] == 2 and "error" in early, "An unavailable app must produce a bounded call error"
         server = Server(("127.0.0.1", port), Handler)
         server.state = state
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        send(initialize)
-        retry = incoming.get(timeout=10)
-        assert retry["id"] == 1 and "result" in retry, retry
-        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        changed = incoming.get(timeout=10)
+        assert changed.get("method") == "notifications/tools/list_changed", changed
         for identity in range(10, 18):
             send({"jsonrpc": "2.0", "id": identity, "method": "tools/call",
                   "params": {"name": "block", "arguments": {}}})

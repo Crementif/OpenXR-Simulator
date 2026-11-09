@@ -26,8 +26,8 @@ def check_failed_start(connector, root, env):
                                start_new_session=True)
     try:
         client = Client(process)
-        result = client.rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                                           "clientInfo": {"name": "test", "version": "1"}})
+        client.initialize()
+        result = client.rpc("tools/call", {"name": "simulator_list_applications", "arguments": {}})
         assert "exit code 23" in result["error"]["message"], result
         time.sleep(1.5)
         assert marker.read_text() == "x", "The connector must not repeatedly respawn a failed app"
@@ -84,6 +84,13 @@ def main():
                 for client in clients:
                     client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
+                names = {tool["name"] for tool in clients[1].rpc("tools/list")["result"]["tools"]}
+                assert "simulator_list_applications" in names, names
+                time.sleep(1.5)
+                assert not discovery_record(discovery), "Listing tools must not start the simulator"
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    listed = list(executor.map(lambda client: client.tool("simulator_list_applications", {}), clients))
+                assert all(not value["error"] for value in listed), listed
                 initial = eventually(lambda: discovery_record(discovery))
                 app_pid = int(initial["process_id"])
                 groups.append(app_pid)
@@ -113,10 +120,14 @@ def main():
                 processes[0].stdin.close()
                 assert processes[0].wait(timeout=15) == 0
                 assert not clients[1].tool("simulator_application_status", {"application_id": app_id})["error"]
+                def refusal():
+                    response = clients[1].rpc("tools/call", {"name": "simulator_list_applications", "arguments": {}})
+                    return response["error"]["message"] if "error" in response else ""
+
                 replacement = build / "rebuilt-simulator"
                 shutil.copy2(app, replacement)
                 os.replace(replacement, app)
-                eventually(lambda: "error" in clients[1].rpc("tools/list"))
+                eventually(lambda: "older simulator instance" in refusal())
                 os.kill(app_pid, signal.SIGTERM)
 
                 def stopped():
@@ -128,7 +139,9 @@ def main():
 
                 eventually(stopped)
                 os.kill(child_pid, 0)
-                assert "error" in clients[1].rpc("tools/list")
+                assert "result" in clients[1].rpc("tools/list")
+                time.sleep(1.5)
+                assert not discovery_record(discovery), "Only a tool call may restart the simulator"
                 manual = subprocess.Popen([app, "--hidden", "--mcp"], env=env, stdout=log,
                                           stderr=subprocess.STDOUT, start_new_session=True)
                 groups.append(manual.pid)
